@@ -12,9 +12,10 @@ here too. When something fails, search
 taking the runtime's own arguments. Delegate the ones it should serve and write the others.
 
 ```ts
-export class PluginHost extends DurableObject<Env> implements PluginHostRpc {
+export class PluginHost extends DurableObject<Env> {
   readonly #object = ActionDurableObject.handlers(this.ctx, {
     services,
+    calls: RpcServer.layer(PluginRpcs).pipe(Layer.provide(pluginHandlers)),
     alarm: () => plugin.alarm,
   });
 
@@ -26,19 +27,24 @@ export class PluginHost extends DurableObject<Env> implements PluginHostRpc {
     return this.#object.alarm();
   }
 
-  install(code: Code) {
-    return this.#object.run(plugin.install(code));
+  effectActionsRpc(request: string) {
+    return this.#object.effectActionsRpc(request);
   }
 }
 ```
 
-- `fetch`, `webSocketMessage`, `webSocketClose`, `webSocketError`, `alarm` and `run` each await
-  the object's build, which the first of them starts: the services, with `State` and `Sockets`
-  provided, then `routes`. Every handler and `run` shares it.
+- `fetch`, `webSocketMessage`, `webSocketClose`, `webSocketError`, `effectActionsRpc`,
+  `alarm` and `run` each await the object's build, which the first of them starts: the
+  services, with `State` provided, then `calls`, with `Calls` and `layerStub()`, and `routes`,
+  with `Sockets`. Every handler and `run` shares it.
 - A build that fails rejects the events awaiting it and is dropped with everything it built; the
   next event builds again from nothing. Nothing holds the object while it builds, so a build
   has no time limit of its own.
-- Without `routes`, `fetch` answers 404, and nothing else is built for it.
+- Without `routes`, `fetch` answers 404, and the socket handlers resolve at once, building
+  nothing. Without `calls`, `effectActionsRpc` rejects at once.
+- `effectActionsRpc` is the method `layerStubClient` and `client` call: a class serving
+  `calls` defines it, delegating, and a stub of a class without it is refused by their types.
+  Methods of the class's own, running Effects with `run`, stay callable beside it.
 - Without `alarm`, `handlers`' `alarm` runs nothing, once the object is built. Define the class's `alarm` only when it has
   one: workerd refuses `storage.setAlarm` on a class without an `alarm` method.
 - The socket handlers dispatch through `Sockets` and resolve for a socket no protocol accepted.
@@ -52,14 +58,20 @@ export class PluginHost extends DurableObject<Env> implements PluginHostRpc {
 
 An application with its own `ManagedRuntime` serves rpcs over hibernating sockets with
 `Sockets.layer` among its services and `layerWebSocket` in its routes, dispatching its socket
-events through `Sockets`.
+events through `Sockets`, and rpcs over its stub with its calls in the runtime, over
+`layerStub()` and `Calls.layer`, dispatching each call through `Calls`.
 
 ```ts
 export class Room extends DurableObject {
   readonly #memoMap = Layer.makeMemoMapUnsafe();
-  readonly #services = Layer.mergeAll(services, ActionDurableObject.Sockets.layer).pipe(
-    Layer.provideMerge(Layer.succeed(ActionDurableObject.State, this.ctx)),
-  );
+  readonly #services = Layer.mergeAll(
+    services,
+    ActionDurableObject.Sockets.layer,
+    calls.pipe(
+      Layer.provide(ActionDurableObject.layerStub()),
+      Layer.provideMerge(ActionDurableObject.Calls.layer),
+    ),
+  ).pipe(Layer.provideMerge(Layer.succeed(ActionDurableObject.State, this.ctx)));
   readonly #runtime = ManagedRuntime.make(this.#services, { memoMap: this.#memoMap });
   readonly #routesBuilt = Deferred.makeUnsafe<void, unknown>();
   readonly #web = HttpRouter.toWebHandler(
@@ -87,6 +99,10 @@ export class Room extends DurableObject {
   }
 
   // webSocketClose and webSocketError likewise, with `sockets.close` and `sockets.error`.
+
+  effectActionsRpc(request: string) {
+    return this.#runtime.runPromise(ActionDurableObject.Calls.use((calls) => calls.call(request)));
+  }
 }
 ```
 
@@ -98,6 +114,10 @@ export class Room extends DurableObject {
   delivers before the routes are built: dispatched then, `Sockets` finds no protocol and
   answers `false`.
 - `Sockets` answers `false` for a socket no protocol accepted: answer it, or ignore it.
+- **The calls build with the runtime**, so `layerStub()` has registered with `Calls` before the
+  first call is dispatched: unlike sockets, nothing waits on the routes. `Calls.layer` belongs
+  in the runtime's Layer once, merged out of the calls, so the protocol registers with the
+  `Calls` the method dispatches through.
 - A failed build stays failed: `ManagedRuntime` keeps its build's failure, and `toWebHandler`
   rejects every request with it, until the runtime evicts the instance. `handlers` builds
   again on the next event instead.

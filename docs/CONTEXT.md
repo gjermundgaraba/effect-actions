@@ -41,7 +41,7 @@ Words of `@gjermundgaraba/effect-actions-cloudflare`'s pages, which are Cloudfla
 - **Durable Object**: a class a Worker's Wrangler configuration binds, with one **object** per id or name, running in one place at a time with its own storage.
 - **Instance**: the class's instance the runtime constructs for an object, which builds its services and routes on its first event. The runtime **evicts** an idle one, and the object's next event constructs another.
 - **Hibernation**: an object evicted while the runtime keeps its accepted WebSockets open: a message on one constructs an instance to receive it.
-- **Stub**: what a Worker reaches an object through, `env.<BINDING>.getByName(name)`.
+- **Stub**: what a Worker, or another object, reaches an object through, `env.<BINDING>.getByName(name)`. A **stub call** is a call of one of the object's methods over it, Cloudflare's own RPC (Workers RPC): `ActionDurableObject` serves an object's rpcs on one such method.
 
 ### Layout of an application
 

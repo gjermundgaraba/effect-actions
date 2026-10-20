@@ -1,13 +1,15 @@
 # ActionDurableObject
 
 Actions served from a Cloudflare Durable Object: the routes the core serves elsewhere, Effect
-RPC on WebSockets the runtime holds while the object hibernates, an alarm, and a client for a
-Worker to call an object through its stub. Reach for it when state belongs to one thing, such
+RPC on WebSockets the runtime holds while the object hibernates and over the object's stub,
+with Cloudflare's own RPC, an alarm, and clients for a Worker to call an object through its
+stub. Reach for it when state belongs to one thing, such
 as a room, a document or a tenant, and its callers should meet in one place. Its primitives
 work in any Durable Object class; `make` is a class built from them.
 
 Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
-For a class of your own, read [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md).
+For calls over the stub, read [ActionDurableObject-stub.md](ActionDurableObject-stub.md); for a
+class of your own, [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md).
 When something fails, search [ActionDurableObject-failures.md](ActionDurableObject-failures.md).
 Reading order: [README.md](README.md).
 
@@ -15,25 +17,32 @@ Reading order: [README.md](README.md).
 
 Import `@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject`.
 
-| API                                                    | Purpose                                                                                      |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `State`                                                | The object's `DurableObjectState`, `ctx`: a startup service of services, routes and alarm.   |
-| `Sockets`, `Sockets.layer`                             | The object's dispatcher for the sockets its routes' protocols accept, one per instance.      |
-| `layerWebSocket({ path })`                             | The hibernating `RpcServer.Protocol` `ActionRpc.layer` serves on, registered with `Sockets`. |
-| `layerHttpClient(stub)`                                | An `HttpClient` sending every request to a stub or a service binding.                        |
-| `handlers(ctx, { services?, routes?, alarm?, ... })`   | The object's handlers, for a class of your own to delegate to.                               |
-| `make({ services?, routes?, alarm?, disableLogger? })` | A Durable Object class delegating every handler to `handlers`.                               |
+| API                                                  | Purpose                                                                                      |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `State`                                              | The object's `DurableObjectState`, `ctx`: a startup service of services, routes and alarm.   |
+| `Sockets`, `Sockets.layer`                           | The object's dispatcher for the sockets its routes' protocols accept, one per instance.      |
+| `layerWebSocket({ path })`                           | The hibernating `RpcServer.Protocol` `ActionRpc.layer` serves on, registered with `Sockets`. |
+| `Calls`, `Calls.layer`                               | The object's dispatcher for the calls over its stub, one per instance.                       |
+| `layerStub()`                                        | The `RpcServer.Protocol` over the object's stub, registered with `Calls`.                    |
+| `layerStubClient(stub)`                              | The `RpcClient.Protocol` calling an object's rpcs over its stub.                             |
+| `client(group, stubOf)`                              | `(key) => client` of a group's rpcs on the objects `stubOf` reaches, declared errors typed.  |
+| `layerHttpClient(stub)`                              | An `HttpClient` sending every request to a stub or a service binding.                        |
+| `handlers(ctx, { services?, routes?, calls?, ... })` | The object's handlers, for a class of your own to delegate to.                               |
+| `make({ services?, routes?, calls?, alarm?, ... })`  | A Durable Object class delegating every handler to `handlers`.                               |
 
 Exported types: `Options` of `handlers` and `make`, `Handlers`, what `handlers` returns,
-`Instance`, an instance of the class `make` returns, and `LayerWebSocketOptions`. `Sockets`'
-`message(socket, data)`, `close(socket)` and `error(socket)` succeed with `true` when a protocol
-took the event, `false` when none accepted the socket. `Handlers`' and `Instance`'s
-`run(effect)` runs an Effect in the object with its services.
+`Instance`, an instance of the class `make` returns, `LayerWebSocketOptions`, `Stub`, what
+`layerStubClient` and `client` call, and `Client<typeof group>`, `client`'s per key.
+`Sockets`' `message(socket, data)`, `close(socket)` and `error(socket)` succeed with `true`
+when a protocol took the event, `false` when none accepted the socket. `Handlers`' and
+`Instance`'s `effectActionsRpc` is the method a stub calls, and `run(effect)` runs an
+Effect in the object with its services.
 
 | Option                   | Meaning                                                                                             |
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
 | `services`               | The object's startup services, a Layer requiring `State` alone, built once per instance.            |
 | `routes`                 | A Layer of routes, as `HttpRouter.toWebHandler` serves them: `ActionRpc.layer`, `ActionHttp.layer`. |
+| `calls`                  | An rpc server served over the stub, given `layerStub()`: `RpcServer.layer`, `ActionRpc.layer`.      |
 | `alarm`                  | A function of the runtime's alarm information to the Effect the object's `alarm` runs.              |
 | `disableLogger`          | Leave out the request logger `toWebHandler` adds.                                                   |
 | `layerWebSocket`: `path` | The upgrade route.                                                                                  |
@@ -56,8 +65,8 @@ Worker's own `fetch`; [chat-rooms/wrangler.jsonc](../examples/chat-rooms/wrangle
 it with a SQLite migration.
 
 - Each instance builds once, on its first event: the services, with `State` provided, then the
-  routes, with the services, `State`, `Sockets` and the platform's services. Events arriving
-  meanwhile await that build. The routes, every request, the alarm and `run` share it.
+  calls, with `Calls`, and the routes, with `Sockets` and the platform's services. Events
+  arriving meanwhile await that build. The calls, routes, alarm and every `run` share it.
 - Run with the compatibility flag `web_socket_auto_reply_to_close`, on by default from the
   `compatibility_date` `2026-04-07`: with it the runtime replies to a client's close frame
   itself. `layerWebSocket` sends no reply of its own.
@@ -73,9 +82,8 @@ it with a SQLite migration.
   once, when it is built: make `authorize` an Effect returning the function, as the core's
   `Action.md` shows for a store
   ([chat-rooms/src/chat/authorize.ts](../examples/chat-rooms/src/chat/authorize.ts)).
-- JSON routes and rpcs merge in one routes Layer: both are served on `fetch`. Without `routes`,
-  `fetch` answers 404.
-- The services and routes are module-level values, built once per instance, so they reach
+- JSON routes and rpcs merge in one routes Layer, served on `fetch`, which answers 404 without.
+- The services, calls and routes are module-level values, built once per instance: they reach
   bindings through the `env` import of `cloudflare:workers`, read as they build or serve, never
   as the module evaluates ([chat-rooms/src/platform/room-stubs.ts](../examples/chat-rooms/src/platform/room-stubs.ts)).
 
@@ -117,8 +125,6 @@ ActionRpc.layer(RoomRpc, room).pipe(
   `RpcClient.layerProtocolSocket` and `Socket.layerWebSocket(url)`.
 - The runtime answers the client's pings itself, every five seconds, so an open page does not
   wake the object.
-- `RpcServer.layerProtocolWebsocket` cannot serve rpcs here: it upgrades through the server's
-  request, and a web handler's request cannot be upgraded.
 
 ## Run an alarm
 
@@ -146,25 +152,30 @@ alarm: () => MessageStore.use((store) => store.expire),
 
 ## Call an object from a Worker
 
-Two paths. Where the Worker is the object's only caller and its API is internal, give a class
-extending the one `make` returns methods the Worker calls over the stub with Cloudflare's RPC,
-each running its Effect with `run`, which gives it the object's services. Where the object's API
-should be an effect-actions surface, with its contract, clients and authentication, call its
-actions over `layerHttpClient`.
+Two paths. For the object's own API, which its Worker and other objects call, serve a group
+over the stub as `calls` and call it with `client`, by name: the declared errors arrive typed
+([ActionDurableObject-stub.md](ActionDurableObject-stub.md)).
 
 ```ts
-export class Plugin extends ActionDurableObject.make({ services, routes: pluginRoutes }) {
-  install(code: string) {
-    return this.run(install(code));
-  }
-}
+export class PluginHost extends ActionDurableObject.make({
+  services: PluginStore.layer,
+  calls: RpcServer.layer(PluginRpcs).pipe(Layer.provide(pluginHandlers)),
+}) {}
+
+const plugin =
+  yield * ActionDurableObject.client(PluginRpcs, (id: string) => env.PLUGIN.getByName(id));
+const { pane } = yield * plugin(id).start(); // fails with PluginNotFound | PluginHasNoPane
 ```
 
-A Layer a `run`'s Effect provides itself, or an `Action.client` it acquires, is built for that
-call alone, and finalized when it ends: what calls share belongs in `services`.
+- An `ActionRpc` binding is served the same way, `calls: ActionRpc.layer(RoomRpc, room)`, and
+  called with `ActionRpc.client` over `layerStubClient(stub)`: chat-rooms' lobby asks each
+  room for its preview so
+  ([chat-rooms/src/platform/room-stubs.ts](../examples/chat-rooms/src/platform/room-stubs.ts)).
+- Nothing authenticates a stub call: only a binding reaches it.
 
-Provide the core's client `layerHttpClient` with the object's stub: every request goes to the
-object's `fetch` in place of the network.
+For the object's routes, `ActionHttp.client`, `ActionMcp.client`, or `ActionRpc.client` over
+`RpcClient.layerProtocolHttp`, give the client `layerHttpClient(stub)`: every request goes to
+the object's `fetch` in place of the network.
 
 ```ts
 ActionHttp.client(RoomHttp, { baseUrl: "https://room" }).pipe(
@@ -173,14 +184,12 @@ ActionHttp.client(RoomHttp, { baseUrl: "https://room" }).pipe(
 );
 ```
 
-- The URL needs a host, which the stub ignores. `ActionRpc.client` over
-  `RpcClient.layerProtocolHttp` and `ActionMcp.client` take the same layer.
-- Nothing authenticates the request on its way: a protected action needs the caller's
-  credential, forwarded with `transformClient`, as for any remote surface.
+- The URL needs a host, which the stub ignores. Nothing authenticates the request on its way:
+  forward the caller's credential with `transformClient`, as for any remote surface.
 - To pass a page's requests to an object, forward the `Request` itself: its upgrade goes with
-  it, and the object answers it
-  ([chat-rooms/src/worker.ts](../examples/chat-rooms/src/worker.ts)).
-- Only names you accept should reach `getByName`: each name is another object.
+  it ([chat-rooms/src/worker.ts](../examples/chat-rooms/src/worker.ts)).
+- A method of the class's own runs its Effect with `run`, which builds a Layer it provides for
+  that call alone. Only names you accept should reach `getByName`: each is another object.
 
 ## Test on the Workers runtime
 
@@ -194,8 +203,9 @@ the test configuration
 - `runDurableObjectAlarm(stub)` runs a set alarm now; `runInDurableObject(stub, fn)` reads or
   changes the object's storage directly.
 
-Call through the Worker as a deployment would, with `layerHttpClient(exports.default)`, and
-open a socket by upgrading through its `fetch`, handing `response.webSocket` to
+Call an object's `calls` with `layerStubClient(env.<BINDING>.getByName(name))`, the Worker as a
+deployment would with `layerHttpClient(exports.default)`, and open a socket by upgrading
+through its `fetch`, handing `response.webSocket` to
 `Socket.fromWebSocket` under `RpcClient.layerProtocolSocket`
 ([chat-rooms/test/support/socket.ts](../examples/chat-rooms/test/support/socket.ts),
 [chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)). The core's
@@ -213,15 +223,17 @@ open a socket by upgrading through its `fetch`, handing `response.webSocket` to
 - **Some guarantees are workerd's, not every runtime's.** On workerd a socket's attachment, the
   headers it keeps, survives hibernation, and `storage.setAlarm` throws on an object with no
   `alarm` handler. celld 0.6.2, Deno's self-hosted runtime, drops the attachment when it evicts
-  an idle object, so the socket's messages carry only their own headers and one relying on the
-  upgrade's token is refused as unauthenticated; it accepts `setAlarm` without a handler and
-  consumes the alarm silently. Send a token on each message to work on both.
+  an idle object, so a message relying on the upgrade's token is refused as unauthenticated,
+  and accepts `setAlarm` without a handler, consuming the alarm. Send a token on each message.
 - **A socket keeps at most 16 KiB.** Upgrade headers past the runtime's 16,384-byte attachment
   limit are refused: the upgrade is answered `431`. A browser's cookies are usually a few KiB.
-- **A call waiting on memory alone can be lost.** A message's event ends once the message is
-  handed to the server. A call doing I/O or waiting on a timer, such as one under
-  `Effect.timeout`, keeps the object from hibernating, and it is billed as long; one waiting
-  only on another call's in-memory state, such as a `Deferred`, is lost if the object
-  hibernates, and its client never hears back. A client reads again instead.
-- **JSON only**, on the socket.
+- **A socket's call waiting on memory alone can be lost.** A message's event ends once the
+  message is handed to the server. A call doing I/O or waiting on a timer keeps the object from
+  hibernating, billed as long; one waiting only on in-memory state, such as a `Deferred`, is
+  lost if the object hibernates, and its client never hears back. A client reads again.
+- **JSON only**, on the socket and the stub.
+- **Unary only over the stub.** A call answers once: an rpc that streams is answered with a
+  defect. Stream over the socket.
+- **32 MiB a stub call**, Workers RPC's limit on a call's serialized request and answer: past
+  it, the runtime's `limited to 32MiB` error.
 - **Bodies are limited by the platform**: `toWebHandler` reads no `MaxBodySize`.

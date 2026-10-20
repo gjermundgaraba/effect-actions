@@ -2,7 +2,9 @@
 
 `@gjermundgaraba/effect-actions-cloudflare` serves effect-actions from Cloudflare Durable
 Objects: the routes `ActionHttp.layer` and `ActionRpc.layer` serve elsewhere, in an object,
-with Effect RPC over WebSockets the runtime holds while the object hibernates. A Worker calls an object's actions through its stub, with the core's own clients.
+with Effect RPC over WebSockets the runtime holds while the object hibernates. A Worker, or
+another object, calls an object's rpcs over its stub with Cloudflare's own RPC, or its routes
+with the core's own clients.
 
 These pages cover what this package adds. Everything else, contracts, implementations,
 authentication and each surface, is in the core package's docs, at
@@ -16,8 +18,9 @@ authentication and each surface, is in the core package's docs, at
 2. **Start from [chat-rooms](../examples/chat-rooms/)**, the one example: its README has a
    layout tree and a "Where to look" table naming the file for each thing.
 3. **Read [ActionDurableObject.md](ActionDurableObject.md) completely**, its limits included,
-   then [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) for a class of your
-   own.
+   then [ActionDurableObject-stub.md](ActionDurableObject-stub.md) to call an object over its
+   stub, and [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) for a class of
+   your own.
 4. **When something fails, search
    [ActionDurableObject-failures.md](ActionDurableObject-failures.md)** for a fragment of the
    message, then the core's `*-failures.md` pages.
@@ -34,6 +37,7 @@ runtime's types, from `wrangler types` or `@cloudflare/workers-types`.
 | Read                                                                 | When you need to                                                                                                 |
 | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | [ActionDurableObject.md](ActionDurableObject.md)                     | serve actions from an object, over hibernating WebSockets or JSON; run its alarm; call it from a Worker; test it |
+| [ActionDurableObject-stub.md](ActionDurableObject-stub.md)           | serve an object's rpcs over its stub and call them from a Worker or another object, by name, with typed errors   |
 | [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a Durable Object class of your own, delegating to `handlers` or composing the primitives         |
 | [ActionDurableObject-failures.md](ActionDurableObject-failures.md)   | find what an error or a refused upgrade means, and the fix                                                       |
 

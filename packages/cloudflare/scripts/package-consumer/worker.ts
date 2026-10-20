@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, ManagedRuntime, Schema, type Scope } from "effect";
 import { HttpRouter, type HttpClient } from "effect/http";
+import { Rpc as NativeRpc, RpcClient, RpcGroup, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -90,3 +91,71 @@ export const checkSocketsTypes = (ctx: DurableObjectState) =>
       ),
     ).pipe(Effect.scoped),
   );
+
+export class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { id: Schema.String }) {}
+
+export const Hosts = RpcGroup.make(
+  NativeRpc.make("start", {
+    payload: { id: Schema.String },
+    success: Schema.String,
+    error: NotFound,
+  }),
+);
+
+const hostCalls = RpcServer.layer(Hosts).pipe(
+  Layer.provide(
+    Hosts.toLayer({
+      start: ({ id }) => (id === "" ? Effect.fail(new NotFound({ id })) : Effect.succeed(id)),
+    }),
+  ),
+);
+
+export class Host extends ActionDurableObject.make({ calls: hostCalls }) {}
+
+export const checkCallsTypes = () =>
+  ActionDurableObject.make({
+    // @ts-expect-error -- Published declarations must refuse calls whose handlers no Layer provides.
+    calls: RpcServer.layer(Hosts),
+  });
+
+export const toHost = (stub: DurableObjectStub<Host>): Layer.Layer<RpcClient.Protocol> =>
+  ActionDurableObject.layerStubClient(stub);
+
+export const checkStubTypes = (stub: DurableObjectStub<Hosted>) =>
+  // @ts-expect-error -- Published declarations must refuse a stub of a class without the method.
+  ActionDurableObject.layerStubClient(stub);
+
+export const start = (
+  stubOf: (id: string) => DurableObjectStub<Host>,
+  id: string,
+): Effect.Effect<string, NotFound, Scope.Scope> =>
+  Effect.flatMap(ActionDurableObject.client(Hosts, stubOf), (host) => host(id).start({ id }));
+
+export const startRaw = (stub: DurableObjectStub<Host>) =>
+  RpcClient.make(Hosts).pipe(
+    Effect.flatMap((client) => client.start({ id: "a" })),
+    Effect.provide(toHost(stub)),
+  );
+
+export const checkRawTypes = (stub: DurableObjectStub<Host>) => {
+  // @ts-expect-error -- Published declarations must keep RpcClientError in the raw client's errors.
+  const typed: Effect.Effect<string, NotFound, Scope.Scope> = startRaw(stub);
+
+  return typed;
+};
+
+export class Composed extends DurableObject {
+  readonly #runtime = ManagedRuntime.make(
+    hostCalls.pipe(
+      Layer.provide(ActionDurableObject.layerStub()),
+      Layer.provideMerge(ActionDurableObject.Calls.layer),
+    ),
+  );
+
+  effectActionsRpc(request: string): Promise<string> {
+    return this.#runtime.runPromise(ActionDurableObject.Calls.use((calls) => calls.call(request)));
+  }
+}
+
+export const toComposed = (stub: DurableObjectStub<Composed>) =>
+  ActionDurableObject.layerStubClient(stub);

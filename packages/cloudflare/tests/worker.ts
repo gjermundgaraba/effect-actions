@@ -18,7 +18,16 @@ import {
   slowUpstream,
   socketRoutes,
   startup,
+  stubCalls,
 } from "./support/app.js";
+import {
+  Hosts,
+  paneCalls,
+  pluginCalls,
+  PluginStore,
+  streamCalls,
+  twoProtocolCalls,
+} from "./support/hosts.js";
 
 export class Plain extends DurableObject {
   readonly web = HttpRouter.toWebHandler(
@@ -125,9 +134,15 @@ export class Hosted extends DurableObject {
 export class Manual extends DurableObject {
   readonly #memoMap = Layer.makeMemoMapUnsafe();
 
-  readonly #services = Layer.mergeAll(startup, ActionDurableObject.Sockets.layer).pipe(
-    Layer.provideMerge(Layer.succeed(ActionDurableObject.State, this.ctx)),
-  );
+  readonly #services = Layer.mergeAll(
+    startup,
+    ActionDurableObject.Sockets.layer,
+    pluginCalls.pipe(
+      Layer.provide(ActionDurableObject.layerStub()),
+      Layer.provideMerge(ActionDurableObject.Calls.layer),
+      Layer.provide(PluginStore.layer),
+    ),
+  ).pipe(Layer.provideMerge(Layer.succeed(ActionDurableObject.State, this.ctx)));
 
   readonly #runtime = ManagedRuntime.make(this.#services, { memoMap: this.#memoMap });
 
@@ -165,6 +180,28 @@ export class Manual extends DurableObject {
   override async webSocketError(socket: WebSocket) {
     await this.#dispatch((sockets) => sockets.error(socket));
   }
+
+  effectActionsRpc(request: string) {
+    return this.#runtime.runPromise(ActionDurableObject.Calls.use((calls) => calls.call(request)));
+  }
 }
+
+export class PluginHost extends ActionDurableObject.make({
+  services: PluginStore.layer,
+  calls: pluginCalls,
+}) {}
+
+export class PaneHost extends ActionDurableObject.make({
+  services: Hosts.layer,
+  calls: paneCalls,
+}) {}
+
+export class Stubbed extends ActionDurableObject.make({ services: startup, calls: stubCalls }) {}
+
+export class Streamed extends ActionDurableObject.make({ calls: streamCalls }) {}
+
+export class Unserved extends ActionDurableObject.make({ calls: Layer.empty }) {}
+
+export class TwoProtocols extends ActionDurableObject.make({ calls: twoProtocolCalls }) {}
 
 export default { fetch: () => new Response(null, { status: 404 }) };

@@ -25,6 +25,19 @@ export class ChatRoom extends ActionDurableObject.make({
 }) {}
 ```
 
+Serve an object's own API as an Effect `RpcGroup` over its stub, and call it from a Worker or
+another object with Cloudflare's own RPC, its declared errors typed:
+
+```ts
+export class PluginHost extends ActionDurableObject.make({
+  calls: RpcServer.layer(PluginRpcs).pipe(Layer.provide(pluginHandlers)),
+}) {}
+
+const plugin =
+  yield * ActionDurableObject.client(PluginRpcs, (id: string) => env.PLUGIN.getByName(id));
+const { pane } = yield * plugin("notes").start();
+```
+
 Call an object's routes from a Worker with the core's own clients, through the stub:
 
 ```ts
@@ -34,8 +47,8 @@ ActionHttp.client(Http, { baseUrl: "https://object" }).pipe(
 ```
 
 Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/):
-one Durable Object per room, served over hibernating WebSockets and JSON, with an alarm and a
-Worker in front. In a project that installs it, both are in
+one Durable Object per room, served over hibernating WebSockets, JSON and its stub, with an
+alarm and a Worker in front. In a project that installs it, both are in
 `node_modules/@gjermundgaraba/effect-actions-cloudflare/`.
 
 MIT licensed.

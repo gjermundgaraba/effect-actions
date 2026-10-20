@@ -68,7 +68,7 @@ there is no package root.
 | [CONTEXT.md](CONTEXT.md)                                 | look up a term the pages use                                                                                                                |
 
 To serve actions from Cloudflare Durable Objects, with Effect RPC over WebSockets that
-hibernate, install `@gjermundgaraba/effect-actions-cloudflare` beside this package, at the same
+hibernate and over an object's stub, install `@gjermundgaraba/effect-actions-cloudflare` beside this package, at the same
 version: its pages are in `node_modules/@gjermundgaraba/effect-actions-cloudflare/docs/`, and
 its example, chat-rooms, beside them.
 

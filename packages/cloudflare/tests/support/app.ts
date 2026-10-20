@@ -144,6 +144,8 @@ const rpcRoutes = ActionRpc.layer(Rpc, implementation, { middleware: [ResolveNot
   Layer.provide(resolveNote),
 );
 
+export const stubCalls = rpcRoutes.pipe(Layer.provide(authenticate));
+
 export const routes = Layer.mergeAll(
   ActionHttp.layer(Http, implementation),
   rpcRoutes.pipe(

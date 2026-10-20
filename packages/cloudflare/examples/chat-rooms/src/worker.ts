@@ -6,18 +6,19 @@ import { MessageStore } from "./chat/store.js";
 import { layerRoom } from "./platform/object-name.js";
 import { layerRooms } from "./platform/room-stubs.js";
 import { layerSql } from "./platform/sql-store.js";
-import { lobbyRoutes, roomRoutes } from "./routes.js";
+import { lobbyRoutes, roomCalls, roomRoutes } from "./routes.js";
 
 // Entrypoint, Wrangler's `main`: the composition root of the Worker and of every room's
 // object. It chooses the store and the room, and routes each request.
 
 // A room's Durable Object, bound as CHAT_ROOM in wrangler.jsonc under this export's name. Each
-// instance builds its services, the store and the room, then its routes, on its first event,
-// again after every eviction. The alarm expires old messages; `post` sets it. It reads the
-// store the instance built for the routes.
+// instance builds its services, the store and the room, then its calls and routes, on its
+// first event, again after every eviction. The alarm expires old messages; `post` sets it. It
+// reads the store the instance built for the calls and routes.
 export class ChatRoom extends ActionDurableObject.make({
   services: Layer.mergeAll(layerSql, layerRoom),
   routes: roomRoutes,
+  calls: roomCalls,
   alarm: () => MessageStore.use((store) => store.expire),
 }) {}
 

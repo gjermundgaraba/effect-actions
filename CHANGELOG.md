@@ -28,11 +28,11 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
 ### Additions
 
 - **`@gjermundgaraba/effect-actions-cloudflare` serves actions from Cloudflare Durable Objects**,
-  released with this package at the same version and requiring it at `~` that version. Its
-  module `ActionDurableObject` offers primitives any Durable Object class composes, and a class
-  built from them:
-  - `State` is the object's `DurableObjectState`, a startup service of its services, routes and
-    alarm.
+  and calls them, released with this package at the same version and requiring it at `~` that
+  version. Its module `ActionDurableObject` offers primitives any Durable Object class composes,
+  and a class built from them:
+  - `State` is the object's `DurableObjectState`, a startup service of its services, calls,
+    routes and alarm.
   - `layerWebSocket({ path })` is the protocol `ActionRpc.layer` serves on: WebSockets the
     runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
     Effect's own socket protocol does, and each message is authenticated with them under its
@@ -49,29 +49,50 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
     `Sockets.layer`, which `layerWebSocket` registers with and requires. Its `message`, `close`
     and `error` hand a socket's event to its protocol and succeed with `true`, or with `false`
     for a socket no protocol accepted, such as one the class accepted itself.
-  - `handlers(ctx, { services, routes, alarm, disableLogger })` returns a class's handlers,
-    `fetch`, `webSocketMessage`, `webSocketClose`, `webSocketError`, `alarm` and `run`, each
-    taking the runtime's arguments, for a class of your own to delegate to. The first event
-    builds the object once: `services`, its startup services, with `State` and `Sockets`, then
-    `routes`, with them; every event awaits that build, and a failed build is dropped with all
-    it built, so the next event builds again. `fetch` serves the routes, or answers 404 without
-    them; the socket handlers dispatch through `Sockets`, resolving for a socket no protocol
-    accepted; `alarm(info)` runs `alarm`, given the runtime's retry count, through `run`; and
-    `run(effect)` runs an Effect in the object with the services, `State` and a `Scope`, for
-    the class's own methods, such as those a Worker calls over the stub. The routes, every
-    request, the alarm and every `run` share the one build of `services`; a Layer a `run`
-    provides itself, or an `Action.client` it acquires, is built for that call alone.
-    `disableLogger` leaves out the request logger.
+  - `layerStub()` is the protocol `RpcServer.layer(group)` and `ActionRpc.layer` serve on over
+    the object's stub, with Cloudflare's own RPC: one call of the object's
+    `effectActionsRpc` method carries one call's request, a JSON string, and returns its
+    responses once its exit is known. It registers with `Calls`, the object's dispatcher for
+    those calls, one per instance from `Calls.layer`, whose `call(request)` answers one. One
+    stub protocol serves an object; a second fails to build. It is unary: an rpc that streams
+    is answered with a defect at its first chunk. Nothing authenticates a stub call, which only
+    a binding reaches; a caller forwards a principal in a header or the payload.
+  - `layerStubClient(stub)` is the `RpcClient.Protocol` calling an object's rpcs over a stub of a
+    class serving them, with `RpcClient.make(group)` or `ActionRpc.client`; a failure of the
+    stub itself, such as an object serving no calls or a call past Workers RPC's 32 MiB limit,
+    is an `RpcClientError`. `client(group, stubOf)` makes one client, in the caller's `Scope`,
+    for every object `stubOf` reaches by key, and returns `(key) => client`, whose calls fail
+    with their declared errors alone, a stub's failure being a defect: an application's
+    `hosts.plugin(id).start()` is an `Effect<{ pane }, PluginNotFound | PluginHasNoPane>`,
+    where it wrapped a hand-typed stub method's promise and rebuilt the errors. It refuses a
+    group with an rpc that streams. `Stub` and `Client<typeof group>` are their types.
+  - `handlers(ctx, { services, routes, calls, alarm, disableLogger })` returns a class's
+    handlers, `fetch`, `webSocketMessage`, `webSocketClose`, `webSocketError`,
+    `effectActionsRpc`, `alarm` and `run`, each taking the runtime's arguments, for a class
+    of your own to delegate to. The first event builds the object once: `services`, its
+    startup services, with `State`, then `calls`, given `Calls` and `layerStub()`, and
+    `routes`, given `Sockets`; every event awaits that build, and a failed build is dropped with
+    all it built, so the next event builds again. `fetch` serves the routes, or answers 404
+    without them; the socket handlers dispatch through `Sockets`, resolving for a socket no
+    protocol accepted, and at once, building nothing, without routes; `effectActionsRpc`
+    dispatches through `Calls`, and rejects at once without calls; `alarm(info)` runs `alarm`,
+    given the runtime's retry count, through `run`; and `run(effect)` runs an Effect in the
+    object with the services, `State` and a `Scope`, for the class's own methods. The calls,
+    the routes, every request, the alarm and every `run` share the one build of `services`; a
+    Layer a `run` provides itself, or an `Action.client` it acquires, is built for that call
+    alone. An object serving only calls builds no router. `disableLogger` leaves out the
+    request logger.
   - `make(options)` is a Durable Object class delegating every handler and `run` to `handlers`,
     for a class extending it to override; made without `alarm`, it has no `alarm` handler.
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.
-  - Its pages, `docs/ActionDurableObject.md`, a page for a class of your own and a failures
-    page, ship in the package, with an example, chat-rooms: one object per room, its messages
-    in the object's SQLite database, an alarm expiring them, and a Worker routing pages' sockets
-    to the rooms and asking them for a lobby through their stubs. The core's `docs/README.md`
-    routes to it and `CONTEXT.md` defines Cloudflare's terms.
+  - Its pages, `docs/ActionDurableObject.md`, a page for calls over the stub, a page for a class
+    of your own and a failures page, ship in the package, with an example, chat-rooms: one
+    object per room, its messages in the object's SQLite database, an alarm expiring them, and
+    a Worker routing pages' sockets to the rooms and asking them for a lobby over their stubs,
+    with the room's own rpc contract. The core's `docs/README.md` routes to it and `CONTEXT.md`
+    defines Cloudflare's terms.
 
 ### Other changes
 

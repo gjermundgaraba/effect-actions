@@ -7,12 +7,18 @@ import {
   type HttpClient,
   type HttpServerRequest,
 } from "effect/http";
+import type { RpcServer } from "effect/rpc";
+import { Calls, layerStub } from "./calls.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
+
+export { Calls, layerStub } from "./calls.js";
 
 export { layerWebSocket, Sockets, type LayerWebSocketOptions } from "./sockets.js";
 
 export { State } from "./state.js";
+
+export { client, layerStubClient, type Client, type Stub } from "./stub.js";
 
 type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
 
@@ -37,6 +43,9 @@ export interface Options<
   R = never,
   AE = never,
   AR = never,
+  CA = never,
+  CE = never,
+  CR = never,
 > {
   /**
    * The object's startup services, such as a store over `State`'s `storage.sql`: built once per
@@ -52,9 +61,18 @@ export interface Options<
    * again after every eviction, and never finalized. They may require `State`, `Sockets` and
    * the services; a request-time requirement must be provided by their middleware or
    * authentication, or be one of the services or a service they provide themselves. Without
-   * them, `fetch` answers 404.
+   * them, `fetch` answers 404, and the socket handlers resolve at once.
    */
   readonly routes?: Layer.Layer<A, E, R> | undefined;
+  /**
+   * What the object serves over its stub, on `effectActionsRpc`: an rpc server, such as
+   * `RpcServer.layer(group)` with its handlers, or `ActionRpc.layer`, given `layerStub` as its
+   * protocol. Built after the services, beside the routes, again after every eviction, and never
+   * finalized. It may require the protocol, `Calls`, `State` and the services; every call's own
+   * requirement must be provided by its middleware or be one of those. Without it, a call over
+   * the stub rejects at once.
+   */
+  readonly calls?: Layer.Layer<CA, CE, CR> | undefined;
   /**
    * What the object's `alarm` runs, scheduled with `State`'s `storage.setAlarm`, given the
    * runtime's `retryCount` and `isRetry`. It may require the services, `State` and a `Scope`,
@@ -89,6 +107,13 @@ export interface Handlers<S = never> {
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   /** Ends the socket's protocol client, and resolves for a socket no protocol accepted. */
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
+  /**
+   * Answers one call over the object's stub, the encoded request `layerStubClient` sends, with
+   * its encoded responses, through `Calls`, once every request it carries has its exit, or
+   * rejects at once without `calls`. Workers RPC calls it by this name, the package's, so it
+   * does not collide with the class's own methods.
+   */
+  effectActionsRpc(request: string): Promise<string>;
   /** Runs the `alarm` option through `run`, or nothing when there is none. */
   alarm(...args: Parameters<HandlerOf<"alarm">>): Promise<void>;
   /**
@@ -106,12 +131,13 @@ const notFound: (request: Request) => Promise<Response> = () =>
 
 /**
  * The object's lifecycle, for a Durable Object class of your own: given its `ctx`, the
- * handlers that build `services`, then `routes`, once per instance, on the first event, with
- * `State` and `Sockets` provided, and share that one build across every event. `fetch` serves
- * the routes, the socket handlers dispatch through `Sockets`, `alarm` runs `alarm` and `run`
- * runs an Effect in the object. A build that fails rejects the events awaiting it, and the next
- * event builds everything again. The runtime evicts an idle instance and constructs a new one
- * for the next event, so nothing the services or routes build is finalized, and in-memory state
+ * handlers that build `services`, then `calls`, with `Calls` and `layerStub`, and `routes`, with
+ * `Sockets`, once per instance, on the first event, with `State` provided, and share that one
+ * build across every event. `fetch` serves the routes, the socket handlers dispatch through
+ * `Sockets`, `effectActionsRpc` through `Calls`, `alarm` runs `alarm` and `run` runs an
+ * Effect in the object. A build that fails rejects the events awaiting it, and the next event
+ * builds everything again. The runtime evicts an idle instance and constructs a new one for the
+ * next event, so nothing the services, calls or routes build is finalized, and in-memory state
  * lasts no longer than an instance.
  *
  * Guide: `docs/ActionDurableObject-own-class.md` in this package.
@@ -125,9 +151,12 @@ export const handlers = <
   R extends Allowed<A, S> = never,
   AE = never,
   AR extends S | State | Scope.Scope = never,
+  CA = never,
+  CE = never,
+  CR extends RpcServer.Protocol | Calls | S | State = never,
 >(
   ctx: DurableObjectState,
-  options: Options<S, SE, SR, A, E, R, AE, AR>,
+  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
 ): Handlers<S> => {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
   const services = (options.services ?? Layer.empty) as Layer.Layer<S, SE, State>;
@@ -135,32 +164,64 @@ export const handlers = <
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every requirement against `Allowed<A, S>`, the built services supply `S`, merged in, and the handler gives each request the services the routes provide, `A`, as `HttpRouter.toWebHandler`'s types say; only those subtractions, which a generic `A` and `S` keep unresolved, are erased.
   const routes = options.routes as Layer.Layer<never, E, Allowed<never, never>> | undefined;
 
+  const calls = options.calls;
+
   const state = Layer.succeed(State, ctx);
 
   const build = Effect.gen(function* () {
     // Why: an implementation of the core is shared through the memo map of the graph it is
-    // built in, so services and routes build in this one map: an implementation the services
-    // build is the one the routes serve, and `Sockets` the one their protocols register with.
+    // built in, so services, calls and routes build in this one map: an implementation the
+    // services build is the one the calls and routes serve.
     const memoMap = yield* Layer.makeMemoMap;
     const scope = yield* Scope.make();
 
     const built = Effect.gen(function* () {
-      // Why: built once, here, into the context the routes and every `run` are given; their
-      // scope is closed only when the build fails, so nothing is finalized while the instance
-      // lives, and a failed build leaves no fiber of its own running.
+      // Why: built once, here, into the context the calls, the routes and every `run` are
+      // given; their scope is closed only when the build fails, so nothing is finalized while
+      // the instance lives, and a failed build leaves no fiber of its own running.
       const context = yield* Layer.buildWithMemoMap(
-        Layer.mergeAll(services, Sockets.layer).pipe(Layer.provideMerge(state)),
+        services.pipe(Layer.provideMerge(state)),
         memoMap,
         scope,
       );
 
-      if (routes === undefined) return { context, serve: notFound };
+      const given = Layer.succeedContext(context);
+
+      // Why: `Calls` and `Sockets` are built with what registers with them, the calls and the
+      // routes, so an object without either has no registry no protocol could fill.
+      const served =
+        calls === undefined
+          ? undefined
+          : Context.get(
+              yield* Layer.buildWithMemoMap(
+                calls.pipe(
+                  Layer.provide(layerStub()),
+                  Layer.provideMerge(Calls.layer),
+                  Layer.provide(given),
+                ),
+                memoMap,
+                scope,
+              ),
+              Calls,
+            );
+
+      if (routes === undefined) {
+        return { context, calls: served, sockets: undefined, serve: notFound };
+      }
+
+      const sockets = yield* Layer.buildWithMemoMap(
+        Sockets.layer.pipe(Layer.provide(given)),
+        memoMap,
+        scope,
+      );
 
       const routesBuilt = yield* Deferred.make<void, unknown>();
 
       const web = HttpRouter.toWebHandler(
         routes.pipe(
-          Layer.provideMerge(Layer.succeedContext<State | Sockets>(context)),
+          Layer.provideMerge(
+            Layer.succeedContext<State | Sockets>(Context.merge(context, sockets)),
+          ),
           Layer.tap(() => Deferred.succeed(routesBuilt, undefined)),
           Layer.tapCause((cause) => Deferred.failCause(routesBuilt, cause)),
           Layer.provide(HttpServer.layerServices),
@@ -171,7 +232,12 @@ export const handlers = <
       yield* Scope.addFinalizer(scope, Effect.promise(web.dispose));
       yield* Deferred.await(routesBuilt);
 
-      return { context, serve: web.handler };
+      return {
+        context,
+        calls: served,
+        sockets: Context.get(sockets, Sockets),
+        serve: web.handler,
+      };
     });
 
     return yield* built.pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))));
@@ -182,9 +248,9 @@ export const handlers = <
   // Why: built on the first event, rather than in the constructor under
   // `blockConcurrencyWhile`, so no event waits on a window the runtime limits to 30 seconds, and
   // events arriving meanwhile await the one build. A failed build's Layer would stay failed in a
-  // memo map whose scope stays open, and its protocols registered with its `Sockets`, so a
-  // failure closes its scope and drops the promise holding its memo map and `Sockets`, and the
-  // next event builds from nothing.
+  // memo map whose scope stays open, and its protocols registered with its `Calls` and
+  // `Sockets`, so a failure closes its scope and drops the promise holding its memo map and
+  // dispatchers, and the next event builds from nothing.
   const built = () => {
     if (building === undefined) {
       // Why: a build failing before its first async step has failed when `runPromiseExit`
@@ -222,10 +288,28 @@ export const handlers = <
     );
   };
 
+  // Why: without routes no protocol accepted a socket, so its events resolve without a build,
+  // as `Sockets` answers `false` for a socket no protocol accepted.
   const dispatch = async (event: (sockets: Sockets["Service"]) => Effect.Effect<boolean>) => {
-    const { context } = await built();
+    if (routes === undefined) return;
 
-    await Effect.runPromise(event(Context.get(context, Sockets)));
+    const { sockets } = await built();
+
+    if (sockets !== undefined) await Effect.runPromise(event(sockets));
+  };
+
+  const call = async (request: string) => {
+    if (calls === undefined) {
+      throw new Error(
+        "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer",
+      );
+    }
+
+    const { calls: served } = await built();
+
+    if (served === undefined) throw new Error("Unreachable: calls were given, and built");
+
+    return Effect.runPromise(served.call(request));
   };
 
   const onAlarm:
@@ -237,6 +321,7 @@ export const handlers = <
     webSocketMessage: (socket, message) => dispatch((sockets) => sockets.message(socket, message)),
     webSocketClose: (socket) => dispatch((sockets) => sockets.close(socket)),
     webSocketError: (socket) => dispatch((sockets) => sockets.error(socket)),
+    effectActionsRpc: call,
     alarm: (info) => run(onAlarm?.(info) ?? Effect.void),
     run,
   };
@@ -252,6 +337,8 @@ export interface Instance<S = never> extends DurableObject<Cloudflare.Env> {
   webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>): Promise<void>;
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
+  /** `Handlers`' `effectActionsRpc`: what `layerStubClient` and `client` call. */
+  effectActionsRpc(request: string): Promise<string>;
   /**
    * `Handlers`' `run`, for the methods of a class extending this one. A Durable Object's public
    * methods are callable over its stub, this one too, but it takes an Effect, which no stub can
@@ -262,8 +349,9 @@ export interface Instance<S = never> extends DurableObject<Cloudflare.Env> {
 
 /**
  * A Durable Object class delegating every handler, and `run`, to `handlers` over its own `ctx`:
- * it serves `routes` on `fetch`, and the sockets their protocols accept on `webSocketMessage`,
- * `webSocketClose` and `webSocketError`, and runs `alarm`. A socket no protocol accepted, such
+ * it serves `routes` on `fetch`, the sockets their protocols accept on `webSocketMessage`,
+ * `webSocketClose` and `webSocketError`, and `calls` on `effectActionsRpc`, the method a
+ * caller's `layerStubClient` or `client` calls over the stub, and runs `alarm`. A socket no protocol accepted, such
  * as one a class extending it accepts itself, is left to that class: the three handlers resolve
  * for it, so an override answers its own sockets and calls `super` for the rest. Export it, or a
  * class extending it, under the name the Wrangler configuration binds. Made without `alarm`,
@@ -282,8 +370,11 @@ export const make = <
   R extends Allowed<A, S> = never,
   AE = never,
   AR extends S | State | Scope.Scope = never,
+  CA = never,
+  CE = never,
+  CR extends RpcServer.Protocol | Calls | S | State = never,
 >(
-  options: Options<S, SE, SR, A, E, R, AE, AR>,
+  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S> => {
   const onAlarm:
     | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, S | State | Scope.Scope>)
@@ -306,6 +397,10 @@ export const make = <
 
     override webSocketError(...args: Parameters<HandlerOf<"webSocketError">>) {
       return this.#object.webSocketError(...args);
+    }
+
+    effectActionsRpc(request: string) {
+      return this.#object.effectActionsRpc(request);
     }
 
     run<A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>) {

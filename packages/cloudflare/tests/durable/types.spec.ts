@@ -1,9 +1,10 @@
 import type { DurableObject } from "cloudflare:workers";
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, type Scope } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
-import type { RpcServer } from "effect/rpc";
+import { RpcClient, type RpcClientError, RpcServer } from "effect/rpc";
 import { expectTypeOf } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import {
   Builds,
@@ -11,10 +12,21 @@ import {
   CurrentUser,
   Http,
   implementation,
+  Rpc,
   routerProvidedRoutes,
   socketRoutes,
   startup,
+  stubCalls,
 } from "../support/app.js";
+import {
+  pluginCalls,
+  PluginHasNoPane,
+  PluginNotFound,
+  PluginRpcs,
+  PluginStore,
+  StreamRpcs,
+} from "../support/hosts.js";
+import type { Hosted, Manual, Plain, PluginHost } from "../worker.js";
 
 expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqualTypeOf<
   new (ctx: DurableObjectState, env: Cloudflare.Env) => ActionDurableObject.Instance
@@ -167,3 +179,86 @@ ActionDurableObject.make({
   routes: buildsRoutes,
   alarm: () => Effect.asVoid(Effect.service(Builds)),
 });
+
+declare const pluginStub: DurableObjectStub<PluginHost>;
+
+declare const plainStub: DurableObjectStub<Plain>;
+
+declare const hostedStub: DurableObjectStub<Hosted>;
+
+declare const manualStub: DurableObjectStub<Manual>;
+
+expectTypeOf(ActionDurableObject.layerStubClient(pluginStub)).toEqualTypeOf<
+  Layer.Layer<RpcClient.Protocol>
+>();
+
+ActionDurableObject.layerStubClient(manualStub);
+
+// @ts-expect-error -- A stub of a class without the method has nothing to call.
+ActionDurableObject.layerStubClient(plainStub);
+
+// @ts-expect-error -- A class delegating to handlers serves calls only if it defines the method.
+ActionDurableObject.layerStubClient(hostedStub);
+
+declare const pluginOf: (id: string) => DurableObjectStub<PluginHost>;
+
+const plugins = ActionDurableObject.client(PluginRpcs, pluginOf);
+
+expectTypeOf(plugins).toEqualTypeOf<
+  Effect.Effect<(key: string) => ActionDurableObject.Client<typeof PluginRpcs>, never, Scope.Scope>
+>();
+
+declare const plugin: ActionDurableObject.Client<typeof PluginRpcs>;
+
+expectTypeOf(plugin.start()).toEqualTypeOf<
+  Effect.Effect<{ readonly pane: string }, PluginNotFound | PluginHasNoPane>
+>();
+
+const raw = RpcClient.make(PluginRpcs).pipe(
+  Effect.provide(ActionDurableObject.layerStubClient(pluginStub)),
+);
+
+expectTypeOf<Effect.Error<ReturnType<Effect.Success<typeof raw>["start"]>>>().toEqualTypeOf<
+  PluginNotFound | PluginHasNoPane | RpcClientError.RpcClientError
+>();
+
+declare const streams: ActionDurableObject.Client<typeof StreamRpcs>;
+
+expectTypeOf(streams.head()).toEqualTypeOf<Effect.Effect<string>>();
+
+// @ts-expect-error -- An rpc that streams has no method over the stub, which answers once.
+void streams.tail;
+
+ActionDurableObject.make({ services: PluginStore.layer, calls: pluginCalls });
+
+ActionDurableObject.make({ services: startup, calls: stubCalls });
+
+ActionDurableObject.make({
+  // @ts-expect-error -- The group's handlers are the calls' to provide.
+  calls: RpcServer.layer(PluginRpcs),
+});
+
+ActionDurableObject.make({
+  // @ts-expect-error -- A startup service other than State belongs in the services.
+  calls: pluginCalls,
+});
+
+ActionDurableObject.make({
+  services: startup,
+  // @ts-expect-error -- A protected contract's authentication is the calls' to provide.
+  calls: ActionRpc.layer(Rpc, implementation),
+});
+
+ActionDurableObject.make({
+  services: PluginStore.layer,
+  // @ts-expect-error -- The stub's protocol serves calls, never routes, which no Calls reaches.
+  routes: pluginCalls.pipe(Layer.provide(ActionDurableObject.layerStub())),
+});
+
+expectTypeOf(ActionDurableObject.layerStub()).toEqualTypeOf<
+  Layer.Layer<RpcServer.Protocol, never, ActionDurableObject.Calls>
+>();
+
+expectTypeOf(ActionDurableObject.Calls.layer).toEqualTypeOf<
+  Layer.Layer<ActionDurableObject.Calls>
+>();

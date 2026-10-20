@@ -11,6 +11,34 @@ in the core's `*-failures.md` pages.
   `Y` are missing: add their Layers to `services`, or provide them to the routes. Where it names
   `Request<"Requires", Z>`, a handler or an authorizer reads `Z` per request: see the core's
   `ActionRpc-failures.md` and `ActionHttp-failures.md`.
+- `is not assignable to type 'Layer<never, never, Calls | Protocol | State | Y>'` at `make`'s or
+  `handlers`' `calls`, where `services` provides `Y`: the rpc server requires a service no
+  Layer provides, such as its group's handlers, `RpcServer.layer(group)` alone, or a contract's
+  authentication. Provide it to the calls, or add its Layer to `services`.
+- `This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer`, an
+  `RpcClientError` at the caller, a defect through `client`: the object was given no `calls`.
+- `The RPC receiver does not implement "effectActionsRpc"`, an `RpcClientError`: the class
+  defines no such method, as a class of your own delegating to `handlers` without it. Define it,
+  delegating ([ActionDurableObject-own-class.md](ActionDurableObject-own-class.md)).
+- `No rpc server runs on this object's ActionDurableObject.layerStub: serve a group over it`, a
+  second after a call: the `calls` serve no rpc server on the protocol, such as a group's
+  handlers given without `RpcServer.layer(group)`. Give the server, with its handlers.
+- `No ActionDurableObject.layerStub protocol registered with this object's Calls`: the calls
+  were served on a protocol of their own, or, in a class composing the primitives itself, built
+  with another `Calls` than the one the method dispatches through. Leave the protocol to
+  `handlers`, or merge `Calls.layer` out of the calls once, in the runtime's Layer.
+- `Two ActionDurableObject.layerStub protocols of one object`, when the calls build: two servers
+  in one object were each given a stub protocol, and one method answers both. Serve one group,
+  `group.merge(other)`.
+- `The rpc <tag> streams, and ActionDurableObject.layerStub is unary`, a defect at the call, or
+  `... ActionDurableObject.client is unary` as `client` is made: a stub call answers once.
+  Serve the stream over `layerWebSocket`, or return the collected values.
+- `Serialized RPC arguments or return values are limited to 32MiB`, an `RpcClientError`, a
+  defect through `client`: the call's encoded request or answer passed Workers RPC's limit.
+  Page large answers, or keep large values in storage, R2 or a socket's stream.
+- A call over the stub dies or fails with `Unauthenticated` though the Worker's request was
+  signed in: nothing forwards a credential over the stub. Forward it with
+  `RpcClient.withHeaders`.
 - A call over the socket dies with `Internal server error` though router middleware or
   `HttpRouter.provideRequest` provides a service its handler reads: those run for the upgrade
   request alone, never a socket's messages. List an `RpcMiddleware` in `ActionRpc.layer`'s
@@ -46,8 +74,8 @@ in the core's `*-failures.md` pages.
   the runtime dropped the socket's attachment, where its upgrade headers are kept, as celld
   0.6.2 does when it evicts an idle object. Send the token on each message, with
   `RpcClient.withHeaders`.
-- A stub's `fetch`, or a method calling `run`, rejects with a build failure: the services or the
-  routes fail to build, and either shows the same. Events awaiting that build reject with it,
+- A stub's `fetch`, a call over the stub, or a method calling `run`, rejects with a build
+  failure: the services, the calls or the routes fail to build, and each shows the same. Events awaiting that build reject with it,
   and the next event builds everything again; fix the failure the rejection names.
 - An upgrade answered `426 Expected a WebSocket upgrade`: the request to the socket's `path` is
   not an upgrade. Connect with a WebSocket client, or forward the page's `Request` itself from

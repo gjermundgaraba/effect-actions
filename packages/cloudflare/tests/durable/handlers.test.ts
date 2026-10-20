@@ -4,12 +4,12 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { Effect } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { describe, expect, it } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { alarmBuildsKey, Http, ownTag, readyKey } from "../support/app.js";
+import { alarmBuildsKey, Builds, Http, ownTag, readyKey } from "../support/app.js";
 import type { OwnSockets, Room } from "../worker.js";
 import { nextMessage, scopedClientOver, upgradeTo, upgradeToRpc } from "../support/socket.js";
 
@@ -246,6 +246,43 @@ describe("handlers", () => {
 
           await instance.webSocketMessage(server, "{}");
         }),
+      );
+    }),
+  );
+  it.effect("answers socket events without routes and calls without calls, building nothing", () =>
+    Effect.gen(function* () {
+      const { refused, builds } = yield* Effect.promise(() =>
+        runInDurableObject(env.HOSTED.getByName("nothing-served"), async (_, state) => {
+          const object = ActionDurableObject.handlers(state, { services: Builds.layer });
+          const { 1: server } = new WebSocketPair();
+
+          state.acceptWebSocket(server);
+
+          await object.webSocketMessage(server, "{}");
+          await object.webSocketClose(server, 1000, "", true);
+          await object.webSocketError(server, new Error("lost"));
+
+          return {
+            refused: await object.effectActionsRpc("[]").then(() => "answered", String),
+            builds: await state.storage.get("builds"),
+          };
+        }),
+      );
+
+      expect(refused).toContain("serves no rpcs over its stub");
+      expect(builds).toBeUndefined();
+    }),
+  );
+  it.effect("dies on a call through a Calls no protocol registered with", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        ActionDurableObject.Calls.use((calls) => calls.call("[]")).pipe(
+          Effect.provide(ActionDurableObject.Calls.layer),
+        ),
+      );
+
+      expect(String(Exit.isFailure(exit) && Cause.squash(exit.cause))).toContain(
+        "No ActionDurableObject.layerStub protocol registered",
       );
     }),
   );
