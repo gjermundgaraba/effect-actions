@@ -169,8 +169,8 @@ export class Manual extends DurableObject {
     }
   }
 
-  override async webSocketClose(socket: WebSocket) {
-    await this.#dispatch((sockets) => sockets.close(socket));
+  override async webSocketClose(socket: WebSocket, code: number, reason: string) {
+    await this.#dispatch((sockets) => sockets.close(socket, code, reason));
   }
 
   override async webSocketError(socket: WebSocket) {

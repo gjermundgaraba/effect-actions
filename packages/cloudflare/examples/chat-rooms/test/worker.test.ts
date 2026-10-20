@@ -1,7 +1,7 @@
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Queue, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Option, Queue, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -27,18 +27,41 @@ const roomAs = (room: string, token?: string) =>
   });
 
 const pageIn = (room: string, token: string, headers: Record<string, string> = {}) =>
-  Effect.flatMap(roomSocket(room, headers), (protocol) =>
+  Effect.flatMap(roomSocket(room, headers), ({ protocol }) =>
     Effect.provideContext(openRoom(token), protocol),
   );
 
-// What a page following the room renders, after `after`: `next(n)` waits for the next `n`.
+// The chunks of a stream the object sent a page, as the socket carries them.
+const chunkOf = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      _tag: Schema.Literal("Chunk"),
+      requestId: Schema.Union([Schema.String, Schema.Number]),
+    }),
+  ),
+);
+
+// A page following the room, after `after`: `next(n)` waits for its next `n` messages, `opened`
+// for its first, and `closed` for the exit `follow` reported.
 const following = (page: Effect.Success<ReturnType<typeof openRoom>>, after: number) =>
   Effect.gen(function* () {
     const rendered = yield* Queue.unbounded<Message>();
+    const opened = yield* Deferred.make<void>();
+    const closed = yield* Deferred.make<Exit.Exit<void, unknown>>();
 
-    yield* Effect.forkScoped(page.follow(after, (message) => Queue.offer(rendered, message)));
+    yield* Effect.forkScoped(
+      page.follow(after, {
+        opened: Deferred.succeed(opened, undefined),
+        message: (message) => Queue.offer(rendered, message),
+        closed: (exit) => Deferred.succeed(closed, exit),
+      }),
+    );
 
-    return { next: (count: number) => Queue.takeN(rendered, count) };
+    return {
+      next: (count: number) => Queue.takeN(rendered, count),
+      opened: Deferred.isDone(opened),
+      closed: Deferred.await(closed),
+    };
   });
 
 describe("the Worker and its rooms", () => {
@@ -71,6 +94,65 @@ describe("the Worker and its rooms", () => {
     }).pipe(Effect.scoped, Effect.provide(worker)),
   );
 
+  it.effect("reports a page's subscription opened, then closed when its socket drops", () =>
+    Effect.gen(function* () {
+      const json = yield* roomAs("general", "ada");
+      const posted = yield* json.postMessage({ text: "Before the socket drops." });
+      const page = yield* following(yield* pageIn("general", "ada"), posted.id - 1);
+
+      expect(yield* page.next(1)).toEqual([posted]);
+      expect(yield* page.opened).toBe(true);
+
+      yield* Effect.promise(() =>
+        runInDurableObject(env.CHAT_ROOM.getByName("general"), (_, state) => {
+          for (const socket of state.getWebSockets()) socket.close(1011, "going away");
+        }),
+      );
+
+      const closed = yield* page.closed;
+
+      expect(Exit.findErrorOption(closed).pipe(Option.getOrUndefined)).toMatchObject({
+        _tag: "RpcClientError",
+      });
+    }).pipe(Effect.scoped, Effect.provide(worker)),
+  );
+
+  it.effect("reports a page's subscription closed with a defect it cannot decode", () =>
+    Effect.gen(function* () {
+      const json = yield* roomAs("design", "ada");
+      const posted = yield* json.postMessage({ text: "Before the bad chunk." });
+      const { socket, protocol } = yield* roomSocket("design");
+      const requestIds: Array<string | number> = [];
+
+      socket.addEventListener("message", ({ data }) => {
+        Option.map(chunkOf(data), ({ requestId }) => requestIds.push(requestId));
+      });
+
+      const page = yield* following(
+        yield* Effect.provideContext(openRoom("ada"), protocol),
+        posted.id - 1,
+      );
+
+      expect(yield* page.next(1)).toEqual([posted]);
+
+      // What a page receives from an object of a newer version, or a broken one: a message
+      // whose fields no longer decode as the page's `Message`.
+      yield* Effect.promise(() =>
+        runInDurableObject(env.CHAT_ROOM.getByName("design"), (_, state) => {
+          for (const open of state.getWebSockets()) {
+            open.send(
+              JSON.stringify({ _tag: "Chunk", requestId: requestIds[0], values: [{ id: "x" }] }),
+            );
+          }
+        }),
+      );
+
+      const closed = yield* page.closed;
+
+      expect(Exit.isFailure(closed) && Cause.hasDies(closed.cause)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(worker)),
+  );
+
   it.effect("keeps a page following across an eviction: a later message still reaches it", () =>
     Effect.gen(function* () {
       const reader = yield* pageIn("design", "ada");
@@ -90,7 +172,7 @@ describe("the Worker and its rooms", () => {
 
   it.effect("authenticates a socket's messages by the token of its upgrade, after eviction", () =>
     Effect.gen(function* () {
-      const protocol = yield* roomSocket("design", { authorization: "Bearer ada" });
+      const { protocol } = yield* roomSocket("design", { authorization: "Bearer ada" });
       const client = yield* Effect.provideContext(ActionRpc.client(RoomRpc), protocol);
       const posted = yield* client.postMessage({ text: "Before the eviction." });
 
@@ -111,12 +193,14 @@ describe("the Worker and its rooms", () => {
 
   it.effect("refuses a member outside the room, on its socket and on its JSON routes", () =>
     Effect.gen(function* () {
-      const page = yield* pageIn("design", "grace");
+      const page = yield* following(yield* pageIn("design", "grace"), 0);
       const json = yield* roomAs("design", "grace");
+      const closed = yield* page.closed;
 
-      expect(yield* Effect.flip(page.follow(0, () => Effect.void))).toBeInstanceOf(
+      expect(Exit.findErrorOption(closed).pipe(Option.getOrUndefined)).toBeInstanceOf(
         Action.Forbidden,
       );
+      expect(yield* page.opened).toBe(false);
       expect(yield* Effect.flip(json.postMessage({ text: "Let me in." }))).toBeInstanceOf(
         Action.Forbidden,
       );

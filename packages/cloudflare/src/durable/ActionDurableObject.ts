@@ -357,7 +357,8 @@ const handlersOf = <
     sockets: {
       webSocketMessage: (socket, message) =>
         dispatch((sockets) => sockets.message(socket, message)),
-      webSocketClose: (socket) => dispatch((sockets) => sockets.close(socket)),
+      webSocketClose: (socket, code, reason) =>
+        dispatch((sockets) => sockets.close(socket, code, reason)),
       webSocketError: (socket) => dispatch((sockets) => sockets.error(socket)),
     } satisfies SocketHandlers,
   };

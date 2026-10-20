@@ -104,7 +104,7 @@ const ExitFrame = Schema.TaggedStruct("Exit", { requestId: RequestId, exit: Sche
  * - At least once across the join, never lost: a value published while a subscriber's `initial` is read may reach it twice, in `initial` and as published, so give values an id the client drops repeats by.
  * - A value published while `initial` is read may arrive before it: the stream is in order from the first value published after `initial` is sent.
  * - Each chunk's ack wakes a hibernating object: Effect's client acknowledges every chunk it is sent, which the object's server ignores for a call it no longer runs.
- * - Effect's socket client fails every stream it runs when its socket drops: a page resubscribes, with `Stream.retry`, from the last value it holds, which `initial` sends on.
+ * - Effect's socket client fails every stream it runs when its socket drops, and a stream may end with a defect, from the server or a chunk the client cannot decode: a page observing only failures misses that end and shows a subscription that is gone, so it reads the stream's `Exit`, `Effect.exit` around its run, then subscribes again from the last value it holds, which `initial` sends on.
  * - Only a call over `layerWebSocket` subscribes: over another protocol it has no socket, and the first `publish` drops its record.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone; a socket closing while the object is evicted leaves its records until then.
  * - `storage.deleteAll()` drops every subscriber's record with the application's own data, silently: those subscribers get nothing more, so `end` them before wiping the object's storage.

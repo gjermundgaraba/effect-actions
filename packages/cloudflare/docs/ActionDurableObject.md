@@ -193,5 +193,6 @@ evicts an object.
   an idle object, so a message relying on the upgrade's token is refused as unauthenticated,
   and accepts `setAlarm` without a handler, consuming the alarm: send a token on each message,
   and give every object that sets an alarm an `alarm`.
-- **Run with `web_socket_auto_reply_to_close`**, on by default from the
-  `compatibility_date` `2026-04-07`, so the runtime replies to a client's close frame.
+- **Any `compatibility_date` serves sockets.** The protocol answers a client's close frame
+  itself, so a page closing its socket gets a clean close with or without the runtime's
+  `web_socket_auto_reply_to_close`.

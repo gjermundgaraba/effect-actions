@@ -193,6 +193,50 @@ describe("layerWebSocket", () => {
     }),
   );
 
+  it.effect(
+    "answers a client's close with its own code and reason, without the runtime's reply",
+    () =>
+      Effect.gen(function* () {
+        const socket = yield* upgradeToRpc(room("answers-close"), bearer("ada"));
+
+        const closed = Effect.promise(
+          () =>
+            new Promise<CloseEvent>((resolve) =>
+              socket.addEventListener("close", resolve, { once: true }),
+            ),
+        );
+
+        socket.close(4000, "page left");
+
+        const { code, reason, wasClean } = yield* closed.pipe(Effect.timeout("2 seconds"));
+
+        expect({ code, reason, wasClean }).toEqual({
+          code: 4000,
+          reason: "page left",
+          wasClean: true,
+        });
+      }),
+  );
+
+  it.effect("ignores a close event for a socket already answered", () =>
+    Effect.gen(function* () {
+      const stub = room("closed-twice");
+
+      yield* upgradeToRpc(stub, bearer("ada"));
+
+      yield* Effect.promise(() =>
+        runInDurableObject(stub, async (instance, state) => {
+          const [socket] = state.getWebSockets();
+
+          if (socket === undefined) throw new Error("No socket");
+
+          await instance.webSocketClose(socket, 1000, "", true);
+          await instance.webSocketClose(socket, 1000, "", true);
+        }),
+      );
+    }),
+  );
+
   it.effect("answers a frame it cannot read with a defect, and serves the socket after it", () =>
     Effect.gen(function* () {
       const socket = yield* upgradeToRpc(room("answers-unreadable"), bearer("ada"));

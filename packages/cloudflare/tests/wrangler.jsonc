@@ -2,6 +2,9 @@
   "name": "effect-actions-cloudflare-tests",
   "main": "./worker.ts",
   "compatibility_date": "2026-10-01",
+  // Why: the runtime's own reply to a client's close is off, as before the date 2026-04-07, so the
+  // sockets' tests show the protocol answering the closing handshake itself.
+  "compatibility_flags": ["web_socket_manual_reply_to_close"],
   "vars": { "GREETING": "from the deployment" },
   "durable_objects": {
     "bindings": [

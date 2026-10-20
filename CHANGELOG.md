@@ -73,9 +73,12 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     serving with each message's own headers, and one whose attachment does not decode answers
     each message with a defect, rather than failing the event.
   - `Sockets` is the object's dispatcher for its protocols' sockets, one per instance from
-    `Sockets.layer`, which `layerWebSocket` registers with and requires. Its `message`, `close`
-    and `error` hand a socket's event to its protocol and succeed with `true`, or with `false`
-    for a socket no protocol accepted, such as one the class accepted itself. It gives each
+    `Sockets.layer`, which `layerWebSocket` registers with and requires. Its `message`,
+    `close(socket, code, reason)` and `error` hand a socket's event to its protocol and succeed
+    with `true`, or with `false` for a socket no protocol accepted, such as one the class
+    accepted itself. `close` completes the closing handshake, replying with the client's code
+    and reason, so a page closing its socket gets a clean close under any `compatibility_date`,
+    without the runtime's `web_socket_auto_reply_to_close`. It gives each
     socket an id unique across the object's protocols, kept in storage so no later socket has an
     earlier one's.
   - `Feed` pushes to a stream rpc's subscribers over `layerWebSocket`, across hibernation, one

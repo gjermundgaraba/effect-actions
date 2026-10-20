@@ -5,7 +5,8 @@ import { Socket } from "effect/socket";
 
 // A page's socket to a room, upgraded through the Worker as a browser's would be. A test has no
 // network to open one by its URL, so it hands the upgraded socket to Effect's client protocol,
-// the protocol `connection(url)` builds over a URL.
+// the protocol `connection(url)` builds over a URL, and keeps the socket, which a test listens
+// on for what the object sent.
 export const roomSocket = (room: string, headers: Record<string, string> = {}) =>
   Effect.gen(function* () {
     const response = yield* Effect.promise(() =>
@@ -20,10 +21,12 @@ export const roomSocket = (room: string, headers: Record<string, string> = {}) =
 
     socket.accept();
 
-    return yield* Layer.build(
+    const protocol = yield* Layer.build(
       RpcClient.layerProtocolSocket().pipe(
         Layer.provide(Layer.effect(Socket.Socket)(Socket.fromWebSocket(Effect.succeed(socket)))),
         Layer.provide(RpcSerialization.layerJson),
       ),
     );
+
+    return { socket, protocol };
   });

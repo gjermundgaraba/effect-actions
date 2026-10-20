@@ -180,32 +180,37 @@ describe("Feed", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("sends nothing more to a subscriber whose socket the runtime reported closed", () =>
+  it.effect("drops the records of a socket the runtime reported closed", () =>
     Effect.gen(function* () {
       const stub = fresh();
       const calls = yield* callsOf(stub);
       const closing = yield* connect(stub);
       const open = yield* connect(stub);
-      const gone = yield* subscribe(closing, [10]);
+
+      yield* subscribe(closing, [10]);
+
       const kept = yield* subscribe(open, [20]);
 
-      yield* Effect.promise(() =>
+      const records = yield* Effect.promise(() =>
         runInDurableObject(stub, async (instance, state) => {
           const [socket] = state.getWebSockets("effect-actions/socket#1");
 
           if (socket === undefined) throw new Error("No socket #1");
 
+          const before = (await state.storage.list({ prefix: recordKey(1, "") })).size;
+
           await instance.webSocketClose(socket, 1000, "", true);
+
+          const after = (await state.storage.list({ prefix: recordKey(1, "") })).size;
+
+          return { before, after };
         }),
       );
 
       yield* calls.publish({ value: 1, key: null });
 
+      expect(records).toEqual({ before: 1, after: 0 });
       expect(yield* kept.next(1)).toEqual([1]);
-
-      yield* closing.client.ping();
-
-      expect(gone.sent()).toBe(1);
     }).pipe(Effect.scoped),
   );
 

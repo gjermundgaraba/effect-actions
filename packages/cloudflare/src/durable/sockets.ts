@@ -39,8 +39,12 @@ export class Sockets extends Context.Service<
   {
     /** Hands a message on `socket`, as `webSocketMessage` receives it, to its protocol. */
     readonly message: (socket: WebSocket, data: string | ArrayBuffer) => Effect.Effect<boolean>;
-    /** Tells the socket's protocol it closed, interrupting its running calls. */
-    readonly close: (socket: WebSocket) => Effect.Effect<boolean>;
+    /**
+     * Tells the socket's protocol it closed, interrupting its running calls, and completes the
+     * closing handshake, replying with the client's `code` and `reason`, as `webSocketClose`
+     * receives them.
+     */
+    readonly close: (socket: WebSocket, code: number, reason: string) => Effect.Effect<boolean>;
     /** Tells the socket's protocol it failed, which ends it as a close does. */
     readonly error: (socket: WebSocket) => Effect.Effect<boolean>;
   }
@@ -79,12 +83,13 @@ export class Sockets extends Context.Service<
           return receiver === undefined ? Effect.succeed(false) : Effect.as(event(receiver), true);
         });
 
-      const close = (socket: WebSocket) => dispatch(socket, (receiver) => receiver.close(socket));
-
       const sockets = Sockets.of({
         message: (socket, data) => dispatch(socket, (receiver) => receiver.message(socket, data)),
-        close,
-        error: close,
+        close: (socket, code, reason) =>
+          dispatch(socket, (receiver) =>
+            Effect.andThen(replyToClose(socket, code, reason), receiver.close(socket)),
+          ),
+        error: (socket) => dispatch(socket, (receiver) => receiver.close(socket)),
       });
 
       registries.set(sockets, { receivers, allocate });
@@ -95,6 +100,19 @@ export class Sockets extends Context.Service<
 }
 
 const storedIdOf = Schema.decodeUnknownOption(Schema.Int);
+
+const isSendableCloseCode = (code: number) =>
+  code >= 1000 && code !== 1005 && code !== 1006 && code !== 1015;
+
+// Why: without the runtime's `web_socket_auto_reply_to_close`, before the `compatibility_date`
+// `2026-04-07`, nothing answers a client's close frame, and every page closing a socket sees a
+// 1006. Replying here, as Cloudflare's hibernation example does in `webSocketClose`, completes
+// the handshake under any date; a socket the runtime already answered refuses the second close,
+// which is ignored.
+const replyToClose = (socket: WebSocket, code: number, reason: string) =>
+  Effect.ignore(
+    Effect.try(() => (isSendableCloseCode(code) ? socket.close(code, reason) : socket.close())),
+  );
 
 const Attachment = Schema.Struct({
   headers: Schema.Array(Schema.mutable(Schema.Tuple([Schema.String, Schema.String]))),
@@ -285,7 +303,7 @@ export interface LayerWebSocketOptions {
  *
  * - An idle object is evicted while its sockets stay open: a message constructs a new instance, which builds the routes and then answers it.
  * - A message's event ends once the message is handed to the server: a call doing I/O or waiting on a timer keeps the object from hibernating, billed as long, and one waiting only on in-memory state, such as a `Deferred`, is lost if the object hibernates, its client never hearing back.
- * - The runtime replies to a client's close frame itself only with the compatibility flag `web_socket_auto_reply_to_close`, on by default from the `compatibility_date` `2026-04-07`: this protocol sends no reply of its own.
+ * - A client's close frame is answered with its own code and reason, as the closing handshake asks, whatever the `compatibility_date`: where the runtime already replied, under `web_socket_auto_reply_to_close`, the second reply is ignored; a socket the class accepted itself is the class's to answer.
  * - An upgrade whose headers, cookies included, exceed the runtime's 16 KiB attachment is answered 431; a request to `path` that is no upgrade is answered 426.
  * - workerd keeps a socket's headers across hibernation; celld 0.6.2 drops them when it evicts an idle object, so a message relying on the upgrade's token is refused as unauthenticated: send a token on each message.
  * - The upgrade's URL and query are not kept, as Effect's own socket protocol keeps neither: a message has no URL, so an API key in the query never authenticates, and a version or tenant a browser can only put in the URL goes in the rpc's payload or a message header.
