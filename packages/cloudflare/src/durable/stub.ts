@@ -48,7 +48,8 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
               if (!Array.isArray(answer) || !answer.some(RpcMessage.isTerminalResponse)) {
                 return yield* clientError(
                   new RpcClientError.RpcClientDefect({
-                    message: "The object's answer ended before the call completed",
+                    message:
+                      "The object's answer ended before the call completed: delegate effectActionsRpc to handlers' own, returning its answer",
                     cause: request,
                   }),
                 );
@@ -70,13 +71,16 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * The `RpcClient.Protocol` `RpcClient.make` and `ActionRpc.client` call an object's rpcs with,
  * over `stub`: each call is one call of the object's `effectActionsRpc` method, its messages
  * and their answer passed as values, each schema's plain form, which the object serves on
- * `layerStub`, through `make`'s or `handlers`' `calls`. A value Workers RPC cannot clone, such
- * as a class instance in an `Unknown`, fails the whole call. The stub's own failure, such as an
- * object serving no rpcs over its stub or an answer past the platform's limit, is an
- * `RpcClientError`, as an HTTP transport's is. It holds `stub`, which many exceptions leave
- * broken, failing every later call: after a stub's failure, provide a client built over a new
- * one. Unary: an rpc that streams fails as a defect. Nothing authenticates the call: forward a
- * principal as a header, with `RpcClient.withHeaders`, or in the payload.
+ * `layerStub`, through `make`'s or `handlers`' `calls`. The stub's own failure is an
+ * `RpcClientError`, as an HTTP transport's is, in every call's errors.
+ *
+ * **Gotchas**
+ *
+ * - It holds `stub`, and many exceptions leave a stub broken, failing every later call through it with the same error: after a failure, provide the client a `layerStubClient` over a new stub.
+ * - Workers RPC limits a call's arguments and its answer to 32 MiB, serialized: past it, the call fails with the runtime's `limited to 32MiB` error.
+ * - An object serving no `calls`, or a class without the method, fails each call at once, with the object's or the runtime's message as the error's cause.
+ * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.
+ * - Unary: an rpc that streams fails with a defect at its first chunk.
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
@@ -118,14 +122,19 @@ export type Client<Group> = RpcClient.RpcClient<Unary<RpcGroup.Rpcs<Group>>>;
 
 /**
  * The rpcs of `group`, as `(stubOf) => client`, for a Worker or an object calling objects of
- * one class: `plugin(() => env.PLUGIN.getByName(id)).start()`. Each call gets its stub from
- * `stubOf`, called as the call is sent, so no stub is held: a stub an exception broke is never
- * called again, and a client over one object may be kept for good. One native client, built in
- * the given `Scope`, serves every factory, so nothing is kept per object and an eviction
- * changes nothing. A call fails with the rpc's declared errors; the stub's own failure, which
- * its caller cannot recover from, and a factory that throws are defects. For Effect's own
- * `RpcClientError` typing, use `RpcClient.make` over `layerStubClient`. A group with an rpc that
- * streams is refused as the client is made.
+ * one class: `room(() => env.CHAT_ROOM.getByName(name)).latestAt()`. One native client, built
+ * in the given `Scope`, serves every object, and each call gets its stub from `stubOf` as it is
+ * sent, so no stub is held, nothing is kept per object and an eviction changes nothing: a
+ * client over one object may be kept for good. A call fails with the rpc's declared errors
+ * alone; the stub's own failure, which its caller cannot recover from, is a defect.
+ *
+ * **Gotchas**
+ *
+ * - Never hold a stub: Cloudflare's error handling guide says "Many exceptions leave the DurableObjectStub in a "broken" state", failing every later request through it, so `stubOf` makes a new one for each call.
+ * - `stubOf` reads `env` as each call is sent, from the `env` import of `cloudflare:workers` or the `env` `make`'s `services` function is given, never as the module evaluates; one that throws is a defect.
+ * - Only names you accept should reach `getByName`: each name is another object.
+ * - A group with an rpc that streams is refused as the client is made: the transport is unary.
+ * - For Effect's own typing, with `RpcClientError` in every call's errors, call `RpcClient.make(group)` over `layerStubClient(stub)`.
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */

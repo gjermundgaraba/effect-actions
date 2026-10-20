@@ -78,6 +78,11 @@ export interface FetchClientOptions<
   /**
    * What each call sends with. Omitted: the global `fetch`, looked up on every call, so one
    * installed after the client is built, such as a test's stub, is used.
+   *
+   * **Gotchas**
+   *
+   * - A page on the API's own origin sends its cookies already; from another origin pass `(input, init) => fetch(input, { ...init, credentials: "include" })`, and the server's CORS must allow credentials, `HttpRouter.cors({ allowedOrigins, credentials: true })`.
+   * - A `fetch` of your own passes `init.signal` on, or interrupting a call no longer aborts its request: a deadline is `Effect.timeout` on the call.
    */
   readonly fetch?: typeof globalThis.fetch | undefined;
 }
@@ -132,14 +137,16 @@ type HttpLayer<
 export interface LayerOptions<M extends Middleware = [], A extends Action.Any = never> {
   /**
    * The actions it serves, among the binding's actions the implementations hold: `[GetUser]`.
-   * Defaults to every one of them. A layer whose middleware requires the identity lists
-   * protected actions only.
+   * Defaults to every one of them.
    */
   readonly actions?: ReadonlyArray<A> | undefined;
   /**
    * Native endpoint middleware every served route runs, the first innermost: inside the
-   * authentication of a protected route, outside its decoding. A middleware requiring the
-   * identity needs a layer serving only protected actions.
+   * authentication of a protected route, outside its decoding, so it also sees invalid input.
+   *
+   * **Gotchas**
+   *
+   * - A middleware requiring the identity needs a layer serving only protected actions: serve the public ones from a second layer without it.
    */
   readonly middleware?: M;
 }
@@ -154,9 +161,31 @@ type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
 
 /** Contract-level configuration shared by servers and clients. */
 export interface Options<E extends Action.Errors = Action.Errors> {
+  /**
+   * The mount path of every route: `/api` by default, `/` at the root. Split a large API, or
+   * actions sharing a name, into one binding per area, each with its own `prefix` and client;
+   * one host serves them all.
+   */
   readonly prefix?: `/${string}`;
-  /** Router middleware's errors, which every endpoint declares: one schema, or a list. */
+  /**
+   * What router middleware around the routes, or the layer's `middleware`, answers with, such as
+   * a quota's 429, which every endpoint declares: one schema, or a list.
+   *
+   * **Gotchas**
+   *
+   * - An error a handler fails with goes in its action's `error`, not here.
+   * - Router middleware answering with one encodes and sends it itself, `HttpServerResponse.schemaJson(QuotaExceeded)(error, { status: 429 })`, at the status `Action.Options.error` gives it: at any other a client fails with an `HttpClientError`.
+   */
   readonly error?: E | E[number];
+  /**
+   * The descriptor of the binding's protected actions, `Authentication.make(...)`: required
+   * when it holds one, and it documents and enforces their credentials as native endpoint
+   * security middleware on each of them.
+   *
+   * **Gotchas**
+   *
+   * - One descriptor per binding: actions of a second identity take a second binding with its own `prefix`, and a public action may be in both.
+   */
   readonly authentication?: Authentication;
 }
 
@@ -190,6 +219,7 @@ export interface Binding<
   E extends Action.Errors = [],
   D extends Authentication | undefined = undefined,
 > {
+  /** Its protected actions' authentication descriptor, or `undefined` without one. */
   readonly authentication: D;
   /** The exact actions bound to this binding. */
   readonly actions: Actions;
@@ -197,6 +227,18 @@ export interface Binding<
   readonly error: E;
   /** Where its routes mount: `/api` by default, `/` at the root, without a trailing slash. */
   readonly prefix: `/${string}`;
+  /**
+   * The native `HttpApi`, for `OpenApi.fromApi`, `HttpApiSwagger.layer`, `HttpApiScalar.layer`
+   * and Effect's own tools: it lists every action of the binding, served or not.
+   *
+   * **Gotchas**
+   *
+   * - Serve it with `layer`, never the native `HttpApiBuilder`: its group name is typed `string`, so `HttpApiBuilder.group(api, "api", …)` is refused as `Endpoint not handled: ${string}`, and given a `string`-typed name a protected action makes the host fail to build with `Service not found: effect-actions/Authentication/Security/…`.
+   * - A header that middleware reads is not in its document, whose operations list no `parameters`: rewrite it, `OpenApi.fromApi(Http.api.annotate(OpenApi.Transform, (document) => …))`, or make the value an input.
+   * - An OAuth protected resource is documented as a bearer scheme: Effect has no OAuth scheme.
+   * - Combined into one document, `HttpApi.make("app").addHttpApi(A.api).addHttpApi(B.api)`, a shared action name makes `OpenApi.fromApi` throw `Duplicate OpenAPI operationId`, and a shared prefix silently drops one binding's actions from the document and a native client: otherwise document each alone.
+   * - A binding holding no protected action documents no security scheme, so Swagger shows no Authorize button.
+   */
   readonly api: Api<Actions, E, D>;
 }
 
@@ -239,13 +281,11 @@ const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middle
 // which `Certain` needs. The first takes public actions by its constraint, which a helper generic
 // in them meets.
 /**
- * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`.
- * Every endpoint declares its action's errors, the binding's `error`, and the built-in
- * `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode each as a typed
- * failure. A union's own `httpApiStatus` applies to every member; otherwise, each member
- * uses its own status, or 422 without one. Protected contracts receive native endpoint
- * security middleware: the same descriptor documents their credentials and enforces them.
- * Guide: `docs/ActionHttp.md` in this package; in an application: `examples/notes-service/src/routes.ts`.
+ * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`, a
+ * `readOnly` one too. Every endpoint declares its action's errors, the binding's `error`, and
+ * the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode each as a
+ * typed failure; a protected one also declares what its descriptor's verifier fails with.
+ * Guide: `docs/ActionHttp.md` in this package; in an application: `examples/notes-service/src/Api.ts`.
  */
 export function make<
   const Actions extends ReadonlyArray<Action.Any & { readonly caller: typeof Anyone }>,
@@ -319,6 +359,8 @@ class JsonContentType extends HttpApiMiddleware.Service<JsonContentType>()(
   "effect-actions/ActionHttp/JsonContentType",
 ) {}
 
+// Why: Effect reads a body with no `Content-Type` as JSON, which a page on another site can send
+// without a CORS preflight; a wrong type Effect refuses itself.
 const jsonContentType = () =>
   Layer.succeed(JsonContentType, (route) =>
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
@@ -330,23 +372,30 @@ const jsonContentType = () =>
 
 /**
  * Serve the binding's actions among `implementations` in one layer, or those its `actions` lists,
- * authenticating a protected action's request before decoding it, then running its implementation's
- * `authorize` before each handler. The binding decides what may be served:
- * an implementation's actions the binding leaves out have no route here, and one holding none of
- * those served is not built; implementations holding none of the binding's actions at all are
- * refused when `layer` is called. It mounts only the routes of the actions it serves, so one
- * binding may be served by several layers, each with its own `actions` and `middleware`, which
- * covers its routes only. Each implementation's builder runs once per layer graph however many
- * layers serve it.
+ * authenticating a protected action's request before decoding it, then running its
+ * implementation's `authorize` before each handler. An implementation's actions the binding
+ * leaves out have no route here, one holding none of those served is not built, and a non-empty
+ * list holding none of the binding's actions is refused when `layer` is called. Several layers
+ * may serve one binding, each with its own `actions` and `middleware` covering its routes only.
+ * The layer fails as the builders do, needs at startup what they need, and per request what the
+ * authorization and handlers of the actions it serves need, until its `middleware` or middleware
+ * around it provides them, the identity of a protected action excepted, which its authentication
+ * provides; what is provided per request wins over what the layer was built with. A declared
+ * error answers with its JSON at the status `Action.Options.error` gives it, input that does not
+ * decode a 400 `InvalidInput`, and a refusal as `Action.Unauthenticated` and `Action.Forbidden`
+ * say.
  *
- * The layer fails as the builders do, needs at startup what they need, and per request what
- * each implementation's authorization and the handlers of the actions it serves
- * need, until its `middleware` or middleware provided around it provides them, the identity
- * of a protected action excepted, which its authentication provides; the router provides
- * its own, such as the request, to every route. Its routes take only requests typed as JSON,
- * and what middleware provides per request wins over what the layer was built with. A request
- * body is read whole, however large, unless the host limits it where the routes are served:
- * `Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1)))`.
+ * **Gotchas**
+ *
+ * - A success is its JSON as the body; an action without `success` answers an empty 200, no body and no content type, so a hand-written client must not parse it. One without `input` still takes the body `{}` typed as JSON: no body is a 400.
+ * - A body that is not JSON is a 400 `InvalidInput`; a request with no `Content-Type` a 415 `Unsupported content-type: none`, one with another type Effect's own 415; each after authentication on a protected route.
+ * - A defect, an undeclared failure, or a success or an error that does not encode answers an empty 500: the cause goes to the log and to the call's `ErrorReporter`s, never to the body.
+ * - A path no layer serves, or a method other than `POST` on a route, is a 404.
+ * - The 415 keeps from every handler what another site's page can send without a CORS preflight, such as a form post carrying the user's cookie; the server's CORS policy decides the rest.
+ * - Router middleware providing a request service `X` is declared `HttpRouter.middleware<{ provides: X }>()`: without the type argument it runs and the layer still owes `X`.
+ * - `HttpRouter.provideRequest(layer)` builds its layer once, at startup, so it never provides an identity or a tenant.
+ * - A request body is read whole, however large, unless the host provides `HttpServerRequest.MaxBodySize` to `HttpRouter.serve`, limiting every route that reads its body whole, MCP endpoints included; a body a route reads as a stream is not limited. On Node a request over it gets no response, its connection closed, never a 413; `HttpRouter.toWebHandler` ignores it, so limit bodies in the platform serving the handler.
+ * - An `ErrorReporter` the server runs with is given, as `Info`, a handler's declared failure and an input that does not decode, never a refusal or a refused credential: give an error class `override readonly [ErrorReporter.ignore] = true` to keep it out, and drop `Info` for a built-in error, which takes no mark.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   binding: H,
@@ -439,19 +488,16 @@ export function layer(
 
 /**
  * Effect's native `HttpApiClient` for a binding, one method per action taking the
- * action's input directly: `client.greet({ name })`. The argument may be omitted when `{}`
- * is a valid input. Requires the native `HttpClient`, as `HttpApiClient.make` does.
- * The options are the native ones, `baseUrl` and `transformClient`, a bearer token being
- * `transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`. The native
- * client itself stays available: `HttpApiClient.make(Http.api)`.
+ * action's input directly: `client.greet({ name })`, the argument omitted when `{}` is a valid
+ * input. Requires the native `HttpClient`, as `HttpApiClient.make` does; the native client
+ * itself stays available: `HttpApiClient.make(Http.api)`. Each call fails with its
+ * `MethodError`, an undeclared answer such as a 502 from a proxy or a defect's empty 500 as an
+ * `HttpClientError`, and with what `transformClient` adds.
  *
- * A call fails with a declared error value (the action's own, the binding's, a built-in
- * `InvalidInput`, `Unauthenticated` or `Forbidden`, or on a protected action its descriptor's),
- * a native `HttpClientError` when the server could not be reached or answered with a status or
- * body the contract does not declare, or a `SchemaError` when the success does not decode. An
- * input that does not encode fails with `InvalidInput`, and nothing is sent. A call also fails
- * with what the client `transformClient` returns fails with, as it is, and requires what that
- * client requires.
+ * **Gotchas**
+ *
+ * - An input that does not encode fails with `InvalidInput`, and nothing is sent; undeclared input fields, which TypeScript lets through on a wider value, are dropped as it encodes, since the server would refuse them.
+ * - It interprets no status and retries nothing: a failed write may have happened, and only a declared error says what the server did.
  */
 export function client<const H extends AnyHttp>(
   binding: H,
@@ -474,9 +520,6 @@ export function client(
  * a browser app: its methods are the same Effects, which require only what `transformClient`
  * requires, so a call without one runs alone, as `Effect.runPromise(api.greet({ name }))`. The
  * options are `client`'s, and `fetch`.
- *
- * Each call sends with `options.fetch`, or with the global `fetch` as it is when the call
- * runs.
  */
 export function fetchClient<const H extends AnyHttp>(
   binding: H,

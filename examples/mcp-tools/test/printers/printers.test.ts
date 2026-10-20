@@ -63,7 +63,7 @@ const farmThat = (
 const door = { id: "mk4-1", name: "MK4 by the door" };
 
 describe("printers, in process", () => {
-  it.effect("pauses, resumes and cancels a job, each call safe to repeat", () =>
+  it.effect("pauses, resumes and cancels a job, pause and cancel safe to repeat", () =>
     Effect.gen(function* () {
       const client = yield* Action.client(printers);
       const pause = client.set_paused({ printer_id: "mk4-1", paused: true });
@@ -115,8 +115,7 @@ describe("printers, in process", () => {
     }).pipe(Effect.provide(farmOver(noting(sent))));
   });
 
-  // The message is all a model gets of a failure, so each test asserts it. `toEqual` with an
-  // expected error would not: an error's `message` is not among the properties it compares.
+  // The message is all a model gets of a failure, so each test asserts it.
   it.effect("fails with the declared error, carrying the farm's own reason", () =>
     Effect.gen(function* () {
       const client = yield* Action.client(printers);

@@ -751,7 +751,10 @@ describe("misplaced media", () => {
   it("refuses media where no tool lifts it when the server is made, naming every such action", () => {
     const message =
       "MCP media must be the success or an array of it, or a top-level field of a struct " +
-      `success, one, optional or a required array: ${misplaced.map(({ name }) => name).join(", ")}`;
+      `success, one, optional or a required array: ${misplaced.map(({ name }) => name).join(", ")} ` +
+      "(make the image such a field, or give an optional array as a required one, empty when " +
+      "absent; an image in input or an error is not served over MCP, so leave that action out " +
+      "of actions)";
 
     expect(() => ActionMcp.layerHttp([lifted, ...refused], options)).toThrow(message);
     expect(() => ActionMcp.runStdio(refused, options)).toThrow(message);

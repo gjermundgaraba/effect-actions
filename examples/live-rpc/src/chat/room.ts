@@ -9,7 +9,7 @@ import { defaultRoom, roomHeader } from "./Chat.js";
 export class CurrentRoom extends Context.Service<CurrentRoom, string>()("live-rpc/CurrentRoom") {}
 
 // Native Effect RPC middleware, declared as providing `CurrentRoom`. Listed in
-// `ActionRpc.layer`'s `middleware`, it runs around every rpc, once per message.
+// `ActionRpc.layer`'s `middleware`, it runs once per message.
 export class ResolveRoom extends RpcMiddleware.Service<ResolveRoom, { provides: CurrentRoom }>()(
   "live-rpc/ResolveRoom",
 ) {}

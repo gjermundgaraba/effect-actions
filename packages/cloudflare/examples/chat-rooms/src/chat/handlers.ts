@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentMember } from "../identity/Identity.js";
 import { authorize } from "./authorize.js";
+import { RoomCalls } from "./Calls.js";
 import { Messages, Preview } from "./Chat.js";
 import { MessageStore } from "./store.js";
 
@@ -32,4 +33,15 @@ export const messages = Action.implement(
     };
   }),
   { authorize },
+);
+
+// The room's own API, for the Worker, read from the store the instance built.
+export const calls = RoomCalls.toLayer(
+  Effect.gen(function* () {
+    const store = yield* MessageStore;
+
+    return RoomCalls.of({
+      latestAt: () => Effect.map(store.latest, (latest) => latest?.at ?? null),
+    });
+  }),
 );

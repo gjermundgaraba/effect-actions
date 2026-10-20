@@ -21,10 +21,14 @@ const registries = new WeakMap<Calls["Service"], Registry>();
 
 /**
  * The object's dispatcher for the calls a caller makes over its stub: `call` hands one call's
- * encoded request to the protocol `layerStub` registered, and succeeds with the encoded responses
- * once every request it carries has its exit, or dies when no protocol registered, or when no
- * rpc server runs on the protocol a second after the call. `Calls.layer` makes one per instance, which `layerStub`
- * registers with as the served Layer builds: dispatch once it is built.
+ * messages to the protocol `layerStub` registered, and succeeds with their responses once every
+ * request it carries has its exit. `Calls.layer` makes one per instance, which `layerStub`
+ * registers with as the served Layer builds; `handlers` and `make` provide it.
+ *
+ * **Gotchas**
+ *
+ * - A call through a `Calls` no protocol registered with dies, as when the calls were built with another `Calls` than the one the class dispatches through: merge `Calls.layer` out of the calls once, in the runtime's Layer.
+ * - A call through a protocol no rpc server runs on, such as a group's handlers given without `RpcServer.layer(group)`, dies a second after it arrives.
  */
 export class Calls extends Context.Service<
   Calls,
@@ -212,14 +216,18 @@ const makeProtocol = (registry: Registry) =>
 /**
  * The `RpcServer.Protocol` `RpcServer.layer` and `ActionRpc.layer` serve on, over the object's
  * stub: a caller's call of the object's `effectActionsRpc` method is one call, its messages in
- * and its responses out, as values Workers RPC clones, each schema's plain form
- * (`Schema.toCodecIso`), never JSON: a `Date`, bytes or `undefined` crosses as itself. It registers with the instance's
- * `Calls`, which hands it every call. Unary: a call answers once every request it carries has
- * its exit, so an rpc that streams is answered with a defect at its first chunk. Nothing
- * authenticates a call: a stub is reachable only through a binding, and a caller forwarding a
- * principal sends it as a header, read by `RpcMiddleware`, or in the payload. Each object serves
- * one: a second registering with one `Calls` fails to build. `handlers` and `make` provide it to
- * their `calls`.
+ * and its responses out, as values Workers RPC's structured clone copies, each schema's plain
+ * form (`Schema.toCodecIso`), never a JSON string. It registers with the instance's `Calls`,
+ * which hands it every call; `handlers` and `make` give it to their `calls`.
+ *
+ * **Gotchas**
+ *
+ * - A `Date`, bytes, `undefined` and an `Error` defect cross as themselves; an `Option`, an exit and a tagged error as their tagged objects, a `Map` and a `Set` as arrays.
+ * - A schema with no JSON form, such as `Schema.instanceOf(Date)`, works over the stub, not over `layerWebSocket`, which speaks JSON; an `ActionRpc` binding's values cross as JSON over either.
+ * - A value the clone refuses, such as a class instance in a `Schema.Unknown`, or a defect that is a class instance other than an `Error`, fails the whole call with workerd's `DataCloneError`, whatever its exit.
+ * - Unary: a call answers once every request it carries has its exit, so an rpc that streams is answered with a defect at its first chunk, naming it: stream over `layerWebSocket`.
+ * - Nothing authenticates a call: a stub is reachable only through a binding, so the caller is the Worker or another object of the deployment, and one acting for a principal forwards it in a header, with `RpcClient.withHeaders`, read by an `RpcMiddleware` or an `ActionRpc` binding's authentication, or in the payload.
+ * - Each object serves one: a second registering with one `Calls` fails the build, so serve several groups as one, `group.merge(other)`.
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
@@ -231,7 +239,7 @@ export const layerStub = (): Layer.Layer<RpcServer.Protocol, never, Calls> =>
       if (registry === undefined) {
         return yield* Effect.die(
           new Error(
-            "ActionDurableObject.layerStub registers only with a Calls that Calls.layer built",
+            "ActionDurableObject.layerStub registers only with a Calls that Calls.layer built: provide Calls.layer",
           ),
         );
       }

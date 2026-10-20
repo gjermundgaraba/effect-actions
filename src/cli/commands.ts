@@ -13,8 +13,8 @@ import {
 } from "effect";
 import { CliError, Command, Flag, Param } from "effect/cli";
 import type * as Action from "../contract/Action.js";
-import { literalValues, members, unsuspended } from "../contract/ast.js";
 import { assertDistinct } from "../contract/names.js";
+import { literalValues, members, unsuspended } from "../contract/ast.js";
 import { withStderrConsole } from "../stdio/console.js";
 import { InvalidInput } from "../contract/errors.js";
 import { decodeInput } from "../contract/call.js";
@@ -42,21 +42,35 @@ type StdinField<A extends Action.Any> = A["input"]["Encoded"] extends infer E
 export interface Options<A extends Action.Any> {
   /** Override the command name. The action name, in kebab case, is used by default. */
   readonly name?: string;
-  /** Human output. Adds a `--json` flag to the command that selects JSON instead. */
+  /**
+   * Human output: the decoded success to text for a person. Adds a `--json` flag to the
+   * command that selects JSON instead.
+   */
   readonly render?: (output: A["success"]["Type"]) => string;
   /**
-   * Input fields taken as positional arguments instead of flags, in this order. An
-   * optional field is an optional argument, so it follows every required one.
+   * Input fields taken as positional arguments instead of flags, in this order: `["id"]` takes
+   * `get-note 7` for `--id 7`. An optional field is an optional argument, and an array field
+   * takes every argument left, one element each.
+   *
+   * **Gotchas**
+   *
+   * - A field listed here has no flag: `--<field>` is `Unrecognized flag`, so pass its value as an argument.
    */
   readonly positional?: ReadonlyArray<Field<A>>;
   /**
-   * A short name per input field's flag, such as `{ limit: "n" }` for `-n`, given as
-   * `Param.withAlias` takes it.
+   * A short name per input field's flag, such as `{ limit: "n" }` for `-n 5` beside
+   * `--limit 5`, given as `Param.withAlias` takes it.
    */
   readonly aliases?: { readonly [K in Field<A>]?: string };
   /**
    * A required field read from stdin instead of a flag, such as a secret, which a flag would
-   * leave in the process list and the shell's history.
+   * leave in the process list and the shell's history, or a document. The value is all of
+   * stdin until it closes, without the line endings that end it.
+   *
+   * **Gotchas**
+   *
+   * - A terminal is never read: run interactively, the command fails with `InvalidInput`.
+   * - The command waits without output until stdin closes: a parent process holding the pipe, or `ssh` without `-n`, keeps it open, so redirect stdin from a file or `/dev/null`.
    */
   readonly stdin?: StdinField<A>;
 }
@@ -401,12 +415,18 @@ const positionalOrder = (
   params: ReadonlyArray<FieldParam>,
   positional: ReadonlyArray<string>,
 ): ReadonlyArray<FieldParam> => {
-  assertDistinct("positional argument", positional, (field) => field);
+  assertDistinct("positional argument", positional, (field) => field, {
+    fix: "list each field once",
+  });
 
   const ordered = positional.map((field) => {
     const found = params.find((param) => param.field === field);
 
-    if (found === undefined) throw new Error(`Not an input field: ${field}`);
+    if (found === undefined) {
+      throw new Error(
+        `Not an input field: ${field} (positional names fields of the action's input)`,
+      );
+    }
 
     return found;
   });
@@ -416,13 +436,17 @@ const positionalOrder = (
   const misplaced = late.find((param) => !param.optional);
 
   if (misplaced !== undefined) {
-    throw new Error(`Required positional argument after an optional one: ${misplaced.field}`);
+    throw new Error(
+      `Required positional argument after an optional one: ${misplaced.field} (list every required field first)`,
+    );
   }
 
   const repeatedBeforeLast = ordered.slice(0, -1).find((param) => param.repeats);
 
   if (repeatedBeforeLast !== undefined) {
-    throw new Error(`Repeated positional argument before another one: ${repeatedBeforeLast.field}`);
+    throw new Error(
+      `Repeated positional argument before another one: ${repeatedBeforeLast.field} (list an array field last)`,
+    );
   }
 
   return ordered;
@@ -450,11 +474,13 @@ const printedOutput = <A extends Action.Any>(
 
 /**
  * What a command fails with when its action fails: Effect CLI's `UserError`, typed with the
- * action's failure as its `cause` and `reason`, and whose message is its JSON, which `Command.run`
- * prints on stderr and marks reported, so `runMain` does not print it again. The process exits with
- * the cause's `Runtime.errorExitCode`, 1 by default. A type only: after `Command.run`, match the
- * reason by its tag, `Effect.catchReason("UserError", "UserNotFound", f)`. A command of your own
- * fails with one through `toUserError`; any other failure is reported as a crash, `ERROR (#n)`.
+ * action's failure as its `cause` and `reason`, and whose `userMessage` is its JSON, or for a
+ * failure no schema encodes, as `command` says. A type only.
+ *
+ * **Gotchas**
+ *
+ * - `Command.run` has printed it before a recovery runs, so a recovery decides what follows, such as the exit code, not the text: for text of your own, provide `CliOutput.layer(Object.assign({}, CliOutput.defaultFormatter(), { formatError }))`, or pass `renderErrors: false` to `Command.run` and print every failure, the parser's too.
+ * - A run also fails with Effect CLI's own errors, such as a flag that does not parse, and only a `UserError` has a `userMessage`: match `Effect.catchTag("UserError", …)` before reading one.
  */
 export class UserError<out E = unknown> extends CliError.UserError {
   declare readonly cause: E;
@@ -542,7 +568,12 @@ const stdinTextOf = (field: string) =>
     // derived command, with `stdin` or without.
     const stdio = yield* Effect.serviceOption(Stdio.Stdio);
 
-    if (Option.isNone(stdio)) return yield* Effect.die(new Error("Stdio is not provided"));
+    if (Option.isNone(stdio))
+      return yield* Effect.die(
+        new Error(
+          "Stdio is not provided (provide NodeServices.layer, or Stdio.layerTest in a test)",
+        ),
+      );
 
     if (yield* stdio.value.stdinIsTerminal) {
       return yield* unreadableStdinField(
@@ -590,10 +621,14 @@ const inputConfig = <A extends Action.Any>(
       const property = encoded.propertySignatures.find(({ name }) => name === field);
 
       if (property === undefined || SchemaAST.isOptional(property.type)) {
-        throw new Error(`Not a required input field: ${field}`);
+        throw new Error(
+          `Not a required input field: ${field} (stdin names a required field of the action's input)`,
+        );
       }
 
-      if (positional.includes(field)) throw new Error(`Both positional and stdin: ${field}`);
+      if (positional.includes(field)) {
+        throw new Error(`Both positional and stdin: ${field} (take it from one of them)`);
+      }
 
       const description = params.find((param) => param.field === field)?.description;
 
@@ -612,7 +647,11 @@ const inputConfig = <A extends Action.Any>(
 
     const stray = Object.keys(aliases).find((field) => !flagged.has(field));
 
-    if (stray !== undefined) throw new Error(`Not a flag's input field: ${stray}`);
+    if (stray !== undefined) {
+      throw new Error(
+        `Not a flag's input field: ${stray} (aliases name fields read from flags, neither positional nor stdin)`,
+      );
+    }
 
     return {
       flags: Object.fromEntries(
@@ -631,15 +670,21 @@ const inputConfig = <A extends Action.Any>(
     };
   }
 
+  const asWhole = "(the input is not a struct, so it is one --input flag: drop the option)";
+
   if (positional.length > 0) {
-    throw new Error(`Positional arguments need named input fields: ${positional.join(", ")}`);
+    throw new Error(
+      `Positional arguments need named input fields: ${positional.join(", ")} ${asWhole}`,
+    );
   }
 
   if (Object.keys(aliases).length > 0) {
-    throw new Error(`Aliases need named input fields: ${Object.keys(aliases).join(", ")}`);
+    throw new Error(
+      `Aliases need named input fields: ${Object.keys(aliases).join(", ")} ${asWhole}`,
+    );
   }
 
-  if (stdin !== undefined) throw new Error(`Stdin needs named input fields: ${stdin}`);
+  if (stdin !== undefined) throw new Error(`Stdin needs named input fields: ${stdin} ${asWhole}`);
 
   return {
     flags: { input: wholeInputFlag(encoded) },
@@ -648,6 +693,10 @@ const inputConfig = <A extends Action.Any>(
     stdinHelp: undefined,
   };
 };
+
+// Why: Effect CLI keys a field's flag and an alias alike, by bare name, and prints a
+// one-character alias as `-n`, every other flag as `--name`.
+const aliasFlag = (alias: string) => (alias.length === 1 ? `-${alias}` : `--${alias}`);
 
 export const command = <A extends Action.Any, E, R>(
   action: A,
@@ -670,16 +719,27 @@ export const command = <A extends Action.Any, E, R>(
   assertDistinct(
     "flag",
     [
-      ...Object.keys(flags).map((field) => [`--${kebab(field)}`, `field ${field}`] as const),
-      ...(render === undefined ? [] : [["--json", "render's --json"] as const]),
-      ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) =>
-        Predicate.isString(alias)
-          ? [[`--${alias.replace(/^-+/, "")}`, `alias of field ${field}`] as const]
-          : [],
+      ...Object.keys(flags).map(
+        (field) => [kebab(field), `--${kebab(field)}`, `field ${field}`] as const,
       ),
+      ...(render === undefined ? [] : [["json", "--json", "render's --json"] as const]),
+      ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) => {
+        const bare = Predicate.isString(alias) ? alias.replace(/^-+/, "") : undefined;
+
+        return bare === undefined
+          ? []
+          : [[bare, aliasFlag(bare), `alias of field ${field}`] as const];
+      }),
     ],
-    ([flag]) => flag,
-    ([, claimant]) => claimant,
+    ([key]) => key,
+    {
+      labelOf: ([, label]) => label,
+      claimantOf: ([, , claimant]) => claimant,
+      fix:
+        render === undefined
+          ? "rename the field or the alias"
+          : "rename the field or the alias, or drop `render`",
+    },
   );
 
   const args = positional.map(({ param }) => param);

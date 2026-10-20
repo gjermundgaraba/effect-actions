@@ -5,8 +5,7 @@ import { type Grant, Grants } from "./grants.js";
 
 // An authorizer built from a startup service, as a handler builder builds handlers: the
 // Effect yields `Grants` once, when the implementation is built, and the function it returns
-// reads the operator on every call. Written as a plain function yielding `Grants` per call, it
-// would make `Grants` a request-time requirement of every surface.
+// reads the operator on every call.
 export const authorize = Effect.gen(function* () {
   const grants = yield* Grants;
 

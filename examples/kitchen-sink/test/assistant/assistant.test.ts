@@ -311,7 +311,7 @@ describe("the assistant, behind a route", () => {
     ),
   );
 
-  it.effect("runs what its member approves in each turn of the demo model", () =>
+  it.effect("runs what its member approves in a later turn of the demo model", () =>
     Effect.gen(function* () {
       const ada = yield* asAda;
 

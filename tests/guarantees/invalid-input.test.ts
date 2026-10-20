@@ -13,7 +13,7 @@ import {
 } from "effect";
 import { McpSchema } from "effect/ai";
 import { HttpClientResponse, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { RpcSerialization, RpcServer } from "effect/rpc";
+import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import { HttpApiClient, HttpApiSchema, OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
@@ -229,6 +229,7 @@ it.effect(
       });
 
       const SaveHttp = ActionHttp.make([Save]);
+      const SaveRpc = ActionRpc.make([Save]);
 
       const app = Action.implement(Save, (input) => Effect.sync(() => seen.push(input)));
 
@@ -260,18 +261,29 @@ it.effect(
         yield* (yield* ActionHttp.client(SaveHttp)).save(wider);
         yield* (yield* HttpApiClient.make(SaveHttp.api)).save({ payload: wider });
         yield* (yield* ActionMcp.client([Save])).save(wider);
+        yield* Effect.flatMap(ActionRpc.client(SaveRpc), (client) => client.save(wider)).pipe(
+          Effect.provide(
+            RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+              Layer.provide(RpcSerialization.layerJson),
+            ),
+          ),
+        );
       }).pipe(
         Effect.provide(
           Testing.layer(
-            Layer.merge(
+            Layer.mergeAll(
               ActionHttp.layer(SaveHttp, app),
               ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+              ActionRpc.layer(SaveRpc, app).pipe(
+                Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+                Layer.provide(RpcSerialization.layerJson),
+              ),
             ),
           ),
         ),
       );
 
-      expect(seen).toEqual(Array.from({ length: 3 }, () => ({ value: 1, owner: { id: "a" } })));
+      expect(seen).toEqual(Array.from({ length: 4 }, () => ({ value: 1, owner: { id: "a" } })));
     }),
 );
 

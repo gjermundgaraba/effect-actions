@@ -76,8 +76,10 @@ const snippets = pages.flatMap((page) =>
   ),
 );
 
-it.each(snippets)("keeps %s's snippet of examples/%s equal to the file", (_, file, code) => {
-  expect(code).toBe(read(`examples/${file}`).trim());
+const packageOf = (page: string) => (page.startsWith(`${cloudflare}/`) ? `${cloudflare}/` : "");
+
+it.each(snippets)("keeps %s's snippet of examples/%s equal to the file", (page, file, code) => {
+  expect(code).toBe(read(`${packageOf(page)}examples/${file}`).trim());
 });
 
 it.each(pages)("%s links only to files and headings that exist", (page) => {
@@ -116,7 +118,33 @@ it.each(cloudflarePages)(
 it.each(docsPages)("%s names no source path of the library, which does not ship", (page) => {
   const ofAnExample = new RegExp(`(?:${[...examples, ...cloudflareExamples].join("|")})/src/`, "g");
 
-  expect(read(page).replaceAll(ofAnExample, "")).not.toMatch(/\bsrc\//);
+  expect(withoutCode(page).replaceAll(ofAnExample, "")).not.toMatch(/\bsrc\//);
+});
+
+it.each(docsPages)("%s fences TypeScript only as a whole example file", (page) => {
+  const fences = Array.from(read(page).matchAll(/^\x60{3}ts(.*)$/gm), ([, rest = ""]) => rest);
+
+  for (const rest of fences) expect(rest, page).toMatch(/^ example=\S+$/);
+});
+
+it("gives every module page a -failures.md beside it, each entry one line", () => {
+  for (const page of docsPages) {
+    if (page.endsWith("-failures.md") || page.endsWith("docs/README.md")) continue;
+
+    const own = page.replace(/\.md$/, "-failures.md");
+
+    const failures = existsSync(join(root, own))
+      ? own
+      : page.replace(/-[a-z-]+\.md$/, "-failures.md");
+
+    const lines = read(failures).split("\n");
+
+    expect(lines.filter((line) => line.startsWith("- ")).length, failures).toBeGreaterThan(0);
+
+    for (const [index, line] of lines.entries()) {
+      if (line.startsWith("  ")) expect.fail(`${failures}:${index + 1} continues an entry`);
+    }
+  }
 });
 
 it.each(docsPages)("%s stays below the 16 KB safety margin for tool-output truncation", (page) => {
@@ -164,20 +192,19 @@ it("gives every module the cloudflare package exports a page and a failures page
 });
 
 it("lists every module the package exports under docs/setup.md's entry points", () => {
-  const section = read("docs/setup.md").split("\n## Entry points\n")[1] ?? "";
+  const section = read("docs/setup.md").split("\n## Entry points\n")[1]?.split("\n## ")[0] ?? "";
 
-  const [block = ""] = Array.from(
-    section.matchAll(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/g),
-    ([, code]) => code,
-  );
+  const sentence = section.replaceAll("\n", " ").match(/The modules: [^.]*\./)?.[0] ?? "";
+
+  const listed = Array.from(sentence.matchAll(/`([A-Za-z]+)`/g), ([, name = ""]) => name);
 
   const modules = Object.keys(manifest.exports).flatMap((path) =>
     path === "./package.json" ? [] : [path.slice("./".length)],
   );
 
-  expect(block.split("\n").toSorted()).toEqual(
-    modules.map((module) => `import * as ${module} from "${manifest.name}/${module}";`).toSorted(),
-  );
+  const byName = (a: string, b: string) => a.localeCompare(b);
+
+  expect(listed.toSorted(byName)).toEqual(modules.toSorted(byName));
 });
 
 it.each(["", `${cloudflare}/`])(
@@ -198,3 +225,58 @@ it.each(["", `${cloudflare}/`])(
     expect(named.filter(({ path }) => !existsSync(join(root, pkg, path)))).toEqual([]);
   },
 );
+
+const exportsOf = (pkg: string, paths: ReadonlyArray<string>) => {
+  const sources = readdirSync(join(root, pkg, "src"), { recursive: true, encoding: "utf8" });
+
+  return paths
+    .filter((path) => path !== "./package.json")
+    .map((path) => {
+      const module = path.slice("./".length);
+      const file = sources.find((name) => name.endsWith(`/${module}.ts`));
+
+      if (file === undefined) throw new Error(`No public module file for ${pkg}${module}`);
+
+      const source = read(`${pkg}src/${file}`);
+
+      const declared = Array.from(
+        source.matchAll(/^export (?:declare )?(?:const|function|interface|type|class) (\w+)/gm),
+        ([, name = ""]) => name,
+      );
+
+      const listed = Array.from(
+        source.matchAll(/^export (?:type )?\{([^}]*)\}/gm),
+        ([, body = ""]) =>
+          body.split(",").flatMap((entry) => {
+            const name =
+              entry
+                .trim()
+                .replace(/^type /, "")
+                .split(" as ")
+                .at(-1)
+                ?.trim() ?? "";
+
+            return name === "" ? [] : [name];
+          }),
+      );
+
+      return [module, new Set([...declared, ...listed.flat()])] as const;
+    });
+};
+
+it("names, in the pages and READMEs, only symbols the public modules of both packages export", () => {
+  const exported = new Map([
+    ...exportsOf("", Object.keys(manifest.exports)),
+    ...exportsOf(`${cloudflare}/`, Object.keys(cloudflareManifest.exports)),
+  ]);
+
+  const pointer = new RegExp(`\\x60(${Array.from(exported.keys()).join("|")})\\.(\\w+)`, "g");
+
+  const unresolved = pages.flatMap((page) =>
+    Array.from(read(page).matchAll(pointer)).flatMap(([, module = "", symbol = ""]) =>
+      exported.get(module)?.has(symbol) ? [] : [`${page}: ${module}.${symbol}`],
+    ),
+  );
+
+  expect(unresolved).toEqual([]);
+});

@@ -5,6 +5,8 @@ import { HttpClient, HttpClientRequest, HttpRouter, HttpServerRequest } from "ef
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
+import { post } from "../support/requests.js";
+import { serve } from "../support/serve.js";
 
 const Echo = Action.make("echo", {
   description: "Echo the text",
@@ -55,3 +57,16 @@ it.effect(
       ),
     ),
 );
+
+it("reads a body over MaxBodySize whole under HttpRouter.toWebHandler", async () => {
+  const { handler } = serve(
+    ActionHttp.layer(ActionHttp.make([Echo]), app).pipe(
+      Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.bytes(1024))),
+    ),
+  );
+
+  const large = "x".repeat(4096);
+  const response = await handler(post("/api/echo", { text: large }));
+
+  expect([response.status, await response.json()]).toEqual([200, large]);
+});

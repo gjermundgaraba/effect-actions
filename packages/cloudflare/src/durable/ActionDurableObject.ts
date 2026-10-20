@@ -52,7 +52,13 @@ export interface Options<
    * instance, before the routes, again after every eviction, and never finalized. The routes,
    * every request, the alarm and `run` share that one build, and an implementation the services
    * build, such as an in-process `Action.client`'s, is the one the routes serve. They may
-   * require `State` alone.
+   * require `State` alone, so a store over the object's storage, or what the object is, such as
+   * its name, is a Layer requiring `State`.
+   *
+   * **Gotchas**
+   *
+   * - A service only the routes need may be provided to them instead, but the alarm and `run` see only these: one they read too belongs here.
+   * - A module-level Layer reading `env` from `cloudflare:workers` as the module evaluates finds it unset: read it as the Layer builds or serves, or give `make` a function of the instance's `env`.
    */
   readonly services?: Layer.Layer<S, SE, SR> | undefined;
   /**
@@ -62,6 +68,11 @@ export interface Options<
    * the services; a request-time requirement must be provided by their middleware or
    * authentication, or be one of the services or a service they provide themselves. Without
    * them, `fetch` answers 404, and the socket handlers resolve at once.
+   *
+   * **Gotchas**
+   *
+   * - Router middleware and `HttpRouter.provideRequest` around the routes run for a socket's upgrade request alone: a service only they provide is missing from every call over the socket, which dies with `Internal server error`; list an `RpcMiddleware` in `ActionRpc.layer`'s `middleware`, or make it a startup service.
+   * - `toWebHandler` reads no `HttpServerRequest.MaxBodySize`: the platform limits request bodies.
    */
   readonly routes?: Layer.Layer<A, E, R> | undefined;
   /**
@@ -71,13 +82,24 @@ export interface Options<
    * finalized. It may require the protocol, `State` and the services; every call's own
    * requirement must be provided by its middleware or be one of those. Without it, a call over
    * the stub rejects at once.
+   *
+   * **Gotchas**
+   *
+   * - The calls serve one group on the one protocol `make` and `handlers` give them: serve several groups as one, `group.merge(other)`, as a second `layerStub()` fails the build.
+   * - A plain group suits an object's own API, which only its Worker and other objects call; an `ActionRpc.layer` suits actions served on other surfaces too, called with `ActionRpc.client` over `layerStubClient`.
    */
   readonly calls?: Layer.Layer<CA, CE, CR> | undefined;
   /**
    * What the object's `alarm` runs, scheduled with `State`'s `storage.setAlarm`, given the
    * runtime's `retryCount` and `isRetry`. It may require the services, `State` and a `Scope`,
-   * closed when it ends. It runs through `run`. A failure rejects `alarm`, which Cloudflare
-   * retries.
+   * closed when it ends. It runs through `run`, once the services and routes are built, given
+   * the `AlarmInvocationInfo` or `undefined` when the object's `alarm` is called with none.
+   *
+   * **Gotchas**
+   *
+   * - A failure rejects `alarm`, which the runtime retries with backoff, up to six times.
+   * - The object has one alarm: setting it again replaces it, so a store setting it for its next expiry sets the earliest.
+   * - Without it, the class `make` returns has no `alarm` handler, and workerd refuses `storage.setAlarm`, at that call.
    */
   readonly alarm?:
     | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, AR>)
@@ -130,15 +152,23 @@ const notFound: (request: Request) => Promise<Response> = () =>
   Promise.resolve(new Response(null, { status: 404 }));
 
 /**
- * The object's lifecycle, for a Durable Object class of your own: given its `ctx`, the
- * handlers that build `services`, then `calls`, with `Calls` and `layerStub`, and `routes`, with
- * `Sockets`, once per instance, on the first event, with `State` provided, and share that one
- * build across every event. `fetch` serves the routes, the socket handlers dispatch through
- * `Sockets`, `effectActionsRpc` through `Calls`, `alarm` runs `alarm` and `run` runs an
- * Effect in the object. A build that fails rejects the events awaiting it, and the next event
- * builds everything again. The runtime evicts an idle instance and constructs a new one for the
- * next event, so nothing the services, calls or routes build is finalized, and in-memory state
- * lasts no longer than an instance.
+ * The object's lifecycle, for a Durable Object class that cannot extend the one `make` returns:
+ * given its `ctx`, the handlers that build `services`, then `calls`, with `Calls` and
+ * `layerStub`, and `routes`, with `Sockets`, once per instance, on the first event, with `State`
+ * provided, and share that one build across every event, which awaits it. `fetch` serves the
+ * routes, the socket handlers dispatch through `Sockets`, `effectActionsRpc` through `Calls`,
+ * `alarm` runs `alarm` and `run` runs an Effect in the object. Delegate the handlers the class
+ * serves this way, as methods: `effectActionsRpc(request: StubRequest)` returning the
+ * handlers' own.
+ *
+ * **Gotchas**
+ *
+ * - An instance lasts until the runtime evicts it, and the next event builds everything again on a new one: nothing the services, calls or routes build is finalized, and in-memory state is lost, so keep state in storage.
+ * - A build that fails rejects every event awaiting it, each with the same failure, and is dropped with all it built: the next event builds again.
+ * - Nothing holds the object while it builds, so a build has no time limit of its own.
+ * - Without `routes`, `fetch` answers 404 and the socket handlers resolve at once, building nothing; without `calls`, `effectActionsRpc` rejects at once, naming the option.
+ * - A socket the class accepts itself, with `State`'s `acceptWebSocket`, carries no protocol's tag: the socket handlers resolve for it, so the class answers the sockets carrying its own tag in `webSocketMessage` and delegates the rest.
+ * - The class defines `alarm` only when it has one: workerd refuses `storage.setAlarm` on a class without an `alarm` method.
  *
  * Guide: `docs/ActionDurableObject-own-class.md` in this package.
  */
@@ -383,15 +413,18 @@ export function make<
 // neither form against the last overload alone.
 /**
  * A Durable Object class delegating every handler, and `run`, to `handlers` over its own `ctx`,
- * with `services`, or what a function of its `env` returns:
- * it serves `routes` on `fetch`, the sockets their protocols accept on `webSocketMessage`,
- * `webSocketClose` and `webSocketError`, and `calls` on `effectActionsRpc`, the method a
- * caller's `layerStubClient` or `client` calls over the stub, and runs `alarm`. A socket no protocol accepted, such
- * as one a class extending it accepts itself, is left to that class: the three handlers resolve
- * for it, so an override answers its own sockets and calls `super` for the rest. Export it, or a
- * class extending it, under the name the Wrangler configuration binds. Made without `alarm`,
- * the class has no alarm handler: workerd refuses `storage.setAlarm` on it, and celld 0.6.2
- * accepts the call and consumes the alarm silently.
+ * with `services`, or what a function of its `env` returns: it serves `routes` on `fetch`, the
+ * sockets their protocols accept on `webSocketMessage`, `webSocketClose` and `webSocketError`,
+ * and `calls` on `effectActionsRpc`, the method a caller's `layerStubClient` or `client` calls
+ * over the stub, and runs `alarm`. Export it, or a class extending it, under the name the
+ * Wrangler configuration binds; a class extending it overrides only the handlers it has reason
+ * to write, and reaches `make`'s through `super`.
+ *
+ * **Gotchas**
+ *
+ * - A socket no protocol accepted, such as one a class extending it accepts itself, is left to that class: the three socket handlers resolve for it, so an override answers its own sockets and calls `super` for the rest.
+ * - Made without `alarm`, the class has no `alarm` handler: workerd refuses `storage.setAlarm` on it with `Your Durable Object class must have an alarm() handler`, and celld 0.6.2 accepts the call and drops the alarm when it is due.
+ * - Made with one, `alarm` is optional in `Instance`'s type, as Cloudflare declares it: an override reaches it with `await super.alarm?.(info)`.
  *
  * Guide: `docs/ActionDurableObject.md` in this package; in an application:
  * `examples/chat-rooms/`.
@@ -487,9 +520,14 @@ export function make<
 /**
  * An `HttpClient` whose requests go to `fetcher`, a Durable Object stub or a service binding,
  * in place of the network: what `ActionHttp.client`, `ActionRpc.client` over
- * `RpcClient.layerProtocolHttp` and `ActionMcp.client` call it with. A request's URL needs a
- * host, which the fetcher ignores, such as `https://object/api`. Nothing authenticates the
- * request on its way: forward the caller's credential, as for any remote surface.
+ * `RpcClient.layerProtocolHttp` and `ActionMcp.client` call an object's routes with, or a
+ * Worker's.
+ *
+ * **Gotchas**
+ *
+ * - A request's URL needs a host, which the fetcher ignores, such as `https://object/api`: a relative URL fails before it is sent.
+ * - Nothing authenticates the request on its way: forward the caller's credential, with the client's `transformClient`, as for any remote surface.
+ * - To pass a page's request on to an object, forward the `Request` itself with the stub's `fetch`: its upgrade goes with it, which this client does not send.
  *
  * Guide: `docs/ActionDurableObject.md` in this package.
  */

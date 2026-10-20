@@ -31,7 +31,11 @@ export class NoteStore extends Context.Service<
     readonly count: Effect.Effect<number>;
   }
 >()("notes-service/NoteStore") {
-  // DEMO ONLY: notes and replay records live in this process's memory, without eviction.
+  // DEMO ONLY: notes and replay records live in this process's memory, without eviction, so
+  // they neither survive a restart nor coordinate separate server instances. A deployed store
+  // commits the mutation and its replay record in one transaction, enforces uniqueness of
+  // caller, operation and key, and defines a retention window: an expired key no longer
+  // protects a retry. A separate network call is not made atomic by a local record.
   static readonly layerMemory = Layer.sync(NoteStore, () => {
     // One map per owner: a note is only ever looked up among its owner's, whatever id is asked.
     const notes = new Map<string, Map<string, Note>>();

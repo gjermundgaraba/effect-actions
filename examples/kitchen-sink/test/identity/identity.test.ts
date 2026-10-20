@@ -68,7 +68,6 @@ describe("a bearer token", () => {
 
         const refused = yield* Effect.flip(reader.createIssue({ title: "Crash", body: "" }));
 
-        // `toEqual` compares an error's own fields, here `scopes`; never its `message`.
         expect(refused).toEqual(new Action.Forbidden({ scopes: ["issues:write"] }));
         expect(refused.message).toBe("Requires issues:write.");
 

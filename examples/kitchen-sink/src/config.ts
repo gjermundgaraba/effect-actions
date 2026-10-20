@@ -14,5 +14,7 @@ export const publicUrl = Config.String("PUBLIC_URL").pipe(
  */
 export const allowedOrigins = Config.all([
   publicUrl,
+  // DEMO ONLY: the default is the MCP Inspector's local origin. A page of any origin listed
+  // passes the request policy and CORS, so a deployment names its own client's.
   Config.String("MCP_ORIGIN").pipe(Config.withDefault("http://localhost:6274")),
 ]).pipe(Config.map(([url, mcp]) => [new URL(url).origin, mcp]));

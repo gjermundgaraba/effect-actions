@@ -6,8 +6,7 @@ import { NoteStore } from "./notes/store.js";
 import { routes } from "./routes.js";
 
 // Entrypoint: `node --import tsx examples/notes-service/src/server.ts`.
-// This is the composition root of the server. It chooses the store, reads the configuration
-// and starts Node's HTTP server; nothing below it knows which of those it got.
+// It chooses the store, reads the configuration and starts Node's HTTP server.
 const server = Layer.unwrap(
   Effect.gen(function* () {
     // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
@@ -16,8 +15,10 @@ const server = Layer.unwrap(
 
     return HttpRouter.serve(routes).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
-      // Request bodies have no size limit unless the host sets one. This covers every route.
+      // Request bodies have no size limit unless the host sets one. This covers every route that
+      // reads its body whole.
       Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
+      // DEMO ONLY: notes live in this process's memory; a deployment provides a store that lasts.
       Layer.provide(NoteStore.layerMemory),
     );
   }),

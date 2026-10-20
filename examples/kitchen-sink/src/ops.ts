@@ -9,10 +9,8 @@ import { WorkspaceRegistry } from "./workspaces/registry.js";
 
 // Entrypoint: `node --import tsx examples/kitchen-sink/src/ops.ts list-workspaces`.
 // The operators' console: the admin actions run in this process, on the host's own services,
-// with no server and no key. A local command is no bypass: the implementation's `authorize`
-// runs here as on the admin port, and admits the operator this host supplies.
+// with no server and no key.
 
-// Only a host can name the trusted operator: no verifier's return type includes it.
 const operator: TrustedOperator = { id: "console", trusted: true };
 
 const ops = ActionCli.make(admin, {
@@ -28,9 +26,8 @@ const ops = ActionCli.make(admin, {
     resumeWorkspace: { positional: ["workspace"] },
   },
 }).pipe(
-  // Services go on the command: built when an action runs, never for `--help` or a mistyped
-  // flag. Only what these actions are built from. DEMO ONLY: memory, so this console sees its
-  // own process, not the server's data. A real one provides the database Layers the server does.
+  // Only what these actions are built from. DEMO ONLY: memory, so this console sees its own
+  // process, not the server's data. A real one provides the database Layers the server does.
   Command.provide(Layer.merge(WorkspaceRegistry.layerMemory, Grants.layerDemo)),
   Command.provideSync(Operator, operator),
 );

@@ -7,7 +7,7 @@ import { connection, openChat } from "./browser.js";
 const visit = Effect.gen(function* () {
   const chat = yield* openChat;
 
-  // Two members on the one socket: each call is whoever its token says.
+  // Two members on the one socket.
   const ada = chat.room("lobby", "ada");
   const grace = chat.room("lobby", "grace");
 
@@ -26,8 +26,7 @@ const visit = Effect.gen(function* () {
 const main = Effect.gen(function* () {
   const url = yield* Config.String("CHAT_URL").pipe(Config.withDefault("ws://127.0.0.1:3000/rpc"));
 
-  // The socket belongs to `connection(url)`: provided once around the whole visit, it opens
-  // for it and closes when this `Effect.provide` ends. `Effect.scoped` holds the client alone.
+  // One socket for the whole visit, so both members' calls share it.
   yield* visit.pipe(
     Effect.scoped,
     Effect.provide(connection(url).pipe(Layer.provide(NodeSocket.layerWebSocketConstructor))),

@@ -6,6 +6,7 @@ import { Http } from "./Api.js";
 
 // Entrypoint: `node --import tsx examples/quickstart/src/client.ts`, with the server running.
 // One typed method per action of the binding.
+// DEMO ONLY: a deployed client reads its `baseUrl` from configuration (kitchen-sink/src/seed.ts).
 Effect.gen(function* () {
   const client = yield* ActionHttp.client(Http, { baseUrl: "http://127.0.0.1:3000" });
 

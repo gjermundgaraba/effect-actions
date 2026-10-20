@@ -98,10 +98,10 @@ const verify = (token: Redacted.Redacted<string>) =>
 const authenticate = Authentication.layer(Login, verify);
 
 describe("Authentication.make", () => {
-  it("refuses a name that is no OpenAPI component key, which it is", () => {
+  it("refuses a name that is no OpenAPI component key, which the name becomes", () => {
     for (const name of ["app/Login", "app:Login", "Log in", ""]) {
       expect(() => Authentication.make(name, Identity)).toThrow(
-        `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key`,
+        `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key: use only letters, digits, "_", "." and "-"`,
       );
     }
 
@@ -112,7 +112,7 @@ describe("Authentication.make", () => {
     for (const security of [{}, { bearer: HttpApiSecurity.bearer }, "Bearer"]) {
       // @ts-expect-error -- Plain JavaScript can pass anything.
       expect(() => Authentication.make("test.Refused", Identity, { security })).toThrow(
-        "Authentication takes one native HttpApiSecurity scheme",
+        "Authentication takes one native HttpApiSecurity scheme as `security`: omit it for Bearer, or give one scheme, such as `HttpApiSecurity.basic`, never a record of them",
       );
     }
   });
@@ -123,7 +123,8 @@ describe("a protected action's descriptor", () => {
 
   const OtherLogin = Authentication.make("test.OtherLogin", Other);
 
-  const refused = "Protected action 'identify' requires its matching authentication descriptor";
+  const refused =
+    "Protected action 'identify' requires its matching authentication descriptor (give it the authentication whose identity the action's caller names)";
 
   it("is required, and of the identity the action declares, where plain JavaScript serves it", () => {
     for (const authentication of [undefined, OtherLogin]) {
@@ -384,7 +385,7 @@ describe("Authentication.layer", () => {
       }),
   );
 
-  it("never lets a protected action's failure be cached, however enclosing middleware answers it", async () => {
+  it("never lets a protected action's failure be cached, even where enclosing middleware marks its response public", async () => {
     class Hidden extends Schema.TaggedError<Hidden>()(
       "Hidden",
       { message: Schema.String },
@@ -524,7 +525,7 @@ describe("Authentication.layer's refusals", () => {
     const bad = { ...resource, scopesRequired: ["has space"] as const };
 
     expect(() => Authentication.layer(Login, verify, { protectedResource: bad })).toThrow(
-      'Invalid scope in scopesRequired: "has space"',
+      `Invalid scope in scopesRequired: "has space", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
     );
   });
 
@@ -532,7 +533,7 @@ describe("Authentication.layer's refusals", () => {
     const bad = { ...resource, scopesSupported: ["docs:read", "has space"] as const };
 
     expect(() => Authentication.layer(Login, verify, { protectedResource: bad })).toThrow(
-      'Invalid scope in scopesSupported: "has space"',
+      `Invalid scope in scopesSupported: "has space", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
     );
   });
 
@@ -625,6 +626,37 @@ describe("Authentication.protect", () => {
     const cached = await web.handler(get("/cached", "Bearer alice"));
     expect(cached.headers.get("cache-control")).toBe("private");
   });
+
+  it.effect(
+    "no-stores a failure of the route that enclosing middleware answers, whatever caching it states",
+    () => {
+      class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
+
+      const answeringGoneCacheable = HttpRouter.middleware<{ handles: Gone }>()((route) =>
+        Effect.catch(route, (error) =>
+          Schema.is(Gone)(error)
+            ? Effect.succeed(
+                HttpServerResponse.text("gone", {
+                  status: 410,
+                  headers: { "cache-control": "public, max-age=60" },
+                }),
+              )
+            : Effect.fail(error),
+        ),
+      );
+
+      const routes = HttpRouter.add("GET", "/gone", Effect.fail(new Gone())).pipe(
+        Layer.provide(Authentication.protect(Login).layer),
+        Layer.provide(answeringGoneCacheable.layer),
+        Layer.provide(Authentication.layer(Login, verify)),
+      );
+
+      return Effect.gen(function* () {
+        const gone = yield* send(get("/gone", "Bearer alice"));
+        expect([gone.status, gone.headers["cache-control"]]).toEqual([410, "no-store"]);
+      }).pipe(Effect.provide(Testing.layer(routes)));
+    },
+  );
 
   it("answers the route's refusals as an action's, stepping up under Bearer, and challenges its own 401", async () => {
     const web = hostRoutesBesideAnAction();
@@ -756,7 +788,7 @@ describe("an error a descriptor declares", () => {
       }).pipe(Effect.provide(Testing.layer(routes))),
   );
 
-  it("is sent as its status and the JSON its schema encodes, its text as it is, no-store and unchallenged, on every remote surface alike", async () => {
+  it("is sent as its status and the JSON its schema encodes, its text as it is, no-store and unchallenged, on the action route, the MCP endpoint, a protect route and refusalResponse alike", async () => {
     const web = serve(routes);
 
     const action = await answerOf(await web.handler(withBearer(request(), "down")));
@@ -833,7 +865,9 @@ describe("an error a descriptor declares", () => {
     expect(() =>
       // @ts-expect-error -- Without the descriptor declaring it, it is no answer authentication gives.
       Authentication.refusalResponse(unavailable),
-    ).toThrow("Not a refusal, nor an error the authentication declares");
+    ).toThrow(
+      "Not a refusal, nor an error the authentication declares: pass the descriptor declaring it as `authentication`, or answer the error yourself",
+    );
   });
 });
 
@@ -985,7 +1019,7 @@ describe("a scheme other than Bearer", () => {
       );
 
       await expect(web.handler(post("/api/identify"))).rejects.toThrow(
-        `Authentication "test.MismatchedSession": the binding's descriptor is not its provider's`,
+        `Authentication "test.MismatchedSession": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
       );
     },
   );
@@ -1026,7 +1060,7 @@ describe("a scheme other than Bearer", () => {
       );
 
       await expect(web.handler(request())).rejects.toThrow(
-        `Authentication "test.MismatchedCookie": the binding's descriptor is not its provider's`,
+        `Authentication "test.MismatchedCookie": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
       );
     },
   );
@@ -1037,7 +1071,9 @@ describe("a scheme other than Bearer", () => {
         // @ts-expect-error -- A cookie names no OAuth resource.
         protectedResource: { resource: "https://a.example", authorizationServers: ["https://as"] },
       }),
-    ).toThrow("A protected resource is published only for a Bearer scheme");
+    ).toThrow(
+      "A protected resource is published only for a Bearer scheme: drop `protectedResource`, or authenticate with a Bearer descriptor",
+    );
   });
 });
 
@@ -1065,6 +1101,26 @@ describe("Basic", () => {
       401,
       'Basic realm="test.Basic"',
     ]);
+  });
+
+  it.effect("answers a handler's Unauthenticated with its 401 and the realm's challenge", () => {
+    const refusing = Action.implement(Identify, () => new Action.Unauthenticated(), {
+      authorize: Action.allowAll,
+    });
+
+    const routes = ActionHttp.layer(
+      ActionHttp.make([Identify], { authentication: Basic }),
+      refusing,
+    ).pipe(Layer.provide(basic));
+
+    return Effect.gen(function* () {
+      const response = yield* send(request(`Basic ${btoa(":token")}`));
+
+      expect([response.status, response.headers["www-authenticate"]]).toEqual([
+        401,
+        'Basic realm="test.Basic"',
+      ]);
+    }).pipe(Effect.provide(Testing.layer(routes)));
   });
 
   it("answers a host route's refusal as its routes do, through refusal", async () => {
@@ -1641,54 +1697,56 @@ describe("Authentication.layer beside other middleware", () => {
     }),
   );
 
-  it.effect("serves the documented tenant example", () =>
-    Effect.gen(function* () {
-      const whoAmIAt = (host: string, token?: string) =>
-        send(
-          new Request(`http://${host}/api/whoAmI`, {
-            method: "POST",
-            headers: {
-              host,
-              "content-type": "application/json",
-              ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-            },
-            body: "{}",
-          }),
-        );
+  it.effect(
+    "answers a tenant's member, refuses another tenant's and a non-member with 403, and challenges a signed-out caller",
+    () =>
+      Effect.gen(function* () {
+        const whoAmIAt = (host: string, token?: string) =>
+          send(
+            new Request(`http://${host}/api/whoAmI`, {
+              method: "POST",
+              headers: {
+                host,
+                "content-type": "application/json",
+                ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+              },
+              body: "{}",
+            }),
+          );
 
-      const alice = yield* whoAmIAt("acme.example.com", "alice");
-      expect([alice.status, alice.headers["x-actor"], yield* alice.json]).toEqual([
-        200,
-        "alice",
-        { id: "alice", tenantId: "acme" },
-      ]);
+        const alice = yield* whoAmIAt("acme.example.com", "alice");
+        expect([alice.status, alice.headers["x-actor"], yield* alice.json]).toEqual([
+          200,
+          "alice",
+          { id: "alice", tenantId: "acme" },
+        ]);
 
-      for (const [host, token] of [
-        ["acme.example.com", "bob"],
-        ["globex.example.com", "alice"],
-      ] as const) {
-        const outsider = yield* whoAmIAt(host, token);
-        expect([outsider.status, outsider.headers["x-actor"]]).toEqual([403, undefined]);
-        expect(yield* outsider.json).toMatchObject({ message: "Not a member of this tenant." });
-      }
+        for (const [host, token] of [
+          ["acme.example.com", "bob"],
+          ["globex.example.com", "alice"],
+        ] as const) {
+          const outsider = yield* whoAmIAt(host, token);
+          expect([outsider.status, outsider.headers["x-actor"]]).toEqual([403, undefined]);
+          expect(yield* outsider.json).toMatchObject({ message: "Not a member of this tenant." });
+        }
 
-      const anonymous = yield* whoAmIAt("acme.example.com");
-      expect([
-        anonymous.status,
-        anonymous.headers["www-authenticate"],
-        anonymous.headers["x-actor"],
-      ]).toEqual([401, "Bearer", undefined]);
+        const anonymous = yield* whoAmIAt("acme.example.com");
+        expect([
+          anonymous.status,
+          anonymous.headers["www-authenticate"],
+          anonymous.headers["x-actor"],
+        ]).toEqual([401, "Bearer", undefined]);
 
-      const bob = yield* whoAmIAt("other.example.com", "bob");
-      expect([bob.status, bob.headers["x-actor"], yield* bob.json]).toEqual([
-        200,
-        "bob",
-        { id: "bob", tenantId: "other" },
-      ]);
-    }).pipe(Effect.provide(Testing.layer(tenantRoutes.pipe(Layer.provide(Users.layerMemory))))),
+        const bob = yield* whoAmIAt("other.example.com", "bob");
+        expect([bob.status, bob.headers["x-actor"], yield* bob.json]).toEqual([
+          200,
+          "bob",
+          { id: "bob", tenantId: "other" },
+        ]);
+      }).pipe(Effect.provide(Testing.layer(tenantRoutes.pipe(Layer.provide(Users.layerMemory))))),
   );
 
-  it("refuses a foreign Host or Origin under the example's global policy before the tenant example's authentication", async () => {
+  it("refuses a foreign Host or Origin under a global policy before a tenant-reading verifier's authentication", async () => {
     const web = serve(
       Layer.mergeAll(requestPolicy, tenantRoutes).pipe(Layer.provide(Users.layerMemory)),
     );

@@ -15,33 +15,32 @@ Its declarations name the Workers runtime's types, such as `Fetcher`: generate t
 Serve actions from an object, over WebSockets the runtime holds while it hibernates:
 
 ```ts
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
-
-export class ChatRoom extends ActionDurableObject.make({
-  routes: ActionRpc.layer(Rpc, implementations).pipe(
+class ChatRoom extends ActionDurableObject.make({
+  services: Layer.mergeAll(layerSql, layerRoom),
+  routes: ActionRpc.layer(RoomRpc, room).pipe(
     Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
     Layer.provide(authenticate),
   ),
+  calls: RpcServer.layer(RoomCalls).pipe(Layer.provide(calls)),
 }) {}
 ```
 
-Serve an object's own API as an Effect `RpcGroup` over its stub, and call it from a Worker or
-another object with Cloudflare's own RPC, its declared errors typed:
+Call an object's own API, an Effect `RpcGroup` it serves as its `calls`, from a Worker or
+another object with Cloudflare's own RPC, a new stub for each call, its declared errors typed:
 
 ```ts
-export class PluginHost extends ActionDurableObject.make({
-  calls: RpcServer.layer(PluginRpcs).pipe(Layer.provide(pluginHandlers)),
-}) {}
+Effect.gen(function* () {
+  const room = yield* ActionDurableObject.client(RoomCalls);
 
-const plugin = yield * ActionDurableObject.client(PluginRpcs);
-const { pane } = yield * plugin(() => env.PLUGIN.getByName("notes")).start();
+  return yield* room(() => env.CHAT_ROOM.getByName("design")).latestAt();
+});
 ```
 
 Call an object's routes from a Worker with the core's own clients, through the stub:
 
 ```ts
-ActionHttp.client(Http, { baseUrl: "https://object" }).pipe(
-  Effect.provide(ActionDurableObject.layerHttpClient(env.ROOM.getByName("lobby"))),
+ActionHttp.client(RoomHttp, { baseUrl: "https://room" }).pipe(
+  Effect.provide(ActionDurableObject.layerHttpClient(env.CHAT_ROOM.getByName("design"))),
 );
 ```
 

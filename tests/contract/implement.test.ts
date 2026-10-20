@@ -165,7 +165,9 @@ describe("implement", () => {
       make: () => Action.implement([Hello, Bye], new OwnHelloInheritedBye()),
     },
   ])("throws at implement for $handlers", ({ make }) => {
-    expect(make).toThrow("Missing handlers: bye");
+    expect(make).toThrow(
+      "Missing handlers: bye (return the handler for one action, or a record with an own function per listed action)",
+    );
   });
 
   it.effect(
@@ -180,21 +182,23 @@ describe("implement", () => {
         const routes = ActionHttp.layer(ActionHttp.make([Hello, Bye]), app);
 
         expect(
-          yield* defectOf(
-            send(post("/api/hello", { name: "Ada" })).pipe(Effect.provide(Testing.layer(routes))),
+          String(
+            yield* defectOf(
+              send(post("/api/hello", { name: "Ada" })).pipe(Effect.provide(Testing.layer(routes))),
+            ),
           ),
-        ).toMatchObject({ message: "Missing handlers: bye" });
-        expect(yield* defectOf(Layer.build(ActionToolkit.make(app).layer))).toMatchObject({
-          message: "Missing handlers: bye",
-        });
+        ).toContain("Missing handlers: bye");
+        expect(String(yield* defectOf(Layer.build(ActionToolkit.make(app).layer)))).toContain(
+          "Missing handlers: bye",
+        );
 
         for (const [action, args] of [
           [Hello, ["--name", "Ada"]],
           [Bye, []],
         ] as const) {
-          expect(yield* defectOf(exec(ActionCli.command(app, action), args))).toMatchObject({
-            message: "Missing handlers: bye",
-          });
+          expect(String(yield* defectOf(exec(ActionCli.command(app, action), args)))).toContain(
+            "Missing handlers: bye",
+          );
         }
       }),
   );
@@ -207,7 +211,7 @@ describe("implement", () => {
           // @ts-expect-error -- A record names only its actions.
           stale: () => Effect.succeed("stale"),
         }),
-      ).toThrow("Unknown handlers: stale");
+      ).toThrow("Unknown handlers: stale (remove it, or list its action)");
 
       const built = Action.implement(
         [Hello],
@@ -215,9 +219,9 @@ describe("implement", () => {
         Effect.succeed({ hello: () => Effect.succeed("hi"), stale: () => Effect.succeed("stale") }),
       );
 
-      expect(yield* defectOf(Layer.build(ActionToolkit.make(built).layer))).toMatchObject({
-        message: "Unknown handlers: stale",
-      });
+      expect(String(yield* defectOf(Layer.build(ActionToolkit.make(built).layer)))).toContain(
+        "Unknown handlers: stale",
+      );
     }),
   );
 });
@@ -232,7 +236,9 @@ describe("authorization", () => {
 
   const hello = () => Effect.succeed("hi");
   const missing = "Protected actions require authorize, or Action.allowAll";
-  const notAFunction = "Missing authorize: pass an authorization function, or Action.allowAll";
+
+  const notAFunction =
+    "Missing authorize: not a function (pass your rule, Action.allowAll, or an Effect returning one)";
 
   it.effect(
     "refuses an implementation of protected actions stating no authorize, as plain JavaScript may write it",
@@ -264,7 +270,7 @@ describe("authorization", () => {
     expect(() =>
       // @ts-expect-error -- A public-only target takes no authorize.
       Action.implement(Open, () => Effect.void, { authorize: Action.allowAll }),
-    ).toThrow("A public-only target takes no authorize");
+    ).toThrow("A public-only target takes no authorize (remove it, or list a protected action)");
   });
 
   it("builds authorize once per layer graph for every surface, and runs what it built per call", async () => {
@@ -348,7 +354,7 @@ describe("authorization", () => {
     expect(built).toBe(1);
   });
 
-  it("serves the documented built authorizer: its store provided at startup, the actor per call", async () => {
+  it("serves a built authorizer: its store provided at startup, the actor per call", async () => {
     const Http = ActionHttp.make([WhoAmIContract], { authentication: Login });
 
     const tokenAsActorWithoutPermissions = Authentication.layer(

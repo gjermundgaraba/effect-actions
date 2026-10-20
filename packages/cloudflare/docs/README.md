@@ -8,40 +8,36 @@ with the core's own clients.
 
 These pages cover what this package adds. Everything else, contracts, implementations,
 authentication and each surface, is in the core package's docs, at
-`node_modules/@gjermundgaraba/effect-actions/docs/`: read its `README.md` first, then its
-`Action.md`, and the page of each surface you serve.
+`node_modules/@gjermundgaraba/effect-actions/docs/`: read its `docs/README.md` first, then its
+`docs/Action.md`, and the page of each surface you serve.
 
 ## How to read these pages
+
+**Arriving with an error?** A message the library throws says its fix; for any other, step 4.
 
 1. **Open one page per tool call, with your file-reading tool.** Pages are kept small to reduce
    truncation; if an output says it was truncated, read that page again alone.
 2. **Start from [chat-rooms](../examples/chat-rooms/)**, the one example: its README has a
-   layout tree and a "Where to look" table naming the file for each thing.
-3. **Read [ActionDurableObject.md](ActionDurableObject.md) completely**, its limits included,
-   then [ActionDurableObject-stub.md](ActionDurableObject-stub.md) to call an object over its
-   stub, and [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) for a class of
-   your own.
-4. **When something fails, search
+   layout tree and a "Where to look" table naming the file for each thing, and its comments
+   carry the traps it shows.
+3. **Read [ActionDurableObject.md](ActionDurableObject.md) completely**, then the page of each
+   task you have ([Pages](#pages)), and the example files their sections link.
+4. **For workerd's, celld's, a compiler diagnostic or Effect's own error, search
    [ActionDurableObject-failures.md](ActionDurableObject-failures.md)** for a fragment of the
-   message, then the core's `*-failures.md` pages.
+   message without quotes, then the core's `*-failures.md` pages.
 
-In a project that installs the package, these pages are in
+Where things are, in a project that installs the package: these pages in
 `node_modules/@gjermundgaraba/effect-actions-cloudflare/docs/`, the example in `examples/`
-beside them and the declarations with their JSDoc in `dist/`. Install it beside the core, at
-the same version: `@gjermundgaraba/effect-actions-cloudflare` and
-`@gjermundgaraba/effect-actions` are released together. Its declarations name the Workers
-runtime's types, from `wrangler types` or `@cloudflare/workers-types`.
+beside them, and the declarations with their JSDoc, the reference for rules and gotchas, under
+`dist/`. Install it beside the core, at the same version: the two are released together. Its
+declarations name the Workers runtime's types, from `wrangler types` or
+`@cloudflare/workers-types`.
 
 ## Pages
 
-| Read                                                                 | When you need to                                                                                                      |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| [ActionDurableObject.md](ActionDurableObject.md)                     | serve actions from an object, over hibernating WebSockets or JSON; run its alarm; test it                             |
-| [ActionDurableObject-stub.md](ActionDurableObject-stub.md)           | serve an object's rpcs over its stub and call them, or its routes, from a Worker or another object, with typed errors |
-| [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a Durable Object class of your own, delegating to `handlers` or composing the primitives              |
-| [ActionDurableObject-failures.md](ActionDurableObject-failures.md)   | find what an error or a refused upgrade means, and the fix                                                            |
-
-## Words
-
-These pages use the core's vocabulary, its `CONTEXT.md`, which defines Cloudflare's own terms
-too, under Cloudflare: Durable Object, object, instance, eviction, hibernation and stub.
+| Read                                                                 | When you need to                                                                                           |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| [ActionDurableObject.md](ActionDurableObject.md)                     | serve actions from an object, over hibernating WebSockets and JSON; run its alarm; test it; deploy it      |
+| [ActionDurableObject-stub.md](ActionDurableObject-stub.md)           | serve an object's own API over its stub, call it from a Worker, name the object in errors, call its routes |
+| [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a class that cannot extend `make`'s, delegating to `handlers` or composing the primitives  |
+| [ActionDurableObject-failures.md](ActionDurableObject-failures.md)   | find what workerd's, the compiler's or Effect's message means, and the fix                                 |

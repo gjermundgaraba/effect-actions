@@ -14,8 +14,7 @@ import { routes } from "../src/routes.js";
 // What the entrypoint reads from the environment, given to the test as a Layer.
 const farm = { FARM_URL: "https://farm.example.test", FARM_USER: "agent", FARM_PASSWORD: "secret" };
 
-// `Testing.layer` gives the test an `HttpClient` of its own, which reaches the routes. The
-// fake farm is another `HttpClient`, provided to `printFarm` alone.
+// The fake farm goes to `printFarm` alone, so the test's own requests still reach the routes.
 const servedWith = (environment: Record<string, string>) =>
   Testing.layer(routes).pipe(
     Layer.provide(printFarm.pipe(Layer.provide(fakeFarm))),
@@ -57,7 +56,7 @@ const Listed = Schema.Struct({
 });
 
 describe("the tools, over MCP", () => {
-  it.effect("lists every tool with the hints its contract states", () =>
+  it.effect("lists every tool with its title and hints as sent", () =>
     Effect.gen(function* () {
       // A raw request, for what no typed client shows: here, the listing itself.
       const response = yield* HttpClient.execute(ActionMcp.request("tools/list"));

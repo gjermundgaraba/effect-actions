@@ -3,13 +3,14 @@ import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { chatOver, openChat } from "../src/browser.js";
+import { openChat } from "../src/browser.js";
+import { chatOver } from "../src/page.js";
 import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
 
-// The page's client against the real rpcs, in memory. `openChat` needs a client protocol and
-// does not care which: a page gives it `connection(url)`, a WebSocket, and this test Effect's
-// HTTP protocol, answered by `Testing.layer`, which cannot upgrade a WebSocket.
+// The page's client against the real rpcs, in memory, served as in routes.test.ts. `openChat`
+// needs a client protocol and does not care which: a page gives it `connection(url)`, a
+// WebSocket, and this test Effect's HTTP protocol.
 const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerJson),
   Layer.provide(
@@ -78,7 +79,7 @@ describe("the page's client", () => {
 
   // `connect(url)` is this with a WebSocket. Each test's runtime builds its own layer, and so
   // its own store.
-  it("answers a page that is not an Effect program with promises, on one connection", async () => {
+  it("answers a page that is not an Effect program with promises, until it closes", async () => {
     const chat = chatOver(served);
 
     const posted = await chat.room("lobby", "ada").post("Deploying at noon.");

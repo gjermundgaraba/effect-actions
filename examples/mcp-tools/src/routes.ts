@@ -20,13 +20,6 @@ export const routes = Layer.unwrap(
     // no origin, allows every one, so it is added only where an origin is configured. The
     // methods are the endpoint's, the headers those an MCP client sends and must be able to
     // read; an endpoint with authentication adds `Authorization` and exposes `WWW-Authenticate`.
-    //
-    // Given several origins it names the request's own in `Access-Control-Allow-Origin` when
-    // it is listed, and sends no such header otherwise. Given exactly one it compares nothing:
-    // every answer names that origin, a preflight from elsewhere included. Both refuse a page
-    // elsewhere, whose browser allows a call only where the header names the page's own origin,
-    // and the Origin check above has answered its request 403 either way. So a test of one
-    // configured origin asserts which origin is named, never that the header is absent.
     const cors =
       allowedOrigins.length === 0
         ? Layer.empty

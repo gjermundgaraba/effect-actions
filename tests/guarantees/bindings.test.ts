@@ -289,9 +289,11 @@ describe("selecting an implementation's actions", () => {
         actions: [lookalike],
         authentication: Login,
       }),
-    ).toThrow("Listed in actions, but no implementation holds it: identity (another contract)");
+    ).toThrow(
+      "Listed in actions, but no implementation holds it: identity (another contract) (pass the implementation holding it, or list the contract it implements; one marked (another contract) is a contract of that name they do not hold: list the one they hold)",
+    );
     expect(() => ActionToolkit.make(narrowed, { actions: [identity, secret] })).toThrow(
-      "Listed in actions, but no implementation holds it: secret",
+      "Listed in actions, but no implementation holds it: secret (pass the implementation holding it, or list the contract it implements)",
     );
   });
 
@@ -637,7 +639,7 @@ it("refuses an object that only looks like an implementation", () => {
   const fake = { actions: [identity] } as never;
 
   expect(() => ActionHttp.layer(ActionHttp.make([identity]), fake)).toThrow(
-    "Not an implementation made by this Action.implement",
+    "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice",
   );
 });
 
@@ -1154,13 +1156,15 @@ describe("HTTP bindings", () => {
     const beta = Action.implement(Beta, () => Effect.succeed("x"));
 
     expect(() => ActionHttp.layer(bound, lookAlike)).toThrow(
-      "No action of these implementations is in this HTTP binding: alpha (another contract)",
+      "No action of these implementations is in this HTTP binding: alpha (another contract) (pass an implementation of a bound action, or bind one of these)",
     );
     expect(() => ActionHttp.layer(bound, beta)).toThrow(
-      "No action of these implementations is in this HTTP binding: beta",
+      "No action of these implementations is in this HTTP binding: beta (pass an implementation of a bound action, or bind one of these)",
     );
     expect(() => ActionHttp.layer(bound, [alpha, beta])).not.toThrow();
-    expect(() => ActionHttp.layer(bound, [alpha, alpha])).toThrow("Duplicate served action: alpha");
+    expect(() => ActionHttp.layer(bound, [alpha, alpha])).toThrow(
+      "Duplicate served action: alpha (pass one implementation of it, or rename one)",
+    );
     expect(() =>
       ActionHttp.layer(bound, [alpha, Action.implement(Alpha, () => Effect.succeed("y"))]),
     ).toThrow("Duplicate served action: alpha");
@@ -1196,12 +1200,14 @@ describe("HTTP bindings", () => {
     expect(() =>
       // @ts-expect-error -- The binding does not hold it.
       ActionHttp.layer(bound, apps, { actions: [Beta] }),
-    ).toThrow("Listed in actions, but the binding does not hold it: beta");
+    ).toThrow(
+      "Listed in actions, but the binding does not hold it: beta (add it to the binding's actions)",
+    );
     expect(() => ActionHttp.layer(bound, apps, { actions: [LookAlike] })).toThrow(
-      "Listed in actions, but the binding does not hold it: alpha (another contract)",
+      "Listed in actions, but the binding does not hold it: alpha (another contract) (add it to the binding's actions; one marked (another contract) is a contract of that name it does not hold: list the one it holds)",
     );
     expect(() => ActionHttp.layer(bound, apps, { actions: [Audit] })).toThrow(
-      "Listed in actions, but no implementation holds it: audit",
+      "Listed in actions, but no implementation holds it: audit (pass the implementation holding it, or list the contract it implements)",
     );
   });
 

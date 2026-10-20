@@ -22,7 +22,7 @@ const as = (token: string) => ({
 });
 
 describe("the service, over HTTP and MCP", () => {
-  it.effect("answers the public action without a token and refuses the rest", () =>
+  it.effect("answers the public action without a token and refuses a protected one", () =>
     Effect.gen(function* () {
       const anyone = yield* ActionHttp.client(Http);
 
@@ -76,7 +76,7 @@ describe("the service, over HTTP and MCP", () => {
     }).pipe(Effect.provide(served)),
   );
 
-  it.effect("lists every tool to a signed-out MCP client, as one of them is public", () =>
+  it.effect("lists protected tools to a signed-out MCP client, as one tool is public", () =>
     Effect.gen(function* () {
       const response = yield* HttpClient.execute(ActionMcp.request("tools/list"));
 

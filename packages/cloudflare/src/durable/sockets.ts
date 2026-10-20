@@ -16,10 +16,15 @@ const registries = new WeakMap<Sockets["Service"], Map<string, Receiver>>();
  * The object's dispatcher for the sockets the protocols of its routes accept, such as
  * `layerWebSocket`'s: each method hands a socket's event to the protocol whose tag the socket
  * carries, and succeeds with `true` once that protocol has it, or with `false` when no protocol
- * accepted the socket, such as one the object accepted itself, which the caller answers. A
- * message's event ends once the message is handed to the server. `Sockets.layer` makes one per
- * instance, which the protocols register with as the routes build: dispatch once they are
- * built, through the one memo map they were built in, or a message finds no protocol yet.
+ * accepted the socket, such as one the object accepted itself, which the caller answers.
+ * `Sockets.layer` makes one per instance, which the protocols register with as the routes build;
+ * `handlers` and `make` provide it.
+ *
+ * **Gotchas**
+ *
+ * - A message dispatched before the routes are built finds no protocol registered and is answered `false`: in a class composing the primitives itself, await the routes' build first, or delegate to `handlers`, which does.
+ * - The runtime dispatching through `Sockets` and `toWebHandler` must build in one memo map: given two, each builds `Sockets.layer`, `layerWebSocket` registers with one, and every socket's messages go unanswered, with no error.
+ * - A socket accepted by an earlier version of the routes at another `path` carries a tag no protocol holds now, and is answered `false`: close it, or serve that `path` again.
  */
 export class Sockets extends Context.Service<
   Sockets,
@@ -97,7 +102,7 @@ const makeProtocol = (
     if (receivers.has(group)) {
       return yield* Effect.die(
         new Error(
-          `Two ActionDurableObject.layerWebSocket protocols of one object serve the path ${path}: a router prefix does not tell them apart`,
+          `Two ActionDurableObject.layerWebSocket protocols of one object serve the path ${path}: a router prefix does not tell them apart: give each its own path, such as /a/rpc and /b/rpc`,
         ),
       );
     }
@@ -204,7 +209,10 @@ const makeProtocol = (
         const request = yield* HttpServerRequest.HttpServerRequest;
 
         if (request.headers["upgrade"]?.toLowerCase() !== "websocket") {
-          return HttpServerResponse.text("Expected a WebSocket upgrade", { status: 426 });
+          return HttpServerResponse.text(
+            "Expected a WebSocket upgrade: connect with a WebSocket client, or forward the page's own Request to the object",
+            { status: 426 },
+          );
         }
 
         const { 0: client, 1: server } = new WebSocketPair();
@@ -212,9 +220,12 @@ const makeProtocol = (
         try {
           server.serializeAttachment(Attachment.make({ headers: Object.entries(request.headers) }));
         } catch {
-          return HttpServerResponse.text("The headers a socket keeps exceed its attachment", {
-            status: 431,
-          });
+          return HttpServerResponse.text(
+            "The headers a socket keeps exceed its attachment: send fewer or smaller cookies to this path, or the token on each message",
+            {
+              status: 431,
+            },
+          );
         }
 
         state.acceptWebSocket(server, [group, tagOf(nextId++)]);
@@ -236,19 +247,27 @@ export interface LayerWebSocketOptions {
 
 /**
  * The `RpcServer.Protocol` `ActionRpc.layer` serves on, in an object's routes: WebSockets the
- * object accepts at `path` for the runtime to hold while it hibernates, speaking JSON, the
- * client's `RpcSerialization.layerJson`. It registers with the instance's `Sockets`, which
- * hands it their events. A message's event ends once the message is handed to the server, and
- * its calls answer after: one doing I/O or waiting on a timer keeps the object from
- * hibernating, and one waiting on memory alone is lost if it hibernates. A socket keeps its
- * upgrade request's headers, as Effect's own socket protocol does, its credential included, and
- * each message is authenticated with those under its own, its own winning. workerd keeps them
- * across hibernation; celld 0.6.2 drops them when it evicts an idle object, and the socket's
- * messages then carry only their own. An upgrade whose headers exceed the runtime's 16 KiB
- * attachment is answered 431. The runtime answers a client's pings without waking the object.
- * Router middleware around the routes runs for the upgrade request alone, never for a socket's
- * messages. Each protocol of one object needs a `path` of its own: a router prefix does not
- * distinguish two.
+ * object accepts at `path`, with the runtime's hibernation API, for the runtime to hold while
+ * the object hibernates, speaking JSON, the client's `RpcSerialization.layerJson` over
+ * `RpcClient.layerProtocolSocket`. A socket keeps its upgrade request's headers, as Effect's own
+ * socket protocol does, its credential included, and each message is authenticated with those
+ * under its own, its own winning. It registers with the instance's `Sockets`, which hands it
+ * their events, and requires it.
+ *
+ * **Gotchas**
+ *
+ * - An idle object is evicted while its sockets stay open: a message constructs a new instance, which builds the routes and then answers it.
+ * - A message's event ends once the message is handed to the server: a call doing I/O or waiting on a timer keeps the object from hibernating, billed as long, and one waiting only on in-memory state, such as a `Deferred`, is lost if the object hibernates, its client never hearing back.
+ * - The runtime replies to a client's close frame itself only with the compatibility flag `web_socket_auto_reply_to_close`, on by default from the `compatibility_date` `2026-04-07`: this protocol sends no reply of its own.
+ * - An upgrade whose headers, cookies included, exceed the runtime's 16 KiB attachment is answered 431; a request to `path` that is no upgrade is answered 426.
+ * - workerd keeps a socket's headers across hibernation; celld 0.6.2 drops them when it evicts an idle object, so a message relying on the upgrade's token is refused as unauthenticated: send a token on each message.
+ * - An API key in the query string is not kept: a message has no URL.
+ * - A browser WebSocket sets no header on its upgrade, so a page sends its token on each message, with `RpcClient.withHeaders`; under a cookie scheme the browser sends the cookie on any page's upgrade, which is never preflighted, so refuse a foreign `Origin` with router middleware, which runs for the upgrade.
+ * - The verifier runs for every message, so a token that expires refuses the next call: a client renews it on its messages, or connects again.
+ * - Router middleware around the routes runs for the upgrade request alone, never for a socket's messages: list an `RpcMiddleware` in `ActionRpc.layer`'s `middleware` for a per-message service.
+ * - Each protocol of one object needs a `path` of its own: a router prefix does not tell two apart, and two at one `path` fail the build.
+ * - The runtime answers a client's pings itself, every five seconds, so an open page does not wake the object.
+ * - Effect's `RpcServer.layerProtocolWebsocket` cannot upgrade a web handler's request: on Workers, serve sockets with this.
  *
  * Guide: `docs/ActionDurableObject.md` in this package.
  */
@@ -263,7 +282,7 @@ export const layerWebSocket = (
       if (receivers === undefined) {
         return yield* Effect.die(
           new Error(
-            "ActionDurableObject.layerWebSocket registers only with a Sockets that Sockets.layer built",
+            "ActionDurableObject.layerWebSocket registers only with a Sockets that Sockets.layer built: provide Sockets.layer",
           ),
         );
       }

@@ -7,12 +7,12 @@ import { MessageStore } from "./chat/store.js";
 import { rpc } from "./routes.js";
 
 // Entrypoint: `node --import tsx examples/live-rpc/src/server.ts`.
-// The composition root of the server. It chooses the protocol, the store and the port, and
-// starts Node's HTTP server. It provides no caller and no room: those arrive with each message.
+// It chooses the protocol, the store and the port, and starts Node's HTTP server. It provides
+// no caller and no room: those arrive with each message.
 
 // The rpcs over a WebSocket at `/rpc`, the router's one route: Node's HTTP server answers the
-// upgrade. `ActionRpc.layer` serves a protocol speaking JSON, and the client must speak the
-// same one.
+// upgrade. JSON, because a page's client speaks it: browser.ts gives its socket the same
+// serialization.
 const socket = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
   Layer.provide(RpcSerialization.layerJson),
@@ -35,6 +35,8 @@ const server = Layer.unwrap(
           websocket: { maxPayload: 64 * 1024 },
         }),
       ),
+      // DEMO ONLY: messages live in this process's memory; a deployment provides a store that
+      // lasts.
       Layer.provide(MessageStore.layerMemory),
     );
   }),

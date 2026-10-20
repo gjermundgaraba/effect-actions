@@ -101,7 +101,9 @@ describe("layerStubClient", () => {
 
       const error = yield* Effect.flip(client.panes());
 
-      expect(error.reason.message).toBe("The object's answer ended before the call completed");
+      expect(error.reason.message).toBe(
+        "The object's answer ended before the call completed: delegate effectActionsRpc to handlers' own, returning its answer",
+      );
     }).pipe(Effect.scoped),
   );
 

@@ -101,7 +101,7 @@ describe("action classification", () => {
           caller: Action.Anyone,
           success: Schema.String,
         }),
-      ).toThrow(`Invalid readOnly: ${readOnly}`);
+      ).toThrow(`Invalid readOnly: ${readOnly} (set true or false)`);
     }
   });
 

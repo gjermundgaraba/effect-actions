@@ -5,7 +5,7 @@ SQLite database and its pages' WebSockets while it hibernates. Members post, rea
 messages in the rooms they belong to over the socket, or over the room's JSON routes. A
 message expires a day after it was posted, when the room's alarm runs. The Worker in front
 routes `/rooms/<room>/…` to the room's object and serves a lobby itself, which asks each room
-when it was last active over the room's stub, calling its rpcs with Cloudflare's own RPC.
+when it was last active over the room's stub, with Cloudflare's own RPC.
 
 Start here to serve actions from Durable Objects. The same chat on a long-lived server is
 live-rpc, in the core package's `examples/`.
@@ -38,15 +38,15 @@ elsewhere.
 - **The room is the object's name**, `getByName(room)`, and the Worker reaches only the rooms
   `RoomName` lists: any other name is refused before it reaches `getByName`, so no caller
   creates an object. Yours may keep its rooms in a store.
-- **`preview` is public** so the lobby can show anyone signed out when each room was last
-  active. What was said stays with the room's members.
+- **`preview` is public** so a page can show anyone signed out when the room was last active.
+  What was said stays with the room's members.
 - **A page reads again to keep up**, as `ReadMessages` in `src/chat/Chat.ts` says.
-- **The lobby calls a room over its stub, not its `fetch`**: the room serves its rpcs, the
-  contract its pages call, as its `calls` too, and the lobby calls `preview` with
-  `ActionRpc.client` over `layerStubClient`. Nothing authenticates a stub call, which only the
-  Worker's binding reaches: a call for a member forwards their token in its headers. An
-  object's internal API, which no page calls, is better a plain Effect `RpcGroup`
-  (the package's `docs/ActionDurableObject-stub.md`).
+- **The lobby calls a room over its stub, not its `fetch`**: the room serves its own API, a
+  plain Effect `RpcGroup` no page calls, as its `calls`, and the lobby calls it with
+  `ActionDurableObject.client`, a new stub for each call. Nothing authenticates a stub call,
+  which only the Worker's binding reaches. To call the room's actions over its stub instead,
+  serve `ActionRpc.layer` as its `calls` and call them with `ActionRpc.client` over
+  `layerStubClient`, forwarding a member's token in each call's headers.
 
 ## Layout
 
@@ -54,10 +54,11 @@ elsewhere.
 src/
 ├── chat/
 │   ├── Chat.ts        contract: the rooms, the message, its errors, the room's actions
+│   ├── Calls.ts       the room's own API over its stub, a plain RpcGroup for the Worker
 │   ├── room.ts        Room, the room an instance holds: a startup service
 │   ├── store.ts       MessageStore, the service the handlers call
 │   ├── authorize.ts   the one authorization rule: a member of the instance's room
-│   └── handlers.ts    Action.implement: contract to store
+│   └── handlers.ts    Action.implement: contract to store, and the calls' handlers
 ├── identity/
 │   ├── Identity.ts    contract: CurrentMember and the Login descriptor
 │   ├── members.ts     the demo members
@@ -69,7 +70,7 @@ src/
 ├── platform/
 │   ├── sql-store.ts   MessageStore over the object's SQLite database, and its alarm
 │   ├── object-name.ts Room from the object's name
-│   └── room-stubs.ts  Rooms over each room's stub, with the room's typed rpc client
+│   └── room-stubs.ts  Rooms over each room's stub, with ActionDurableObject.client
 ├── Api.ts             the JSON bindings: a room's and the lobby's
 ├── Rpc.ts             the room's RPC binding
 ├── routes.ts          a room's routes, its calls over its stub and the lobby's routes
@@ -97,15 +98,15 @@ test/
 
 ## Where to look
 
-| To see                                                                 | Read                                            |
-| ---------------------------------------------------------------------- | ----------------------------------------------- |
-| A Durable Object class serving actions, and its alarm                  | `src/worker.ts`                                 |
-| Rpcs on hibernating WebSockets beside JSON routes, in one object       | `src/routes.ts`                                 |
-| An authorizer that yields the instance's room once, when it is built   | `src/chat/authorize.ts`, `src/chat/handlers.ts` |
-| A store over the object's SQLite database, setting its alarm           | `src/platform/sql-store.ts`                     |
-| A startup service read from the object's state                         | `src/platform/object-name.ts`                   |
-| A Worker calling an object's rpcs over its stub, with Cloudflare's RPC | `src/platform/room-stubs.ts`, `src/routes.ts`   |
-| Routing requests and upgrades from the Worker to an object             | `src/worker.ts`                                 |
-| A page's socket client, its token on each message                      | `src/browser.ts`                                |
-| Testing on the Workers runtime: an eviction, the alarm, the database   | `test/worker.test.ts`, `test/platform/`         |
-| A socket that keeps the token of its upgrade request                   | `test/worker.test.ts`                           |
+| To see                                                                    | Read                                                               |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| A Durable Object class serving actions, and its alarm                     | `src/worker.ts`                                                    |
+| Rpcs on hibernating WebSockets beside JSON routes, in one object          | `src/routes.ts`                                                    |
+| An authorizer that yields the instance's room once, when it is built      | `src/chat/authorize.ts`, `src/chat/handlers.ts`                    |
+| A store over the object's SQLite database, setting its alarm              | `src/platform/sql-store.ts`                                        |
+| A startup service read from the object's state                            | `src/platform/object-name.ts`                                      |
+| A Worker calling an object's own API over its stub, with Cloudflare's RPC | `src/chat/Calls.ts`, `src/routes.ts`, `src/platform/room-stubs.ts` |
+| Routing requests and upgrades from the Worker to an object                | `src/worker.ts`                                                    |
+| A page's socket client, its token on each message                         | `src/browser.ts`                                                   |
+| Testing on the Workers runtime: an eviction, the alarm, the database      | `test/worker.test.ts`, `test/platform/`                            |
+| A socket that keeps the token of its upgrade request                      | `test/worker.test.ts`                                              |

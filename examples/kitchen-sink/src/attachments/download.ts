@@ -7,26 +7,23 @@ import { GetAttachment } from "./Attachments.js";
 import { AttachmentStore } from "./store.js";
 
 // A route of the host's own: `GET /attachments/<id>` answers the image's bytes, for an `<img>`
-// of the web app, which no action can (an action answers JSON). A descriptor covers action
-// routes alone, so this one takes `Authentication.protect(Session)`: router middleware that
-// verifies the page's cookie with the provider the web app's rpcs use, provides
-// `CurrentMember`, and answers a refusal the route fails with as an action's is answered. A
-// token holder has no use for it: `getAttachment` gives an API client the same image.
+// of the web app, which no action can (an action answers JSON), behind
+// `Authentication.protect(Session)`: the page's cookie, which the web app's rpcs use. A token
+// holder has no use for it: `getAttachment` gives an API client the same image.
 export const download = Layer.unwrap(
   Effect.map(AttachmentStore, (store) =>
     HttpRouter.add(
       "GET",
       "/attachments/:id",
       Effect.gen(function* () {
-        // The route states its own authorization. It reuses the rule of the action it mirrors.
+        // The rule of the action it mirrors.
         yield* authorize(GetAttachment);
 
         const member = yield* CurrentMember;
         const { id = "" } = yield* HttpRouter.params;
         const { image } = yield* store.get(member.workspace, id);
 
-        // Authentication marks what it covers `no-store` unless the route states its own
-        // caching. An attachment never changes, but it is one workspace's: `private`.
+        // An attachment never changes, but it is one workspace's: `private`.
         return HttpServerResponse.uint8Array(image.data, {
           contentType: image.mimeType,
           headers: {

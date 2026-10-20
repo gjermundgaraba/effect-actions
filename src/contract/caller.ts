@@ -22,7 +22,7 @@ export const assertAuthentication = (
       (authentication === undefined || action.caller.key !== authentication.identity.key)
     ) {
       throw new Error(
-        `Protected action '${action.name}' requires its matching authentication descriptor`,
+        `Protected action '${action.name}' requires its matching authentication descriptor (give it the authentication whose identity the action's caller names)`,
       );
     }
   }

@@ -8,22 +8,38 @@
 `Authentication.make`, `ActionHttp.make` and `ActionRpc.make` check what each call can fail with,
 the built-in errors, the action's, the binding's `error` and a protected action's
 authentication's, and throw
-`… error _tag "<tag>" names two error schemas, which a client cannot tell apart` where two
-different schemas share one. One schema is each union member, compared by identity: one reached
-twice, listed again, through a `Schema.Union` or a `Schema.suspend`, is one; two declared alike
-are two. This reverses 0.10.0, which accepted errors sharing a `_tag` and told them apart by their
+`… error _tag "<tag>" names two error schemas, which a client cannot tell apart (…)` where two
+different schemas share one. One schema is each union member, compared by identity, unless the union has its own
+`httpApiStatus`, checks or a transformation, which make it one schema: one reached twice, listed
+again, through a `Schema.Union` or a `Schema.suspend`, is one; two declared alike are two. This reverses 0.10.0, which accepted errors sharing a `_tag` and told them apart by their
 other fields: a client decodes a failure as the first schema that accepts it, so where one
 accepted the other's values the client received the wrong error, its other fields dropped, and
 Effect's `catchTag` never told them apart. Errors without a `_tag` are still accepted.
 
 The message replaces `… error _tag "<tag>" is built in, and declared on every surface`, which an
 error reusing a built-in error's `_tag` threw; a binding's message now names the action,
-`ActionHttp binding of "<name>"`.
+`ActionHttp binding of "<name>"` or `ActionRpc binding of "<name>"`.
 
 - Migrate: reuse one schema value where two declare one error; merge variants into one schema
   whose fields tell them apart, such as
   `Schema.TaggedStruct("Validation", { field: Schema.Literals(["email", "name"]) })` or one with a
   tagged `reason`; or rename one of the tags. Update code matching the old message.
+
+**A message the library throws says its fix.** Every message a consumer can trigger names its
+fix, most in parentheses after what failed. Changed: an invalid action name or `readOnly`, an
+`authorize` that is not a function or given to a public-only target, missing or unknown
+handlers, a duplicate action, flag, command, positional argument or middleware, an action listed
+but not held, an implementation none of whose actions is bound, an implementation that is a
+copy, a protected action without its descriptor, an MCP tool whose input is not one object,
+whose image is misplaced or whose name a native feature claims, a CLI without `Stdio`, a
+client method for an action a hand-spread binding's group lacks, and
+`Authentication.layer`'s and `refusalResponse`'s refusals of a resource, a scope, a fragment or
+an error. Some messages changed before the fix: `Missing authorize: not a
+function (…)` replaces `Missing authorize: pass an authorization function, or Action.allowAll`,
+and the copied implementation's no longer asks `is effect-actions installed twice?`.
+
+- Migrate: update code matching an old message. A one-character alias in a duplicate-flag
+  message is now shown as `-n`; every other message keeps its start.
 
 ### Additions
 
@@ -100,11 +116,11 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.
   - Its pages, `docs/ActionDurableObject.md`, a page for calls over the stub, a page for a class
-    of your own and a failures page, ship in the package, with an example, chat-rooms: one
-    object per room, its messages in the object's SQLite database, an alarm expiring them, and
-    a Worker routing pages' sockets to the rooms and asking them for a lobby over their stubs,
-    with the room's own rpc contract. The core's `docs/README.md` routes to it and `CONTEXT.md`
-    defines Cloudflare's terms.
+    that cannot extend `make`'s and a failures page, ship in the package, in the core's docs
+    model, the rules and gotchas in the JSDoc of each declaration, with an example, chat-rooms:
+    one object per room, its messages in the object's SQLite database, an alarm expiring them,
+    and a Worker routing pages' sockets to the rooms and asking each for its latest message over
+    its stub, through the room's own `RpcGroup`. The core's `docs/README.md` routes to it.
 
 ### Other changes
 
@@ -113,14 +129,38 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
   codec, so `layer` and `client` give the protocol JSON's codec, and refuse one that does not
   keep a JSON value as it is, such as schema-binary's. `layer` refused every codec but JSON's;
   `client` now refuses schema-binary's too, as it is made. The message is
-  `ActionRpc puts JSON in a protocol's messages, which its codec must keep as it is: …`, where
-  it was `ActionRpc serves a protocol speaking JSON: …`.
+  `ActionRpc puts JSON in a protocol's messages, which this protocol's codec does not keep as it is (…)`,
+  naming the codecs to provide, where it was `ActionRpc serves a protocol speaking JSON: …`.
 
+- `ActionToolkit.Options.needsApproval` may return an Effect that fails, and a call whose
+  policy fails asks for approval, where Effect's own default ran it unapproved; a defect ends
+  the turn, as Effect's own does.
+- `ActionCli.Calling`, the `client` option `remote` and `remoteCommand` take, is exported.
+- A `protectedResource.resource` that is not an absolute URL, such as `/mcp`, is refused at
+  `Authentication.layer` and `refusalResponse` with the library's own message naming the fix,
+  where the platform's `TypeError: Invalid URL` was thrown. The message for a descriptor given
+  where its provider was built from another now reads
+  `Authentication "<name>": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
+  holding for an MCP endpoint and `protect` too.
+- The docs follow one model, that of `docs/Action.md`: a page is the concept, the one way to do
+  each task, whole example files as its snippets and links; the rule of each option is in its
+  JSDoc, and what a call answers on each surface is in the JSDoc of the declaration that
+  answers it, as `**Gotchas**`: `ActionHttp.layer`, `ActionMcp.layerHttp` and `runStdio`,
+  `ActionRpc.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client, and
+  `Action.Unauthenticated` and `Action.Forbidden` for a refusal. All of it ships in `dist/`:
+  grep the symbol.
+  `docs/Action-in-process.md` is folded into `docs/Action.md`; `docs/guarantees.md` and
+  `docs/CONTEXT.md` are gone, each term defined where it is first used. The option tables are
+  gone, and the `*-failures.md` pages hold only messages the library does not own, compiler
+  diagnostics and Effect's among them,
+  one line each. `docs/setup.md`'s `tsconfig.json` adds `"types": ["node"]`, and its install
+  table `@types/node`, which the examples need.
+- `Action.make` takes a helper's type parameter standing for `caller` or `error`: a
+  `Context.Reference` is refused by `caller`'s own type, not by a rule over the options. One
+  standing for `mcp` is still refused, since the hint check cannot see through it.
 - A built-in error listed in an action's `error`, a binding's or an authentication's is accepted,
-  in the types and at `make`, where it was refused: every surface declares it anyway. A helper
-  whose type parameter stands for `make`'s `error` compiles.
-- An error schema a call reaches twice, through a union, a `Schema.suspend` or the binding, is
-  declared once: an endpoint's OpenAPI responses name it once.
+  in the types and at each `make`, where it was refused: every surface declares it anyway.
+- An endpoint's OpenAPI responses name an error schema once, however often the call reaches it.
 
 ## 0.18.2
 

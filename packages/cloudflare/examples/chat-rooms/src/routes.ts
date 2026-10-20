@@ -1,9 +1,11 @@
 import { Layer } from "effect";
+import { RpcServer } from "effect/rpc";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { LobbyHttp, RoomHttp } from "./Api.js";
-import { messages, preview } from "./chat/handlers.js";
+import { RoomCalls } from "./chat/Calls.js";
+import { calls, messages, preview } from "./chat/handlers.js";
 import { authenticate } from "./identity/verifier.js";
 import { lobby } from "./lobby/handlers.js";
 import { RoomRpc } from "./Rpc.js";
@@ -21,11 +23,9 @@ export const roomRoutes = Layer.mergeAll(
   ActionHttp.layer(RoomHttp, room),
 ).pipe(Layer.provide(authenticate));
 
-// What a room's object serves over its stub: the same rpcs, for the Worker, which calls them
-// with Cloudflare's own RPC. Nothing authenticates a stub call on its way, as only a binding
-// reaches it: each call carries its own credential, as a socket's message does, and `preview`
-// needs none.
-export const roomCalls = ActionRpc.layer(RoomRpc, room).pipe(Layer.provide(authenticate));
+// What a room's object serves over its stub: its own calls, on Effect's own RpcServer, for the
+// Worker, which calls them with Cloudflare's own RPC. It requires `MessageStore` at startup.
+export const roomCalls = RpcServer.layer(RoomCalls).pipe(Layer.provide(calls));
 
 // What the Worker serves itself: the lobby, which asks the rooms' objects. It requires `Rooms`.
 export const lobbyRoutes = ActionHttp.layer(LobbyHttp, lobby);
