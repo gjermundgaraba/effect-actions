@@ -200,13 +200,20 @@ ActionDurableObject.layerStubClient(plainStub);
 // @ts-expect-error -- A class delegating to handlers serves calls only if it defines the method.
 ActionDurableObject.layerStubClient(hostedStub);
 
-declare const pluginOf: (id: string) => DurableObjectStub<PluginHost>;
-
-const plugins = ActionDurableObject.client(PluginRpcs, pluginOf);
+const plugins = ActionDurableObject.client(PluginRpcs);
 
 expectTypeOf(plugins).toEqualTypeOf<
-  Effect.Effect<(key: string) => ActionDurableObject.Client<typeof PluginRpcs>, never, Scope.Scope>
+  Effect.Effect<
+    (stub: ActionDurableObject.Stub) => ActionDurableObject.Client<typeof PluginRpcs>,
+    never,
+    Scope.Scope
+  >
 >();
+
+void Effect.map(plugins, (plugin) => plugin(pluginStub));
+
+// @ts-expect-error -- A client calls an object through a stub of a class serving calls alone.
+void Effect.map(plugins, (plugin) => plugin(plainStub));
 
 declare const plugin: ActionDurableObject.Client<typeof PluginRpcs>;
 

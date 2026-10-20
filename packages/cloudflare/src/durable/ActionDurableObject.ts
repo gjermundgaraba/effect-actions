@@ -7,7 +7,7 @@ import {
   type HttpClient,
   type HttpServerRequest,
 } from "effect/http";
-import type { RpcServer } from "effect/rpc";
+import type { RpcMessage, RpcServer } from "effect/rpc";
 import { Calls, layerStub } from "./calls.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
@@ -108,12 +108,14 @@ export interface Handlers<S = never> {
   /** Ends the socket's protocol client, and resolves for a socket no protocol accepted. */
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
   /**
-   * Answers one call over the object's stub, the encoded request `layerStubClient` sends, with
-   * its encoded responses, through `Calls`, once every request it carries has its exit, or
+   * Answers one call over the object's stub, the messages `layerStubClient` sends, with its
+   * responses, as values, through `Calls`, once every request it carries has its exit, or
    * rejects at once without `calls`. Workers RPC calls it by this name, the package's, so it
    * does not collide with the class's own methods.
    */
-  effectActionsRpc(request: string): Promise<string>;
+  effectActionsRpc(
+    request: ReadonlyArray<RpcMessage.FromClientEncoded>,
+  ): Promise<ReadonlyArray<RpcMessage.FromServerEncoded>>;
   /** Runs the `alarm` option through `run`, or nothing when there is none. */
   alarm(...args: Parameters<HandlerOf<"alarm">>): Promise<void>;
   /**
@@ -298,7 +300,7 @@ export const handlers = <
     if (sockets !== undefined) await Effect.runPromise(event(sockets));
   };
 
-  const call = async (request: string) => {
+  const call = async (request: ReadonlyArray<RpcMessage.FromClientEncoded>) => {
     if (calls === undefined) {
       throw new Error(
         "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer",
@@ -338,7 +340,9 @@ export interface Instance<S = never> extends DurableObject<Cloudflare.Env> {
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
   /** `Handlers`' `effectActionsRpc`: what `layerStubClient` and `client` call. */
-  effectActionsRpc(request: string): Promise<string>;
+  effectActionsRpc(
+    ...args: Parameters<Handlers["effectActionsRpc"]>
+  ): ReturnType<Handlers["effectActionsRpc"]>;
   /**
    * `Handlers`' `run`, for the methods of a class extending this one. A Durable Object's public
    * methods are callable over its stub, this one too, but it takes an Effect, which no stub can
@@ -399,8 +403,8 @@ export const make = <
       return this.#object.webSocketError(...args);
     }
 
-    effectActionsRpc(request: string) {
-      return this.#object.effectActionsRpc(request);
+    effectActionsRpc(...args: Parameters<Handlers["effectActionsRpc"]>) {
+      return this.#object.effectActionsRpc(...args);
     }
 
     run<A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>) {

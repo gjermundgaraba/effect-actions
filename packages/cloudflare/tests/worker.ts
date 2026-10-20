@@ -21,6 +21,7 @@ import {
   stubCalls,
 } from "./support/app.js";
 import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./support/hosts.js";
+import { nativeCalls } from "./support/native.js";
 
 export class Plain extends DurableObject {
   readonly web = HttpRouter.toWebHandler(
@@ -174,7 +175,7 @@ export class Manual extends DurableObject {
     await this.#dispatch((sockets) => sockets.error(socket));
   }
 
-  effectActionsRpc(request: string) {
+  effectActionsRpc(...[request]: Parameters<ActionDurableObject.Handlers["effectActionsRpc"]>) {
     return this.#runtime.runPromise(ActionDurableObject.Calls.use((calls) => calls.call(request)));
   }
 }
@@ -192,6 +193,8 @@ export class PaneHost extends ActionDurableObject.make({
 export class Stubbed extends ActionDurableObject.make({ services: startup, calls: stubCalls }) {}
 
 export class Streamed extends ActionDurableObject.make({ calls: streamCalls }) {}
+
+export class Native extends ActionDurableObject.make({ calls: nativeCalls }) {}
 
 export class Unserved extends ActionDurableObject.make({ calls: Layer.empty }) {}
 

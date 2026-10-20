@@ -17,7 +17,7 @@ import {
 
 const plugin = (id: string) => env.PLUGIN_HOST.getByName(id);
 
-const plugins = ActionDurableObject.client(PluginRpcs, plugin);
+const plugins = ActionDurableObject.client(PluginRpcs);
 
 const rawOver = (stub: ActionDurableObject.Stub) =>
   RpcClient.make(PluginRpcs).pipe(Effect.provide(ActionDurableObject.layerStubClient(stub)));
@@ -92,7 +92,7 @@ describe("layerStubClient", () => {
 
   it.effect("fails with RpcClientError when the answer ends before the call completes", () =>
     Effect.gen(function* () {
-      const client = yield* rawOver({ effectActionsRpc: () => Promise.resolve("[]") });
+      const client = yield* rawOver({ effectActionsRpc: () => Promise.resolve([]) });
 
       const error = yield* Effect.flip(client.panes());
 
@@ -199,55 +199,57 @@ describe("layerStubClient", () => {
 });
 
 describe("client", () => {
-  it.effect("calls an object by its key, failing with the declared errors alone", () =>
+  it.effect("calls an object through its stub, failing with the declared errors alone", () =>
     Effect.gen(function* () {
       const host = yield* plugins;
 
-      expect(yield* Effect.flip(host("by-key").start())).toEqual(
+      expect(yield* Effect.flip(host(plugin("by-key")).start())).toEqual(
         new PluginNotFound({ plugin: "unknown" }),
       );
-      yield* host("by-key").install({ code: { plugin: "notes", pane: true } });
-      expect(yield* host("by-key").start()).toEqual({ pane: "notes/1" });
-      expect(yield* host("another").panes()).toEqual([]);
+      yield* host(plugin("by-key")).install({ code: { plugin: "notes", pane: true } });
+      expect(yield* host(plugin("by-key")).start()).toEqual({ pane: "notes/1" });
+      expect(yield* host(plugin("another")).panes()).toEqual([]);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("answers several calls in flight to several objects with their own responses", () =>
-    Effect.gen(function* () {
-      const host = yield* plugins;
+  it.effect(
+    "answers several calls in flight to several objects with their own responses, through one client",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* plugins;
 
-      const calls = ["a", "b", "c", "a", "b"].map((id, index) => ({
-        id,
-        text: `${id}${index}`,
-        millis: 10 * (5 - index),
-      }));
+        const calls = ["a", "b", "c", "a", "b"].map((id, index) => ({
+          id,
+          text: `${id}${index}`,
+          millis: 10 * (5 - index),
+        }));
 
-      expect(
-        yield* Effect.forEach(calls, ({ id, ...call }) => host(id).echo(call), {
-          concurrency: "unbounded",
-        }),
-      ).toEqual(calls.map(({ text }) => text));
-    }).pipe(Effect.scoped),
+        expect(
+          yield* Effect.forEach(calls, ({ id, ...call }) => host(plugin(id)).echo(call), {
+            concurrency: "unbounded",
+          }),
+        ).toEqual(calls.map(({ text }) => text));
+      }).pipe(Effect.scoped),
   );
 
   it.effect("answers after an eviction with the one client it made", () =>
     Effect.gen(function* () {
       const host = yield* plugins;
 
-      yield* host("client-evicted").install({ code: { plugin: "notes", pane: true } });
+      yield* host(plugin("client-evicted")).install({ code: { plugin: "notes", pane: true } });
       yield* Effect.promise(() => evictDurableObject(plugin("client-evicted")));
 
-      expect(yield* host("client-evicted").start()).toEqual({ pane: "notes/1" });
+      expect(yield* host(plugin("client-evicted")).start()).toEqual({ pane: "notes/1" });
     }).pipe(Effect.scoped),
   );
 
   it.effect("makes a transport failure a defect", () =>
     Effect.gen(function* () {
-      const host = yield* ActionDurableObject.client(PluginRpcs, (id: string) => ({
-        effectActionsRpc: () => Promise.reject(new Error(`The object ${id} is gone`)),
-      }));
+      const host = yield* plugins;
 
-      const exit = yield* Effect.exit(host("gone").panes());
+      const exit = yield* Effect.exit(
+        host({ effectActionsRpc: () => Promise.reject(new Error("The object is gone")) }).panes(),
+      );
 
       expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
       expect(defectOf(exit)).toBeInstanceOf(RpcClientError.RpcClientError);
@@ -256,9 +258,7 @@ describe("client", () => {
 
   it.effect("refuses a group with an rpc that streams as it is made", () =>
     Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        ActionDurableObject.client(StreamRpcs, (id: string) => env.STREAMED.getByName(id)),
-      );
+      const exit = yield* Effect.exit(ActionDurableObject.client(StreamRpcs));
 
       expect(String(defectOf(exit))).toContain("The rpc tail streams");
     }).pipe(Effect.scoped),
@@ -275,9 +275,9 @@ describe("client", () => {
       expect(yield* Effect.flip(pane.open({ plugin: "from-pane" }))).toEqual(
         new PluginNotFound({ plugin: "unknown" }),
       );
-      yield* host("from-pane").install({ code: { plugin: "notes", pane: true } });
+      yield* host(plugin("from-pane")).install({ code: { plugin: "notes", pane: true } });
       expect(yield* pane.open({ plugin: "from-pane" })).toEqual({ pane: "notes/1" });
-      expect(yield* host("from-pane").panes()).toEqual(["notes/1"]);
+      expect(yield* host(plugin("from-pane")).panes()).toEqual(["notes/1"]);
     }).pipe(Effect.scoped),
   );
 });

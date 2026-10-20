@@ -34,12 +34,12 @@ runtime's types, from `wrangler types` or `@cloudflare/workers-types`.
 
 ## Pages
 
-| Read                                                                 | When you need to                                                                                                 |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| [ActionDurableObject.md](ActionDurableObject.md)                     | serve actions from an object, over hibernating WebSockets or JSON; run its alarm; call it from a Worker; test it |
-| [ActionDurableObject-stub.md](ActionDurableObject-stub.md)           | serve an object's rpcs over its stub and call them from a Worker or another object, by name, with typed errors   |
-| [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a Durable Object class of your own, delegating to `handlers` or composing the primitives         |
-| [ActionDurableObject-failures.md](ActionDurableObject-failures.md)   | find what an error or a refused upgrade means, and the fix                                                       |
+| Read                                                                 | When you need to                                                                                                      |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| [ActionDurableObject.md](ActionDurableObject.md)                     | serve actions from an object, over hibernating WebSockets or JSON; run its alarm; test it                             |
+| [ActionDurableObject-stub.md](ActionDurableObject-stub.md)           | serve an object's rpcs over its stub and call them, or its routes, from a Worker or another object, with typed errors |
+| [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a Durable Object class of your own, delegating to `handlers` or composing the primitives              |
+| [ActionDurableObject-failures.md](ActionDurableObject-failures.md)   | find what an error or a refused upgrade means, and the fix                                                            |
 
 ## Words
 

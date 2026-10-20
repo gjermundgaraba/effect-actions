@@ -25,14 +25,14 @@ Import `@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject`.
 | `Calls`, `Calls.layer`                               | The object's dispatcher for the calls over its stub, one per instance.                       |
 | `layerStub()`                                        | The `RpcServer.Protocol` over the object's stub, registered with `Calls`.                    |
 | `layerStubClient(stub)`                              | The `RpcClient.Protocol` calling an object's rpcs over its stub.                             |
-| `client(group, stubOf)`                              | `(key) => client` of a group's rpcs on the objects `stubOf` reaches, declared errors typed.  |
+| `client(group)`                                      | `(stub) => client` of a group's rpcs, one client for every stub, declared errors typed.      |
 | `layerHttpClient(stub)`                              | An `HttpClient` sending every request to a stub or a service binding.                        |
 | `handlers(ctx, { services?, routes?, calls?, ... })` | The object's handlers, for a class of your own to delegate to.                               |
 | `make({ services?, routes?, calls?, alarm?, ... })`  | A Durable Object class delegating every handler to `handlers`.                               |
 
 Exported types: `Options` of `handlers` and `make`, `Handlers`, what `handlers` returns,
 `Instance`, an instance of the class `make` returns, `LayerWebSocketOptions`, `Stub`, what
-`layerStubClient` and `client` call, and `Client<typeof group>`, `client`'s per key.
+`layerStubClient` and `client` call, and `Client<typeof group>`, `client`'s per stub.
 `Sockets`' `message(socket, data)`, `close(socket)` and `error(socket)` succeed with `true`
 when a protocol took the event, `false` when none accepted the socket. `Handlers`' and
 `Instance`'s `effectActionsRpc` is the method a stub calls, and `run(effect)` runs an
@@ -152,44 +152,8 @@ alarm: () => MessageStore.use((store) => store.expire),
 
 ## Call an object from a Worker
 
-Two paths. For the object's own API, which its Worker and other objects call, serve a group
-over the stub as `calls` and call it with `client`, by name: the declared errors arrive typed
-([ActionDurableObject-stub.md](ActionDurableObject-stub.md)).
-
-```ts
-export class PluginHost extends ActionDurableObject.make({
-  services: PluginStore.layer,
-  calls: RpcServer.layer(PluginRpcs).pipe(Layer.provide(pluginHandlers)),
-}) {}
-
-const plugin =
-  yield * ActionDurableObject.client(PluginRpcs, (id: string) => env.PLUGIN.getByName(id));
-const { pane } = yield * plugin(id).start(); // fails with PluginNotFound | PluginHasNoPane
-```
-
-- An `ActionRpc` binding is served the same way, `calls: ActionRpc.layer(RoomRpc, room)`, and
-  called with `ActionRpc.client` over `layerStubClient(stub)`: chat-rooms' lobby asks each
-  room for its preview so
-  ([chat-rooms/src/platform/room-stubs.ts](../examples/chat-rooms/src/platform/room-stubs.ts)).
-- Nothing authenticates a stub call: only a binding reaches it.
-
-For the object's routes, `ActionHttp.client`, `ActionMcp.client`, or `ActionRpc.client` over
-`RpcClient.layerProtocolHttp`, give the client `layerHttpClient(stub)`: every request goes to
-the object's `fetch` in place of the network.
-
-```ts
-ActionHttp.client(RoomHttp, { baseUrl: "https://room" }).pipe(
-  Effect.flatMap((client) => client.preview()),
-  Effect.provide(ActionDurableObject.layerHttpClient(env.CHAT_ROOM.getByName(room))),
-);
-```
-
-- The URL needs a host, which the stub ignores. Nothing authenticates the request on its way:
-  forward the caller's credential with `transformClient`, as for any remote surface.
-- To pass a page's requests to an object, forward the `Request` itself: its upgrade goes with
-  it ([chat-rooms/src/worker.ts](../examples/chat-rooms/src/worker.ts)).
-- A method of the class's own runs its Effect with `run`, which builds a Layer it provides for
-  that call alone. Only names you accept should reach `getByName`: each is another object.
+Call its `calls` with `client`, the declared errors typed, and its routes with the core's
+clients over `layerHttpClient(stub)`: [ActionDurableObject-stub.md](ActionDurableObject-stub.md).
 
 ## Test on the Workers runtime
 
@@ -231,7 +195,8 @@ through its `fetch`, handing `response.webSocket` to
   message is handed to the server. A call doing I/O or waiting on a timer keeps the object from
   hibernating, billed as long; one waiting only on in-memory state, such as a `Deferred`, is
   lost if the object hibernates, and its client never hears back. A client reads again.
-- **JSON only**, on the socket and the stub.
+- **JSON on the socket, values on the stub.** A schema with no JSON form, such as
+  `Schema.instanceOf(Date)`, works over the stub, not over the socket.
 - **Unary only over the stub.** A call answers once: an rpc that streams is answered with a
   defect. Stream over the socket.
 - **32 MiB a stub call**, Workers RPC's limit on a call's serialized request and answer: past

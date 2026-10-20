@@ -263,7 +263,7 @@ describe("handlers", () => {
           await object.webSocketError(server, new Error("lost"));
 
           return {
-            refused: await object.effectActionsRpc("[]").then(() => "answered", String),
+            refused: await object.effectActionsRpc([]).then(() => "answered", String),
             builds: await state.storage.get("builds"),
           };
         }),
@@ -276,7 +276,7 @@ describe("handlers", () => {
   it.effect("dies on a call through a Calls no protocol registered with", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        ActionDurableObject.Calls.use((calls) => calls.call("[]")).pipe(
+        ActionDurableObject.Calls.use((calls) => calls.call([])).pipe(
           Effect.provide(ActionDurableObject.Calls.layer),
         ),
       );

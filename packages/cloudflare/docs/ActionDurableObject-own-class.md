@@ -27,8 +27,8 @@ export class PluginHost extends DurableObject<Env> {
     return this.#object.alarm();
   }
 
-  effectActionsRpc(request: string) {
-    return this.#object.effectActionsRpc(request);
+  effectActionsRpc(...request: Parameters<ActionDurableObject.Handlers["effectActionsRpc"]>) {
+    return this.#object.effectActionsRpc(...request);
   }
 }
 ```
@@ -43,7 +43,8 @@ export class PluginHost extends DurableObject<Env> {
 - Without `routes`, `fetch` answers 404, and the socket handlers resolve at once, building
   nothing. Without `calls`, `effectActionsRpc` rejects at once.
 - `effectActionsRpc` is the method `layerStubClient` and `client` call: a class serving
-  `calls` defines it, delegating, and a stub of a class without it is refused by their types.
+  `calls` defines it, delegating, its parameters `Handlers`', and a stub of a class without it
+  is refused by their types.
   Methods of the class's own, running Effects with `run`, stay callable beside it.
 - Without `alarm`, `handlers`' `alarm` runs nothing, once the object is built. Define the class's `alarm` only when it has
   one: workerd refuses `storage.setAlarm` on a class without an `alarm` method.
@@ -100,7 +101,7 @@ export class Room extends DurableObject {
 
   // webSocketClose and webSocketError likewise, with `sockets.close` and `sockets.error`.
 
-  effectActionsRpc(request: string) {
+  effectActionsRpc(...[request]: Parameters<ActionDurableObject.Handlers["effectActionsRpc"]>) {
     return this.#runtime.runPromise(ActionDurableObject.Calls.use((calls) => calls.call(request)));
   }
 }

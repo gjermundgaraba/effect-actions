@@ -1,7 +1,9 @@
 import { type Cause, Context, Deferred, Effect, Layer, Predicate, Queue, Schema } from "effect";
-import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
+import { RpcMessage, type RpcSerialization, RpcServer } from "effect/rpc";
 
-type Serve = (request: string) => Effect.Effect<string>;
+type Serve = (
+  request: ReadonlyArray<RpcMessage.FromClientEncoded>,
+) => Effect.Effect<ReadonlyArray<RpcMessage.FromServerEncoded>>;
 
 interface Registry {
   serve: Serve | undefined;
@@ -22,8 +24,10 @@ const registries = new WeakMap<Calls["Service"], Registry>();
 export class Calls extends Context.Service<
   Calls,
   {
-    /** Answers one call over the stub: its encoded request, in, and its encoded responses, out. */
-    readonly call: (request: string) => Effect.Effect<string>;
+    /** Answers one call over the stub: its encoded messages, in, and its responses, out. */
+    readonly call: (
+      request: ReadonlyArray<RpcMessage.FromClientEncoded>,
+    ) => Effect.Effect<ReadonlyArray<RpcMessage.FromServerEncoded>>;
   }
 >()("effect-actions-cloudflare/ActionDurableObject/Calls") {
   /** One dispatcher, with no protocol registered. */
@@ -66,9 +70,15 @@ export class Calls extends Context.Service<
   });
 }
 
-const json = RpcSerialization.json;
+/**
+ * The codec of the stub's values: each schema's type to its plain form, `Schema.toCodecIso`, which
+ * Workers RPC's structured clone carries as it is, a `Date`, bytes, `undefined` and a `Map` among
+ * them, where JSON would encode them again. An `Exit`, a `Cause` and an `Option` encode to their
+ * tagged objects, a class instance to its fields.
+ */
+export const codecFor = Schema.toCodecIso as RpcSerialization.CodecFor;
 
-const encodeDefect = Schema.encodeSync(json.codecFor(Schema.Defect()));
+const encodeDefect = Schema.encodeSync(codecFor(Schema.Defect()));
 
 const unary = (tag: string) =>
   new Error(
@@ -76,7 +86,7 @@ const unary = (tag: string) =>
   );
 
 /**
- * A unary `RpcServer.Protocol` over the object's stub, speaking JSON, modeled on Effect's HTTP
+ * A unary `RpcServer.Protocol` over the object's stub, passing values, modeled on Effect's HTTP
  * protocol: one call is one client, its requests and their responses, then its end.
  */
 const makeProtocol = (registry: Registry) =>
@@ -112,8 +122,6 @@ const makeProtocol = (registry: Registry) =>
             tags: new Map(),
           };
 
-          const parser = json.makeUnsafe();
-
           clients.set(clientId, client);
 
           // Why: a call ending before its requests do, such as when its runtime interrupts it,
@@ -125,12 +133,12 @@ const makeProtocol = (registry: Registry) =>
             }),
           );
 
-          // Why: a request that does not parse, or a message the server cannot read, is answered
-          // with a defect, as Effect's HTTP protocol answers a body, never rejecting the call.
+          // Why: a request that is no array of messages, or a message the server cannot read, is
+          // answered with a defect, as Effect's HTTP protocol answers a body, never rejecting the
+          // call: what a caller sent is checked by RpcServer, message by message.
           yield* Effect.suspend(() =>
             Effect.forEach(
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- What a caller sent: RpcServer checks each message's tag, id and payload, and a message it cannot read fails as a defect, answered as one.
-              parser.decode(request) as ReadonlyArray<RpcMessage.FromClientEncoded>,
+              request,
               (message) => {
                 if (Predicate.isTagged(message, "Request"))
                   client.tags.set(String(message.id), message.tag);
@@ -147,8 +155,7 @@ const makeProtocol = (registry: Registry) =>
 
           yield* write(clientId, RpcMessage.constEof);
 
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The JSON parser encodes to a string.
-          return parser.encode(yield* Queue.collect(client.responses)) as string;
+          return yield* Queue.collect(client.responses);
         }).pipe(Effect.scoped, Effect.provideContext(context));
 
       return Effect.succeed({
@@ -187,7 +194,7 @@ const makeProtocol = (registry: Registry) =>
         supportsTransferables: false,
         supportsSpanPropagation: true,
         supportsNotifications: false,
-        codecFor: json.codecFor,
+        codecFor,
       });
     });
 
@@ -199,8 +206,9 @@ const makeProtocol = (registry: Registry) =>
 
 /**
  * The `RpcServer.Protocol` `RpcServer.layer` and `ActionRpc.layer` serve on, over the object's
- * stub: a caller's call of the object's `effectActionsRpc` method is one call, its requests
- * and their responses, speaking JSON, the stub client's. It registers with the instance's
+ * stub: a caller's call of the object's `effectActionsRpc` method is one call, its messages in
+ * and its responses out, as values Workers RPC clones, each schema's plain form
+ * (`Schema.toCodecIso`), never JSON: a `Date`, bytes or `undefined` crosses as itself. It registers with the instance's
  * `Calls`, which hands it every call. Unary: a call answers once every request it carries has
  * its exit, so an rpc that streams is answered with a defect at its first chunk. Nothing
  * authenticates a call: a stub is reachable only through a binding, and a caller forwarding a

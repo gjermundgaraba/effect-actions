@@ -37,6 +37,12 @@ in the core's `*-failures.md` pages.
 - `Serialized RPC arguments or return values are limited to 32MiB`, an `RpcClientError`, a
   defect through `client`: the call's encoded request or answer passed Workers RPC's limit.
   Page large answers, or keep large values in storage, R2 or a socket's stream.
+- `Could not serialize object of type "<Class>". This type does not support serialization`, a
+  `DataCloneError` as an `RpcClientError`, a defect through `client`: a value of the call's
+  request or answer, a success, an error or a defect, is one Workers RPC's structured clone
+  refuses, such as a class instance in a `Schema.Unknown`, or as a defect, other than an `Error`. The
+  whole call fails, whatever its exit. Declare the value's schema, whose plain form clones, or
+  die with an `Error`.
 - A call over the stub dies or fails with `Unauthenticated` though the Worker's request was
   signed in: nothing forwards a credential over the stub. Forward it with
   `RpcClient.withHeaders`.

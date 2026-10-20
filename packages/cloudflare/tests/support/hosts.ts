@@ -85,9 +85,8 @@ export class Hosts extends Context.Service<
   { readonly plugin: (id: string) => ActionDurableObject.Client<typeof PluginRpcs> }
 >()("test/Hosts") {
   static readonly layer = Layer.effect(Hosts)(
-    Effect.map(
-      ActionDurableObject.client(PluginRpcs, (id: string) => env.PLUGIN_HOST.getByName(id)),
-      (plugin) => Hosts.of({ plugin }),
+    Effect.map(ActionDurableObject.client(PluginRpcs), (plugin) =>
+      Hosts.of({ plugin: (id) => plugin(env.PLUGIN_HOST.getByName(id)) }),
     ),
   );
 }

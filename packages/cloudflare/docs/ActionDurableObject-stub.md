@@ -2,7 +2,8 @@
 
 Call an object's rpcs from its Worker, or from another object, with Cloudflare's own RPC: the
 operations are declared once, as an Effect `RpcGroup` or an `ActionRpc` binding, served by the
-object on one method, and called with a typed client whose errors are the declared ones. Read
+object on one method, and called with a typed client whose errors are the declared ones. Its
+routes are called through the same stub with the core's clients. Read
 [ActionDurableObject.md](ActionDurableObject.md) first: its API and limits hold here too. When
 something fails, search [ActionDurableObject-failures.md](ActionDurableObject-failures.md).
 
@@ -46,10 +47,10 @@ export class PluginHost extends ActionDurableObject.make({
   ([ActionDurableObject-own-class.md](ActionDurableObject-own-class.md)). Its other methods stay
   callable over the stub beside it.
 
-## Call objects by name
+## Call an object's rpcs
 
-`client(group, stubOf)` makes one client, in the caller's `Scope`, for every object `stubOf`
-reaches, and returns `(key) => client`. A call goes to its key's stub and fails with the rpc's
+`client(group)` makes one client, in the caller's `Scope`, for every object of a class, and
+returns `(stub) => client`. A call goes to the stub it was given and fails with the rpc's
 declared errors; a failure of the stub itself is a defect.
 
 Before, from an application calling three objects: a hand-typed stub interface, a method per
@@ -77,9 +78,8 @@ export class Hosts extends Context.Service<
   { readonly plugin: (id: string) => ActionDurableObject.Client<typeof PluginRpcs> }
 >()("app/Hosts") {
   static readonly layer = Layer.effect(Hosts)(
-    Effect.map(
-      ActionDurableObject.client(PluginRpcs, (id: string) => env.PLUGIN.getByName(id)),
-      (plugin) => Hosts.of({ plugin }),
+    Effect.map(ActionDurableObject.client(PluginRpcs), (plugin) =>
+      Hosts.of({ plugin: (id) => plugin(env.PLUGIN.getByName(id)) }),
     ),
   );
 }
@@ -87,11 +87,14 @@ export class Hosts extends Context.Service<
 startPane: ({ plugin }) => hosts.plugin(plugin).start(),
 ```
 
+An application calling one object holds the client alone:
+`const catalog = (yield* ActionDurableObject.client(CatalogRpcs))(env.CATALOG.getByName("main"))`.
+
 - `hosts.plugin(id).start()` is an `Effect<{ pane }, PluginNotFound | PluginHasNoPane>`.
 - The one client holds nothing per object: its calls are correct across evictions, and a
   Worker reaching many names keeps nothing for each.
-- `stubOf` returns the stub, `getByName`'s or `get(idFromString(id))`'s. Only keys you accept
-  should reach `getByName`: each name is another object.
+- Give it the stub `getByName` or `get(idFromString(id))` returns. Only keys you accept should
+  reach `getByName`: each name is another object.
 - A stub's failure, such as an object without `calls` or an answer past the platform's limit,
   is one its caller cannot recover from, so `client` makes it a defect. For Effect's own typing,
   with `RpcClientError` in every call's errors, call `RpcClient.make(group)` over
@@ -113,6 +116,36 @@ ActionRpc.client(RoomRpc).pipe(
 [chat-rooms/src/platform/room-stubs.ts](../examples/chat-rooms/src/platform/room-stubs.ts) is
 that client, for the lobby. Its calls fail with `RpcClientError` as well as the actions' errors.
 
+## Errors that name the object
+
+An object reached by `getByName` knows its name, `State`'s `id.name`. Make the name a startup
+service, dying without one, as
+[chat-rooms/src/platform/object-name.ts](../examples/chat-rooms/src/platform/object-name.ts)
+makes its `Room`, and build the error from that service in the handler: a `PluginName` service
+gives `new PluginNotFound({ plugin: name })`, with nothing more from the caller. An object
+reached by `get(idFromString(id))` has no name: its caller sends the key in the payload, for
+the error to name.
+
+## Call an object's routes
+
+For the object's routes, `ActionHttp.client`, `ActionMcp.client`, or `ActionRpc.client` over
+`RpcClient.layerProtocolHttp`, give the client `layerHttpClient(stub)`: every request goes to
+the object's `fetch` in place of the network.
+
+```ts
+ActionHttp.client(RoomHttp, { baseUrl: "https://room" }).pipe(
+  Effect.flatMap((client) => client.preview()),
+  Effect.provide(ActionDurableObject.layerHttpClient(env.CHAT_ROOM.getByName(room))),
+);
+```
+
+- The URL needs a host, which the stub ignores. Nothing authenticates the request on its way:
+  forward the caller's credential with `transformClient`, as for any remote surface.
+- To pass a page's requests to an object, forward the `Request` itself: its upgrade goes with
+  it ([chat-rooms/src/worker.ts](../examples/chat-rooms/src/worker.ts)).
+- A method of the class's own runs its Effect with `run`, which builds a Layer it provides for
+  that call alone.
+
 ## Identity
 
 Nothing authenticates a stub call: a stub is reachable only through a binding, so the caller is
@@ -123,8 +156,16 @@ headers, as over a socket: forward the user's credential with `RpcClient.withHea
 
 ## On the wire
 
-- The method takes a call's encoded request, a JSON string, and returns its encoded responses,
-  a JSON string: Effect's `RpcSerialization.json`, as over the socket, one copy each way.
+- The method takes an array of a call's messages, `RpcMessage.FromClientEncoded`, and returns
+  its responses, `FromServerEncoded`, as values Workers RPC's structured clone copies, never a
+  JSON string: each schema's plain form, `Schema.toCodecIso`. A `Date`, bytes, `undefined` and
+  an `Error` defect cross as themselves; an `Option`, an exit and a tagged error as their
+  tagged objects, a `Map` and a `Set` as arrays.
+- A schema with no JSON form, such as `Schema.instanceOf(Date)`, works over the stub, not over
+  the socket. An `ActionRpc` binding's values cross as JSON over either.
+- A value the clone refuses, such as a class instance in a `Schema.Unknown`, fails the whole
+  call with workerd's `DataCloneError`, which the client reports as `RpcClientError`
+  ([ActionDurableObject-failures.md](ActionDurableObject-failures.md)).
 - Workers RPC limits a call's arguments and return value to 32 MiB, serialized. A request or
   an answer past it fails with the runtime's error, which the client reports as
   `RpcClientError`, a defect through `client`.

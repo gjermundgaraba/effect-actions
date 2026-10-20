@@ -126,10 +126,10 @@ export const checkStubTypes = (stub: DurableObjectStub<Hosted>) =>
   ActionDurableObject.layerStubClient(stub);
 
 export const start = (
-  stubOf: (id: string) => DurableObjectStub<Host>,
+  stub: DurableObjectStub<Host>,
   id: string,
 ): Effect.Effect<string, NotFound, Scope.Scope> =>
-  Effect.flatMap(ActionDurableObject.client(Hosts, stubOf), (host) => host(id).start({ id }));
+  Effect.flatMap(ActionDurableObject.client(Hosts), (host) => host(stub).start({ id }));
 
 export const startRaw = (stub: DurableObjectStub<Host>) =>
   RpcClient.make(Hosts).pipe(
@@ -152,7 +152,9 @@ export class Composed extends DurableObject {
     ),
   );
 
-  effectActionsRpc(request: string): Promise<string> {
+  effectActionsRpc(
+    ...[request]: Parameters<ActionDurableObject.Handlers["effectActionsRpc"]>
+  ): ReturnType<ActionDurableObject.Handlers["effectActionsRpc"]> {
     return this.#runtime.runPromise(ActionDurableObject.Calls.use((calls) => calls.call(request)));
   }
 }

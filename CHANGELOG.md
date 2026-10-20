@@ -51,18 +51,22 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
     for a socket no protocol accepted, such as one the class accepted itself.
   - `layerStub()` is the protocol `RpcServer.layer(group)` and `ActionRpc.layer` serve on over
     the object's stub, with Cloudflare's own RPC: one call of the object's
-    `effectActionsRpc` method carries one call's request, a JSON string, and returns its
-    responses once its exit is known. It registers with `Calls`, the object's dispatcher for
-    those calls, one per instance from `Calls.layer`, whose `call(request)` answers one. One
+    `effectActionsRpc` method carries one call's messages and returns its responses once its
+    exit is known, as values Workers RPC's structured clone copies, each schema's plain form,
+    never JSON: a `Date`, bytes and `undefined` cross as themselves, and a schema with no JSON
+    form works over the stub, not over the socket. A value the clone refuses, such as a class
+    instance in a `Schema.Unknown`, fails the whole call with workerd's `DataCloneError`. It
+    registers with `Calls`, the object's dispatcher for those calls, one per instance from
+    `Calls.layer`, whose `call(request)` answers one. One
     stub protocol serves an object; a second fails to build. It is unary: an rpc that streams
     is answered with a defect at its first chunk. Nothing authenticates a stub call, which only
     a binding reaches; a caller forwards a principal in a header or the payload.
   - `layerStubClient(stub)` is the `RpcClient.Protocol` calling an object's rpcs over a stub of a
     class serving them, with `RpcClient.make(group)` or `ActionRpc.client`; a failure of the
     stub itself, such as an object serving no calls or a call past Workers RPC's 32 MiB limit,
-    is an `RpcClientError`. `client(group, stubOf)` makes one client, in the caller's `Scope`,
-    for every object `stubOf` reaches by key, and returns `(key) => client`, whose calls fail
-    with their declared errors alone, a stub's failure being a defect: an application's
+    is an `RpcClientError`. `client(group)` makes one client, in the caller's `Scope`, for
+    every object of a class, and returns `(stub) => client`, whose calls fail with their
+    declared errors alone, a stub's failure being a defect: an application's
     `hosts.plugin(id).start()` is an `Effect<{ pane }, PluginNotFound | PluginHasNoPane>`,
     where it wrapped a hand-typed stub method's promise and rebuilt the errors. It refuses a
     group with an rpc that streams. `Stub` and `Client<typeof group>` are their types.
