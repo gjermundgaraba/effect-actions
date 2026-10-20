@@ -1,7 +1,8 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Predicate, Schedule, Stream } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import type { Message } from "./chat/Chat.js";
 import { RoomRpc } from "./Rpc.js";
 
 // Client module: what a web page imports. It holds the binding and nothing of the server.
@@ -23,12 +24,37 @@ export const connection = (url: string) =>
 export const openRoom = (token: string) =>
   Effect.gen(function* () {
     const client = yield* ActionRpc.client(RoomRpc);
-    const signedIn = RpcClient.withHeaders({ authorization: `Bearer ${token}` });
+    const headers = { authorization: `Bearer ${token}` };
+    const signedIn = RpcClient.withHeaders(headers);
+
+    // The room's messages after `after`, then each as it is posted, rendered in order. Effect's
+    // socket client fails every stream it runs when its socket drops, so this subscribes again,
+    // a second later, from the last message rendered; a refusal ends it. A message posted as the
+    // page subscribes may arrive twice, and is rendered once.
+    const follow = (after: number, render: (message: Message) => Effect.Effect<void>) =>
+      Effect.suspend(() => {
+        let lastSeen = after;
+
+        return Effect.suspend(() =>
+          client.watch({ after: lastSeen }, { headers }).pipe(
+            Stream.filter((message) => message.id > lastSeen),
+            Stream.runForEach((message) => {
+              lastSeen = message.id;
+
+              return render(message);
+            }),
+          ),
+        ).pipe(
+          Effect.retry({
+            while: (error) => Predicate.isTagged(error, "RpcClientError"),
+            schedule: Schedule.spaced("1 second"),
+          }),
+        );
+      });
 
     return {
       preview: Effect.map(client.preview(), ({ latestAt }) => latestAt),
-      read: (after: number) =>
-        Effect.map(client.readMessages({ after }).pipe(signedIn), ({ messages }) => messages),
+      follow,
       post: (text: string) => client.postMessage({ text }).pipe(signedIn),
       remove: (id: number) =>
         client.deleteMessage({ id }).pipe(

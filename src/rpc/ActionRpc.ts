@@ -18,7 +18,7 @@ import {
   RpcClient,
   type RpcClientError,
   RpcGroup,
-  type RpcMiddleware,
+  RpcMiddleware,
   RpcSerialization,
   RpcServer,
 } from "effect/rpc";
@@ -28,19 +28,22 @@ import { type Certain, type ErrorsOf, bindingErrors, bindingOf } from "../contra
 import {
   type Any as Authentication,
   type Credential,
+  type Descriptor,
   type DescriptorOf,
   type Identity,
   type Matching,
   providerOf,
+  type ProviderOf,
   type PublicOnly,
   type RemoteRequest,
   type Required as RequiredAuthentication,
+  type Security,
   type ServerBuildServices,
   type ServedProvider,
   type VerifierError,
 } from "../authentication/provider.js";
 import { type Call, checked, decodeInput, type ErasedMethod } from "../contract/call.js";
-import type { BuiltIn, BuiltIns } from "../contract/errors.js";
+import { type BuiltIn, type BuiltIns, Unauthenticated } from "../contract/errors.js";
 import {
   acquire,
   type BuildError,
@@ -68,15 +71,53 @@ type RpcOf<A extends Action.Any, E extends Action.Errors, D> = A extends Action.
   ? Rpc.Rpc<A["name"], A["input"], A["success"], ErrorOf<A, E, D>>
   : never;
 
+const authenticatedKey = "effect-actions/ActionRpc/Authenticated";
+
+type RefusalOf<E extends Action.Errors> = Schema.Union<
+  ReadonlyArray<typeof Unauthenticated | E[number]>
+>;
+
 /**
- * An RPC binding: actions, the errors every rpc declares, and the descriptor authenticating
- * its protected ones. Plain data, so a copy of it, or one made by another installed copy of
- * this package, serves the same; `layer` serves it and `client` calls it.
+ * The middleware authenticating a binding's native rpcs, as Effect's server reads it: what it
+ * provides their handlers, and what it fails with.
+ */
+interface Authenticated<I, E extends Action.Errors = Action.Errors> {
+  readonly [RpcMiddleware.TypeId]: {
+    readonly provides: I;
+    readonly requires: never;
+    readonly error: RefusalOf<E>;
+    readonly clientError: never;
+  };
+}
+
+type AuthenticatedOf<D> =
+  D extends Descriptor<infer I, unknown, Security, string, infer E>
+    ? RpcMiddleware.ServiceClass<
+        Authenticated<I, E>,
+        typeof authenticatedKey,
+        I,
+        RefusalOf<E>,
+        never,
+        never,
+        false
+      >
+    : never;
+
+type NativeOf<N extends Rpc.Any, D> = [D] extends [Authentication]
+  ? Rpc.AddMiddleware<N, AuthenticatedOf<D>>
+  : N;
+
+/**
+ * An RPC binding: actions, the errors every rpc declares, the descriptor authenticating its
+ * protected ones, and the native rpcs it serves beside them. Plain data, so a copy of it, or one
+ * made by another installed copy of this package, serves the same; `layer` serves it and
+ * `client` calls it.
  */
 export interface Binding<
   Actions extends ReadonlyArray<Action.Any>,
   E extends Action.Errors = [],
   D extends Authentication | undefined = undefined,
+  N extends Rpc.Any = never,
 > {
   /** The descriptor authenticating its protected actions, or `undefined` when it names none. */
   readonly authentication: D;
@@ -85,20 +126,27 @@ export interface Binding<
   /** The errors every rpc declares besides its action's own, as a list. */
   readonly error: E;
   /**
-   * The native group of one rpc per action, named after it, as clients see it:
+   * The native rpcs `make`'s `rpcs` gave, as served: under an `authentication`, each runs
+   * behind the middleware authenticating it, which provides its handler the identity. A host
+   * implements them with `rpcs.toLayer`.
+   */
+  readonly rpcs: RpcGroup.RpcGroup<NativeOf<N, D>>;
+  /**
+   * The native group of one rpc per action, named after it, and of `rpcs`, as clients see it:
    * `RpcClient.make(Rpc.group)` is the native client.
    */
-  readonly group: RpcGroup.RpcGroup<RpcOf<Actions[number], E, D>>;
+  readonly group: RpcGroup.RpcGroup<RpcOf<Actions[number], E, D> | NativeOf<N, D>>;
 }
 
 /**
- * Any RPC binding. Its group is any native group here, since native groups are invariant in
+ * Any RPC binding. Its groups are any native groups here, since native groups are invariant in
  * their rpcs; `actions` carries the types.
  */
 export interface Any {
   readonly authentication?: Authentication | undefined;
   readonly actions: ReadonlyArray<Action.Any>;
   readonly error: Action.Errors;
+  readonly rpcs: RpcGroup.Any;
   readonly group: RpcGroup.Any;
 }
 
@@ -114,7 +162,34 @@ export interface Options<E extends Action.Errors = Action.Errors> {
    * their messages: required when the binding holds a protected action, and of its identity.
    */
   readonly authentication?: Authentication;
+  /**
+   * Native rpcs the binding serves beside its actions, with their own schemas and handlers,
+   * such as one that streams: `RpcGroup.make(Watch)`. Under an `authentication`, each of their
+   * messages authenticates as a protected action's does: its handler reads the identity, and a
+   * refusal fails the call with `Unauthenticated`.
+   *
+   * **Gotchas**
+   *
+   * - `layer` requires their handlers, which the host provides from the binding's own `rpcs`: `Rpc.rpcs.toLayer(handlers)`, whose types then leave the identity unowed.
+   * - The layer's `middleware` runs on actions alone: a native rpc runs the native middleware its group adds.
+   * - A native rpc named after one of the actions is refused as the binding is made.
+   */
+  readonly rpcs?: RpcGroup.Any;
 }
+
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native group boundary: every native group is a `RpcGroup` of native rpcs; only its invariant static rpcs are dropped.
+const nativeOf = (group: RpcGroup.Any) => group as RpcGroup.RpcGroup<Rpc.Any>;
+
+type RpcsOf<O> = O extends { readonly rpcs: infer G } ? RpcGroup.Rpcs<G> : never;
+
+// Why: a native rpc's refusal is its own call's typed failure, as an action's is: the
+// middleware's error joins the rpc's in the exit both sides encode, so its client decodes
+// `Unauthenticated` and the verifier's errors without declaring them. Its key is one name, which
+// `layer` provides each server its own implementation under.
+const authenticatedOf = (authentication: Authentication) =>
+  RpcMiddleware.Service<Authenticated<unknown>, { provides: unknown }>()(authenticatedKey, {
+    error: Schema.Union([Unauthenticated, ...authentication.error]),
+  });
 
 // Why: The same three overloads as `ActionHttp.make`, for the reasons stated there.
 /**
@@ -122,7 +197,8 @@ export interface Options<E extends Action.Errors = Action.Errors> {
  * its action's input and answering its success. Every rpc declares its action's errors, the
  * binding's `error`, and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so
  * clients decode each as a typed failure; a protected one also declares what its descriptor's
- * verifier fails with. Browser-safe, as an HTTP binding is.
+ * verifier fails with. An action's rpc is unary; `rpcs` adds native ones beside them, such as
+ * one that streams. Browser-safe, as an HTTP binding is.
  * Guide: `docs/ActionRpc.md` in this package; in an application: `examples/live-rpc/`.
  */
 export function make<
@@ -134,12 +210,27 @@ export function make<const Actions extends ReadonlyArray<Action.Any>, const O ex
     RequiredAuthentication<Actions[number]> &
     Matching<Actions[number], NoInfer<DescriptorOf<O>>> &
     NoInfer<Known<O, Options>>,
-): Binding<Actions, ErrorsOf<O>, DescriptorOf<O>>;
+): Binding<Actions, ErrorsOf<O>, DescriptorOf<O>, RpcsOf<O>>;
 export function make<const Actions extends ReadonlyArray<Action.Any>>(
   actions: Actions & PublicOnly<Actions>,
 ): Binding<Actions, [], undefined>;
 export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): Any {
   const bound = bindingOf("ActionRpc binding", actions, options);
+
+  const given = options.rpcs === undefined ? RpcGroup.make() : nativeOf(options.rpcs);
+
+  for (const tag of given.requests.keys()) {
+    if (actions.some((action) => action.name === tag)) {
+      throw new Error(
+        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action (rename one)`,
+      );
+    }
+  }
+
+  const rpcs =
+    bound.authentication === undefined
+      ? given
+      : given.middleware(authenticatedOf(bound.authentication));
 
   const group = RpcGroup.make(
     ...actions.map((action) =>
@@ -149,9 +240,9 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
         error: Schema.Union(bindingErrors(action, bound)),
       }),
     ),
-  );
+  ).merge(rpcs);
 
-  return { actions, ...bound, group };
+  return { actions, ...bound, rpcs, group };
 }
 
 type Middleware = ReadonlyArray<RpcMiddleware.AnyService>;
@@ -210,7 +301,22 @@ type RpcLayer<
   | HttpRouter.Request.From<"Requires", LayerRequest<Member<Apps>, A, M>>
   | ServedProvider<Member<Apps>, A, B extends { readonly authentication: infer D } ? D : never>
   | IdOf<M[number]>
+  | NativeServer<
+      RpcGroup.Rpcs<B["rpcs"]>,
+      B extends { readonly authentication: infer D } ? D : never
+    >
 >;
+
+// Why: the native rpcs' handlers are the host's, provided as Effect's own `toLayer` provides
+// them, so a layer without them is refused where the server is launched; the middleware
+// authenticating them is the layer's own, never owed.
+type NativeServer<N extends Rpc.Any, D> = [N] extends [never]
+  ? never
+  :
+      | Rpc.ToHandler<N>
+      | Exclude<Rpc.Middleware<N>, Authenticated<unknown>>
+      | Rpc.ServicesServer<N>
+      | ProviderOf<D>;
 
 /** `ActionRpc.layer`'s options. */
 export interface LayerOptions<M extends Middleware = [], A extends Action.Any = never> {
@@ -395,6 +501,7 @@ const carryingJson = <P extends { readonly codecFor: RpcSerialization.CodecFor }
  * - Over a protocol with no router, such as `RpcServer.layerProtocolSocketServer` or `layerProtocolStdio`, there is no HTTP request or route: a provider publishing a `protectedResource` leaves `HttpRouter` owed, and a verifier yielding a request service leaves it owed.
  * - A protocol passing values, such as a Durable Object stub's, serves too: the actions' values cross as JSON whatever its codec, which the layer replaces with JSON's.
  * - A codec that does not keep a JSON value as it is, such as schema-binary's, fails the build with `ActionRpc puts JSON in a protocol's messages`, naming the codecs to provide.
+ * - The binding's native `rpcs` are served on the same protocol with their own schemas, every one, whatever `actions` lists, and their handlers are owed until provided: `Rpc.rpcs.toLayer(handlers)`; a native rpc's defect or undeclared failure is answered as Effect's server answers it, never `Internal server error`.
  */
 export function layer<const B extends Any, const Apps extends Served>(
   binding: B,
@@ -462,8 +569,26 @@ export function layer(
     }),
   ).pipe(provideHandlers(apps));
 
-  return RpcServer.layer(jsonGroup, { disableFatalDefects: true }).pipe(
+  const authenticated =
+    authentication === undefined || nativeOf(binding.rpcs).requests.size === 0
+      ? Layer.empty
+      : Layer.effect(authenticatedOf(authentication))(
+          Effect.map(
+            authenticationStepOf(authentication),
+            (step) =>
+              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased middleware: the step passes the call's success through, or fails with a refusal or the verifier's error, which the middleware declares, and provides the identity it declares.
+              ((effect, options) =>
+                Effect.suspend(() => step(effect, options))) as RpcMiddleware.RpcMiddleware<
+                unknown,
+                unknown,
+                never
+              >,
+          ),
+        );
+
+  return RpcServer.layer(jsonGroup.merge(binding.rpcs), { disableFatalDefects: true }).pipe(
     Layer.provide(handlers),
+    Layer.provide(authenticated),
     Layer.provide(
       Layer.effect(RpcServer.Protocol)(Effect.flatMap(RpcServer.Protocol, carryingJson)),
     ),
@@ -495,7 +620,7 @@ export type Client<B extends Any> = {
     A,
     B["error"][number] | VerifierError<A, B["authentication"]>
   >;
-};
+} & RpcClient.RpcClient<RpcGroup.Rpcs<B["rpcs"]>, RpcClientError.RpcClientError>;
 
 /**
  * The native `RpcClient.make` options `client` takes: `spanPrefix`, `spanAttributes`,
@@ -524,16 +649,21 @@ type NativeClient = { readonly [name: string]: NativeMethod | undefined };
  * - A browser WebSocket cannot set an `Authorization` header on its upgrade, so under Bearer a protected call without its own token fails with `Unauthenticated`, `A bearer token is required.`: send the token on each call with `RpcClient.withHeaders`.
  * - The socket belongs to the Layer providing the protocol, not to the `Scope` around the client: provided around one call, it opens a socket for that call alone.
  * - The actions' values cross as JSON whatever the protocol's codec, as `layer` serves them: a codec that does not keep a JSON value as it is, such as schema-binary's, is refused as the client is made, with `ActionRpc puts JSON in a protocol's messages`.
+ * - A native rpc of the binding's `rpcs` is the native client's method: a stream rpc's is a `Stream`, its headers given as its options' `headers`, since `RpcClient.withHeaders` wraps an Effect.
  */
 export function client<const B extends Any>(
   binding: B,
   options?: ClientOptions,
-): Effect.Effect<Client<B>, never, RpcClient.Protocol | Scope.Scope>;
+): Effect.Effect<
+  Client<B>,
+  never,
+  RpcClient.Protocol | Scope.Scope | Rpc.MiddlewareClient<RpcGroup.Rpcs<B["rpcs"]>>
+>;
 export function client(
   binding: Any,
   options?: ClientOptions,
 ): Effect.Effect<
-  { readonly [name: string]: ErasedMethod },
+  { readonly [name: string]: ErasedMethod | NativeMethod },
   never,
   RpcClient.Protocol | Scope.Scope
 > {
@@ -550,17 +680,24 @@ export function client(
   return Effect.map(made, (client) => {
     const native: NativeClient = client;
 
-    return Object.fromEntries(
-      binding.actions.map((action) => {
-        const method = native[action.name];
+    const methodOf = (name: string) => {
+      const method = native[name];
 
-        if (method === undefined)
-          throw new Error(
-            `No client method for ${action.name} (use the binding \`ActionRpc.make\` returned, whose group holds this action's rpc)`,
-          );
+      if (method === undefined)
+        throw new Error(
+          `No client method for ${name} (use the binding \`ActionRpc.make\` returned, whose group holds this rpc)`,
+        );
 
-        return [action.name, checked(action, (payload) => method(payload))];
+      return method;
+    };
+
+    return Object.fromEntries([
+      ...binding.actions.map((action) => {
+        const method = methodOf(action.name);
+
+        return [action.name, checked(action, (payload) => method(payload))] as const;
       }),
-    );
+      ...[...nativeOf(binding.rpcs).requests.keys()].map((tag) => [tag, methodOf(tag)] as const),
+    ]);
   });
 }

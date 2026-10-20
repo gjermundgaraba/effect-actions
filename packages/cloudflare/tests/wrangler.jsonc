@@ -26,6 +26,7 @@
       { "name": "UNSERVED", "class_name": "Unserved" },
       { "name": "FROM_ENV", "class_name": "FromEnv" },
       { "name": "DELEGATING", "class_name": "Delegating" },
+      { "name": "FED", "class_name": "Fed" },
     ],
   },
   "migrations": [
@@ -53,6 +54,7 @@
         "Unserved",
         "FromEnv",
         "Delegating",
+        "Fed",
       ],
     },
   ],

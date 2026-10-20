@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { Rpc } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentMember } from "../identity/Identity.js";
 
@@ -45,17 +46,6 @@ export const Preview = Action.make("preview", {
 
 const signedIn = { caller: CurrentMember } as const;
 
-// Actions are unary: nothing streams. A page keeps up by calling this again on its open socket,
-// passing the last id it has seen. A call waiting for a message, on memory alone, would be lost
-// when the object hibernates.
-export const ReadMessages = Action.make("readMessages", {
-  ...signedIn,
-  description: "Read the room's messages after the given id; 0 reads them all.",
-  input: { after: Schema.Int },
-  success: { messages: Schema.Array(Message) },
-  readOnly: true,
-});
-
 export const PostMessage = Action.make("postMessage", {
   ...signedIn,
   description: "Post a message to the room. It expires a day later.",
@@ -72,4 +62,15 @@ export const DeleteMessage = Action.make("deleteMessage", {
   readOnly: false,
 });
 
-export const Messages = [ReadMessages, PostMessage, DeleteMessage] as const;
+export const Messages = [PostMessage, DeleteMessage] as const;
+
+// A page follows the room on its open socket: `watch` sends what came after the last message it
+// holds, then each message as it is posted, after the object hibernated too. A native Effect
+// rpc that streams, beside the actions on the room's binding: authenticated as they are, and
+// refused for a member outside the room.
+export const Watch = Rpc.make("watch", {
+  payload: { after: Schema.Int },
+  success: Message,
+  error: Action.Forbidden,
+  stream: true,
+});

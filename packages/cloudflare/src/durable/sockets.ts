@@ -1,6 +1,7 @@
-import { Context, Effect, Layer, Predicate, Queue, Schema } from "effect";
+import { Context, Effect, Layer, Option, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
+import { forget, nextSocketKey, socketIdOf, socketTag } from "./feed.js";
 import { State } from "./state.js";
 
 interface Receiver {
@@ -8,9 +9,15 @@ interface Receiver {
   readonly close: (socket: WebSocket) => Effect.Effect<void>;
 }
 
+interface Registry {
+  readonly receivers: Map<string, Receiver>;
+  /** The next socket's id, never one an earlier socket of the object had. */
+  readonly allocate: Effect.Effect<number>;
+}
+
 // Why: registering is no concept of the dispatcher's own: only `layerWebSocket` registers, so
 // the registry is reached through the dispatcher here rather than a method consumers would see.
-const registries = new WeakMap<Sockets["Service"], Map<string, Receiver>>();
+const registries = new WeakMap<Sockets["Service"], Registry>();
 
 /**
  * The object's dispatcher for the sockets the protocols of its routes accept, such as
@@ -39,8 +46,27 @@ export class Sockets extends Context.Service<
 >()("effect-actions-cloudflare/ActionDurableObject/Sockets") {
   /** One dispatcher, with no protocol registered, for the instance whose `State` it is given. */
   static readonly layer: Layer.Layer<Sockets, never, State> = Layer.effect(Sockets)(
-    Effect.map(Effect.service(State), (state) => {
+    Effect.gen(function* () {
+      const state = yield* State;
       const receivers = new Map<string, Receiver>();
+
+      // Why: a socket's id names its subscribers' records, which outlive it until a publish
+      // meets them, so an id is never given twice: the next one is kept in storage.
+      const stored = yield* Effect.promise(() => state.storage.get(nextSocketKey));
+
+      let next = Math.max(
+        Option.getOrElse(storedIdOf(stored), () => 1),
+        ...state.getWebSockets().map((socket) => (socketIdOf(state.getTags(socket)) ?? 0) + 1),
+      );
+
+      const allocate = Effect.suspend(() => {
+        const id = next++;
+
+        return Effect.as(
+          Effect.promise(() => state.storage.put(nextSocketKey, next)),
+          id,
+        );
+      });
 
       const dispatch = (socket: WebSocket, event: (receiver: Receiver) => Effect.Effect<void>) =>
         Effect.suspend(() => {
@@ -60,12 +86,14 @@ export class Sockets extends Context.Service<
         error: close,
       });
 
-      registries.set(sockets, receivers);
+      registries.set(sockets, { receivers, allocate });
 
       return sockets;
     }),
   );
 }
+
+const storedIdOf = Schema.decodeUnknownOption(Schema.Int);
 
 const Attachment = Schema.Struct({
   headers: Schema.Array(Schema.mutable(Schema.Tuple([Schema.String, Schema.String]))),
@@ -87,7 +115,7 @@ const isRequest = (message: RpcMessage.FromClientEncoded): message is RpcMessage
  */
 const makeProtocol = (
   state: DurableObjectState,
-  receivers: Map<string, Receiver>,
+  { receivers, allocate }: Registry,
   path: HttpRouter.PathInput,
 ) =>
   Effect.gen(function* () {
@@ -107,18 +135,7 @@ const makeProtocol = (
       );
     }
 
-    const idPrefix = `${group}#`;
-    const tagOf = (id: number) => `${idPrefix}${id}`;
-
-    const idOf = (socket: WebSocket) =>
-      Number(
-        state
-          .getTags(socket)
-          .find((tag) => tag.startsWith(idPrefix))
-          ?.slice(idPrefix.length),
-      );
-
-    let nextId = Math.max(0, ...state.getWebSockets(group).map(idOf)) + 1;
+    const idOf = (socket: WebSocket) => socketIdOf(state.getTags(socket)) ?? Number.NaN;
 
     // Why: Effect's socket client pings every five seconds. Answered by the runtime, a ping never
     // wakes a hibernating object, which would otherwise stay billed for as long as a page is open.
@@ -136,7 +153,7 @@ const makeProtocol = (
 
       if (encoded === undefined) return;
 
-      for (const socket of state.getWebSockets(tagOf(clientId))) socket.send(encoded);
+      for (const socket of state.getWebSockets(socketTag(clientId))) socket.send(encoded);
     };
 
     const protocol = yield* RpcServer.Protocol.make((write) => {
@@ -162,11 +179,18 @@ const makeProtocol = (
                 Predicate.isString(data) ? data : new Uint8Array(data),
               ) as ReadonlyArray<RpcMessage.FromClientEncoded>,
               (message) =>
-                write(
-                  clientId,
-                  isRequest(message)
-                    ? { ...message, headers: [...headers, ...message.headers] }
-                    : message,
+                Effect.andThen(
+                  // Why: a subscriber's record outlives the server's request, which hibernation
+                  // drops, so the client's interruption is what ends it.
+                  Predicate.isTagged(message, "Interrupt")
+                    ? forget(state.storage, clientId, String(message.requestId))
+                    : Effect.void,
+                  write(
+                    clientId,
+                    isRequest(message)
+                      ? { ...message, headers: [...headers, ...message.headers] }
+                      : message,
+                  ),
                 ),
               { discard: true },
             );
@@ -180,7 +204,9 @@ const makeProtocol = (
           );
         },
         close: (socket) =>
-          Effect.asVoid(Queue.offer(disconnects, idOf(socket))).pipe(
+          forget(state.storage, idOf(socket)).pipe(
+            Effect.andThen(Queue.offer(disconnects, idOf(socket))),
+            Effect.asVoid,
             Effect.provideContext(context),
           ),
       });
@@ -190,7 +216,7 @@ const makeProtocol = (
         send: (clientId, response) => Effect.sync(() => sendTo(clientId, response)),
         end: (clientId) =>
           Effect.sync(() => {
-            for (const socket of state.getWebSockets(tagOf(clientId))) socket.close(1000);
+            for (const socket of state.getWebSockets(socketTag(clientId))) socket.close(1000);
           }),
         clientIds: Effect.sync(() => new Set(state.getWebSockets(group).map(idOf))),
         initialMessage: Effect.succeedNone,
@@ -228,7 +254,7 @@ const makeProtocol = (
           );
         }
 
-        state.acceptWebSocket(server, [group, tagOf(nextId++)]);
+        state.acceptWebSocket(server, [group, socketTag(yield* allocate)]);
 
         return HttpServerResponse.raw(new Response(null, { status: 101, webSocket: client }), {
           status: 101,
@@ -277,9 +303,9 @@ export const layerWebSocket = (
   Layer.effect(RpcServer.Protocol)(
     Effect.gen(function* () {
       const state = yield* State;
-      const receivers = registries.get(yield* Sockets);
+      const registry = registries.get(yield* Sockets);
 
-      if (receivers === undefined) {
+      if (registry === undefined) {
         return yield* Effect.die(
           new Error(
             "ActionDurableObject.layerWebSocket registers only with a Sockets that Sockets.layer built: provide Sockets.layer",
@@ -287,6 +313,6 @@ export const layerWebSocket = (
         );
       }
 
-      return yield* makeProtocol(state, receivers, options.path);
+      return yield* makeProtocol(state, registry, options.path);
     }),
   );

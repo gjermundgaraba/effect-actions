@@ -1,9 +1,9 @@
 # chat-rooms
 
 Chat rooms on Cloudflare: each room is one Durable Object, holding its messages in its own
-SQLite database and its pages' WebSockets while it hibernates. Members post, read and delete
-messages in the rooms they belong to over the socket, or over the room's JSON routes. A
-message expires a day after it was posted, when the room's alarm runs. The Worker in front
+SQLite database and its pages' WebSockets while it hibernates. Members follow, post and delete
+messages in the rooms they belong to over the socket, and post or delete them over the room's
+JSON routes. A message expires a day after it was posted, when the room's alarm runs. The Worker in front
 routes `/rooms/<room>/…` to the room's object and serves a lobby itself, which asks each room
 when it was last active over the room's stub, with Cloudflare's own RPC.
 
@@ -40,7 +40,11 @@ elsewhere.
   creates an object. Yours may keep its rooms in a store.
 - **`preview` is public** so a page can show anyone signed out when the room was last active.
   What was said stays with the room's members.
-- **A page reads again to keep up**, as `ReadMessages` in `src/chat/Chat.ts` says.
+- **A page follows the room**, through `watch`, an rpc that streams, beside the room's actions
+  on its binding: a message posted reaches every page following the room, after the object
+  hibernated too, and a page whose socket dropped subscribes again from the last message it
+  holds. A deletion reaches a page only when it subscribes again: publish one, in a stream of
+  events, for pages to drop it at once.
 - **The lobby calls a room over its stub, not its `fetch`**: the room serves its own API, a
   plain Effect `RpcGroup` no page calls, as its `calls`, and the lobby calls it with
   `ActionDurableObject.client`, a new stub for each call. Nothing authenticates a stub call,
@@ -53,12 +57,12 @@ elsewhere.
 ```text
 src/
 ├── chat/
-│   ├── Chat.ts        contract: the rooms, the message, its errors, the room's actions
+│   ├── Chat.ts        contract: the rooms, the message, its errors, the room's actions, its feed
 │   ├── Calls.ts       the room's own API over its stub, a plain RpcGroup for the Worker
 │   ├── room.ts        Room, the room an instance holds: a startup service
 │   ├── store.ts       MessageStore, the service the handlers call
 │   ├── authorize.ts   the one authorization rule: a member of the instance's room
-│   └── handlers.ts    Action.implement: contract to store, and the calls' handlers
+│   └── handlers.ts    Action.implement: contract to store, the feed's and the calls' handlers
 ├── identity/
 │   ├── Identity.ts    contract: CurrentMember and the Login descriptor
 │   ├── members.ts     the demo members
@@ -72,7 +76,7 @@ src/
 │   ├── object-name.ts Room from the object's name
 │   └── room-stubs.ts  Rooms over each room's stub, with ActionDurableObject.client
 ├── Api.ts             the JSON bindings: a room's and the lobby's
-├── Rpc.ts             the room's RPC binding
+├── Rpc.ts             the room's RPC binding: its actions and its feed
 ├── routes.ts          a room's routes, its calls over its stub and the lobby's routes
 ├── worker.ts          entrypoint: the room's Durable Object class and the Worker's fetch
 ├── browser.ts         client module: a page's socket and its room
@@ -108,5 +112,6 @@ test/
 | A Worker calling an object's own API over its stub, with Cloudflare's RPC | `src/chat/Calls.ts`, `src/routes.ts`, `src/platform/room-stubs.ts` |
 | Routing requests and upgrades from the Worker to an object                | `src/worker.ts`                                                    |
 | A page's socket client, its token on each message                         | `src/browser.ts`                                                   |
+| Pushing each message to the pages following a room, across hibernation    | `src/chat/handlers.ts`, `src/browser.ts`                           |
 | Testing on the Workers runtime: an eviction, the alarm, the database      | `test/worker.test.ts`, `test/platform/`                            |
 | A socket that keeps the token of its upgrade request                      | `test/worker.test.ts`                                              |

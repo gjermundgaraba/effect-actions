@@ -628,7 +628,7 @@ describe("ActionRpc selection", () => {
 
       expect(Exit.isFailure(made) && Cause.squash(made.cause)).toEqual(
         new Error(
-          "No client method for crashy (use the binding `ActionRpc.make` returned, whose group holds this action's rpc)",
+          "No client method for crashy (use the binding `ActionRpc.make` returned, whose group holds this rpc)",
         ),
       );
     }).pipe(

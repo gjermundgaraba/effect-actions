@@ -22,6 +22,7 @@ import {
   stubCalls,
 } from "./support/app.js";
 import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./support/hosts.js";
+import { feedCalls, feedRoutes } from "./support/feed.js";
 import { nativeCalls } from "./support/native.js";
 
 export class Plain extends DurableObject {
@@ -219,3 +220,5 @@ export class Delegating extends DurableObject {
     return this.#object.effectActionsRpc(request);
   }
 }
+
+export class Fed extends ActionDurableObject.make({ routes: feedRoutes, calls: feedCalls }) {}

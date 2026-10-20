@@ -1,7 +1,7 @@
 import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Queue, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -9,6 +9,7 @@ import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { LobbyHttp, RoomHttp } from "../src/Api.js";
 import { openRoom } from "../src/browser.js";
+import type { Message } from "../src/chat/Chat.js";
 import { RoomRpc } from "../src/Rpc.js";
 import { roomSocket } from "./support/socket.js";
 
@@ -30,17 +31,61 @@ const pageIn = (room: string, token: string, headers: Record<string, string> = {
     Effect.provideContext(openRoom(token), protocol),
   );
 
+// What a page following the room renders, after `after`: `next(n)` waits for the next `n`.
+const following = (page: Effect.Success<ReturnType<typeof openRoom>>, after: number) =>
+  Effect.gen(function* () {
+    const rendered = yield* Queue.unbounded<Message>();
+
+    yield* Effect.forkScoped(page.follow(after, (message) => Queue.offer(rendered, message)));
+
+    return { next: (count: number) => Queue.takeN(rendered, count) };
+  });
+
 describe("the Worker and its rooms", () => {
   it.effect("serves a room's page over its socket, the token on each message", () =>
     Effect.gen(function* () {
       const room = yield* pageIn("design", "ada");
       const posted = yield* room.post("Mock-ups are up.");
+      const page = yield* following(room, posted.id - 1);
 
-      expect(yield* room.read(posted.id - 1)).toEqual([posted]);
+      expect(yield* page.next(1)).toEqual([posted]);
       expect(yield* room.preview).toBe(posted.at);
       expect(yield* room.remove(posted.id)).toBe("removed");
-      expect(yield* room.read(posted.id - 1)).toEqual([]);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends a following page each message posted after it, over a socket or JSON", () =>
+    Effect.gen(function* () {
+      const reader = yield* pageIn("general", "ada");
+      const writer = yield* pageIn("general", "ada");
+      const json = yield* roomAs("general", "ada");
+      const first = yield* writer.post("Before the page follows.");
+      const page = yield* following(reader, first.id - 1);
+
+      expect(yield* page.next(1)).toEqual([first]);
+
+      const second = yield* writer.post("Over a socket.");
+      const third = yield* json.postMessage({ text: "Over the JSON routes." });
+
+      expect(yield* page.next(2)).toEqual([second, third]);
+    }).pipe(Effect.scoped, Effect.provide(worker)),
+  );
+
+  it.effect("keeps a page following across an eviction: a later message still reaches it", () =>
+    Effect.gen(function* () {
+      const reader = yield* pageIn("design", "ada");
+      const json = yield* roomAs("design", "ada");
+      const first = yield* json.postMessage({ text: "Before the eviction." });
+      const page = yield* following(reader, first.id - 1);
+
+      expect(yield* page.next(1)).toEqual([first]);
+
+      yield* Effect.promise(() => evictDurableObject(env.CHAT_ROOM.getByName("design")));
+
+      const after = yield* json.postMessage({ text: "After the eviction." });
+
+      expect(yield* page.next(1)).toEqual([after]);
+    }).pipe(Effect.scoped, Effect.provide(worker)),
   );
 
   it.effect("authenticates a socket's messages by the token of its upgrade, after eviction", () =>
@@ -51,13 +96,15 @@ describe("the Worker and its rooms", () => {
 
       yield* Effect.promise(() => evictDurableObject(env.CHAT_ROOM.getByName("design")));
 
-      const { messages } = yield* client.readMessages({ after: posted.id - 1 });
+      const watched = yield* client
+        .watch({ after: posted.id - 1 })
+        .pipe(Stream.take(1), Stream.runCollect);
 
       const anonymous = yield* roomAs("design").pipe(
-        Effect.flatMap((json) => Effect.flip(json.readMessages({ after: 0 }))),
+        Effect.flatMap((json) => Effect.flip(json.postMessage({ text: "Anonymous." }))),
       );
 
-      expect(messages).toEqual([posted]);
+      expect(watched).toEqual([posted]);
       expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
     }).pipe(Effect.scoped, Effect.provide(worker)),
   );
@@ -67,8 +114,12 @@ describe("the Worker and its rooms", () => {
       const page = yield* pageIn("design", "grace");
       const json = yield* roomAs("design", "grace");
 
-      expect(yield* Effect.flip(page.read(0))).toBeInstanceOf(Action.Forbidden);
-      expect(yield* Effect.flip(json.readMessages({ after: 0 }))).toBeInstanceOf(Action.Forbidden);
+      expect(yield* Effect.flip(page.follow(0, () => Effect.void))).toBeInstanceOf(
+        Action.Forbidden,
+      );
+      expect(yield* Effect.flip(json.postMessage({ text: "Let me in." }))).toBeInstanceOf(
+        Action.Forbidden,
+      );
     }).pipe(Effect.scoped, Effect.provide(worker)),
   );
 
@@ -79,7 +130,10 @@ describe("the Worker and its rooms", () => {
       const posted = yield* ada.post("Mine.");
 
       expect(yield* grace.remove(posted.id)).toBe("not-yours");
-      expect(yield* grace.read(posted.id - 1)).toEqual([posted]);
+
+      const page = yield* following(grace, posted.id - 1);
+
+      expect(yield* page.next(1)).toEqual([posted]);
     }).pipe(Effect.scoped),
   );
 
@@ -135,14 +189,15 @@ describe("the Worker and its rooms", () => {
 
       expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
 
-      const { messages } = yield* design.readMessages({ after: 0 });
+      const page = yield* following(yield* pageIn("design", "ada"), 0);
+      const kept = yield* page.next(1);
 
       const next = yield* Effect.promise(() =>
         runInDurableObject(stub, (_, state) => state.storage.getAlarm()),
       );
 
-      expect(messages).toEqual([recent]);
+      expect(kept).toEqual([recent]);
       expect(next).toBe(recent.at + day);
-    }).pipe(Effect.provide(worker)),
+    }).pipe(Effect.scoped, Effect.provide(worker)),
   );
 });

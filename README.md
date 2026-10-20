@@ -143,7 +143,7 @@ the pages of the installed version are beside them, in
 
 ## Status
 
-The `effect` peer range is in [docs/setup.md](docs/setup.md#install). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no streaming or uploads.
+The `effect` peer range is in [docs/setup.md](docs/setup.md#install). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no uploads, and a stream only from a native rpc an RPC binding serves beside its actions.
 Token verification and the authorization rule belong to the application; the library supplies the authentication descriptor and provider, runs the rule, and answers the refusals. See [what the library leaves to you](docs/README.md#what-the-library-leaves-to-you).
 
 ## Acknowledgements

@@ -11,6 +11,7 @@ import type { RpcMessage, RpcServer } from "effect/rpc";
 import { Calls, layerStub, type StubRequest } from "./calls.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
+import { Feed } from "./subscribers.js";
 
 export { Calls, layerStub, type StubRequest } from "./calls.js";
 
@@ -18,12 +19,21 @@ export { layerWebSocket, Sockets, type LayerWebSocketOptions } from "./sockets.j
 
 export { State } from "./state.js";
 
+export {
+  Feed,
+  type EndOptions,
+  type PublishOptions,
+  type SubscribeOptions,
+  type Subscriber,
+} from "./subscribers.js";
+
 export { client, layerStubClient, type Client, type Stub } from "./stub.js";
 
 type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
 
 type Allowed<A, S> =
   | State
+  | Feed
   | Sockets
   | S
   | HttpRouter.HttpRouter
@@ -64,7 +74,7 @@ export interface Options<
   /**
    * What `fetch` serves: routes, as `HttpRouter.toWebHandler` serves them, such as
    * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built after the services,
-   * again after every eviction, and never finalized. They may require `State`, `Sockets` and
+   * again after every eviction, and never finalized. They may require `State`, `Feed`, `Sockets` and
    * the services; a request-time requirement must be provided by their middleware or
    * authentication, or be one of the services or a service they provide themselves. Without
    * them, `fetch` answers 404, and there are no socket handlers, as no protocol accepts a socket.
@@ -79,7 +89,7 @@ export interface Options<
    * What the object serves over its stub, on `effectActionsRpc`: an rpc server, such as
    * `RpcServer.layer(group)` with its handlers, or `ActionRpc.layer`, given `layerStub` as its
    * protocol. Built after the services, beside the routes, again after every eviction, and never
-   * finalized. It may require the protocol, `State` and the services; every call's own
+   * finalized. It may require the protocol, `State`, `Feed` and the services; every call's own
    * requirement must be provided by its middleware or be one of those. Without it, a call over
    * the stub rejects at once.
    *
@@ -91,7 +101,7 @@ export interface Options<
   readonly calls?: Layer.Layer<CA, CE, CR> | undefined;
   /**
    * What the object's `alarm` runs, scheduled with `State`'s `storage.setAlarm`, given the
-   * runtime's `retryCount` and `isRetry`. It may require the services, `State` and a `Scope`,
+   * runtime's `retryCount` and `isRetry`. It may require the services, `State`, `Feed` and a `Scope`,
    * closed when it ends. It runs through `run`, once the services and routes are built, given
    * the `AlarmInvocationInfo` or `undefined` when the object's `alarm` is called with none.
    *
@@ -148,13 +158,13 @@ export interface Handlers<S = never> extends SocketHandlers {
   /** Runs the `alarm` option through `run`, or nothing when there is none. */
   alarm(...args: Parameters<HandlerOf<"alarm">>): Promise<void>;
   /**
-   * Runs `effect` in the object, with the services the instance built, `State` and a `Scope`,
+   * Runs `effect` in the object, with the services the instance built, `State`, `Feed` and a `Scope`,
    * closed when it ends, once the services and routes are built: what the alarm runs through,
    * and what the object's own methods run their Effects with, such as a method a Worker calls
    * over the object's stub. A Layer the effect provides itself, or an `Action.client` it
    * acquires, is built for that call alone: give what calls share as `services`.
    */
-  run<A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>): Promise<A>;
+  run<A, E>(effect: Effect.Effect<A, E, S | State | Feed | Scope.Scope>): Promise<A>;
 }
 
 const notFound: (request: Request) => Promise<Response> = () =>
@@ -168,10 +178,10 @@ const handlersOf = <
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Scope.Scope = never,
+  AR extends S | State | Feed | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State = never,
+  CR extends RpcServer.Protocol | S | State | Feed = never,
 >(
   ctx: DurableObjectState,
   options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
@@ -198,7 +208,7 @@ const handlersOf = <
       // given; their scope is closed only when the build fails, so nothing is finalized while
       // the instance lives, and a failed build leaves no fiber of its own running.
       const context = yield* Layer.buildWithMemoMap(
-        services.pipe(Layer.provideMerge(state)),
+        Layer.merge(services, Feed.layer).pipe(Layer.provideMerge(state)),
         memoMap,
         scope,
       );
@@ -238,7 +248,7 @@ const handlersOf = <
       const web = HttpRouter.toWebHandler(
         routes.pipe(
           Layer.provideMerge(
-            Layer.succeedContext<State | Sockets>(Context.merge(context, sockets)),
+            Layer.succeedContext<State | Feed | Sockets>(Context.merge(context, sockets)),
           ),
           Layer.tap(() => Deferred.succeed(routesBuilt, undefined)),
           Layer.tapCause((cause) => Deferred.failCause(routesBuilt, cause)),
@@ -286,7 +296,9 @@ const handlersOf = <
     return building;
   };
 
-  const run = async <A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>): Promise<A> => {
+  const run = async <A, E>(
+    effect: Effect.Effect<A, E, S | State | Feed | Scope.Scope>,
+  ): Promise<A> => {
     const { context } = await built();
 
     // Why: the services' context carries the instance's memo map, which `run` gave every effect
@@ -327,7 +339,9 @@ const handlersOf = <
   };
 
   const onAlarm:
-    | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, S | State | Scope.Scope>)
+    | ((
+        info: AlarmInvocationInfo | undefined,
+      ) => Effect.Effect<void, AE, S | State | Feed | Scope.Scope>)
     | undefined = options.alarm;
 
   return {
@@ -360,7 +374,7 @@ type InstanceOf<S, Env, RT> = [RT] extends [Layer.Any]
  * The object's lifecycle, for a Durable Object class that cannot extend the one `make` returns:
  * given its `ctx`, the handlers that build `services`, then `calls`, with `Calls` and
  * `layerStub`, and `routes`, with `Sockets`, once per instance, on the first event, with `State`
- * provided, and share that one build across every event, which awaits it. `fetch` serves the
+ * and `Feed` provided, and share that one build across every event, which awaits it. `fetch` serves the
  * routes, the socket handlers dispatch through `Sockets`, `effectActionsRpc` through `Calls`,
  * `alarm` runs `alarm` and `run` runs an Effect in the object. Delegate the handlers the class
  * serves this way, as methods: `effectActionsRpc(request: StubRequest)` returning the
@@ -385,10 +399,10 @@ export const handlers = <
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Scope.Scope = never,
+  AR extends S | State | Feed | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State = never,
+  CR extends RpcServer.Protocol | S | State | Feed = never,
   RT = undefined,
 >(
   ctx: DurableObjectState,
@@ -420,7 +434,7 @@ export interface Instance<S = never, Env = Cloudflare.Env> extends DurableObject
    * methods are callable over its stub, this one too, but it takes an Effect, which no stub can
    * send: a caller over the stub gets a rejection, nothing more.
    */
-  run<A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>): Promise<A>;
+  run<A, E>(effect: Effect.Effect<A, E, S | State | Feed | Scope.Scope>): Promise<A>;
 }
 
 /**
@@ -439,10 +453,10 @@ export function make<
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Scope.Scope = never,
+  AR extends S | State | Feed | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State = never,
+  CR extends RpcServer.Protocol | S | State | Feed = never,
   Env = Cloudflare.Env,
   RT = undefined,
 >(
@@ -486,10 +500,10 @@ export function make<
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Scope.Scope = never,
+  AR extends S | State | Feed | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State = never,
+  CR extends RpcServer.Protocol | S | State | Feed = never,
   RT = undefined,
 >(
   options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR> & { readonly routes?: RT },
@@ -502,10 +516,10 @@ export function make<
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Scope.Scope = never,
+  AR extends S | State | Feed | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State = never,
+  CR extends RpcServer.Protocol | S | State | Feed = never,
 >(
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
     readonly services?:
@@ -520,7 +534,9 @@ export function make<
     Predicate.isFunction(services) ? services(env) : services;
 
   const onAlarm:
-    | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, S | State | Scope.Scope>)
+    | ((
+        info: AlarmInvocationInfo | undefined,
+      ) => Effect.Effect<void, AE, S | State | Feed | Scope.Scope>)
     | undefined = options.alarm;
 
   // Why: the handlers are an instance's, reached by the subclasses below, which add the socket
@@ -556,7 +572,7 @@ export function make<
       return objectOf(this).effectActionsRpc(request);
     }
 
-    run<A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>) {
+    run<A, E>(effect: Effect.Effect<A, E, S | State | Feed | Scope.Scope>) {
       return objectOf(this).run(effect);
     }
   }

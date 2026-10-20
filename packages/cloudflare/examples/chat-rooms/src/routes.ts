@@ -5,7 +5,7 @@ import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { LobbyHttp, RoomHttp } from "./Api.js";
 import { RoomCalls } from "./chat/Calls.js";
-import { calls, messages, preview } from "./chat/handlers.js";
+import { calls, messages, preview, watch } from "./chat/handlers.js";
 import { authenticate } from "./identity/verifier.js";
 import { lobby } from "./lobby/handlers.js";
 import { RoomRpc } from "./Rpc.js";
@@ -14,10 +14,12 @@ const room = [preview, messages];
 
 // What a room's object serves. Its rpcs on WebSockets the runtime holds while the object
 // hibernates: a socket keeps the token its upgrade request carried, and each message is
-// authenticated with it, or with the message's own. Its JSON routes at `/api/<action>`. It
-// requires `MessageStore` and `Room` at startup: worker.ts chooses them.
+// authenticated with it, or with the message's own. `watch`'s handler is the host's, as an
+// Effect rpc's is. Its JSON routes at `/api/<action>`. It requires `MessageStore` and `Room` at
+// startup: worker.ts chooses them.
 export const roomRoutes = Layer.mergeAll(
   ActionRpc.layer(RoomRpc, room).pipe(
+    Layer.provide(watch),
     Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
   ),
   ActionHttp.layer(RoomHttp, room),

@@ -1,6 +1,6 @@
 # ActionRpc
 
-Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one unary rpc per action.
+Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one unary rpc per action, and native rpcs beside them, which may stream.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionRpc-failures.md](ActionRpc-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
 
@@ -23,6 +23,15 @@ export const Rpc = ActionRpc.make([ListRooms, ...Messages], { authentication: Lo
 
 [kitchen-sink/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Rpc.ts) adds `error`, what its
 middleware fails with.
+
+- **An rpc that streams.** An action answers once. Give the binding native rpcs in `rpcs`,
+  `ActionRpc.make(actions, { authentication, rpcs: RpcGroup.make(Watch) })`, each with its own
+  schemas, such as `stream: true`: under the binding's `authentication` each message
+  authenticates as a protected action's does, and the client has their methods beside the
+  actions', a stream rpc's a `Stream`. The host implements them with the binding's own
+  `Rpc.rpcs.toLayer(handlers)`, whose handlers read the identity, and provides that to
+  `ActionRpc.layer`, which otherwise does not compile. The rules are on `ActionRpc.Options.rpcs`;
+  the Cloudflare package's chat-rooms example binds a room's feed this way.
 
 ## Serve the rpcs
 

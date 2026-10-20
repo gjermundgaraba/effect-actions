@@ -43,6 +43,17 @@ and the copied implementation's no longer asks `is effect-actions installed twic
 
 ### Additions
 
+- **An RPC binding serves native rpcs beside its actions, such as one that streams.**
+  `ActionRpc.make(actions, { rpcs: RpcGroup.make(Watch) })` adds a native `RpcGroup`, each rpc
+  with its own schemas; the binding's `group` is both, and its `rpcs` the native ones as served.
+  Under the binding's `authentication`, each of their messages authenticates as a protected
+  action's does, through native middleware the binding adds: its handler reads the identity, and
+  a refusal is the call's typed `Unauthenticated`, or the verifier's declared error.
+  `ActionRpc.client` has their methods beside the actions', a stream rpc's a `Stream`.
+  `ActionRpc.layer` serves them with their own schemas on the same protocol, and requires their
+  handlers, which the host provides with `Rpc.rpcs.toLayer(handlers)`, so a layer without them
+  does not compile; its `middleware` runs on actions alone. A native rpc named after an action is
+  refused as the binding is made. An action stays unary.
 - **`@gjermundgaraba/effect-actions-cloudflare` serves actions from Cloudflare Durable Objects**,
   and calls them, released with this package at the same version and requiring it at `~` that
   version. Its module `ActionDurableObject` offers primitives any Durable Object class composes,
@@ -64,7 +75,22 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   - `Sockets` is the object's dispatcher for its protocols' sockets, one per instance from
     `Sockets.layer`, which `layerWebSocket` registers with and requires. Its `message`, `close`
     and `error` hand a socket's event to its protocol and succeed with `true`, or with `false`
-    for a socket no protocol accepted, such as one the class accepted itself.
+    for a socket no protocol accepted, such as one the class accepted itself. It gives each
+    socket an id unique across the object's protocols, kept in storage so no later socket has an
+    earlier one's.
+  - `Feed` pushes to a stream rpc's subscribers over `layerWebSocket`, across hibernation, one
+    per instance from `Feed.layer`, which `handlers` and `make` provide to the calls, the routes,
+    the alarm and `run`. A stream rpc's handler returns `feed.subscribe(request, { initial, key })`:
+    the subscriber's record is kept in the object's storage, keyed by its socket's id and its
+    request's, then `initial` is sent as one chunk, and the stream never ends.
+    `publish(rpc, value, { key })`, typed by the rpc's chunk, sends each subscriber of the rpc,
+    or of the key, whose socket is open, the value as Effect's server sends a chunk, from any
+    instance, so a value published after the object hibernated reaches a page subscribed
+    before; `end(rpc, { key })` completes their streams. A record is dropped when its client
+    interrupts the stream or its socket closes, through `layerWebSocket`, and when a publish
+    finds its socket gone. A subscriber gets every value published after its `initial` at least
+    once; each chunk's ack wakes the object; Effect's socket client fails its streams when its
+    socket drops, so a page subscribes again from the last value it holds.
   - `layerStub()` is the protocol `RpcServer.layer(group)` and `ActionRpc.layer` serve on over
     the object's stub, with Cloudflare's own RPC: one call of the object's
     `effectActionsRpc` method carries one call's messages and returns its responses once its
@@ -95,7 +121,7 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     handlers, `fetch`, `webSocketMessage`, `webSocketClose`, `webSocketError`,
     `effectActionsRpc`, `alarm` and `run`, each taking the runtime's arguments, for a class
     of your own to delegate to. The first event builds the object once: `services`, its
-    startup services, with `State`, then `calls`, given `Calls` and `layerStub()`, and
+    startup services, with `State` and `Feed`, then `calls`, given `Calls` and `layerStub()`, and
     `routes`, given `Sockets`; every event awaits that build, and a failed build is dropped with
     all it built, so the next event builds again. `fetch` serves the routes, or answers 404
     without them; the socket handlers, `SocketHandlers`, returned only with routes, since
@@ -103,7 +129,7 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     socket no protocol accepted; `effectActionsRpc`
     dispatches through `Calls`, and rejects at once without calls; `alarm(info)` runs `alarm`,
     given the runtime's retry count, through `run`; and `run(effect)` runs an Effect in the
-    object with the services, `State` and a `Scope`, for the class's own methods. The calls,
+    object with the services, `State`, `Feed` and a `Scope`, for the class's own methods. The calls,
     the routes, every request, the alarm and every `run` share the one build of `services`; a
     Layer a `run` provides itself, or an `Action.client` it acquires, is built for that call
     alone. An object serving only calls builds no router. `disableLogger` leaves out the
@@ -119,12 +145,14 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.
-  - Its pages, `docs/ActionDurableObject.md`, a page for calls over the stub, a page for a class
-    that cannot extend `make`'s and a failures page, ship in the package, in the core's docs
-    model, the rules and gotchas in the JSDoc of each declaration, with an example, chat-rooms:
-    one object per room, its messages in the object's SQLite database, an alarm expiring them,
-    and a Worker routing pages' sockets to the rooms and asking each for its latest message over
-    its stub, through the room's own `RpcGroup`. The core's `docs/README.md` routes to it.
+  - Its pages, `docs/ActionDurableObject.md`, a page for calls over the stub, a page for pushing
+    to pages, a page for a class that cannot extend `make`'s and a failures page, ship in the
+    package, in the core's docs model, the rules and gotchas in the JSDoc of each declaration,
+    with an example, chat-rooms: one object per room, its messages in the object's SQLite
+    database, an alarm expiring them, pages following a room's messages through a stream rpc on
+    the room's binding, which `Feed` pushes to, and a Worker routing pages' sockets to the rooms
+    and asking each for its latest message over its stub, through the room's own `RpcGroup`.
+    The core's `docs/README.md` routes to it.
 
 ### Other changes
 

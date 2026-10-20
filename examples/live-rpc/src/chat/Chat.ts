@@ -54,8 +54,8 @@ export const ListRooms = Action.make("listRooms", {
 
 const signedIn = { caller: CurrentMember } as const;
 
-// Actions are unary: nothing streams. A page keeps up by calling this again on its open
-// socket, passing the last id it has seen.
+// Actions are unary. A page keeps up by calling this again on its open socket, passing the last
+// id it has seen; a native rpc in the binding's `rpcs` could stream them instead.
 export const ReadMessages = Action.make("readMessages", {
   ...signedIn,
   description: "Read the room's messages after the given id; 0 reads them all.",

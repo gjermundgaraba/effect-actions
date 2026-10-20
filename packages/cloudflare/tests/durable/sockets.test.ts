@@ -1,5 +1,5 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { Effect } from "effect";
+import { Effect, Schedule } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Overdrawn } from "../support/app.js";
 import { nextMessage, scopedClientOver, upgradeTo, upgradeToRpc } from "../support/socket.js";
@@ -33,6 +33,36 @@ describe("Sockets", () => {
         expect(yield* client.whoami()).toBe("grace");
         expect(yield* client.spend({ amount: 3 })).toEqual({ left: 7 });
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("never gives a new socket the id of one closed before the object was rebuilt", () =>
+    Effect.gen(function* () {
+      const stub = env.ROOM.getByName("socket-ids");
+
+      const tagsOf = Effect.promise(() =>
+        runInDurableObject(stub, (_, state) =>
+          state.getWebSockets().map((socket) => state.getTags(socket)),
+        ),
+      );
+
+      const first = yield* upgradeToRpc(stub);
+
+      first.close(1000);
+
+      yield* tagsOf.pipe(
+        Effect.repeat({
+          while: (tags) => tags.length > 0,
+          schedule: Schedule.spaced("10 millis"),
+        }),
+      );
+
+      yield* Effect.promise(() => evictDurableObject(stub));
+      yield* upgradeToRpc(stub);
+
+      const [tags] = yield* tagsOf;
+
+      expect(tags).toContain("effect-actions/socket#2");
+    }),
   );
 
   it.effect("leaves a client's ping to the runtime", () =>
