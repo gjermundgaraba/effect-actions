@@ -64,12 +64,17 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
   - `layerStubClient(stub)` is the `RpcClient.Protocol` calling an object's rpcs over a stub of a
     class serving them, with `RpcClient.make(group)` or `ActionRpc.client`; a failure of the
     stub itself, such as an object serving no calls or a call past Workers RPC's 32 MiB limit,
-    is an `RpcClientError`. `client(group)` makes one client, in the caller's `Scope`, for
-    every object of a class, and returns `(stub) => client`, whose calls fail with their
-    declared errors alone, a stub's failure being a defect: an application's
+    is an `RpcClientError`; it holds its stub, which many exceptions leave broken, so a caller
+    recovering from its failure builds it over a new one. `client(group)` makes one client, in
+    the caller's `Scope`, for every object of a class, and returns `(stubOf) => client`, which
+    calls `stubOf` for a new stub as each call is sent, so no stub is held and a client over
+    one object is kept for good; its calls fail with their declared errors alone, a stub's
+    failure being a defect: an application's
     `hosts.plugin(id).start()` is an `Effect<{ pane }, PluginNotFound | PluginHasNoPane>`,
     where it wrapped a hand-typed stub method's promise and rebuilt the errors. It refuses a
-    group with an rpc that streams. `Stub` and `Client<typeof group>` are their types.
+    group with an rpc that streams. `Stub` and `Client<typeof group>` are their types, and
+    `StubRequest` the method's parameter, so a class delegating it writes
+    `effectActionsRpc(request: ActionDurableObject.StubRequest)`.
   - `handlers(ctx, { services, routes, calls, alarm, disableLogger })` returns a class's
     handlers, `fetch`, `webSocketMessage`, `webSocketClose`, `webSocketError`,
     `effectActionsRpc`, `alarm` and `run`, each taking the runtime's arguments, for a class
@@ -87,7 +92,10 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
     alone. An object serving only calls builds no router. `disableLogger` leaves out the
     request logger.
   - `make(options)` is a Durable Object class delegating every handler and `run` to `handlers`,
-    for a class extending it to override; made without `alarm`, it has no `alarm` handler.
+    for a class extending it to override; made without `alarm`, it has no `alarm` handler. Its
+    `services` may be a function of the instance's `env`, called as each instance is
+    constructed, so a class reading its bindings extends it without a constructor or delegates
+    of its own.
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.

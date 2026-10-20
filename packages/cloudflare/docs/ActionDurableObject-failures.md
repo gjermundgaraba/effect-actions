@@ -15,6 +15,11 @@ in the core's `*-failures.md` pages.
   `handlers`' `calls`, where `services` provides `Y`: the rpc server requires a service no
   Layer provides, such as its group's handlers, `RpcServer.layer(group)` alone, or a contract's
   authentication. Provide it to the calls, or add its Layer to `services`.
+- `No overload matches this call` at `make` with `services` a function of `env`, where the
+  last overload says the function `is not assignable to type 'Layer<...>'` and a requirement is
+  `not assignable to type 'Allowed<never, never>'`: TypeScript reports the Layer form, as if
+  the services provided nothing. Read the requirement error as the two entries above describe,
+  the services being the function's.
 - `This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer`, an
   `RpcClientError` at the caller, a defect through `client`: the object was given no `calls`.
 - `The RPC receiver does not implement "effectActionsRpc"`, an `RpcClientError`: the class
@@ -37,6 +42,11 @@ in the core's `*-failures.md` pages.
 - `Serialized RPC arguments or return values are limited to 32MiB`, an `RpcClientError`, a
   defect through `client`: the call's encoded request or answer passed Workers RPC's limit.
   Page large answers, or keep large values in storage, R2 or a socket's stream.
+- Every call through one stub fails at once with the same error, after one call failed: many
+  exceptions leave a stub broken, in Cloudflare's words "Many exceptions leave the
+  DurableObjectStub in a "broken" state". Never hold a stub: give `client` a factory,
+  `() => env.PLUGIN.getByName(id)`, which every call calls, and after a failure over
+  `layerStubClient(stub)` provide a client over a new stub.
 - `Could not serialize object of type "<Class>". This type does not support serialization`, a
   `DataCloneError` as an `RpcClientError`, a defect through `client`: a value of the call's
   request or answer, a success, an error or a defect, is one Workers RPC's structured clone

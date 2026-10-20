@@ -34,7 +34,7 @@ export class PluginHost extends ActionDurableObject.make({
 }) {}
 
 const plugin = yield * ActionDurableObject.client(PluginRpcs);
-const { pane } = yield * plugin(env.PLUGIN.getByName("notes")).start();
+const { pane } = yield * plugin(() => env.PLUGIN.getByName("notes")).start();
 ```
 
 Call an object's routes from a Worker with the core's own clients, through the stub:

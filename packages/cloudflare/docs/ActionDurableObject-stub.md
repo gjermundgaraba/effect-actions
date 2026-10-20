@@ -50,8 +50,8 @@ export class PluginHost extends ActionDurableObject.make({
 ## Call an object's rpcs
 
 `client(group)` makes one client, in the caller's `Scope`, for every object of a class, and
-returns `(stub) => client`. A call goes to the stub it was given and fails with the rpc's
-declared errors; a failure of the stub itself is a defect.
+returns `(stubOf) => client`. Each call gets a new stub from `stubOf`, as it is sent, and fails
+with the rpc's declared errors; a failure of the stub itself is a defect.
 
 Before, from an application calling three objects: a hand-typed stub interface, a method per
 operation on the object, a wrapper per call, and the declared errors rebuilt in the Worker.
@@ -79,7 +79,7 @@ export class Hosts extends Context.Service<
 >()("app/Hosts") {
   static readonly layer = Layer.effect(Hosts)(
     Effect.map(ActionDurableObject.client(PluginRpcs), (plugin) =>
-      Hosts.of({ plugin: (id) => plugin(env.PLUGIN.getByName(id)) }),
+      Hosts.of({ plugin: (id) => plugin(() => env.PLUGIN.getByName(id)) }),
     ),
   );
 }
@@ -87,21 +87,27 @@ export class Hosts extends Context.Service<
 startPane: ({ plugin }) => hosts.plugin(plugin).start(),
 ```
 
-An application calling one object holds the client alone:
-`const catalog = (yield* ActionDurableObject.client(CatalogRpcs))(env.CATALOG.getByName("main"))`.
+An application calling one object keeps its client for good, since each call reaches it
+through a new stub: `const catalog = calls(() => env.CATALOG.getByName("catalog"))`, where
+`calls` is what `client(CatalogRpcs)` succeeds with.
 
 - `hosts.plugin(id).start()` is an `Effect<{ pane }, PluginNotFound | PluginHasNoPane>`.
-- The one client holds nothing per object: its calls are correct across evictions, and a
-  Worker reaching many names keeps nothing for each.
-- Give it the stub `getByName` or `get(idFromString(id))` returns. Only keys you accept should
-  reach `getByName`: each name is another object.
+- Never hold a stub: Cloudflare's error-handling guide says "Many exceptions leave the
+  DurableObjectStub in a "broken" state", failing every later request through it with the
+  same exception. `stubOf` is called for every call, so a call after a broken stub reaches the
+  object through a new one, and the client keeps nothing per object across evictions.
+- `stubOf` returns the stub `getByName` or `get(idFromString(id))` returns, and reads `env` as
+  each call is sent. Only keys you accept should reach `getByName`: each name is another
+  object. A factory that throws is a defect.
 - A stub's failure, such as an object without `calls` or an answer past the platform's limit,
   is one its caller cannot recover from, so `client` makes it a defect. For Effect's own typing,
   with `RpcClientError` in every call's errors, call `RpcClient.make(group)` over
   `layerStubClient(stub)`.
-- From another object, make the client in a startup service, reading the binding from the
-  `env` import of `cloudflare:workers` as the service builds.
-- Read `env` as the client is made or called, never as the module evaluates.
+- From another object, make the client in a startup service. Its factory reads the binding
+  as each call is sent, from the `env` import of `cloudflare:workers` or from the `env` given
+  to `make`'s `services` function, never as the module evaluates.
+- `layerStubClient(stub)` holds the stub it was given: after its failure, provide the client
+  a `layerStubClient` over a new stub.
 
 An `ActionRpc` binding is called with its own client over the stub:
 
@@ -114,7 +120,8 @@ ActionRpc.client(RoomRpc).pipe(
 ```
 
 [chat-rooms/src/platform/room-stubs.ts](../examples/chat-rooms/src/platform/room-stubs.ts) is
-that client, for the lobby. Its calls fail with `RpcClientError` as well as the actions' errors.
+that client, for the lobby, over a new stub for every call. Its calls fail with
+`RpcClientError` as well as the actions' errors.
 
 ## Errors that name the object
 

@@ -27,6 +27,11 @@ const defectOf = <A, E>(exit: Exit.Exit<A, E>) =>
 
 const asAda = RpcClient.withHeaders({ authorization: "Bearer ada" });
 
+const abort = (stub: DurableObjectStub) =>
+  Effect.promise(() =>
+    runInDurableObject(stub, (_, state) => state.abort("aborted")).catch(String),
+  );
+
 describe("layerStubClient", () => {
   it.effect("calls a group's rpcs over the stub, with their successes and declared errors", () =>
     Effect.gen(function* () {
@@ -146,6 +151,15 @@ describe("layerStubClient", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("serves through a class of its own delegating the method in one line", () =>
+    Effect.gen(function* () {
+      const client = yield* rawOver(env.DELEGATING.getByName("delegating"));
+
+      yield* client.install({ code: { plugin: "notes", pane: true } });
+      expect(yield* client.start()).toEqual({ pane: "notes/1" });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("answers an rpc that streams with a defect naming it, and others as before", () =>
     Effect.gen(function* () {
       const client = yield* RpcClient.make(StreamRpcs).pipe(
@@ -203,12 +217,12 @@ describe("client", () => {
     Effect.gen(function* () {
       const host = yield* plugins;
 
-      expect(yield* Effect.flip(host(plugin("by-key")).start())).toEqual(
+      expect(yield* Effect.flip(host(() => plugin("by-key")).start())).toEqual(
         new PluginNotFound({ plugin: "unknown" }),
       );
-      yield* host(plugin("by-key")).install({ code: { plugin: "notes", pane: true } });
-      expect(yield* host(plugin("by-key")).start()).toEqual({ pane: "notes/1" });
-      expect(yield* host(plugin("another")).panes()).toEqual([]);
+      yield* host(() => plugin("by-key")).install({ code: { plugin: "notes", pane: true } });
+      expect(yield* host(() => plugin("by-key")).start()).toEqual({ pane: "notes/1" });
+      expect(yield* host(() => plugin("another")).panes()).toEqual([]);
     }).pipe(Effect.scoped),
   );
 
@@ -225,21 +239,66 @@ describe("client", () => {
         }));
 
         expect(
-          yield* Effect.forEach(calls, ({ id, ...call }) => host(plugin(id)).echo(call), {
+          yield* Effect.forEach(calls, ({ id, ...call }) => host(() => plugin(id)).echo(call), {
             concurrency: "unbounded",
           }),
         ).toEqual(calls.map(({ text }) => text));
       }).pipe(Effect.scoped),
   );
 
+  it.effect("gets a stub from its factory for every call", () =>
+    Effect.gen(function* () {
+      const host = yield* plugins;
+
+      let made = 0;
+
+      const counted = host(() => {
+        made += 1;
+
+        return plugin("counted");
+      });
+
+      yield* counted.install({ code: { plugin: "notes", pane: true } });
+      expect(yield* counted.start()).toEqual({ pane: "notes/1" });
+      expect(made).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("answers through a new stub after an exception broke the one before", () =>
+    Effect.gen(function* () {
+      const host = yield* plugins;
+      const broken = plugin("broken");
+      const raw = yield* rawOver(broken);
+
+      yield* raw.install({ code: { plugin: "notes", pane: true } });
+      yield* abort(broken);
+
+      for (const _ of [1, 2]) {
+        expect(String((yield* Effect.flip(raw.panes())).reason.cause)).toContain("aborted");
+      }
+
+      const stubs = [broken];
+      const recovering = host(() => stubs.shift() ?? plugin("broken"));
+
+      const defect = defectOf(yield* Effect.exit(recovering.panes()));
+
+      expect(
+        defect instanceof RpcClientError.RpcClientError && String(defect.reason.cause),
+      ).toContain("aborted");
+      expect(yield* recovering.start()).toEqual({ pane: "notes/1" });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("answers after an eviction with the one client it made", () =>
     Effect.gen(function* () {
       const host = yield* plugins;
 
-      yield* host(plugin("client-evicted")).install({ code: { plugin: "notes", pane: true } });
+      yield* host(() => plugin("client-evicted")).install({
+        code: { plugin: "notes", pane: true },
+      });
       yield* Effect.promise(() => evictDurableObject(plugin("client-evicted")));
 
-      expect(yield* host(plugin("client-evicted")).start()).toEqual({ pane: "notes/1" });
+      expect(yield* host(() => plugin("client-evicted")).start()).toEqual({ pane: "notes/1" });
     }).pipe(Effect.scoped),
   );
 
@@ -248,7 +307,9 @@ describe("client", () => {
       const host = yield* plugins;
 
       const exit = yield* Effect.exit(
-        host({ effectActionsRpc: () => Promise.reject(new Error("The object is gone")) }).panes(),
+        host(() => ({
+          effectActionsRpc: () => Promise.reject(new Error("The object is gone")),
+        })).panes(),
       );
 
       expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
@@ -275,9 +336,9 @@ describe("client", () => {
       expect(yield* Effect.flip(pane.open({ plugin: "from-pane" }))).toEqual(
         new PluginNotFound({ plugin: "unknown" }),
       );
-      yield* host(plugin("from-pane")).install({ code: { plugin: "notes", pane: true } });
+      yield* host(() => plugin("from-pane")).install({ code: { plugin: "notes", pane: true } });
       expect(yield* pane.open({ plugin: "from-pane" })).toEqual({ pane: "notes/1" });
-      expect(yield* host(plugin("from-pane")).panes()).toEqual(["notes/1"]);
+      expect(yield* host(() => plugin("from-pane")).panes()).toEqual(["notes/1"]);
     }).pipe(Effect.scoped),
   );
 });

@@ -25,27 +25,28 @@ Import `@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject`.
 | `Calls`, `Calls.layer`                               | The object's dispatcher for the calls over its stub, one per instance.                       |
 | `layerStub()`                                        | The `RpcServer.Protocol` over the object's stub, registered with `Calls`.                    |
 | `layerStubClient(stub)`                              | The `RpcClient.Protocol` calling an object's rpcs over its stub.                             |
-| `client(group)`                                      | `(stub) => client` of a group's rpcs, one client for every stub, declared errors typed.      |
+| `client(group)`                                      | `(stubOf) => client` of a group's rpcs, a new stub per call, declared errors typed.          |
 | `layerHttpClient(stub)`                              | An `HttpClient` sending every request to a stub or a service binding.                        |
 | `handlers(ctx, { services?, routes?, calls?, ... })` | The object's handlers, for a class of your own to delegate to.                               |
 | `make({ services?, routes?, calls?, alarm?, ... })`  | A Durable Object class delegating every handler to `handlers`.                               |
 
 Exported types: `Options` of `handlers` and `make`, `Handlers`, what `handlers` returns,
 `Instance`, an instance of the class `make` returns, `LayerWebSocketOptions`, `Stub`, what
-`layerStubClient` and `client` call, and `Client<typeof group>`, `client`'s per stub.
+`layerStubClient` and `client` call, `StubRequest`, what its method takes, and
+`Client<typeof group>`, what `client` returns for a factory.
 `Sockets`' `message(socket, data)`, `close(socket)` and `error(socket)` succeed with `true`
 when a protocol took the event, `false` when none accepted the socket. `Handlers`' and
 `Instance`'s `effectActionsRpc` is the method a stub calls, and `run(effect)` runs an
 Effect in the object with its services.
 
-| Option                   | Meaning                                                                                             |
-| ------------------------ | --------------------------------------------------------------------------------------------------- |
-| `services`               | The object's startup services, a Layer requiring `State` alone, built once per instance.            |
-| `routes`                 | A Layer of routes, as `HttpRouter.toWebHandler` serves them: `ActionRpc.layer`, `ActionHttp.layer`. |
-| `calls`                  | An rpc server served over the stub, given `layerStub()`: `RpcServer.layer`, `ActionRpc.layer`.      |
-| `alarm`                  | A function of the runtime's alarm information to the Effect the object's `alarm` runs.              |
-| `disableLogger`          | Leave out the request logger `toWebHandler` adds.                                                   |
-| `layerWebSocket`: `path` | The upgrade route.                                                                                  |
+| Option                   | Meaning                                                                                                                                                   |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `services`               | The object's startup services, a Layer requiring `State` alone, built once per instance; to `make`, also a function of the instance's `env` returning it. |
+| `routes`                 | A Layer of routes, as `HttpRouter.toWebHandler` serves them: `ActionRpc.layer`, `ActionHttp.layer`.                                                       |
+| `calls`                  | An rpc server served over the stub, given `layerStub()`: `RpcServer.layer`, `ActionRpc.layer`.                                                            |
+| `alarm`                  | A function of the runtime's alarm information to the Effect the object's `alarm` runs.                                                                    |
+| `disableLogger`          | Leave out the request logger `toWebHandler` adds.                                                                                                         |
+| `layerWebSocket`: `path` | The upgrade route.                                                                                                                                        |
 
 ## Serve actions from an object
 
@@ -86,6 +87,10 @@ it with a SQLite migration.
 - The services, calls and routes are module-level values, built once per instance: they reach
   bindings through the `env` import of `cloudflare:workers`, read as they build or serve, never
   as the module evaluates ([chat-rooms/src/platform/room-stubs.ts](../examples/chat-rooms/src/platform/room-stubs.ts)).
+- `make`'s `services` may instead be a function of the instance's `env`, called as each
+  instance is constructed, `services: (env) => Layer.succeed(Bucket, env.BUCKET)`: a class
+  extending the one `make` returns needs no constructor or delegates of its own, and overrides
+  only the handlers it has reason to write.
 
 ## Serve rpcs over hibernating WebSockets
 

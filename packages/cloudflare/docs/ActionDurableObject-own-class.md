@@ -1,15 +1,18 @@
 # ActionDurableObject in a class of your own
 
-Serve actions from a Durable Object class you write yourself, with its own methods, its own
-sockets or its own runtime, through the primitives `make` is built from. Read
+Serve actions from a Durable Object class that cannot extend the one `make` returns, such as
+one extending another base class or holding its own runtime, through the primitives `make` is
+built from. A class with methods, sockets or handlers of its own extends `make`'s and
+overrides them, with `services` a function of its `env` when they read its bindings. Read
 [ActionDurableObject.md](ActionDurableObject.md) first: its API, sockets, alarm and limits hold
 here too. When something fails, search
 [ActionDurableObject-failures.md](ActionDurableObject-failures.md).
 
 ## Delegate to handlers
 
-`handlers(this.ctx, options)` takes `make`'s options and returns the object's handlers, each
-taking the runtime's own arguments. Delegate the ones it should serve and write the others.
+`handlers(this.ctx, options)` takes `make`'s options, with `services` a Layer, built from
+`this.env` when they read it, and returns the object's handlers, each taking the runtime's own
+arguments. Delegate the ones it should serve and write the others.
 
 ```ts
 export class PluginHost extends DurableObject<Env> {
@@ -27,8 +30,8 @@ export class PluginHost extends DurableObject<Env> {
     return this.#object.alarm();
   }
 
-  effectActionsRpc(...request: Parameters<ActionDurableObject.Handlers["effectActionsRpc"]>) {
-    return this.#object.effectActionsRpc(...request);
+  effectActionsRpc(request: ActionDurableObject.StubRequest) {
+    return this.#object.effectActionsRpc(request);
   }
 }
 ```
@@ -43,9 +46,9 @@ export class PluginHost extends DurableObject<Env> {
 - Without `routes`, `fetch` answers 404, and the socket handlers resolve at once, building
   nothing. Without `calls`, `effectActionsRpc` rejects at once.
 - `effectActionsRpc` is the method `layerStubClient` and `client` call: a class serving
-  `calls` defines it, delegating, its parameters `Handlers`', and a stub of a class without it
-  is refused by their types.
-  Methods of the class's own, running Effects with `run`, stay callable beside it.
+  `calls` defines it as a method, delegating, its parameter a `StubRequest`, and a stub of a
+  class without it is refused by their types. Methods of the class's own, running Effects with
+  `run`, stay callable beside it.
 - Without `alarm`, `handlers`' `alarm` runs nothing, once the object is built. Define the class's `alarm` only when it has
   one: workerd refuses `storage.setAlarm` on a class without an `alarm` method.
 - The socket handlers dispatch through `Sockets` and resolve for a socket no protocol accepted.
@@ -101,7 +104,7 @@ export class Room extends DurableObject {
 
   // webSocketClose and webSocketError likewise, with `sockets.close` and `sockets.error`.
 
-  effectActionsRpc(...[request]: Parameters<ActionDurableObject.Handlers["effectActionsRpc"]>) {
+  effectActionsRpc(request: ActionDurableObject.StubRequest) {
     return this.#runtime.runPromise(ActionDurableObject.Calls.use((calls) => calls.call(request)));
   }
 }

@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { Cause, Context, Deferred, Effect, Exit, Layer, Scope } from "effect";
+import { Cause, Context, Deferred, Effect, Exit, Layer, Predicate, Scope } from "effect";
 import {
   FetchHttpClient,
   HttpRouter,
@@ -8,11 +8,11 @@ import {
   type HttpServerRequest,
 } from "effect/http";
 import type { RpcMessage, RpcServer } from "effect/rpc";
-import { Calls, layerStub } from "./calls.js";
+import { Calls, layerStub, type StubRequest } from "./calls.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
 
-export { Calls, layerStub } from "./calls.js";
+export { Calls, layerStub, type StubRequest } from "./calls.js";
 
 export { layerWebSocket, Sockets, type LayerWebSocketOptions } from "./sockets.js";
 
@@ -113,9 +113,7 @@ export interface Handlers<S = never> {
    * rejects at once without `calls`. Workers RPC calls it by this name, the package's, so it
    * does not collide with the class's own methods.
    */
-  effectActionsRpc(
-    request: ReadonlyArray<RpcMessage.FromClientEncoded>,
-  ): Promise<ReadonlyArray<RpcMessage.FromServerEncoded>>;
+  effectActionsRpc(request: StubRequest): Promise<ReadonlyArray<RpcMessage.FromServerEncoded>>;
   /** Runs the `alarm` option through `run`, or nothing when there is none. */
   alarm(...args: Parameters<HandlerOf<"alarm">>): Promise<void>;
   /**
@@ -300,7 +298,7 @@ export const handlers = <
     if (sockets !== undefined) await Effect.runPromise(event(sockets));
   };
 
-  const call = async (request: ReadonlyArray<RpcMessage.FromClientEncoded>) => {
+  const call = async (request: StubRequest) => {
     if (calls === undefined) {
       throw new Error(
         "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer",
@@ -340,9 +338,7 @@ export interface Instance<S = never> extends DurableObject<Cloudflare.Env> {
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
   /** `Handlers`' `effectActionsRpc`: what `layerStubClient` and `client` call. */
-  effectActionsRpc(
-    ...args: Parameters<Handlers["effectActionsRpc"]>
-  ): ReturnType<Handlers["effectActionsRpc"]>;
+  effectActionsRpc(request: StubRequest): ReturnType<Handlers["effectActionsRpc"]>;
   /**
    * `Handlers`' `run`, for the methods of a class extending this one. A Durable Object's public
    * methods are callable over its stub, this one too, but it takes an Effect, which no stub can
@@ -352,7 +348,42 @@ export interface Instance<S = never> extends DurableObject<Cloudflare.Env> {
 }
 
 /**
- * A Durable Object class delegating every handler, and `run`, to `handlers` over its own `ctx`:
+ * `make` with `services` a function of the instance's `env`, called as each instance is
+ * constructed: the class `make` returns otherwise, with the services the function returns. A
+ * call matching neither form is reported against the Layer form: see
+ * `docs/ActionDurableObject-failures.md`.
+ *
+ * Guide: `docs/ActionDurableObject.md` in this package.
+ */
+export function make<
+  S,
+  SE,
+  SR extends State,
+  A = never,
+  E = never,
+  R extends Allowed<A, S> = never,
+  AE = never,
+  AR extends S | State | Scope.Scope = never,
+  CA = never,
+  CE = never,
+  CR extends RpcServer.Protocol | S | State = never,
+>(
+  options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
+    /**
+     * The object's startup services, as `handlers`' `services`, returned by a function of the
+     * instance's `env`, `this.env`: a service reads a binding or a variable from the `env` it
+     * is given.
+     */
+    readonly services: (env: Cloudflare.Env) => Layer.Layer<S, SE, SR>;
+  },
+): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S>;
+// Why: a `services` function of `env` has its parameter inferred, which fixes the type
+// parameters a default gives before the function's return gives `S`, so its overload has none
+// for the services. The Layer overload stays last, since TypeScript reports an argument of
+// neither form against the last overload alone.
+/**
+ * A Durable Object class delegating every handler, and `run`, to `handlers` over its own `ctx`,
+ * with `services`, or what a function of its `env` returns:
  * it serves `routes` on `fetch`, the sockets their protocols accept on `webSocketMessage`,
  * `webSocketClose` and `webSocketError`, and `calls` on `effectActionsRpc`, the method a
  * caller's `layerStubClient` or `client` calls over the stub, and runs `alarm`. A socket no protocol accepted, such
@@ -365,7 +396,7 @@ export interface Instance<S = never> extends DurableObject<Cloudflare.Env> {
  * Guide: `docs/ActionDurableObject.md` in this package; in an application:
  * `examples/chat-rooms/`.
  */
-export const make = <
+export function make<
   S = never,
   SE = never,
   SR extends State = never,
@@ -379,13 +410,41 @@ export const make = <
   CR extends RpcServer.Protocol | S | State = never,
 >(
   options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
-): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S> => {
+): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S>;
+export function make<
+  S = never,
+  SE = never,
+  SR extends State = never,
+  A = never,
+  E = never,
+  R extends Allowed<A, S> = never,
+  AE = never,
+  AR extends S | State | Scope.Scope = never,
+  CA = never,
+  CE = never,
+  CR extends RpcServer.Protocol | S | State = never,
+>(
+  options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
+    readonly services?:
+      | Layer.Layer<S, SE, SR>
+      | ((env: Cloudflare.Env) => Layer.Layer<S, SE, SR>)
+      | undefined;
+  },
+): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S> {
+  const { services } = options;
+
+  const servicesOf = (env: Cloudflare.Env) =>
+    Predicate.isFunction(services) ? services(env) : services;
+
   const onAlarm:
     | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, S | State | Scope.Scope>)
     | undefined = options.alarm;
 
   class ActionDurableObject extends DurableObject<Cloudflare.Env> {
-    readonly #object = handlers(this.ctx, options);
+    readonly #object = handlers<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>(this.ctx, {
+      ...options,
+      services: servicesOf(this.env),
+    });
 
     override fetch(...args: Parameters<HandlerOf<"fetch">>) {
       return this.#object.fetch(...args);
@@ -403,8 +462,8 @@ export const make = <
       return this.#object.webSocketError(...args);
     }
 
-    effectActionsRpc(...args: Parameters<Handlers["effectActionsRpc"]>) {
-      return this.#object.effectActionsRpc(...args);
+    effectActionsRpc(request: StubRequest) {
+      return this.#object.effectActionsRpc(request);
     }
 
     run<A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>) {
@@ -423,7 +482,7 @@ export const make = <
           return this.run(onAlarm(info));
         }
       };
-};
+}
 
 /**
  * An `HttpClient` whose requests go to `fetcher`, a Durable Object stub or a service binding,

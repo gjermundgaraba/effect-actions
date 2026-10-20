@@ -1,9 +1,14 @@
 import { type Cause, Context, Deferred, Effect, Layer, Predicate, Queue, Schema } from "effect";
 import { RpcMessage, type RpcSerialization, RpcServer } from "effect/rpc";
 
-type Serve = (
-  request: ReadonlyArray<RpcMessage.FromClientEncoded>,
-) => Effect.Effect<ReadonlyArray<RpcMessage.FromServerEncoded>>;
+/**
+ * What a call over the stub carries to the object's `effectActionsRpc`: its messages, as values.
+ * A class of its own delegating the method takes it as its parameter,
+ * `effectActionsRpc(request: ActionDurableObject.StubRequest)`.
+ */
+export type StubRequest = ReadonlyArray<RpcMessage.FromClientEncoded>;
+
+type Serve = (request: StubRequest) => Effect.Effect<ReadonlyArray<RpcMessage.FromServerEncoded>>;
 
 interface Registry {
   serve: Serve | undefined;
@@ -26,7 +31,7 @@ export class Calls extends Context.Service<
   {
     /** Answers one call over the stub: its encoded messages, in, and its responses, out. */
     readonly call: (
-      request: ReadonlyArray<RpcMessage.FromClientEncoded>,
+      request: StubRequest,
     ) => Effect.Effect<ReadonlyArray<RpcMessage.FromServerEncoded>>;
   }
 >()("effect-actions-cloudflare/ActionDurableObject/Calls") {

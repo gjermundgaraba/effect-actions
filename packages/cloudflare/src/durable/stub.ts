@@ -7,18 +7,16 @@ import {
   type Rpc,
   type RpcGroup,
 } from "effect/rpc";
-import { codecFor } from "./calls.js";
+import { codecFor, type StubRequest } from "./calls.js";
 
 /**
- * What a caller holds to call an object's rpcs: a `DurableObjectStub` of a class `make` returns,
+ * What a call reaches an object's rpcs through: a `DurableObjectStub` of a class `make` returns,
  * or of a class delegating `effectActionsRpc` to `handlers`, as `getByName` returns it. Its
  * answer is untyped data until the client checks it: Workers RPC's types rewrite a returned
  * tuple as an array.
  */
 export interface Stub {
-  readonly effectActionsRpc: (
-    request: ReadonlyArray<RpcMessage.FromClientEncoded>,
-  ) => Promise<ReadonlyArray<unknown>>;
+  readonly effectActionsRpc: (request: StubRequest) => Promise<ReadonlyArray<unknown>>;
 }
 
 const clientError = (reason: RpcClientError.RpcClientDefect) =>
@@ -73,24 +71,25 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * over `stub`: each call is one call of the object's `effectActionsRpc` method, its messages
  * and their answer passed as values, each schema's plain form, which the object serves on
  * `layerStub`, through `make`'s or `handlers`' `calls`. A value Workers RPC cannot clone, such
- * as a class instance in an `Unknown`, fails the whole call. The
- * stub's own failure, such as an object serving no rpcs over its stub or an answer past the
- * platform's limit, is an `RpcClientError`, as an HTTP transport's is. Unary: an rpc that
- * streams fails as a defect. Nothing authenticates the call: forward a principal as a header,
- * with `RpcClient.withHeaders`, or in the payload.
+ * as a class instance in an `Unknown`, fails the whole call. The stub's own failure, such as an
+ * object serving no rpcs over its stub or an answer past the platform's limit, is an
+ * `RpcClientError`, as an HTTP transport's is. It holds `stub`, which many exceptions leave
+ * broken, failing every later call: after a stub's failure, provide a client built over a new
+ * one. Unary: an rpc that streams fails as a defect. Nothing authenticates the call: forward a
+ * principal as a header, with `RpcClient.withHeaders`, or in the payload.
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
 export const layerStubClient = (stub: Stub): Layer.Layer<RpcClient.Protocol> =>
   Layer.effect(RpcClient.Protocol)(makeProtocol(Effect.succeed(stub)));
 
-const CurrentStub = Context.Reference<Stub | undefined>(
+const CurrentStub = Context.Reference<(() => Stub) | undefined>(
   "effect-actions-cloudflare/ActionDurableObject/CurrentStub",
   { defaultValue: () => undefined },
 );
 
-const currentStub = Effect.flatMap(Effect.service(CurrentStub), (stub) =>
-  stub === undefined ? Effect.die(new Error("No stub for the call")) : Effect.succeed(stub),
+const currentStub = Effect.flatMap(Effect.service(CurrentStub), (stubOf) =>
+  stubOf === undefined ? Effect.die(new Error("No stub for the call")) : Effect.sync(stubOf),
 );
 
 type Unary<Rpcs extends Rpc.Any> = Rpcs extends Rpc.Any
@@ -118,11 +117,13 @@ const methodOf = (native: NativeClient, tag: string): NativeMethod => {
 export type Client<Group> = RpcClient.RpcClient<Unary<RpcGroup.Rpcs<Group>>>;
 
 /**
- * The rpcs of `group`, as `(stub) => client`, for a Worker or an object calling objects of one
- * class: `plugin(env.PLUGIN.getByName(id)).start()`. One native client, built in the given
- * `Scope`, serves every stub, each call going to the stub it was made for, so nothing is kept
- * per object and an eviction changes nothing. A call fails with the rpc's declared errors; the
- * stub's own failure, which its caller cannot recover from, is a defect. For Effect's own
+ * The rpcs of `group`, as `(stubOf) => client`, for a Worker or an object calling objects of
+ * one class: `plugin(() => env.PLUGIN.getByName(id)).start()`. Each call gets its stub from
+ * `stubOf`, called as the call is sent, so no stub is held: a stub an exception broke is never
+ * called again, and a client over one object may be kept for good. One native client, built in
+ * the given `Scope`, serves every factory, so nothing is kept per object and an eviction
+ * changes nothing. A call fails with the rpc's declared errors; the stub's own failure, which
+ * its caller cannot recover from, and a factory that throws are defects. For Effect's own
  * `RpcClientError` typing, use `RpcClient.make` over `layerStubClient`. A group with an rpc that
  * streams is refused as the client is made.
  *
@@ -131,7 +132,7 @@ export type Client<Group> = RpcClient.RpcClient<Unary<RpcGroup.Rpcs<Group>>>;
 export const client = <Rpcs extends Rpc.Any>(
   group: RpcGroup.RpcGroup<Rpcs>,
 ): Effect.Effect<
-  (stub: Stub) => Client<RpcGroup.RpcGroup<Rpcs>>,
+  (stubOf: () => Stub) => Client<RpcGroup.RpcGroup<Rpcs>>,
   never,
   Scope.Scope | Rpc.MiddlewareClient<Rpcs>
 > =>
@@ -148,7 +149,8 @@ export const client = <Rpcs extends Rpc.Any>(
     }
 
     // Why: `RpcClient.make` runs each call's send in the calling fiber's context, so the call's
-    // stub is a reference set around it, and one client serves every object.
+    // stub factory is a reference set around it, and one client serves every object. The factory
+    // runs at each send: a stub an exception broke fails every later call through it.
     const native: NativeClient = yield* RpcClient.make(group).pipe(
       Effect.provideServiceEffect(RpcClient.Protocol, makeProtocol(currentStub)),
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased native client: one method per rpc of the group, by its tag, each taking its payload and options.
@@ -157,7 +159,7 @@ export const client = <Rpcs extends Rpc.Any>(
 
     const tags = [...group.requests.keys()];
 
-    return (stub: Stub) =>
+    return (stubOf: () => Stub) =>
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased client: one method per rpc of the group, each the native client's, whose declared errors and successes `Client` types; only the transport's `RpcClientError` is moved to the defects.
       Object.fromEntries(
         tags.map((tag) => [
@@ -167,7 +169,7 @@ export const client = <Rpcs extends Rpc.Any>(
               native,
               tag,
             )(...args).pipe(
-              Effect.provideService(CurrentStub, stub),
+              Effect.provideService(CurrentStub, stubOf),
               Effect.catchIf(
                 (error): error is RpcClientError.RpcClientError =>
                   Predicate.isTagged(error, "RpcClientError"),

@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { Effect, Layer, ManagedRuntime, Schema, type Scope } from "effect";
+import { Context, Effect, Layer, ManagedRuntime, Schema, type Scope } from "effect";
 import { HttpRouter, type HttpClient } from "effect/http";
 import { Rpc as NativeRpc, RpcClient, RpcGroup, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
@@ -56,6 +56,19 @@ export const checkMakeTypes = () =>
     // @ts-expect-error -- Published declarations must refuse routes lacking a startup service, here the protocol.
     routes: ActionRpc.layer(Rpc, pong),
   });
+
+export class Deployment extends Context.Service<Deployment, Cloudflare.Env>()(
+  "consumer/Deployment",
+) {}
+
+export class Deployed extends ActionDurableObject.make({
+  services: (env) => Layer.succeed(Deployment, env),
+  alarm: () => Effect.asVoid(Effect.service(Deployment)),
+}) {
+  deployment(): Promise<Cloudflare.Env> {
+    return this.run(Effect.service(Deployment));
+  }
+}
 
 export class Hosted extends DurableObject {
   readonly #object = ActionDurableObject.handlers(this.ctx, { routes: socket });
@@ -129,7 +142,7 @@ export const start = (
   stub: DurableObjectStub<Host>,
   id: string,
 ): Effect.Effect<string, NotFound, Scope.Scope> =>
-  Effect.flatMap(ActionDurableObject.client(Hosts), (host) => host(stub).start({ id }));
+  Effect.flatMap(ActionDurableObject.client(Hosts), (host) => host(() => stub).start({ id }));
 
 export const startRaw = (stub: DurableObjectStub<Host>) =>
   RpcClient.make(Hosts).pipe(
@@ -152,9 +165,7 @@ export class Composed extends DurableObject {
     ),
   );
 
-  effectActionsRpc(
-    ...[request]: Parameters<ActionDurableObject.Handlers["effectActionsRpc"]>
-  ): ReturnType<ActionDurableObject.Handlers["effectActionsRpc"]> {
+  effectActionsRpc(request: ActionDurableObject.StubRequest) {
     return this.#runtime.runPromise(ActionDurableObject.Calls.use((calls) => calls.call(request)));
   }
 }

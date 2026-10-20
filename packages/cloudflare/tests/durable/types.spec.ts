@@ -1,7 +1,7 @@
 import type { DurableObject } from "cloudflare:workers";
 import { Context, Effect, Layer, type Scope } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
-import { RpcClient, type RpcClientError, RpcServer } from "effect/rpc";
+import { RpcClient, type RpcClientError, type RpcMessage, RpcServer } from "effect/rpc";
 import { expectTypeOf } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -10,6 +10,7 @@ import {
   Builds,
   buildsRoutes,
   CurrentUser,
+  Greeting,
   Http,
   implementation,
   Rpc,
@@ -180,6 +181,29 @@ ActionDurableObject.make({
   alarm: () => Effect.asVoid(Effect.service(Builds)),
 });
 
+const FromEnv = ActionDurableObject.make({
+  services: (env) => Layer.merge(Builds.layer, Layer.succeed(Greeting, env.GREETING)),
+  routes: buildsRoutes,
+});
+
+declare const fromEnv: InstanceType<typeof FromEnv>;
+
+expectTypeOf(fromEnv.run(Effect.service(Greeting))).toEqualTypeOf<Promise<string>>();
+
+ActionDurableObject.make({
+  // @ts-expect-error -- The services a function of env returns are built at startup too.
+  services: () => Layer.effect(Builds)(Effect.as(Effect.service(CurrentUser), 1)),
+  routes: Layer.empty,
+});
+
+expectTypeOf<Parameters<ActionDurableObject.Handlers["effectActionsRpc"]>>().toEqualTypeOf<
+  [request: ActionDurableObject.StubRequest]
+>();
+
+expectTypeOf<ActionDurableObject.StubRequest>().toEqualTypeOf<
+  ReadonlyArray<RpcMessage.FromClientEncoded>
+>();
+
 declare const pluginStub: DurableObjectStub<PluginHost>;
 
 declare const plainStub: DurableObjectStub<Plain>;
@@ -204,16 +228,19 @@ const plugins = ActionDurableObject.client(PluginRpcs);
 
 expectTypeOf(plugins).toEqualTypeOf<
   Effect.Effect<
-    (stub: ActionDurableObject.Stub) => ActionDurableObject.Client<typeof PluginRpcs>,
+    (stubOf: () => ActionDurableObject.Stub) => ActionDurableObject.Client<typeof PluginRpcs>,
     never,
     Scope.Scope
   >
 >();
 
-void Effect.map(plugins, (plugin) => plugin(pluginStub));
+void Effect.map(plugins, (plugin) => plugin(() => pluginStub));
 
 // @ts-expect-error -- A client calls an object through a stub of a class serving calls alone.
-void Effect.map(plugins, (plugin) => plugin(plainStub));
+void Effect.map(plugins, (plugin) => plugin(() => plainStub));
+
+// @ts-expect-error -- A client takes a factory of stubs, never a stub it would hold.
+void Effect.map(plugins, (plugin) => plugin(pluginStub));
 
 declare const plugin: ActionDurableObject.Client<typeof PluginRpcs>;
 

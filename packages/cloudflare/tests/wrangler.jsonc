@@ -2,6 +2,7 @@
   "name": "effect-actions-cloudflare-tests",
   "main": "./worker.ts",
   "compatibility_date": "2026-10-01",
+  "vars": { "GREETING": "from the deployment" },
   "durable_objects": {
     "bindings": [
       { "name": "PLAIN", "class_name": "Plain" },
@@ -23,6 +24,8 @@
       { "name": "STREAMED", "class_name": "Streamed" },
       { "name": "NATIVE", "class_name": "Native" },
       { "name": "UNSERVED", "class_name": "Unserved" },
+      { "name": "FROM_ENV", "class_name": "FromEnv" },
+      { "name": "DELEGATING", "class_name": "Delegating" },
     ],
   },
   "migrations": [
@@ -48,6 +51,8 @@
         "Streamed",
         "Native",
         "Unserved",
+        "FromEnv",
+        "Delegating",
       ],
     },
   ],

@@ -7,6 +7,7 @@ import {
   Builds,
   buildsAlarm,
   buildsRoutes,
+  Greeting,
   ownSocketRoutes,
   ownTag,
   prefixedRoutes,
@@ -175,7 +176,7 @@ export class Manual extends DurableObject {
     await this.#dispatch((sockets) => sockets.error(socket));
   }
 
-  effectActionsRpc(...[request]: Parameters<ActionDurableObject.Handlers["effectActionsRpc"]>) {
+  effectActionsRpc(request: ActionDurableObject.StubRequest) {
     return this.#runtime.runPromise(ActionDurableObject.Calls.use((calls) => calls.call(request)));
   }
 }
@@ -199,3 +200,22 @@ export class Native extends ActionDurableObject.make({ calls: nativeCalls }) {}
 export class Unserved extends ActionDurableObject.make({ calls: Layer.empty }) {}
 
 export default { fetch: () => new Response(null, { status: 404 }) };
+
+export class FromEnv extends ActionDurableObject.make({
+  services: (env) => Layer.succeed(Greeting, env.GREETING),
+}) {
+  greeting() {
+    return this.run(Effect.service(Greeting));
+  }
+}
+
+export class Delegating extends DurableObject {
+  readonly #object = ActionDurableObject.handlers(this.ctx, {
+    services: PluginStore.layer,
+    calls: pluginCalls,
+  });
+
+  effectActionsRpc(request: ActionDurableObject.StubRequest) {
+    return this.#object.effectActionsRpc(request);
+  }
+}

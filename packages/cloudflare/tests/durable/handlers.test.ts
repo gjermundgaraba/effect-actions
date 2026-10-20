@@ -100,6 +100,14 @@ describe("handlers", () => {
     }),
   );
 
+  it.effect("builds the services a function of the instance's env returns", () =>
+    Effect.gen(function* () {
+      const greeting = yield* Effect.promise(() => env.FROM_ENV.getByName("env").greeting());
+
+      expect(greeting).toBe("from the deployment");
+    }),
+  );
+
   it.effect("builds a Layer a run provides itself for that run alone", () =>
     Effect.gen(function* () {
       const stub = env.COUNTED.getByName("provided");

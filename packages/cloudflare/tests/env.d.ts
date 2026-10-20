@@ -19,5 +19,8 @@ declare namespace Cloudflare {
     readonly STREAMED: DurableObjectNamespace<import("./worker.ts").Streamed>;
     readonly NATIVE: DurableObjectNamespace<import("./worker.ts").Native>;
     readonly UNSERVED: DurableObjectNamespace<import("./worker.ts").Unserved>;
+    readonly FROM_ENV: DurableObjectNamespace<import("./worker.ts").FromEnv>;
+    readonly DELEGATING: DurableObjectNamespace<import("./worker.ts").Delegating>;
+    readonly GREETING: string;
   }
 }
