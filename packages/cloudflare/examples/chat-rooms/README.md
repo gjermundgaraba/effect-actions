@@ -43,8 +43,7 @@ elsewhere.
 - **A page follows the room**, through `watch`, an rpc that streams, beside the room's actions
   on its binding: a message posted reaches every page following the room, after the object
   hibernated too, and a page whose socket dropped subscribes again from the last message it
-  holds. A deletion reaches a page only when it subscribes again: publish one, in a stream of
-  events, for pages to drop it at once.
+  holds.
 - **The lobby calls a room over its stub, not its `fetch`**: the room serves its own API, a
   plain Effect `RpcGroup` no page calls, as its `calls`, and the lobby calls it with
   `ActionDurableObject.client`, a new stub for each call. Nothing authenticates a stub call,

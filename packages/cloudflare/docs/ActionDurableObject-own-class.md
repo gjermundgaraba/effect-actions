@@ -15,8 +15,8 @@ compiler diagnostic or Effect's own error, search
 arguments. Keep it in a private field, delegate the handlers the class serves this way, and
 write the others. A class serving `calls` defines the method a stub calls, delegating:
 `effectActionsRpc(request: ActionDurableObject.StubRequest) { return this.#object.effectActionsRpc(request); }`.
-Its own methods run their Effects with `run(effect)`, which gives them the services, `State`
-and a `Scope`, and stay callable over the stub beside it.
+Its own methods run their Effects with `run(effect)`, which gives them the services, `State`,
+`Feed` and a `Scope`, and stay callable over the stub beside it.
 
 How the object builds, when it builds again, and which handlers resolve without a build are
 on `ActionDurableObject.handlers`; the rules of each option on `ActionDurableObject.Options`;
@@ -28,6 +28,9 @@ A class with its own `ManagedRuntime` builds what `handlers` would, in one memo 
 the runtime and `HttpRouter.toWebHandler`:
 
 - `State`, the object's `ctx`, for the services, provided with `Layer.succeed`.
+- `Feed.layer`, the object's subscribers, requiring `State`, for the services, calls or routes
+  that subscribe or publish: one, in the shared memo map, since `end` completes the live
+  subscriptions of the `Feed` they subscribed through.
 - `Sockets.layer`, the dispatcher `layerWebSocket` registers with: the class's socket handlers
   call `Sockets`' `message`, `close` and `error`, once the routes are built, and answer the
   sockets for which they succeed with `false`.

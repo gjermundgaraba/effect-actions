@@ -34,6 +34,8 @@ export const messages = Action.implement(
         Effect.flatMap(CurrentMember, (member) => store.post(member.id, text)).pipe(
           Effect.tap((message) => feed.publish(Watch, message)),
         ),
+      // A deletion is not published: a page following the room drops the message only when it
+      // subscribes again. Publish one, in a `watch` of events, for pages to drop it at once.
       deleteMessage: ({ id }) =>
         Effect.flatMap(CurrentMember, (member) => store.remove(member.id, id)),
     };

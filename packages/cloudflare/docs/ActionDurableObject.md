@@ -10,7 +10,7 @@ for it when state belongs to one thing, such as a room, a document or a tenant, 
 callers should meet in one place.
 
 Import `@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject`. A message the library
-throws says its fix; for workerd's, celld's, a compiler diagnostic or Effect's own error,
+throws says its fix; for workerd's, a compiler diagnostic or Effect's own error,
 search [ActionDurableObject-failures.md](ActionDurableObject-failures.md). For one symbol,
 `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions-cloudflare/dist/`: each
 declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot
@@ -179,20 +179,14 @@ through its `fetch`, handing `response.webSocket` to `Socket.fromWebSocket` unde
 `RpcClient.layerProtocolSocket`
 ([chat-rooms/test/support/socket.ts](../examples/chat-rooms/test/support/socket.ts),
 [chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)). The core's
-`Testing.layer` serves the same routes in memory, but cannot upgrade a socket. Under celld,
-`CELLD_IDLE_EVICT_S` is the equivalent of `evictDurableObject`: the idle seconds after which it
-evicts an object.
+`Testing.layer` serves the same routes in memory, but cannot upgrade a socket. Under
+**celld**, Deno's self-hosted Durable Object runtime, `CELLD_IDLE_EVICT_S` is the equivalent of
+`evictDurableObject`: the idle seconds after which it evicts an object.
 
 ## Deploy
 
-- **Keep state in storage.** An instance lasts until it is evicted, and the next builds
-  everything again: in-memory state is lost.
-- **Some guarantees are workerd's, not every runtime's.** On workerd, a socket keeps its
-  upgrade headers across hibernation and `storage.setAlarm` throws on an object with no
-  `alarm` handler. celld 0.6.2, Deno's self-hosted runtime, drops the headers when it evicts
-  an idle object, so a message relying on the upgrade's token is refused as unauthenticated,
-  and accepts `setAlarm` without a handler, consuming the alarm: send a token on each message,
-  and give every object that sets an alarm an `alarm`.
-- **Any `compatibility_date` serves sockets.** The protocol answers a client's close frame
-  itself, so a page closing its socket gets a clean close with or without the runtime's
-  `web_socket_auto_reply_to_close`.
+workerd, Cloudflare's runtime, serves an object's sockets under any `compatibility_date`.
+celld 0.6.2 differs from it twice, each difference a gotcha of the declaration it touches: a
+socket's upgrade headers after an eviction, on `ActionDurableObject.layerWebSocket`, and an
+alarm set on a class made without `alarm`, on `ActionDurableObject.make`. What an eviction
+loses is on `ActionDurableObject.handlers`.

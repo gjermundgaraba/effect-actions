@@ -30,8 +30,9 @@ middleware fails with.
   authenticates as a protected action's does, and the client has their methods beside the
   actions', a stream rpc's a `Stream`. The host implements them with the binding's own
   `Rpc.rpcs.toLayer(handlers)`, whose handlers read the identity, and provides that to
-  `ActionRpc.layer`, which otherwise does not compile. The rules are on `ActionRpc.Options.rpcs`;
-  the Cloudflare package's chat-rooms example binds a room's feed this way.
+  `ActionRpc.layer`, which otherwise does not compile. The rules are on `ActionRpc.Options.rpcs`.
+  No example of this package streams: the one that does is chat-rooms, in the Cloudflare
+  package, `@gjermundgaraba/effect-actions-cloudflare`, which binds a room's feed this way.
 
 ## Serve the rpcs
 

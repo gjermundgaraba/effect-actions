@@ -22,7 +22,7 @@ authentication and each surface, is in the core package's docs, at
    carry the traps it shows.
 3. **Read [ActionDurableObject.md](ActionDurableObject.md) completely**, then the page of each
    task you have ([Pages](#pages)), and the example files their sections link.
-4. **For workerd's, celld's, a compiler diagnostic or Effect's own error, search
+4. **For workerd's, a compiler diagnostic or Effect's own error, search
    [ActionDurableObject-failures.md](ActionDurableObject-failures.md)** for a fragment of the
    message without quotes, then the core's `*-failures.md` pages.
 
