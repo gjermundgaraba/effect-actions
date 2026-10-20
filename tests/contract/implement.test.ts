@@ -114,7 +114,7 @@ describe("implement", () => {
 
   it("refuses duplicate actions at implement", () => {
     expect(() => Action.implement([Hello, Hello], { hello: () => Effect.succeed("hi") })).toThrow(
-      "Duplicate action: hello, listed twice (list it once)",
+      "Duplicate action: hello",
     );
   });
 

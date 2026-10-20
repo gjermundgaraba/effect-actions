@@ -233,9 +233,7 @@ describe("contracts", () => {
     for (const error of errorsSharingATag) {
       expect(() =>
         Action.make("lookup", { description: "", readOnly: true, caller: Action.Anyone, error }),
-      ).toThrow(
-        `Action "lookup": error _tag "NotFound" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart)`,
-      );
+      ).toThrow(`Action "lookup": error _tag "NotFound" names two error schemas`);
     }
   });
 
@@ -436,7 +434,7 @@ describe("contracts", () => {
     });
 
     expect(() => Action.byName([GetUser, Again])).toThrow(
-      "Duplicate action: getUser, two share the name (rename one)",
+      "Duplicate action: getUser (list it once, or rename one)",
     );
   });
 });

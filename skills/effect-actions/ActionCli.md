@@ -61,7 +61,7 @@ defect included, on `ActionCli.logToStderr`; matching a failure after `Command.r
 
 Pass the HTTP binding to `remote`. The program imports the binding alone, never a handler. The
 connection is the `client` option, an `ActionHttp.client`
-([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)), its rules on `Calling`'s `client`,
+([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)), its rules on `ActionCli.Calling`'s `client`,
 shared by `remote` and `remoteCommand`:
 [notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts) requires a token,
 mapping its absence to an error that says what to do, and

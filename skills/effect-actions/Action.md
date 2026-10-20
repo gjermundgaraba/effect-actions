@@ -194,7 +194,7 @@ does.
 `Action.client(implementations)` gives the methods `ActionHttp.client` gives, for a job, an
 agent or a test, without a transport. It is acquired where builders live:
 [kitchen-sink/src/agent.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/agent.ts) in a scoped program,
-[notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts)
+[notes-service/test/notes/in-process.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/in-process.test.ts)
 under `it.effect`. The rules are on `Action.client`; testing with it is
 [Testing.md](Testing.md#test-an-implementation-in-process).
 

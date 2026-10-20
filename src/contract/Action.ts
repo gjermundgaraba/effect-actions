@@ -2,7 +2,7 @@ import { Array as Arr, Cause, Context, Effect, type Layer, Predicate, Schema } f
 import type { Scope } from "effect";
 import { Anyone } from "./caller.js";
 import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
-import { assertName, assertOnce } from "./names.js";
+import { assertKnown, assertName, assertOnce } from "./names.js";
 import { type Call, inputOf } from "./call.js";
 import { type BuiltIn, InvalidInput, type Refusal } from "./errors.js";
 import {
@@ -517,11 +517,7 @@ export function implement(
       ? Object.fromEntries(Array.isArray(actions) ? [] : listed.map(({ name }) => [name, built]))
       : built;
 
-    const unknown = Object.keys(keyed).filter((key) => !names.includes(key));
-
-    if (unknown.length > 0) {
-      throw new Error(`Unknown handlers: ${unknown.join(", ")} (remove it, or list its action)`);
-    }
+    assertKnown("handlers", Object.keys(keyed), names, "remove it, or list its action");
 
     const bound = listed.flatMap((action) => {
       const handle = Object.hasOwn(keyed, action.name) ? keyed[action.name] : undefined;
@@ -660,7 +656,7 @@ export interface ClientOptions<A extends Any> {
  * - Two acquisitions share a build only inside one layer graph, such as under a layer provided around the program; with none around them, each builds its own.
  * - Every implemented action has a method, whether or not a surface serves it; `actions` lists the ones to call, and an implementation holding none of them is left unbuilt.
  * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, running nothing, for an input that does not encode.
- * - A builder acquiring a client of its own implementation never completes: call the services both use instead.
+ * - A builder acquiring a client of its own implementation is refused by the compiler, TS7022, and with the types bypassed never completes: call the services both use instead.
  */
 export function client<
   const Apps extends Served,
@@ -685,7 +681,6 @@ export function client(
   assertOnce(
     "action",
     apps.flatMap((app) => app.actions),
-    "implementation",
   );
 
   return Effect.map(built(apps), (bound) =>

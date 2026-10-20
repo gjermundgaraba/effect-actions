@@ -994,8 +994,7 @@ const Http = ActionHttp.make([WhoAmI, Invoice, Audit]);
 it("refuses a binding error with a built-in error's tag, on each binding", () => {
   class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
 
-  const refusal =
-    'binding of "identity": error _tag "Forbidden" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart; for a built-in\'s tag, fail with the built-in itself)';
+  const refusal = 'binding of "identity": error _tag "Forbidden" names two error schemas';
 
   expect(() => ActionHttp.make([identity], { error: [Forbidden] })).toThrow(
     `ActionHttp ${refusal}`,
@@ -1043,9 +1042,7 @@ it("refuses a binding where a call's errors share a _tag across their sources, o
   ] as const;
 
   for (const [make, what] of refusals) {
-    expect(make).toThrow(
-      `${what}: error _tag "Down" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart)`,
-    );
+    expect(make).toThrow(`${what}: error _tag "Down" names two error schemas`);
   }
 
   const LookupOfAUnion = Action.make("lookup", {
@@ -1166,13 +1163,11 @@ describe("HTTP bindings", () => {
     );
     expect(() => ActionHttp.layer(bound, [alpha, beta])).not.toThrow();
     expect(() => ActionHttp.layer(bound, [alpha, alpha])).toThrow(
-      "Duplicate served action: alpha, held by two implementations, or one listed twice (pass one)",
+      "Duplicate served action: alpha (list it once, or rename one)",
     );
     expect(() =>
       ActionHttp.layer(bound, [alpha, Action.implement(Alpha, () => Effect.succeed("y"))]),
-    ).toThrow(
-      "Duplicate served action: alpha, held by two implementations, or one listed twice (pass one)",
-    );
+    ).toThrow("Duplicate served action: alpha");
 
     const text = () => Effect.succeed("x");
 
@@ -1209,7 +1204,7 @@ describe("HTTP bindings", () => {
       "Listed in actions, but the binding does not hold it: beta (add it to the binding's actions)",
     );
     expect(() => ActionHttp.layer(bound, apps, { actions: [LookAlike] })).toThrow(
-      "Listed in actions, but the binding does not hold it: alpha (another contract) (add it to the binding's actions; one marked (another contract) is a contract of that name they do not hold: list the one they hold)",
+      "Listed in actions, but the binding does not hold it: alpha (another contract) (add it to the binding's actions; one marked (another contract) is a contract of that name it does not hold: list the one it holds)",
     );
     expect(() => ActionHttp.layer(bound, apps, { actions: [Audit] })).toThrow(
       "Listed in actions, but no implementation holds it: audit (pass the implementation holding it, or list the contract it implements)",

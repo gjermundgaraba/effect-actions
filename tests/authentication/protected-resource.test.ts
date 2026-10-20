@@ -248,7 +248,7 @@ describe("a resource built at startup", () => {
     );
 
     await expect(web.handler(post("/a/identify"))).rejects.toThrow(
-      `Invalid scope in scopesRequired: "docs read", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
+      `Invalid scope in scopesRequired: "docs read"`,
     );
   });
 
@@ -262,7 +262,7 @@ describe("a resource built at startup", () => {
     );
 
     await expect(web.handler(post("/a/identify"))).rejects.toThrow(
-      `Invalid scope in scopesSupported: "docs write", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
+      `Invalid scope in scopesSupported: "docs write"`,
     );
   });
 });

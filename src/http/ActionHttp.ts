@@ -204,38 +204,9 @@ type Endpoint<A extends Action.Any, E extends Action.Errors, D> = A extends Acti
     >
   : never;
 
-type Segments<S extends string> = S extends `${infer Head}/${infer Tail}`
-  ? Head extends ""
-    ? Segments<Tail>
-    : [Head, ...Segments<Tail>]
-  : S extends ""
-    ? []
-    : [S];
-
-type Joined<S extends ReadonlyArray<string>> = S extends [
-  infer Head extends string,
-  ...infer Rest extends ReadonlyArray<string>,
-]
-  ? Rest extends []
-    ? Head
-    : `${Head}/${Joined<Rest>}`
-  : "";
-
-/** The name of the binding's `HttpApiGroup`: its `prefix` without the slashes around it, `/` at the root. */
-export type GroupName<Prefix extends `/${string}` | undefined> = Prefix extends `/${infer Rest}`
-  ? Joined<Segments<Rest>> extends ""
-    ? "/"
-    : Joined<Segments<Rest>>
-  : "api";
-
-type Api<
-  Actions extends ReadonlyArray<Action.Any>,
-  E extends Action.Errors,
-  D,
-  Name extends string,
-> = HttpApi.HttpApi<
+type Api<Actions extends ReadonlyArray<Action.Any>, E extends Action.Errors, D> = HttpApi.HttpApi<
   "actions",
-  HttpApiGroup.HttpApiGroup<Name, Endpoint<Actions[number], E, D>, true>
+  HttpApiGroup.HttpApiGroup<string, Endpoint<Actions[number], E, D>, true>
 >;
 
 /**
@@ -247,7 +218,6 @@ export interface Binding<
   Actions extends ReadonlyArray<Action.Any>,
   E extends Action.Errors = [],
   D extends Authentication | undefined = undefined,
-  Name extends string = "api",
 > {
   /** Its protected actions' authentication descriptor, or `undefined` without one. */
   readonly authentication: D;
@@ -263,13 +233,13 @@ export interface Binding<
    *
    * **Gotchas**
    *
-   * - Serve it with `layer`, never the native `HttpApiBuilder`: `HttpApiBuilder.group(api, "api", …)` compiles, its group named `GroupName` of the `prefix`, and with a protected action the host then fails to build with `Service not found: effect-actions/Authentication/Security/…`.
+   * - Serve it with `layer`, never the native `HttpApiBuilder`: its group name is typed `string`, so `HttpApiBuilder.group(api, "api", …)` is refused as `Endpoint not handled: ${string}`, and given a `string`-typed name a protected action makes the host fail to build with `Service not found: effect-actions/Authentication/Security/…`.
    * - A header that middleware reads is not in its document, whose operations list no `parameters`: rewrite it, `OpenApi.fromApi(Http.api.annotate(OpenApi.Transform, (document) => …))`, or make the value an input.
    * - An OAuth protected resource is documented as a bearer scheme: Effect has no OAuth scheme.
    * - Combined into one document, `HttpApi.make("app").addHttpApi(A.api).addHttpApi(B.api)`, a shared action name makes `OpenApi.fromApi` throw `Duplicate OpenAPI operationId`, and a shared prefix silently drops one binding's actions from the document and a native client: otherwise document each alone.
    * - A binding holding no protected action documents no security scheme, so Swagger shows no Authorize button.
    */
-  readonly api: Api<Actions, E, D, Name>;
+  readonly api: Api<Actions, E, D>;
 }
 
 interface Request {
@@ -319,14 +289,14 @@ const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middle
  */
 export function make<
   const Actions extends ReadonlyArray<Action.Any & { readonly caller: typeof Anyone }>,
->(actions: Actions): Binding<Actions, [], undefined, "api">;
+>(actions: Actions): Binding<Actions, [], undefined>;
 export function make<const Actions extends ReadonlyArray<Action.Any>, const O extends Options = {}>(
   actions: Actions,
   options: O &
     RequiredAuthentication<Actions[number]> &
     Matching<Actions[number], NoInfer<DescriptorOf<O>>> &
     NoInfer<Known<O, Options>>,
-): Binding<Actions, ErrorsOf<O>, DescriptorOf<O>, GroupName<O["prefix"]>>;
+): Binding<Actions, ErrorsOf<O>, DescriptorOf<O>>;
 // Why: Reached only when the forms above fail. TypeScript reports a call matching no overload by
 // the last one's error, so this one tells protected actions without options to name their
 // authentication, where the first form's constraint would tell them to be public.
@@ -389,24 +359,15 @@ class JsonContentType extends HttpApiMiddleware.Service<JsonContentType>()(
   "effect-actions/ActionHttp/JsonContentType",
 ) {}
 
-// Why: Normalized as `HttpApiBuilder` does, its own being internal, so this middleware answers
-// every content type the JSON payload would refuse, and its answer says the fix.
-const mediaTypeOf = (contentType: string | undefined) =>
-  contentType === undefined ? "none" : (contentType.toLowerCase().split(";")[0] ?? "").trim();
-
+// Why: Effect reads a body with no `Content-Type` as JSON, which a page on another site can send
+// without a CORS preflight; a wrong type Effect refuses itself.
 const jsonContentType = () =>
   Layer.succeed(JsonContentType, (route) =>
-    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
-      const type = mediaTypeOf(request.headers["content-type"]);
-
-      return type === "application/json"
-        ? route
-        : Effect.succeed(
-            HttpServerResponse.text(`Unsupported content-type: ${type} (send application/json)`, {
-              status: 415,
-            }),
-          );
-    }),
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+      request.headers["content-type"] === undefined
+        ? Effect.succeed(HttpServerResponse.text("Unsupported content-type: none", { status: 415 }))
+        : route,
+    ),
   );
 
 /**
@@ -427,7 +388,7 @@ const jsonContentType = () =>
  * **Gotchas**
  *
  * - A success is its JSON as the body; an action without `success` answers an empty 200, no body and no content type, so a hand-written client must not parse it. One without `input` still takes the body `{}` typed as JSON: no body is a 400.
- * - A body that is not JSON is a 400 `InvalidInput`; a `Content-Type` missing or not JSON a 415 whose text is `Unsupported content-type: <type> (send application/json)`, `none` without one; both after authentication on a protected route.
+ * - A body that is not JSON is a 400 `InvalidInput`; a request with no `Content-Type` a 415 `Unsupported content-type: none`, one with another type Effect's own 415; each after authentication on a protected route.
  * - A defect, an undeclared failure, or a success or an error that does not encode answers an empty 500: the cause goes to the log and to the call's `ErrorReporter`s, never to the body.
  * - A path no layer serves, or a method other than `POST` on a route, is a 404.
  * - The 415 keeps from every handler what another site's page can send without a CORS preflight, such as a form post carrying the user's cookie; the server's CORS policy decides the rest.

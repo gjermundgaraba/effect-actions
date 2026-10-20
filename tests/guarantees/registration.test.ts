@@ -1138,9 +1138,7 @@ describe("MCP registration", () => {
     const First = same();
     const Second = same();
 
-    expect(() => ActionHttp.make([First, Second])).toThrow(
-      "Duplicate action: same, two share the name (rename one)",
-    );
+    expect(() => ActionHttp.make([First, Second])).toThrow("Duplicate action: same");
 
     const apps = [
       Action.implement(First, () => Effect.succeed("a")),
@@ -1148,7 +1146,7 @@ describe("MCP registration", () => {
     ];
 
     const options = { name: "test", version: "0" };
-    const shared = "same, two share the name (rename one)";
+    const shared = "same (list it once, or rename one)";
 
     expect(() => ActionMcp.layerHttp(apps, options)).toThrow(`Duplicate MCP tool: ${shared}`);
     expect(() => ActionMcp.runStdio(apps, options)).toThrow(`Duplicate MCP tool: ${shared}`);

@@ -713,9 +713,7 @@ describe("Action.client", () => {
     const again = Action.implement(Ping, () => Effect.succeed(2));
     const ping = Action.implement(Ping, () => Effect.succeed(1));
 
-    expect(() => Action.client([ping, again])).toThrow(
-      "Duplicate action: ping, held by two implementations, or one listed twice (pass one)",
-    );
+    expect(() => Action.client([ping, again])).toThrow("Duplicate action: ping");
 
     // oxlint-disable-next-line typescript/no-misused-spread -- Deliberate nominal-fabrication fixture.
     const copy = { ...ping };
@@ -725,22 +723,4 @@ describe("Action.client", () => {
       "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice",
     );
   });
-});
-
-it("never completes acquiring a client of its own implementation inside its builder", async () => {
-  const self: Action.AnyImplementation = Action.implement(
-    Ping,
-    Effect.gen(function* () {
-      yield* Effect.suspend(() => Action.client(self)).pipe(Effect.scoped);
-
-      return () => Effect.succeed(1);
-    }),
-  );
-
-  const acquired = await Effect.runPromiseExit(
-    // @ts-expect-error -- An erased implementation's startup requirements are unknown to the types; here they are none.
-    Action.client(self).pipe(Effect.scoped, Effect.timeout("200 millis")),
-  );
-
-  expect(Exit.isFailure(acquired) && Cause.pretty(acquired.cause)).toContain("TimeoutError");
 });

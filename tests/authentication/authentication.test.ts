@@ -843,7 +843,7 @@ describe("an error a descriptor declares", () => {
     class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
 
     expect(() => Authentication.make("test.Builtin", Identity, { error: Forbidden })).toThrow(
-      'Authentication "test.Builtin": error _tag "Forbidden" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart; for a built-in\'s tag, fail with the built-in itself)',
+      'Authentication "test.Builtin": error _tag "Forbidden" names two error schemas',
     );
     expect(
       Authentication.make("test.Builtin", Identity, { error: Action.Forbidden }).error,
@@ -858,9 +858,7 @@ describe("an error a descriptor declares", () => {
           Schema.TaggedStruct("Down", { retry: Schema.Number }),
         ],
       }),
-    ).toThrow(
-      'Authentication "test.Shared": error _tag "Down" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart)',
-    );
+    ).toThrow('Authentication "test.Shared": error _tag "Down" names two error schemas');
   });
 
   it("is the only failure besides a refusal refusalResponse renders", () => {

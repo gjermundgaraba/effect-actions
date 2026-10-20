@@ -3,7 +3,7 @@ import { type CliError, Command } from "effect/cli";
 import type { HttpClient } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import { projectedErrors, bindingErrors, type Declaring } from "../contract/declared.js";
-import { assertDistinct } from "../contract/names.js";
+import { assertDistinct, assertKnown } from "../contract/names.js";
 import {
   type UserError,
   command as makeCommand,
@@ -258,8 +258,10 @@ const aggregateCommand = (
         .map((command) => ({ claimant: "subcommands", name: command.name })),
     ],
     ({ name: claimed }) => claimed,
-    ({ claimant }) => claimant,
-    "rename one of your subcommands, or give an action's command another name in commands",
+    {
+      claimantOf: ({ claimant }) => claimant,
+      fix: "rename one of your subcommands, or give an action's command another name in commands",
+    },
   );
 
   // Why: One `withSubcommands`, as a second one replaces the first's commands.
@@ -274,14 +276,12 @@ const checkedCommandsOf = (
 ): NonNullable<Options["commands"]> => {
   const given = commands ?? {};
 
-  const names = actions.map((action) => action.name);
-  const unknown = Object.keys(given).filter((key) => !names.includes(key));
-
-  if (unknown.length > 0) {
-    throw new Error(
-      `Unknown commands: ${unknown.join(", ")} (key it by the action's own name, not its command's)`,
-    );
-  }
+  assertKnown(
+    "commands",
+    Object.keys(given),
+    actions.map((action) => action.name),
+    "key it by the action's own name, not its command's",
+  );
 
   return given;
 };
@@ -348,7 +348,7 @@ export function remoteCommand(
 }
 
 // Why: One declaration of `client` for `remote` and `remoteCommand`, so its JSDoc has one home.
-interface Calling<C> {
+export interface Calling<C> {
   /**
    * The connection: an Effect of the binding's client, such as
    * `ActionHttp.client(Http, { baseUrl, transformClient })`, run each time a command runs, so one

@@ -112,7 +112,8 @@ test/
 | The CLI's connection, read from config when a command runs    | `src/commands.ts`                |
 | A missing token as one message, not a `ConfigError` report    | `src/commands.ts`                |
 | A promise client handling a declared error by its tag         | `src/browser.ts`                 |
-| Testing handlers and authorization with no transport          | `test/notes/notes.test.ts`       |
+| Testing handlers and authorization with no transport          | `test/notes/in-process.test.ts`  |
+| Testing a revision race, two fibers taking turns              | `test/notes/notes.test.ts`       |
 | Testing routes, tools and refusals in memory                  | `test/routes.test.ts`            |
 | Testing commands against the routes in memory                 | `test/commands.test.ts`          |
 | Testing `--help` and the connection with config as a Layer    | `test/commands.test.ts`          |

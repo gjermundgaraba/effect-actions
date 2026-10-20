@@ -13,17 +13,17 @@ A message the library throws says its fix; for a compiler diagnostic or Effect's
 
 Acquire `Action.client(implementation)` and call its methods
 ([Action.md](Action.md#call-actions-in-process)), as
-[notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts)
+[notes-service/test/notes/in-process.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/in-process.test.ts)
 does. The rules are on `Action.client`.
 
-```ts example=notes-service/test/notes/notes.test.ts
+```ts example=notes-service/test/notes/in-process.test.ts
 import { describe, expect, it } from "@effect/vitest";
-import { Array, Effect, Exit, References } from "effect";
+import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentUser } from "../../src/identity/Identity.js";
 import { users } from "../../src/identity/users.js";
 import { notes } from "../../src/notes/handlers.js";
-import { NoteChanged, NoteNotFound } from "../../src/notes/Notes.js";
+import { NoteNotFound } from "../../src/notes/Notes.js";
 import { NoteStore } from "../../src/notes/store.js";
 
 // What the implementation does, with no transport: `Action.client` runs the same decoding,
@@ -52,58 +52,6 @@ describe("notes, in process", () => {
         missing,
       );
       expect(yield* client.getNote({ id: note.id }).pipe(as("ada"))).toEqual(note);
-    }).pipe(Effect.provide(NoteStore.layerMemory)),
-  );
-
-  it.effect("deletes a note for its owner", () =>
-    Effect.gen(function* () {
-      const client = yield* Action.client(notes);
-      const note = yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
-
-      yield* client.deleteNote({ id: note.id }).pipe(as("ada"));
-
-      expect(yield* Effect.flip(client.getNote({ id: note.id }).pipe(as("ada")))).toEqual(
-        new NoteNotFound({ id: note.id }),
-      );
-    }).pipe(Effect.provide(NoteStore.layerMemory)),
-  );
-
-  it.effect("refuses an update of a revision that is no longer current", () =>
-    Effect.gen(function* () {
-      const client = yield* Action.client(notes);
-      const note = yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
-      const update = { id: note.id, body: "Final", revision: note.revision };
-
-      expect(yield* client.updateNote(update).pipe(as("ada"))).toMatchObject({ revision: 2 });
-      expect(yield* Effect.flip(client.updateNote(update).pipe(as("ada")))).toEqual(
-        new NoteChanged({ id: note.id, revision: 2 }),
-      );
-    }).pipe(Effect.provide(NoteStore.layerMemory)),
-  );
-
-  it.effect("lets one of two concurrent updates of the same revision through", () =>
-    Effect.gen(function* () {
-      const client = yield* Action.client(notes);
-
-      // A fiber is set aside after every `steps` steps, and two that run at once then take
-      // turns. Each count sets the first update aside at another point of its work; under
-      // three, the two do not finish.
-      const succeeded = yield* Effect.forEach(Array.range(3, 60), (steps) =>
-        Effect.gen(function* () {
-          const note = yield* client.createNote({ title: "Plan", body: "Draft" }).pipe(as("ada"));
-
-          const update = (body: string) =>
-            Effect.exit(client.updateNote({ id: note.id, body, revision: 1 }).pipe(as("ada")));
-
-          const exits = yield* Effect.all([update("One"), update("Two")], {
-            concurrency: "unbounded",
-          }).pipe(Effect.provideService(References.MaxOpsBeforeYield, steps));
-
-          return exits.filter(Exit.isSuccess).length;
-        }),
-      );
-
-      expect(succeeded).toEqual(Array.range(3, 60).map(() => 1));
     }).pipe(Effect.provide(NoteStore.layerMemory)),
   );
 
@@ -219,7 +167,7 @@ serves JSON routes and rpcs in one `Testing.layer`.
 
 Take the failure with `Effect.flip(call)`, which alone asserts only that the call failed, then
 assert its class and its `message` separately, as the last test of
-[notes-service/test/notes/notes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/notes.test.ts) does.
+[notes-service/test/notes/in-process.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/notes/in-process.test.ts) does.
 
 `toEqual` never compares a tagged error's `message`, which is not an enumerable property:
 `expect(error).toEqual(new Action.Forbidden({ message: "anything" }))` passes for every message,

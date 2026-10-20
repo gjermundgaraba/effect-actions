@@ -22,16 +22,9 @@ const Protected = Action.make("protected", {
   success: Schema.String,
 });
 
-type Bound<Name extends string> = ActionHttp.Binding<
-  ReadonlyArray<Action.Any>,
-  [],
-  undefined,
-  Name
->;
-
-const combined = <First extends string, Second extends string>(
-  first: Bound<First>,
-  second: Bound<Second>,
+const combined = (
+  first: ReturnType<typeof ActionHttp.make>,
+  second: ReturnType<typeof ActionHttp.make>,
 ) => HttpApi.make("app").addHttpApi(first.api).addHttpApi(second.api);
 
 describe("a binding's native api", () => {
@@ -61,10 +54,11 @@ describe("a binding's native api", () => {
   it.effect("holding a protected action, fails to build under the native HttpApiBuilder", () =>
     Effect.gen(function* () {
       const guarded = ActionHttp.make([Protected], { authentication: Login });
+      const groupTypedAsString: string = "api";
 
       const exit = yield* Effect.exit(
         Layer.build(
-          HttpApiBuilder.group(guarded.api, "api", (handlers) =>
+          HttpApiBuilder.group(guarded.api, groupTypedAsString, (handlers) =>
             handlers.handleAll({ protected: () => Effect.succeed("ok") }),
           ),
         ),

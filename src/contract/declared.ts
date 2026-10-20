@@ -106,10 +106,11 @@ const encodedTags = (ast: SchemaAST.AST): ReadonlyArray<string> =>
 // authentication's, and a client decodes a failure as the first schema that accepts it, so two
 // schemas sharing a `_tag` misdecode wherever one accepts the other's values. Effect's `catchTag`
 // cannot tell them apart either. A schema's own variants, behind a transformation, are its own.
+const builtInTags = new Set(builtIns.flatMap((schema) => encodedTags(schema.ast)));
+
 /** Throws where two of the schemas in `errors` encode with one `_tag`. */
 export const assertDistinctTags = (what: string, errors: Action.Errors): void => {
   const seen = new Set<string>();
-  const builtInTags = new Set(builtIns.flatMap((schema) => encodedTags(schema.ast)));
 
   for (const schema of errorSchemas(errors)) {
     for (const tag of new Set(encodedTags(schema.ast))) {

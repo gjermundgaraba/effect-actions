@@ -302,12 +302,17 @@ export const notHeld = {
   byImplementation: {
     why: "no implementation holds it",
     fix: "pass the implementation holding it, or list the contract it implements",
+    holder: "they do not hold: list the one they hold",
   },
-  byBinding: { why: "the binding does not hold it", fix: "add it to the binding's actions" },
+  byBinding: {
+    why: "the binding does not hold it",
+    fix: "add it to the binding's actions",
+    holder: "it does not hold: list the one it holds",
+  },
 } as const;
 
 export const assertHeld = (
-  { why, fix }: (typeof notHeld)[keyof typeof notHeld],
+  { why, fix, holder }: (typeof notHeld)[keyof typeof notHeld],
   listed: ReadonlyArray<Action.Any>,
   held: ReadonlyArray<Action.Any>,
 ): void => {
@@ -322,7 +327,7 @@ export const assertHeld = (
         .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
         .join(
           ", ",
-        )} (${fix}${sameName ? "; one marked (another contract) is a contract of that name they do not hold: list the one they hold" : ""})`,
+        )} (${fix}${sameName ? `; one marked (another contract) is a contract of that name ${holder}` : ""})`,
     );
   }
 };
@@ -375,7 +380,7 @@ const servedBy = (
     );
   }
 
-  assertOnce("served action", actions, "implementation");
+  assertOnce("served action", actions);
 
   return served;
 };
@@ -402,13 +407,9 @@ export const servingOf = <D extends Proving>(
   // Why: A binding spread with another descriptor, `{ ...binding, authentication }`, type-checks,
   // so what `make` checked no longer holds for it.
   assertAuthentication(actions, binding.authentication);
-  assertDistinct(
-    "middleware",
-    options.middleware ?? [],
-    (key) => key.key,
-    undefined,
-    "list each middleware once",
-  );
+  assertDistinct("middleware", options.middleware ?? [], (key) => key.key, {
+    fix: "list each middleware once",
+  });
 
   return {
     apps,

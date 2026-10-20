@@ -129,7 +129,7 @@ alone for it.
 `ActionRpc.MethodError`. A page's client module:
 
 ```ts example=live-rpc/src/browser.ts
-import { Context, Effect, Layer, ManagedRuntime } from "effect";
+import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -194,40 +194,11 @@ export const openChat = Effect.gen(function* () {
     },
   };
 });
-
-// The chat for a page that is not one Effect program: the same client, each call a promise.
-// A `ManagedRuntime` keeps the protocol's layer, and so the socket, between calls. It builds
-// the layer on the first call, which is when the socket opens, and `close` releases it. A
-// failure `openChat` does not handle, such as `InvalidInput`, rejects the promise.
-class Chat extends Context.Service<Chat, Effect.Success<typeof openChat>>()("live-rpc/Chat") {}
-
-export const chatOver = <E>(protocol: Layer.Layer<RpcClient.Protocol, E>) => {
-  const runtime = ManagedRuntime.make(Layer.effect(Chat, openChat).pipe(Layer.provide(protocol)));
-
-  const call = <A, E2>(use: (chat: Chat["Service"]) => Effect.Effect<A, E2>) =>
-    runtime.runPromise(Effect.flatMap(Chat, use));
-
-  return {
-    rooms: () => call((chat) => chat.rooms),
-
-    room: (name: string, token: string) => ({
-      read: (after: number) => call((chat) => chat.room(name, token).read(after)),
-      post: (text: string) => call((chat) => chat.room(name, token).post(text)),
-      remove: (id: number) => call((chat) => chat.room(name, token).remove(id)),
-    }),
-
-    close: () => runtime.dispose(),
-  };
-};
-
-// What a page calls: `const chat = connect("wss://chat.example/rpc")`, on the browser's own
-// WebSocket, then `await chat.room("lobby", token).post("Hello")`.
-export const connect = (url: string) =>
-  chatOver(connection(url).pipe(Layer.provide(Socket.layerWebSocketConstructorGlobal)));
 ```
 
-[live-rpc/src/client.ts](../examples/live-rpc/src/client.ts) runs it from Node. The client's
-traps are on `ActionRpc.client`.
+[live-rpc/src/client.ts](../examples/live-rpc/src/client.ts) runs it from Node, and
+[live-rpc/src/page.ts](../examples/live-rpc/src/page.ts) wraps it in promises for a page that is
+not one Effect program. The client's traps are on `ActionRpc.client`.
 
 ## Send request context with a call
 

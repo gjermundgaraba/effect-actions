@@ -3,7 +3,8 @@ import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { chatOver, openChat } from "../src/browser.js";
+import { openChat } from "../src/browser.js";
+import { chatOver } from "../src/page.js";
 import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
 

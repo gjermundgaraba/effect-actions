@@ -92,19 +92,19 @@ export interface Options<A extends Action.Any> {
   /**
    * Whether a model's call needs approval before it runs: a boolean, or an Effect of one, for
    * each call, with Effect's native approval context. `LanguageModel` asks for approval
-   * instead of calling the tool when it is `true`. The Effect runs in the caller's context and
-   * requires nothing, so it reads the caller with `Effect.serviceOption`. Defaults to none.
+   * instead of calling the tool when it is `true`, and when the Effect fails or dies, so a
+   * policy that cannot be read asks. The Effect runs in the caller's context and requires
+   * nothing, so it reads the caller with `Effect.serviceOption`. Defaults to none.
    *
    * **Gotchas**
    *
    * - `call` ranges over every action of the implementations, whatever `actions` lists: check `call.name` to narrow `action` and `input`.
-   * - The Effect cannot fail in its type, and one that fails anyway runs the call unapproved: end it with `Effect.orElseSucceed(() => true)` to ask when a policy cannot be read.
    * - Approval authorizes nothing, which stays `authorize`'s, and only a model's turn asks for it: `handle` and `ActionMcp` never do.
    */
   readonly needsApproval?: (
     call: ToolCall<A>,
     context: Tool.NeedsApprovalContext,
-  ) => boolean | Effect.Effect<boolean>;
+  ) => boolean | Effect.Effect<boolean, unknown>;
 }
 
 interface ErasedOptions {
@@ -113,7 +113,7 @@ interface ErasedOptions {
     this: void,
     call: ToolCall<Action.Any>,
     context: Tool.NeedsApprovalContext,
-  ): boolean | Effect.Effect<boolean>;
+  ): boolean | Effect.Effect<boolean, unknown>;
 }
 
 const annotateIfGiven = <I, S>(tool: Tool.Any, key: Context.Key<I, S>, value: S | undefined) =>
@@ -189,7 +189,6 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   assertOnce(
     "tool",
     served.flatMap((app) => app.actions),
-    "implementation",
   );
 
   // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id carries
@@ -200,9 +199,17 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
     Object.assign(
       needsApproval === undefined
         ? jsonToolOf(action)
-        : jsonToolOf(action).setNeedsApproval((input, context) =>
-            needsApproval({ name: action.name, action, input }, context),
-          ),
+        : jsonToolOf(action).setNeedsApproval((input, context) => {
+            const decided = needsApproval({ name: action.name, action, input }, context);
+
+            // Why: A policy that cannot be read asks; Effect's own default on a failure is to run the call.
+            return Effect.isEffect(decided)
+              ? decided.pipe(
+                  Effect.catch(() => Effect.succeed(true)),
+                  Effect.catchDefect(() => Effect.succeed(true)),
+                )
+              : decided;
+          }),
       { id: `${Implementation.runKey(app)}/${action.name}` },
     );
 

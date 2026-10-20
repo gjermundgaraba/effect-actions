@@ -181,7 +181,7 @@ describe("ActionToolkit", () => {
   );
 
   it.effect(
-    "runs a call whose check fails without approval, as LanguageModel decides natively",
+    "asks for approval when the check fails, where LanguageModel alone would run the call",
     () =>
       Effect.gen(function* () {
         const calls: string[] = [];
@@ -189,7 +189,6 @@ describe("ActionToolkit", () => {
         const binding = ActionToolkit.make(
           Action.implement(Erase, ({ id }) => Effect.sync(() => (calls.push(id), "erased"))),
           {
-            // @ts-expect-error -- The check's Effect cannot fail in its type; plain JavaScript's can.
             needsApproval: () => Effect.fail("unavailable"),
           },
         );
@@ -206,10 +205,10 @@ describe("ActionToolkit", () => {
         );
 
         expect(approvalsAndResults(response)).toEqual({
-          approvals: [],
-          results: [["erase", "erased"]],
+          approvals: [expect.any(String)],
+          results: [],
         });
-        expect(calls).toEqual(["x"]);
+        expect(calls).toEqual([]);
       }),
   );
 

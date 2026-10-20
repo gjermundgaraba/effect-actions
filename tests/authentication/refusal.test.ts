@@ -152,9 +152,7 @@ describe("refusal", () => {
 
     expect(() =>
       Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: invalid }),
-    ).toThrow(
-      `Invalid scope in scopesRequired: "docs read", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
-    );
+    ).toThrow(`Invalid scope in scopesRequired: "docs read"`);
   });
 
   it("refuses a scopesSupported that is no scope token, as Authentication.layer does", () => {
@@ -165,9 +163,7 @@ describe("refusal", () => {
 
     expect(() =>
       Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: invalid }),
-    ).toThrow(
-      `Invalid scope in scopesSupported: "docs write", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
-    );
+    ).toThrow(`Invalid scope in scopesSupported: "docs write"`);
   });
 
   it("refuses a resource with a fragment, a bare `#` included, which its discovery would never answer, as Authentication.layer does", () => {

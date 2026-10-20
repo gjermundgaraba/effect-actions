@@ -39,7 +39,8 @@ src/
 ├── Rpc.ts             the RPC binding of every action
 ├── routes.ts          the rpcs, authenticated and with their middleware, not yet on a protocol
 ├── server.ts          entrypoint: the rpcs over a WebSocket at /rpc, its messages bounded
-├── browser.ts         client module: the connection and the chat, as Effects and as promises
+├── browser.ts         client module: the connection and the chat, as one Effect program
+├── page.ts            the same chat as promises, for a page that is not one
 └── client.ts          entrypoint: that client, run from Node
 test/
 ├── chat/              in process, with Action.client

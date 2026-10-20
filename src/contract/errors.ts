@@ -27,7 +27,7 @@ const standardIssues = SchemaIssue.makeFormatterStandardSchemaV1();
  *
  * - Raised by the library for input that does not decode, before `authorize` and the handler; what each surface answers is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `runStdio`, `ActionRpc.layer`, `ActionToolkit.make` and `ActionCli.command`.
  * - Failed by a handler, it is answered as a declared error on every surface.
- * - What receives encoded input, a route, an MCP tool, an rpc, a CLI flag or `--input`, refuses an undeclared field with it, nested ones too, naming its path; a typed client drops such a field instead, as `Action.client`, `ActionHttp.client`, `ActionRpc.client` and `ActionMcp.client` say.
+ * - What receives encoded input, a route, an MCP tool, an rpc, a CLI flag or `--input`, refuses an undeclared field with it, nested ones too, naming its path; a typed client drops such a field instead, as its JSDoc says.
  * - Its message and `issues` name paths and what the schema expects, never a field's value; a path names every key it passes through, a record's keys included, so never key a record by a secret such as an email or a token.
  * - A check's message, or a schema's `message` annotation, is sent as written: never put the input in one.
  */
@@ -70,7 +70,7 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
  * **Gotchas**
  *
  * - Over HTTP its JSON with a 401: from authentication before the body is read, from a protected action's `authorize` or handler after the input is decoded, each with the scheme's challenge, none for an API key.
- * - Over MCP: from authentication, the same HTTP 401 in place of a JSON-RPC answer, before the arguments are decoded; from a protected tool's `authorize` or handler, the HTTP 401 with the challenge on an endpoint under Bearer, otherwise an `isError: true` tool result in a 200; after a handler's notification, as `ActionMcp.LayerHttpOptions`'s `authentication` says.
+ * - Over MCP: from authentication, the same HTTP 401 in place of a JSON-RPC answer, before the arguments are decoded; from a protected tool's `authorize` or handler, the HTTP 401 with the challenge on an endpoint under Bearer, otherwise an `isError: true` tool result in a 200.
  * - Over RPC the typed failure, never a status; on a Toolkit and in a CLI as a declared error.
  * - From another service's client, such as `ActionHttp.client`, one passed on tells a caller whose token is valid to sign in again: map it to an error the action declares, or to a defect.
  */
@@ -97,7 +97,7 @@ const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
  * **Gotchas**
  *
  * - Over HTTP its JSON with a 403: from authentication before the body is read, from `authorize` or a handler after the input is decoded; on a protected route under Bearer, one naming `scopes` also carries the challenge.
- * - Over MCP, from authentication the HTTP 403 before the arguments are decoded; from `authorize` or a handler an `isError: true` tool result holding its JSON as text, in a **200**, not a 403; only on an endpoint under Bearer is a protected tool's refusal naming `scopes` the HTTP 403 with the challenge instead, and after a handler's notification as `ActionMcp.LayerHttpOptions`'s `authentication` says.
+ * - Over MCP, from authentication the HTTP 403 before the arguments are decoded; from `authorize` or a handler an `isError: true` tool result holding its JSON as text, in a **200**, not a 403; only on an endpoint under Bearer is a protected tool's refusal naming `scopes` the HTTP 403 with the challenge instead.
  * - Over RPC the typed failure, never a status or a challenge; on a Toolkit and in a CLI as a declared error.
  * - From another service's client, such as `ActionHttp.client`, one passed on becomes this server's own refusal: map it to an error the action declares, or to a defect.
  */

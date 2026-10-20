@@ -14,8 +14,7 @@ export const assertDistinct = <T>(
   what: string,
   items: ReadonlyArray<T>,
   nameOf: (item: T) => string,
-  claimantOf: (item: T) => string = nameOf,
-  fix?: string,
+  { claimantOf = nameOf, fix }: { readonly claimantOf?: (item: T) => string; readonly fix: string },
 ): void => {
   const seen = new Map<string, string>();
 
@@ -26,36 +25,24 @@ export const assertDistinct = <T>(
 
     if (other !== undefined) {
       const by = other === claimant ? "" : `, claimed by ${other} and ${claimant}`;
-      const hint = fix === undefined ? "" : ` (${fix})`;
 
-      throw new Error(`Duplicate ${what}: ${name}${by}${hint}`);
+      throw new Error(`Duplicate ${what}: ${name}${by} (${fix})`);
     }
 
     seen.set(name, claimant);
   }
 };
 
-export const assertOnce = (
+export const assertOnce = (what: string, actions: ReadonlyArray<Action.Any>): void =>
+  assertDistinct(what, actions, (action) => action.name, { fix: "list it once, or rename one" });
+
+export const assertKnown = (
   what: string,
-  actions: ReadonlyArray<Action.Any>,
-  listedBy: "contract" | "implementation" = "contract",
+  keys: ReadonlyArray<string>,
+  names: ReadonlyArray<string>,
+  fix: string,
 ): void => {
-  const seen = new Map<string, Action.Any>();
+  const unknown = keys.filter((key) => !names.includes(key));
 
-  for (const action of actions) {
-    const other = seen.get(action.name);
-
-    if (other !== undefined) {
-      const why =
-        other !== action
-          ? "two share the name (rename one)"
-          : listedBy === "contract"
-            ? "listed twice (list it once)"
-            : "held by two implementations, or one listed twice (pass one)";
-
-      throw new Error(`Duplicate ${what}: ${action.name}, ${why}`);
-    }
-
-    seen.set(action.name, action);
-  }
+  if (unknown.length > 0) throw new Error(`Unknown ${what}: ${unknown.join(", ")} (${fix})`);
 };

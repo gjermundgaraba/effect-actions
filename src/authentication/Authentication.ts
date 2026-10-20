@@ -139,13 +139,15 @@ const assertPublishableResource = (
     }
   }
 
-  if (!URL.canParse(options.resource)) {
+  const resource = URL.parse(options.resource);
+
+  if (resource === null) {
     throw new Error(
       `A protected resource is an absolute URL: ${JSON.stringify(options.resource)} is not one; give the public URL of the endpoint clients connect to, such as https://api.example.com/mcp, read from configuration`,
     );
   }
 
-  if (new URL(options.resource).href.includes("#")) {
+  if (resource.href.includes("#")) {
     throw new Error(
       `A protected resource has no fragment: ${options.resource}; drop the "#", which no request URL carries, so its discovery would never answer`,
     );

@@ -13,6 +13,7 @@ import {
 } from "effect";
 import { CliError, Command, Flag, Param } from "effect/cli";
 import type * as Action from "../contract/Action.js";
+import { assertDistinct } from "../contract/names.js";
 import { literalValues, members, unsuspended } from "../contract/ast.js";
 import { withStderrConsole } from "../stdio/console.js";
 import { InvalidInput } from "../contract/errors.js";
@@ -414,11 +415,9 @@ const positionalOrder = (
   params: ReadonlyArray<FieldParam>,
   positional: ReadonlyArray<string>,
 ): ReadonlyArray<FieldParam> => {
-  const twice = positional.find((field, index) => positional.indexOf(field) !== index);
-
-  if (twice !== undefined) {
-    throw new Error(`Duplicate positional argument: ${twice} (list each field once)`);
-  }
+  assertDistinct("positional argument", positional, (field) => field, {
+    fix: "list each field once",
+  });
 
   const ordered = positional.map((field) => {
     const found = params.find((param) => param.field === field);
@@ -695,54 +694,8 @@ const inputConfig = <A extends Action.Any>(
   };
 };
 
-interface ClaimedFlag {
-  readonly claimedBy: "field" | "alias" | "render";
-  readonly name: string;
-  readonly label: string;
-  readonly claimant: string;
-}
-
-const flagOf = (
-  claimedBy: ClaimedFlag["claimedBy"],
-  name: string,
-  claimant: string,
-): ClaimedFlag => {
-  const flag = claimedBy === "field" ? kebab(name) : name;
-
-  // Why: Effect CLI prints a one-character alias as `-n`, and every flag's own name as `--name`.
-  return {
-    claimedBy,
-    name: flag,
-    label: claimedBy === "alias" && flag.length === 1 ? `-${flag}` : `--${flag}`,
-    claimant,
-  };
-};
-
-// Why: The fix depends on who claims the flag: `render` is dropped only when its `--json` is one
-// of the two, and an alias renamed only when one is.
-const distinctFlags = (claimed: ReadonlyArray<ClaimedFlag>): void => {
-  const seen = new Map<string, ClaimedFlag>();
-
-  for (const flag of claimed) {
-    const other = seen.get(flag.name);
-
-    if (other !== undefined) {
-      const by = new Set([other.claimedBy, flag.claimedBy]);
-
-      const fix = by.has("render")
-        ? `rename the ${by.has("alias") ? "alias" : "field"}, or drop \`render\``
-        : by.size === 2
-          ? "rename the alias or the field"
-          : `rename one ${by.has("alias") ? "alias" : "field"}`;
-
-      throw new Error(
-        `Duplicate flag: ${other.label}, claimed by ${other.claimant} and ${flag.claimant} (${fix})`,
-      );
-    }
-
-    seen.set(flag.name, flag);
-  }
-};
+// Why: Effect CLI prints a one-character alias as `-n`, and every other flag as `--name`.
+const aliasFlag = (alias: string) => (alias.length === 1 ? `-${alias}` : `--${alias}`);
 
 export const command = <A extends Action.Any, E, R>(
   action: A,
@@ -762,15 +715,23 @@ export const command = <A extends Action.Any, E, R>(
 
   const failing = failingAsDerived(errors);
 
-  distinctFlags([
-    ...Object.keys(flags).map((field) => flagOf("field", field, `field ${field}`)),
-    ...(render === undefined ? [] : [flagOf("render", "json", "render's --json")]),
-    ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) =>
-      Predicate.isString(alias)
-        ? [flagOf("alias", alias.replace(/^-+/, ""), `alias of field ${field}`)]
-        : [],
-    ),
-  ]);
+  assertDistinct(
+    "flag",
+    [
+      ...Object.keys(flags).map((field) => [`--${kebab(field)}`, `field ${field}`] as const),
+      ...(render === undefined ? [] : [["--json", "render's --json"] as const]),
+      ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) =>
+        Predicate.isString(alias)
+          ? [[aliasFlag(alias.replace(/^-+/, "")), `alias of field ${field}`] as const]
+          : [],
+      ),
+    ],
+    ([flag]) => flag,
+    {
+      claimantOf: ([, claimant]) => claimant,
+      fix: "rename the field or the alias, or drop `render`",
+    },
+  );
 
   const args = positional.map(({ param }) => param);
 

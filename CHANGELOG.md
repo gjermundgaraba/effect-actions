@@ -34,23 +34,18 @@ copy, a protected action without its descriptor, an MCP tool whose input is not 
 whose image is misplaced or whose name a native feature claims, a CLI without `Stdio`, a
 client method for an action a hand-spread binding's group lacks, and
 `Authentication.layer`'s and `refusalResponse`'s refusals of a resource, a scope, a fragment or
-an error. A duplicate action says whether one was listed twice, two share the name, or two
-implementations hold it. Some messages changed before the fix: `Missing authorize: not a
+an error. Some messages changed before the fix: `Missing authorize: not a
 function (…)` replaces `Missing authorize: pass an authorization function, or Action.allowAll`,
 and the copied implementation's no longer asks `is effect-actions installed twice?`.
 
-- Migrate: update code matching an old message; a test matching the message's start still
-  passes.
+- Migrate: update code matching an old message. A one-character alias in a duplicate-flag
+  message is now shown as `-n`; every other message keeps its start.
 
 ### Other changes
 
-- A request to a JSON route whose `Content-Type` is not `application/json` is answered 415 by the
-  library on every route, with `Unsupported content-type: <type> (send application/json)`, `none`
-  without the header, where a wrong type was answered by Effect's own text and a missing one
-  by `Unsupported content-type: none`.
-- `ActionHttp.Binding` names its `HttpApiGroup` by its `prefix` in the type, `GroupName`, where
-  it was `string`: `HttpApiBuilder.group(binding.api, "api", …)` and Effect's other tools that
-  take the group's name compile against it.
+- `ActionToolkit.Options.needsApproval` may return an Effect that fails, and a call whose
+  policy fails or dies asks for approval, where Effect's own default ran it unapproved.
+- `ActionCli.Calling`, the `client` option `remote` and `remoteCommand` take, is exported.
 - A `protectedResource.resource` that is not an absolute URL, such as `/mcp`, is refused at
   `Authentication.layer` and `refusalResponse` with the library's own message naming the fix,
   where the platform's `TypeError: Invalid URL` was thrown. The message for a descriptor given
@@ -66,7 +61,8 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   grep the symbol.
   `docs/Action-in-process.md` is folded into `docs/Action.md`; `docs/guarantees.md` and
   `docs/CONTEXT.md` are gone, each term defined where it is first used. The option tables are
-  gone, and the `*-failures.md` pages hold only compiler diagnostics and Effect's own errors,
+  gone, and the `*-failures.md` pages hold only messages the library does not own, compiler
+  diagnostics and Effect's among them,
   one line each. `docs/setup.md`'s `tsconfig.json` adds `"types": ["node"]`, and its install
   table `@types/node`, which the examples need.
 - `Action.make` takes a helper's type parameter standing for `caller` or `error`: a

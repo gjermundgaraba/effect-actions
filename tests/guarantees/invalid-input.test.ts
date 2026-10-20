@@ -207,10 +207,10 @@ it("names the content type a 415 refuses, or none", async () => {
     return [response.status, await response.text()];
   };
 
-  expect(await send({})).toEqual([415, "Unsupported content-type: none (send application/json)"]);
+  expect(await send({})).toEqual([415, "Unsupported content-type: none"]);
   expect(await send({ "content-type": "text/plain" })).toEqual([
     415,
-    "Unsupported content-type: text/plain (send application/json)",
+    "Unsupported content-type: text/plain",
   ]);
 });
 
