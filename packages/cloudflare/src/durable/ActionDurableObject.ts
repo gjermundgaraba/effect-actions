@@ -62,8 +62,8 @@ export interface Options<
    * instance, before the routes, again after every eviction, and never finalized. The routes,
    * every request, the alarm and `run` share that one build, and an implementation the services
    * build, such as an in-process `Action.client`'s, is the one the routes serve. They may
-   * require `State` alone, so a store over the object's storage, or what the object is, such as
-   * its name, is a Layer requiring `State`.
+   * require `State` and `Feed` alone, so a store over the object's storage, what the object is,
+   * such as its name, or an adapter publishing over its feed, is a Layer requiring them.
    *
    * **Gotchas**
    *
@@ -114,7 +114,10 @@ export interface Options<
   readonly alarm?:
     | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, AR>)
     | undefined;
-  /** Whether to leave out the request logger `HttpRouter.toWebHandler` adds by default. */
+  /**
+   * Whether to leave out the request logger `HttpRouter.toWebHandler` adds by default, which logs
+   * every request the routes serve, a socket's upgrade included: Effect's default, kept.
+   */
   readonly disableLogger?: boolean | undefined;
 }
 
@@ -173,7 +176,7 @@ const notFound: (request: Request) => Promise<Response> = () =>
 const handlersOf = <
   S = never,
   SE = never,
-  SR extends State = never,
+  SR extends State | Feed = never,
   A = never,
   E = never,
   R extends Allowed<A, S> = never,
@@ -187,7 +190,7 @@ const handlersOf = <
   options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
 ) => {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
-  const services = (options.services ?? Layer.empty) as Layer.Layer<S, SE, State>;
+  const services = (options.services ?? Layer.empty) as Layer.Layer<S, SE, State | Feed>;
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every requirement against `Allowed<A, S>`, the built services supply `S`, merged in, and the handler gives each request the services the routes provide, `A`, as `HttpRouter.toWebHandler`'s types say; only those subtractions, which a generic `A` and `S` keep unresolved, are erased.
   const routes = options.routes as Layer.Layer<never, E, Allowed<never, never>> | undefined;
@@ -208,7 +211,7 @@ const handlersOf = <
       // given; their scope is closed only when the build fails, so nothing is finalized while
       // the instance lives, and a failed build leaves no fiber of its own running.
       const context = yield* Layer.buildWithMemoMap(
-        Layer.merge(services, Feed.layer).pipe(Layer.provideMerge(state)),
+        services.pipe(Layer.provideMerge(Feed.layer), Layer.provideMerge(state)),
         memoMap,
         scope,
       );
@@ -394,7 +397,7 @@ type InstanceOf<S, Env, RT> = [RT] extends [Layer.Any]
 export const handlers = <
   S = never,
   SE = never,
-  SR extends State = never,
+  SR extends State | Feed = never,
   A = never,
   E = never,
   R extends Allowed<A, S> = never,
@@ -448,7 +451,7 @@ export interface Instance<S = never, Env = Cloudflare.Env> extends DurableObject
 export function make<
   S,
   SE,
-  SR extends State,
+  SR extends State | Feed,
   A = never,
   E = never,
   R extends Allowed<A, S> = never,
@@ -495,7 +498,7 @@ export function make<
 export function make<
   S = never,
   SE = never,
-  SR extends State = never,
+  SR extends State | Feed = never,
   A = never,
   E = never,
   R extends Allowed<A, S> = never,
@@ -511,7 +514,7 @@ export function make<
 export function make<
   S = never,
   SE = never,
-  SR extends State = never,
+  SR extends State | Feed = never,
   A = never,
   E = never,
   R extends Allowed<A, S> = never,

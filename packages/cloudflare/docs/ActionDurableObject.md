@@ -179,7 +179,9 @@ through its `fetch`, handing `response.webSocket` to `Socket.fromWebSocket` unde
 `RpcClient.layerProtocolSocket`
 ([chat-rooms/test/support/socket.ts](../examples/chat-rooms/test/support/socket.ts),
 [chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)). The core's
-`Testing.layer` serves the same routes in memory, but cannot upgrade a socket.
+`Testing.layer` serves the same routes in memory, but cannot upgrade a socket. Under celld,
+`CELLD_IDLE_EVICT_S` is the equivalent of `evictDurableObject`: the idle seconds after which it
+evicts an object.
 
 ## Deploy
 

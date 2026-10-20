@@ -27,6 +27,7 @@ import {
   PluginStore,
   StreamRpcs,
 } from "../support/hosts.js";
+import { Announcer, feedCalls } from "../support/feed.js";
 import type { Hosted, Manual, Plain, PluginHost } from "../worker.js";
 
 expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqualTypeOf<
@@ -349,3 +350,19 @@ expectTypeOf(ActionDurableObject.layerStub()).toEqualTypeOf<
 expectTypeOf(ActionDurableObject.Calls.layer).toEqualTypeOf<
   Layer.Layer<ActionDurableObject.Calls>
 >();
+
+const Published = ActionDurableObject.make({ services: Announcer.layer, calls: feedCalls });
+
+expectTypeOf(Published).toEqualTypeOf<
+  new (ctx: DurableObjectState, env: Cloudflare.Env) => ActionDurableObject.Instance<Announcer>
+>();
+
+export const publishedFromEnv = ActionDurableObject.make({ services: () => Announcer.layer });
+
+export const handledPublisher = (ctx: DurableObjectState) =>
+  ActionDurableObject.handlers(ctx, { services: Announcer.layer, calls: feedCalls });
+
+ActionDurableObject.make({
+  // @ts-expect-error -- The services may require State and Feed alone.
+  services: Announcer.layer.pipe(Layer.provideMerge(Layer.effectDiscard(Effect.service(Greeting)))),
+});

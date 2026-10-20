@@ -5,7 +5,7 @@ import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { recordKey } from "../../src/durable/feed.js";
-import { FeedCalls, FeedRpcs } from "../support/feed.js";
+import { FeedCalls, FeedRpcs, NoInitial } from "../support/feed.js";
 import { upgradeToRpc } from "../support/socket.js";
 
 let objects = 0;
@@ -90,6 +90,18 @@ describe("Feed", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("sends a subscriber what a service built among the object's services publishes", () =>
+    Effect.gen(function* () {
+      const stub = fresh();
+      const calls = yield* callsOf(stub);
+      const subscriber = yield* subscribe(yield* connect(stub), [0]);
+
+      yield* calls.announce({ value: 7 });
+
+      expect(yield* subscriber.next(1)).toEqual([7]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("sends a keyed value only to its key's subscribers, and an unkeyed one to all", () =>
     Effect.gen(function* () {
       const stub = fresh();
@@ -127,6 +139,28 @@ describe("Feed", () => {
         expect(yield* going.next(1)).toEqual([1]);
         expect(ended.sent()).toBe(1);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends nothing to a subscriber whose initial values failed", () =>
+    Effect.gen(function* () {
+      const stub = fresh();
+      const calls = yield* callsOf(stub);
+      const connection = yield* connect(stub);
+      const kept = yield* subscribe(connection, [20]);
+
+      const failed = yield* Effect.flip(
+        Stream.runDrain(connection.client.ticks({ key: null, initial: [], failInitial: true })),
+      );
+
+      yield* calls.publish({ value: 1, key: null });
+
+      expect(yield* kept.next(1)).toEqual([1]);
+
+      yield* connection.client.ping();
+
+      expect(failed).toBeInstanceOf(NoInitial);
+      expect(connection.chunks.length).toBe(kept.sent());
+    }).pipe(Effect.scoped),
   );
 
   it.effect("sends nothing more to a subscriber whose client interrupted its stream", () =>

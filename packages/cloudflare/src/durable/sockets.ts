@@ -32,6 +32,7 @@ const registries = new WeakMap<Sockets["Service"], Registry>();
  * - A message dispatched before the routes are built finds no protocol registered and is answered `false`: in a class composing the primitives itself, await the routes' build first, or delegate to `handlers`, which does.
  * - The runtime dispatching through `Sockets` and `toWebHandler` must build in one memo map: given two, each builds `Sockets.layer`, `layerWebSocket` registers with one, and every socket's messages go unanswered, with no error.
  * - A socket accepted by an earlier version of the routes at another `path` carries a tag no protocol holds now, and is answered `false`: close it, or serve that `path` again.
+ * - `storage.deleteAll()` drops the socket-id counter, kept beside the application's data, and every `Feed` subscriber's record with it: a later socket may take a closed one's id, which no record names any more, and the subscribers get nothing more, so `Feed.end` them before wiping.
  */
 export class Sockets extends Context.Service<
   Sockets,
@@ -287,7 +288,7 @@ export interface LayerWebSocketOptions {
  * - The runtime replies to a client's close frame itself only with the compatibility flag `web_socket_auto_reply_to_close`, on by default from the `compatibility_date` `2026-04-07`: this protocol sends no reply of its own.
  * - An upgrade whose headers, cookies included, exceed the runtime's 16 KiB attachment is answered 431; a request to `path` that is no upgrade is answered 426.
  * - workerd keeps a socket's headers across hibernation; celld 0.6.2 drops them when it evicts an idle object, so a message relying on the upgrade's token is refused as unauthenticated: send a token on each message.
- * - An API key in the query string is not kept: a message has no URL.
+ * - The upgrade's URL and query are not kept, as Effect's own socket protocol keeps neither: a message has no URL, so an API key in the query never authenticates, and a version or tenant a browser can only put in the URL goes in the rpc's payload or a message header.
  * - A browser WebSocket sets no header on its upgrade, so a page sends its token on each message, with `RpcClient.withHeaders`; under a cookie scheme the browser sends the cookie on any page's upgrade, which is never preflighted, so refuse a foreign `Origin` with router middleware, which runs for the upgrade.
  * - The verifier runs for every message, so a token that expires refuses the next call: a client renews it on its messages, or connects again.
  * - Router middleware around the routes runs for the upgrade request alone, never for a socket's messages: list an `RpcMiddleware` in `ActionRpc.layer`'s `middleware` for a per-message service.

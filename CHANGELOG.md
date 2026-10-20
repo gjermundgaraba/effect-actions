@@ -79,10 +79,12 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     socket an id unique across the object's protocols, kept in storage so no later socket has an
     earlier one's.
   - `Feed` pushes to a stream rpc's subscribers over `layerWebSocket`, across hibernation, one
-    per instance from `Feed.layer`, which `handlers` and `make` provide to the calls, the routes,
-    the alarm and `run`. A stream rpc's handler returns `feed.subscribe(request, { initial, key })`:
+    per instance from `Feed.layer`, which `handlers` and `make` build before the services and
+    provide to them, the calls, the routes, the alarm and `run`, so a publish adapter is one of
+    the services. A stream rpc's handler returns `feed.subscribe(request, { initial, key })`:
     the subscriber's record is kept in the object's storage, keyed by its socket's id and its
-    request's, then `initial` is sent as one chunk, and the stream never ends.
+    request's, then `initial` is sent as one chunk, and the stream never ends; an `initial` that
+    fails ends the stream with its failure and drops the record.
     `publish(rpc, value, { key })`, typed by the rpc's chunk, sends each subscriber of the rpc,
     or of the key, whose socket is open, the value as Effect's server sends a chunk, from any
     instance, so a value published after the object hibernated reaches a page subscribed
@@ -90,7 +92,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     interrupts the stream or its socket closes, through `layerWebSocket`, and when a publish
     finds its socket gone. A subscriber gets every value published after its `initial` at least
     once; each chunk's ack wakes the object; Effect's socket client fails its streams when its
-    socket drops, so a page subscribes again from the last value it holds.
+    socket drops, so a page subscribes again from the last value it holds. The records and the
+    socket-id counter sit in the object's storage beside the application's data, so
+    `storage.deleteAll()` drops every subscriber: `end` them first.
   - `layerStub()` is the protocol `RpcServer.layer(group)` and `ActionRpc.layer` serve on over
     the object's stub, with Cloudflare's own RPC: one call of the object's
     `effectActionsRpc` method carries one call's messages and returns its responses once its
@@ -121,7 +125,7 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     handlers, `fetch`, `webSocketMessage`, `webSocketClose`, `webSocketError`,
     `effectActionsRpc`, `alarm` and `run`, each taking the runtime's arguments, for a class
     of your own to delegate to. The first event builds the object once: `services`, its
-    startup services, with `State` and `Feed`, then `calls`, given `Calls` and `layerStub()`, and
+    startup services, which may require `State` and `Feed`, then `calls`, given `Calls` and `layerStub()`, and
     `routes`, given `Sockets`; every event awaits that build, and a failed build is dropped with
     all it built, so the next event builds again. `fetch` serves the routes, or answers 404
     without them; the socket handlers, `SocketHandlers`, returned only with routes, since

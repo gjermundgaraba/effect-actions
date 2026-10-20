@@ -100,12 +100,14 @@ const ExitFrame = Schema.TaggedStruct("Exit", { requestId: RequestId, exit: Sche
  *
  * **Gotchas**
  *
+ * - A subscriber whose `initial` fails ends with its failure, its record dropped.
  * - At least once across the join, never lost: a value published while a subscriber's `initial` is read may reach it twice, in `initial` and as published, so give values an id the client drops repeats by.
  * - A value published while `initial` is read may arrive before it: the stream is in order from the first value published after `initial` is sent.
  * - Each chunk's ack wakes a hibernating object: Effect's client acknowledges every chunk it is sent, which the object's server ignores for a call it no longer runs.
  * - Effect's socket client fails every stream it runs when its socket drops: a page resubscribes, with `Stream.retry`, from the last value it holds, which `initial` sends on.
  * - Only a call over `layerWebSocket` subscribes: over another protocol it has no socket, and the first `publish` drops its record.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone; a socket closing while the object is evicted leaves its records until then.
+ * - `storage.deleteAll()` drops every subscriber's record with the application's own data, silently: those subscribers get nothing more, so `end` them before wiping the object's storage.
  * - `publish` reads every subscriber's record from storage: one per open stream of every rpc.
  * - A value that does not encode as the rpc's chunk is a defect; an rpc that does not stream is refused, naming it.
  *
@@ -184,9 +186,11 @@ export class Feed extends Context.Service<
         subscribe: (request, options) =>
           Stream.unwrap(
             Effect.gen(function* () {
+              const key = recordKey(request.client.id, String(request.requestId));
+
               yield* Effect.promise(() =>
                 storage.put(
-                  recordKey(request.client.id, String(request.requestId)),
+                  key,
                   Subscription.make({
                     tag: request.rpc._tag,
                     key: options?.key,
@@ -197,7 +201,12 @@ export class Feed extends Context.Service<
 
               const initial = options?.initial ?? [];
 
-              const values = Effect.isEffect(initial) ? yield* initial : initial;
+              // Why: the record is kept before `initial` is read, so nothing published meanwhile
+              // is lost; a call whose `initial` fails has ended, and a record left behind would
+              // send its client chunks for it.
+              const values = Effect.isEffect(initial)
+                ? yield* Effect.onError(initial, () => drop(key))
+                : initial;
 
               return Stream.concat(Stream.fromArray(values), Stream.never);
             }),

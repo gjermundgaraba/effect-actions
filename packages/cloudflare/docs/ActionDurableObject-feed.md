@@ -4,7 +4,9 @@ An object pushes what changes to the pages connected to it over their sockets, a
 hibernated too: a page calls an rpc that streams, its handler makes the call a **subscriber**
 with `Feed`, and any part of the object publishes to it. A subscriber is kept in the object's
 storage, keyed by its socket, so a value published by a new instance, after an eviction,
-reaches the page that subscribed on the one before, as long as its socket stays open. An
+reaches the page that subscribed on the one before, as long as its socket stays open. The
+records sit beside the application's own data, so `storage.deleteAll()` drops them too, and
+every subscriber with them: `end` the feed before wiping the object's storage. An
 action answers once, so the stream is a native rpc in the binding's `rpcs`, beside its actions
 (the core's `docs/ActionRpc.md`).
 
@@ -209,4 +211,5 @@ export const openRoom = (token: string) =>
   acknowledgement wakes a hibernating object, as a call does.
 - **Testing it.** `evictDurableObject(stub)` between a page subscribing and a post shows the
   value reach it from a new instance
-  ([chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)).
+  ([chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)); under celld,
+  `CELLD_IDLE_EVICT_S` sets the idle seconds after which it evicts an object.
