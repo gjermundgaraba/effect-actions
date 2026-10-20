@@ -200,7 +200,6 @@ ActionToolkit.make(app, {
 // @ts-expect-error -- A check requiring the caller would be a requirement no tool states.
 ActionToolkit.make(app, { needsApproval: () => Effect.map(Principal, () => true) });
 
-// @ts-expect-error -- Its Effect cannot fail: a failure would mean no approval needed.
 ActionToolkit.make(app, { needsApproval: () => Effect.fail("unavailable") });
 
 const Erase = Action.make("erase", {

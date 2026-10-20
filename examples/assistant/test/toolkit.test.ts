@@ -49,7 +49,6 @@ describe("the toolkit", () => {
 
   it.effect("asks for approval before a model adds to a list that is not its caller's", () =>
     Effect.gen(function* () {
-      // `LanguageModel` is what enforces approval: a call by hand, as above, is never asked.
       // The model answers each member with the same two calls.
       const plan = (member: Member) =>
         LanguageModel.generateText({ prompt: "Plan the launch.", toolkit }).pipe(

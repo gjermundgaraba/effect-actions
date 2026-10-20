@@ -28,7 +28,6 @@ describe("the operators", () => {
 
       expect((yield* support.listWorkspaces()).workspaces).toHaveLength(2);
 
-      // A key cannot step up, so the refusal names no scope: a plain 403.
       const refused = yield* Effect.flip(support.suspendWorkspace({ workspace: "acme" }));
 
       expect(refused).toBeInstanceOf(Action.Forbidden);

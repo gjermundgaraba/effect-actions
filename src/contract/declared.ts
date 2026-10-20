@@ -102,11 +102,13 @@ const encodedTags = (ast: SchemaAST.AST): ReadonlyArray<string> =>
     return tag === undefined ? [] : members(tag).flatMap(literalValues).filter(Predicate.isString);
   });
 
+const builtInTags = new Set(builtIns.flatMap((schema) => encodedTags(schema.ast)));
+
 // Why: The library joins one call's errors, the built-in ones, the action's, the binding's and the
 // authentication's, and a client decodes a failure as the first schema that accepts it, so two
 // schemas sharing a `_tag` misdecode wherever one accepts the other's values. Effect's `catchTag`
 // cannot tell them apart either. A schema's own variants, behind a transformation, are its own.
-/** Throws where two of the schemas `errors` decode with encode with one `_tag`. */
+/** Throws where two of the schemas in `errors` encode with one `_tag`. */
 export const assertDistinctTags = (what: string, errors: Action.Errors): void => {
   const seen = new Set<string>();
 
@@ -114,7 +116,9 @@ export const assertDistinctTags = (what: string, errors: Action.Errors): void =>
     for (const tag of new Set(encodedTags(schema.ast))) {
       if (seen.has(tag)) {
         throw new Error(
-          `${what}: error _tag "${tag}" names two error schemas, which a client cannot tell apart`,
+          `${what}: error _tag "${tag}" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart${
+            builtInTags.has(tag) ? "; for a built-in's tag, fail with the built-in itself" : ""
+          })`,
         );
       }
 
@@ -125,7 +129,7 @@ export const assertDistinctTags = (what: string, errors: Action.Errors): void =>
 
 /**
  * The checks `ActionHttp.make` and `ActionRpc.make` share: each action once, the descriptor every
- * protected action names, and each call's errors distinct by `_tag`. Returns `error` as a list.
+ * protected action names, and each call's errors distinct by `_tag`. Returns the binding's `error`, as a list, and `authentication`.
  */
 export const bindingOf = <D extends Proving & { readonly error: Action.Errors }>(
   what: string,

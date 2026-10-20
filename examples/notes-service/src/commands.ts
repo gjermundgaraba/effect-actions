@@ -12,18 +12,14 @@ class MissingToken extends Schema.TaggedError<MissingToken>()("MissingToken", {
 }) {}
 
 // The binding's typed client, connected to where the server is and as who is calling, both read
-// from config. It is an Effect, not a client: every command here, the derived ones and your own,
-// runs it when it runs, so `--help` and a mistyped flag read nothing. It reaches these commands'
-// requests and no others.
+// from config. Every command here, the derived ones and your own, calls through this one.
 const api = Effect.gen(function* () {
   const baseUrl = yield* Config.String("NOTES_URL").pipe(
     Config.withDefault("http://127.0.0.1:3000"),
   );
 
-  // Required, since every command but `get-status` is refused without one. Left as it is, a
-  // missing token prints as `ConfigError: …`; mapped, it prints the message, which says what to
-  // do. A CLI whose public commands must answer signed out reads the token with `Config.option`
-  // instead and adds the header when it is there.
+  // Required, since every command but `get-status` is refused without one, and mapped so that a
+  // missing one prints what to do.
   const token = yield* Config.Redacted("NOTES_TOKEN").pipe(
     Effect.mapError(
       () =>
@@ -68,15 +64,11 @@ const exportNotes = Command.make(
 
       yield* Console.log(`Wrote ${whole.length} notes to ${file}`);
     }).pipe(
-      // Context of your own for a failure goes to stderr before it, on a line of its own. A
-      // `UserError` wrapped around the failure instead would put its JSON mid-sentence. The
-      // line prints for every failure of the command, a file that cannot be written included,
-      // so it says only what is true of them all.
+      // Context of your own for a failure, on stderr before it. The line prints for every
+      // failure of the command, a file that cannot be written included, so it says only what is
+      // true of them all.
       Effect.tapError(() => Console.error(`The export to ${file} did not finish.`)),
-      // Once, around the whole command: it then fails as a derived command does, an action's
-      // error printed as its JSON on stderr and any other, a file that cannot be written for
-      // one, named. A failure left as it is would be reported as a crash, with an `ERROR (#n)`
-      // line and a stack trace.
+      // So the export fails as a derived command does.
       ActionCli.toUserError(Http),
     ),
 ).pipe(Command.withDescription("Write every note to a file, as Markdown."));
@@ -135,7 +127,5 @@ export const commands = ActionCli.remote(Http, {
     // `notes update-note <id> --revision 1 < draft.md`: an argument, a flag and stdin together.
     updateNote: { positional: ["id"], stdin: "body" },
   },
-  // `Command.withSubcommands` on the result would replace the derived commands, so your own
-  // go here.
   subcommands: [exportNotes, importNotes],
 });

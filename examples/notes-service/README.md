@@ -5,11 +5,6 @@ implementation, served as a JSON API and as MCP tools, with a CLI and a browser 
 same binding. Notes belong to the signed-in user; reading needs the `notes:read` scope and
 writing `notes:write`.
 
-Start here if you are building a service. The other examples follow the same layout. Then read
-[Action.md](../../docs/Action.md) and the page of each surface you serve, which
-[docs/README.md](../../docs/README.md) routes, one page per tool call. An error's message is
-quoted in a `docs/*-failures.md`.
-
 ## Run it
 
 From the repository root, after `vp install` (from an installed package, see
@@ -44,11 +39,10 @@ codex mcp add notes --url http://127.0.0.1:3000/mcp --bearer-token-env-var NOTES
 Cloudflare Workers ([ActionMcp.md](../../docs/ActionMcp.md#serve-tools-over-http)).
 
 The server reads `HOST` (default `127.0.0.1`), `PORT` (default 3000) and `PUBLIC_URL`, the
-address it tells OAuth clients it is at; the CLI reads `NOTES_URL` and `NOTES_TOKEN`. Change the port and set all three to match.
-Every command asks for `NOTES_TOKEN`, the public `get-status` included: without it a command
-prints one message on stderr saying to set it, and exits 1. `--help` needs none.
-
-The tokens are fixed names and the store is memory: replace both before deploying anything.
+address it tells OAuth clients it is at; the CLI reads `NOTES_URL` and `NOTES_TOKEN`. Change the
+port and set `PORT`, `PUBLIC_URL` and `NOTES_URL` to match. Every command asks for
+`NOTES_TOKEN`, the public `get-status` included: without it a command prints one message on
+stderr saying to set it, and exits 1. `--help` needs none.
 
 ## Retry a creation
 
@@ -62,24 +56,8 @@ command:
 echo "First draft" | node --import tsx examples/notes-service/src/cli.ts create-note --request-id plan-1 --title Plan
 ```
 
-The key belongs to the signed-in caller and the `createNote` operation. Another caller can use
-it independently. The same caller repeating the key and content gets the original result;
-different content fails with `RequestConflict`. A new key creates a new note, even when its
-content is identical. Every attempt still runs authorization.
-
-The replay result is a snapshot of the creation. Updating or deleting the note leaves that
-snapshot intact: replay neither changes the note back nor recreates it. `importNotes` has no
-request key; each import creates new notes. Calls without a key are not idempotent, so the
-creation tool does not advertise `idempotentHint: true`.
-
-[src/notes/store.ts](src/notes/store.ts) owns creation and replay recording.
-
-**DEMO ONLY:** notes and replay records live in this process's memory, without eviction. They
-do not survive a restart or coordinate separate server instances. A deployed store must commit
-the mutation and replay record in one transaction, enforce uniqueness of caller, operation and
-key, and define a retention window. An expired key no longer protects a retry. External side
-effects need the upstream system's cooperation: a local record cannot make a separate network
-call atomic. The library supplies neither replay storage nor automatic retries.
+What a key promises, per caller, for changed content and after the note changes, is what
+[test/notes/idempotency.test.ts](test/notes/idempotency.test.ts) asserts.
 
 ## Layout
 
@@ -113,19 +91,6 @@ test/
 └── commands.test.ts   the commands and their connection, against the same routes in memory
 ```
 
-- **A folder per domain, not per mechanism.** Everything about notes is in `notes/`; there is no
-  `contracts/` or `handlers/` folder.
-- **The PascalCase file is the contract.** `Notes.ts`, `Identity.ts`, `Status.ts` and `Api.ts`
-  import no server code, so a browser or a CLI imports them. The lowercase files beside them run
-  on the server, each named for its role, never the domain: `notes.ts` beside `Notes.ts` is one
-  file on a disk that ignores case (TS1149).
-- **One entrypoint per way of running it.** Each chooses its own implementations: `server.ts`
-  picks the store and the HTTP server, `worker.ts` the routes for a serverless host, `stdio.ts`
-  names the local user, a test provides its own store. Nothing below an entrypoint knows which
-  it got.
-- **In a monorepo** the contract files and `Api.ts` are the package the server, the CLI and the
-  website all depend on; the lowercase files and `routes.ts` are the server.
-
 ## Where to look
 
 | To see                                                        | Read                             |
@@ -146,8 +111,9 @@ test/
 | A bulk import as one action, its command reading a file       | `src/notes/`, `src/commands.ts`  |
 | The CLI's connection, read from config when a command runs    | `src/commands.ts`                |
 | A missing token as one message, not a `ConfigError` report    | `src/commands.ts`                |
-| A promise client handling each declared error by its tag      | `src/browser.ts`                 |
-| Testing handlers and authorization with no transport          | `test/notes/notes.test.ts`       |
+| A promise client handling a declared error by its tag         | `src/browser.ts`                 |
+| Testing handlers and authorization with no transport          | `test/notes/in-process.test.ts`  |
+| Testing a revision race, two fibers taking turns              | `test/notes/notes.test.ts`       |
 | Testing routes, tools and refusals in memory                  | `test/routes.test.ts`            |
 | Testing commands against the routes in memory                 | `test/commands.test.ts`          |
 | Testing `--help` and the connection with config as a Layer    | `test/commands.test.ts`          |

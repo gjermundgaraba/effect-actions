@@ -120,7 +120,7 @@ describe("the commands", () => {
     }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("import a file `export` wrote with one call, all its notes or none", () =>
+  it.effect("import a file `export` wrote, all its notes or none", () =>
     Effect.gen(function* () {
       const files = yield* FileSystem.FileSystem;
       const directory = yield* files.makeTempDirectoryScoped();

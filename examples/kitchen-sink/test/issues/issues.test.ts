@@ -47,7 +47,6 @@ describe("issues, in process", () => {
       );
       yield* client.closeIssue({ id: "ACME-2" }).pipe(as("ada"));
 
-      // No argument is the input `{}`: `status` is absent and `limit` its default.
       const all = yield* client.listIssues().pipe(as("ada"));
       const closed = yield* client.listIssues({ status: "closed", limit: 20 }).pipe(as("ada"));
       const newest = yield* client.listIssues({ limit: 1 }).pipe(as("ada"));
@@ -69,7 +68,6 @@ describe("issues, in process", () => {
 
       const refused = yield* Effect.flip(create.pipe(as("linus")));
 
-      // `toEqual` compares an error's own fields, here `scopes`; never its `message`.
       expect(refused).toEqual(new Action.Forbidden({ scopes: ["issues:write"] }));
       expect(refused.message).toBe("Requires issues:write.");
     }).pipe(Effect.provide(services)),

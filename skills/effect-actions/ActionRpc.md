@@ -1,179 +1,242 @@
 # ActionRpc
 
 Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one unary rpc per action.
-Reach for it when a client keeps a connection open and calls often, such as a page on a
-WebSocket, or when the application already speaks Effect RPC.
 
-Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
-When something fails, search [ActionRpc-failures.md](ActionRpc-failures.md). Reading order:
-[SKILL.md](SKILL.md).
-
-## API
-
-Import `@gjermundgaraba/effect-actions/ActionRpc`.
-
-| API                                     | Purpose                                                                    |
-| --------------------------------------- | -------------------------------------------------------------------------- |
-| `make(actions, options?)`               | Bind a list of actions; returns a `Binding`.                               |
-| `Rpc.actions`                           | The bound actions.                                                         |
-| `Rpc.error`                             | The errors every rpc declares besides its action's own.                    |
-| `Rpc.authentication`                    | The authentication descriptor of its protected actions, or `undefined`.    |
-| `Rpc.group`                             | Native `RpcGroup`, one rpc per action, for `RpcClient.make`.               |
-| `layer(Rpc, implementations, options?)` | Serve the rpcs of the bound actions the implementations hold.              |
-| `client(Rpc, options?)`                 | An Effect of a typed client; requires the client `Protocol` and a `Scope`. |
-
-Exported types: `Binding`; `Any`, any binding; `Client<typeof Rpc>`; `MethodError`, what one call fails with; `Options` of `make`, `LayerOptions` of `layer`, `ClientOptions` of `client`.
-
-| Option                   | Meaning                                                                                                |
-| ------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `make`: `error`          | Errors the layer's `middleware` fails with: declared by every rpc, so clients decode them.             |
-| `make`: `authentication` | `Authentication.make(...)` of the protected actions' identity: required when the binding holds one.    |
-| `layer`: `actions`       | The bound actions it serves: `[GetUser]`. Defaults to every one the implementations hold.              |
-| `layer`: `middleware`    | Native `RpcMiddleware` around every rpc, inside authentication, outside decoding; the first innermost. |
-| `client`: options        | The native `RpcClient.make` options but `flatten`.                                                     |
+A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionRpc-failures.md](ActionRpc-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
 
 ## Bind actions to rpcs
 
-Call `ActionRpc.make` once, in a file that imports no server code
-([setup.md](setup.md#bundle-for-a-browser)), and export the binding: the server serves it and
-every client calls it. A binding that holds a protected action names its authentication
-descriptor ([Authentication.md](Authentication.md#declare-how-callers-sign-in)).
+A binding that holds a protected action names its authentication descriptor
+([Authentication.md](Authentication.md#declare-how-callers-sign-in)); the rules of each option
+are on `ActionRpc.Options`. Call `ActionRpc.make` once and export the binding:
 
-```ts
+```ts example=live-rpc/src/Rpc.ts
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { ListRooms, Messages } from "./chat/Chat.js";
+import { Login } from "./identity/Identity.js";
+
+// The RPC binding: one native rpc per action, named after it, the protected ones requiring
+// `Login`. It is plain data and imports no server code, so the server and a browser page both
+// import this one value. `Rpc.group` is the native `RpcGroup`, for Effect's own `RpcClient.make`.
 export const Rpc = ActionRpc.make([ListRooms, ...Messages], { authentication: Login });
 ```
 
-[live-rpc/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/Rpc.ts) is that binding;
-[kitchen-sink/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Rpc.ts) adds `error`.
-
-Nothing streams. A page that follows changes calls again on its open socket, as `readMessages`
-does in [live-rpc/src/chat/Chat.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/chat/Chat.ts).
+[kitchen-sink/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Rpc.ts) adds `error`, what its
+middleware fails with.
 
 ## Serve the rpcs
 
 In the routes file, give `ActionRpc.layer` the binding and the implementations, and provide
-what it requires except the protocol: the service of each listed middleware and, where it
-serves a protected action, the authentication provider
-([Authentication.md](Authentication.md#verify-credentials)). The entrypoint chooses the
-protocol and its serialization, then serves the result with `HttpRouter.serve`.
+what it requires except the protocol and the startup services the entrypoint chooses: the
+service of each listed middleware and, where it serves a protected action, the authentication
+provider ([Authentication.md](Authentication.md#verify-credentials)).
 
-```ts
-// routes.ts
+```ts example=live-rpc/src/routes.ts
+import { Layer } from "effect";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { messages, rooms } from "./chat/handlers.js";
+import { ResolveRoom, resolveRoom } from "./chat/room.js";
+import { authenticate } from "./identity/verifier.js";
+import { Rpc } from "./Rpc.js";
+
+// The binding's rpcs on Effect's own RpcServer, the protected ones behind `Login`'s verifier;
+// `listRooms` needs no token.
+//
+// `ResolveRoom`, listed in `middleware`, provides `CurrentRoom`, which the handlers and
+// `authorize` read. Only something that runs per message can, since each message names its own
+// room: `Layer.succeed(CurrentRoom, "lobby")` provided here would leave the layer still
+// requiring it, in its type.
+//
+// It still requires three things, each chosen by whoever serves it. The protocol and its
+// serialization: server.ts gives it a WebSocket, and a test Effect's HTTP protocol, which
+// answers in memory. And `MessageStore`.
 export const rpc = ActionRpc.layer(Rpc, [rooms, messages], { middleware: [ResolveRoom] }).pipe(
   Layer.provide([resolveRoom, authenticate]),
 );
+```
 
-// server.ts
+The entrypoint serves the result with `HttpRouter.serve`; a test serves it in memory
+([Testing.md](Testing.md#test-rpcs)).
+
+```ts example=live-rpc/src/server.ts
+import { createServer } from "node:http";
+import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
+import { Config, Effect, Layer } from "effect";
+import { HttpRouter } from "effect/http";
+import { RpcSerialization, RpcServer } from "effect/rpc";
+import { MessageStore } from "./chat/store.js";
+import { rpc } from "./routes.js";
+
+// Entrypoint: `node --import tsx examples/live-rpc/src/server.ts`.
+// It chooses the protocol, the store and the port, and starts Node's HTTP server. It provides
+// no caller and no room: those arrive with each message.
+
+// The rpcs over a WebSocket at `/rpc`, the router's one route: Node's HTTP server answers the
+// upgrade. JSON, because a page's client speaks it: browser.ts gives its socket the same
+// serialization.
 const socket = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
   Layer.provide(RpcSerialization.layerJson),
 );
+
+const server = Layer.unwrap(
+  Effect.gen(function* () {
+    // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
+    const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));
+    const port = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
+
+    return HttpRouter.serve(socket).pipe(
+      Layer.provide(
+        NodeHttpServer.layer(createServer, {
+          host,
+          port,
+          // A message on a WebSocket is no request body, so `HttpServerRequest.MaxBodySize`
+          // does not bound it: Node's WebSocket server reads one of up to 100 MiB whole unless
+          // told otherwise. A chat message is short, and a larger one closes the socket (1009).
+          websocket: { maxPayload: 64 * 1024 },
+        }),
+      ),
+      // DEMO ONLY: messages live in this process's memory; a deployment provides a store that
+      // lasts.
+      Layer.provide(MessageStore.layerMemory),
+    );
+  }),
+);
+
+Layer.launch(server).pipe(NodeRuntime.runMain);
 ```
 
-[live-rpc/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/routes.ts) and
-[live-rpc/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/server.ts) are the two halves.
+Where the protocol goes, why one protocol takes one layer, and what a protocol with no router
+lacks are on `ActionRpc.layer`; the order of `middleware`, and which actions a middleware
+reading the identity may serve, on `ActionRpc.LayerOptions.middleware`.
+[kitchen-sink/src/identity/quota.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/quota.ts) is a limit
+in `middleware`, keyed on the caller, and
+[kitchen-sink/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Rpc.ts) binds the protected actions
+alone for it.
 
-- Provide the protocol to the rpc layer, inside what `HttpRouter.serve` serves:
-  `RpcServer.layerProtocolWebsocket` and `layerProtocolHttp` add their route to that router.
-- Export the rpc layer before it is given a protocol. `Testing.layer` cannot upgrade a
-  WebSocket, so a test gives that layer the HTTP protocol ([Testing.md](Testing.md#test-rpcs)).
-- Provide a JSON serialization, the same one on the client: `RpcSerialization.layerJson`,
-  `layerNdjson`, `layerJsonRpc()` or `layerNdJsonRpc()`.
-- Bound a WebSocket message on the server: `HttpServerRequest.MaxBodySize` does not, and Node's
-  reads up to 100 MiB whole. `server.ts` passes `websocket: { maxPayload }` to
-  `NodeHttpServer.layer`; a larger message closes the socket.
-- Authentication runs for every message of a protected rpc, not once per connection.
-- A limit in `middleware` may key on the caller and counts input that does not decode, as the
-  quota of [kitchen-sink/src/identity/quota.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/quota.ts)
-  does; a limit in a handler holds on every surface.
-- A middleware may require the identity only where every action its layer serves is
-  protected, and one protocol takes one `ActionRpc.layer`: a second layer given the same
-  protocol is never reached. So bind the protected actions alone, as
-  [kitchen-sink/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Rpc.ts) does, or have the middleware
-  read the identity with `Effect.serviceOption`, which a public rpc's call lacks.
-- A protocol with no router, such as `RpcServer.layerProtocolSocketServer` or
-  `layerProtocolStdio`, serves protected actions too, but has no HTTP request, which limits its
-  provider and its verifier: [ActionRpc-failures.md](ActionRpc-failures.md).
 - **The same actions as JSON too.** Merge `ActionHttp.layer(Http, implementations)` beside the
   rpc layer, each given its descriptor's provider
   ([kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) defines both, and
   [server.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/server.ts) merges them): one provider given to both
-  is built once. The routes need what
-  the rpcs did not: an `httpApiStatus` on each declared error, which answers 422 without one
-  ([live-rpc/src/chat/Chat.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/chat/Chat.ts)); a request body limit;
-  and router middleware for a service an `RpcMiddleware` provides
-  ([ActionHttp.md](ActionHttp.md#serve-the-routes)). Write the header's decoding once, in a
-  function both middleware call.
+  is built once. The routes need what the rpcs did not: an `httpApiStatus` on a declared error,
+  by the rule on `Action.Options.error`, and router middleware for a service an `RpcMiddleware`
+  provides ([ActionHttp.md](ActionHttp.md#serve-the-routes)).
 
 ## Call the rpcs
 
 `ActionRpc.client(Rpc)` has the methods of `ActionHttp.client`
-([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)): `client.readMessages({ after })`.
-Its connection is a Layer of Effect's own:
+([ActionHttp.md](ActionHttp.md#call-the-api-from-effect)), and what one call fails with is
+`ActionRpc.MethodError`. A page's client module:
 
-```ts
+```ts example=live-rpc/src/browser.ts
+import { Effect, Layer } from "effect";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import { Socket } from "effect/socket";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { roomHeader } from "./chat/Chat.js";
+import { Rpc } from "./Rpc.js";
+
+// Client module: what a web page imports. It holds the binding and nothing of the server, so a
+// bundler gets the contracts and Effect's RPC client, no handler and nothing of Node.
+
+// Effect's own client protocol: one WebSocket, speaking the server's JSON. This layer owns
+// the socket, so a page provides it once, around its whole program, and every call shares
+// that one socket. Which WebSocket is left to the host: a page provides
+// `Socket.layerWebSocketConstructorGlobal`, the browser's own, and client.ts provides Node's.
 export const connection = (url: string) =>
   RpcClient.layerProtocolSocket().pipe(
     Layer.provide(Socket.layerWebSocket(url)),
     Layer.provide(RpcSerialization.layerJson),
   );
+
+// The chat as a page uses it, on the connection provided around it.
+export const openChat = Effect.gen(function* () {
+  // One typed method per action of the binding, all on the one connection.
+  const client = yield* ActionRpc.client(Rpc);
+
+  return {
+    // The public rpc: no token.
+    rooms: Effect.map(client.listRooms(), ({ rooms }) => rooms),
+
+    room: (name: string, token: string) => {
+      // A browser WebSocket cannot set an `Authorization` header on its upgrade, so the token
+      // travels on each message, and the room beside it. A refreshed token needs no new socket.
+      const here = RpcClient.withHeaders({ authorization: `Bearer ${token}`, [roomHeader]: name });
+
+      return {
+        // Called again and again while the page is open, with the last id it holds. A token
+        // may expire while the page stays open, so each refusal becomes what the page shows.
+        read: (after: number) =>
+          client.readMessages({ after }).pipe(
+            here,
+            Effect.map(({ messages }) => ({ access: "member" as const, messages })),
+            Effect.catchTags({
+              Unauthenticated: () =>
+                Effect.succeed({ access: "signed-out" as const, messages: [] }),
+              Forbidden: () => Effect.succeed({ access: "not-a-member" as const, messages: [] }),
+            }),
+          ),
+
+        post: (text: string) => client.postMessage({ text }).pipe(here),
+
+        // A declared error arrives as the contract's class. A message someone else already
+        // removed is gone, which is what the page asked for.
+        remove: (id: number) =>
+          client.deleteMessage({ id }).pipe(
+            here,
+            Effect.as("removed" as const),
+            Effect.catchTags({
+              MessageNotFound: () => Effect.succeed("removed" as const),
+              NotAuthor: () => Effect.succeed("not-yours" as const),
+            }),
+          ),
+      };
+    },
+  };
+});
 ```
 
-It leaves the WebSocket constructor to its host: a page provides
-`Socket.layerWebSocketConstructorGlobal`, and Node `NodeSocket.layerWebSocketConstructor`.
-[live-rpc/src/browser.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/browser.ts) is a page's client module, and
-[live-rpc/src/client.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/client.ts) runs it from Node.
-
-- The socket belongs to the Layer providing the protocol, not to the scope around the client:
-  provide the connection once, around the page's whole program, never around one call. A page
-  that is not one Effect program keeps it in a `ManagedRuntime` and calls with promises:
-  `connect(url)` in `browser.ts`, whose socket opens on the first call.
-- A declared error or a refusal is its call's typed failure: only that call fails, and the
-  socket stays open. RPC answers no 401 or 403 challenge, and a token may expire under an open
-  socket, so the page handles `Unauthenticated` itself
-  ([guarantees.md](guarantees.md#wire-behavior)).
+[live-rpc/src/client.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/client.ts) runs it from Node, and
+[live-rpc/src/page.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/page.ts) wraps it in promises for a page that is
+not one Effect program. The client's traps are on `ActionRpc.client`.
 
 ## Send request context with a call
 
-What travels beside a call's input, such as a token, a tenant or a room, goes in headers. On
-the client, wrap the call in `RpcClient.withHeaders`:
+What travels beside a call's input, such as a token, a tenant or a room, goes in headers: the
+client wraps the call in `RpcClient.withHeaders`, as `room` does in `browser.ts` above. On the
+server, authentication decodes the credential from those headers. Anything else is read by
+native `RpcMiddleware` listed in `ActionRpc.layer`'s `middleware`:
 
-```ts
-const here = RpcClient.withHeaders({ authorization: `Bearer ${token}`, [roomHeader]: name });
+```ts example=live-rpc/src/chat/room.ts
+import { Context, Effect, Layer } from "effect";
+import { RpcMiddleware } from "effect/rpc";
+import { defaultRoom, roomHeader } from "./Chat.js";
 
-client.postMessage({ text }).pipe(here);
-```
+/**
+ * The room a message is about. A request-time service: handlers and `authorize` read it per
+ * call, and it has no Layer, because no one value of it is right for a whole server.
+ */
+export class CurrentRoom extends Context.Service<CurrentRoom, string>()("live-rpc/CurrentRoom") {}
 
-On the server, authentication decodes the credential from those headers. Anything else is read
-by native `RpcMiddleware` listed in `layer`'s `middleware`, which provides it as a service to
-the handlers and to `authorize`:
-
-```ts
+// Native Effect RPC middleware, declared as providing `CurrentRoom`. Listed in
+// `ActionRpc.layer`'s `middleware`, it runs once per message.
 export class ResolveRoom extends RpcMiddleware.Service<ResolveRoom, { provides: CurrentRoom }>()(
   "live-rpc/ResolveRoom",
 ) {}
 
+// The middleware's implementation. It gets the message's headers, which over a WebSocket are
+// the upgrade request's merged with the message's own, and runs the rest of the call with the
+// room they name, or the default room when they name none. It refuses nothing: whether the
+// caller may be in that room is `authorize`'s rule.
 export const resolveRoom = Layer.succeed(ResolveRoom, (call, { headers }) =>
   Effect.provideService(call, CurrentRoom, headers[roomHeader] ?? defaultRoom),
 );
 ```
 
-[live-rpc/src/chat/room.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/chat/room.ts) is that middleware, and
-[live-rpc/src/browser.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/browser.ts) the client sending the header.
+Why router middleware is no substitute over a WebSocket is on
+`ActionRpc.LayerOptions.middleware`.
 
-- Over a WebSocket, a message's headers are the upgrade request's with its own merged over
-  them. A browser WebSocket sets no header on its upgrade, so a bearer token goes on each
-  message, and a refreshed token needs no new socket.
-- A cookie the browser attaches to the upgrade covers every message
+- **A cookie the browser attaches to the upgrade covers every message**
   ([kitchen-sink/src/browser.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/browser.ts)). A browser attaches
   it from any page, so refuse a foreign `Origin` on the upgrade, with a request policy
   ([Authentication-advanced.md](Authentication-advanced.md#run-a-request-policy-before-authentication)).
-- An API key in the query string never reaches authentication.
-- A request-time requirement is never a startup service: `Layer.succeed(CurrentRoom, "lobby")`
-  provided to the layer leaves `CurrentRoom` owed, in its type.
-- Router middleware or `HttpRouter.provideRequest` around the layer provides one too, but over
-  a WebSocket it runs once, for the upgrade, so its value holds for the whole connection. What
-  differs per message needs a listed middleware.
-- Authentication runs outside the listed middleware, so none of them provides what a verifier
-  reads
-  ([Authentication-advanced.md](Authentication-advanced.md#read-request-context-in-a-verifier)).

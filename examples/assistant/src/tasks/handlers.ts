@@ -5,9 +5,9 @@ import { CurrentCaller } from "../identity/Identity.js";
 import { Tasks } from "./Tasks.js";
 import { TaskStore } from "./store.js";
 
-// The builder gets the store. It runs once for a toolkit's layer, however many calls a model
-// makes, and each time a command runs. `CurrentCaller` is read per call. No handler knows whether a model or a person at a terminal
-// called it, and none checks a permission: `authorize` has run before it.
+// The builder gets the store. `CurrentCaller` is read per call. No handler knows whether a model
+// or a person at a terminal called it, and none checks a permission: `authorize` has run before
+// it.
 export const tasks = Action.implement(
   Tasks,
   Effect.gen(function* () {

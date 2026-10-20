@@ -3,9 +3,9 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentCaller } from "./Identity.js";
 import { type Permission, Permissions } from "./permissions.js";
 
-// The one rule, for a model's tool call and for a command alike. It is built as handlers are:
-// this Effect runs once and gets the permission store, a startup service; the function it
-// returns runs before every handler and reads the caller of that call.
+// The one rule, for a model's tool call and for a command alike. The permission store is a
+// startup service, so this Effect gets it; the caller differs per call, so the function it
+// returns reads it.
 export const authorize = Effect.gen(function* () {
   const permissions = yield* Permissions;
 

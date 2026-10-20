@@ -2,9 +2,9 @@ import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import { identity } from "./identity/handlers.js";
 import { tasks } from "./tasks/handlers.js";
 
-// The same implementations as local commands: `assistant <action>`, a subcommand per action in
-// kebab case, a flag per input field. A command runs the handler in this process, behind the
-// same `authorize`. `add-task` and `who-am-i` are as derived; the others each change one thing.
+// The same implementations as local commands, `assistant <action>`: a command runs the handler
+// in this process, behind the same `authorize`. `add-task` and `who-am-i` are as derived; the
+// others each change their syntax or output.
 export const commands = ActionCli.make([tasks, identity], {
   name: "assistant",
   commands: {

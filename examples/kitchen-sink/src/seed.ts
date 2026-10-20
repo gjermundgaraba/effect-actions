@@ -46,7 +46,6 @@ const seed = Effect.gen(function* () {
 
   yield* tracker.commentOnIssue({ id: issue.id, text: "Reproduced on 2.4.1." });
 
-  // No argument: `{}` is a valid input here, so `limit` takes its default and `status` none.
   const { issues } = yield* tracker.listIssues();
 
   yield* Console.log(`Filed ${issue.id} with attachment ${attachment.id}. Issues:`, issues);

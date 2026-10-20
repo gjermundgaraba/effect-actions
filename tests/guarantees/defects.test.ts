@@ -273,7 +273,7 @@ const surfaces = [
 ] as const;
 
 it.effect.each(surfaces)(
-  "answers a defect, an undeclared failure, and a success or an error that does not encode as guarantees.md's table states, sending no cause, over $surface, logging and reporting $reporting",
+  "answers a defect, an undeclared failure, and a success or an error that does not encode as its surface's declaration states, sending no cause, over $surface, logging and reporting $reporting",
   ({ answers, guaranteed, reports, logs, logsNaming, reportsNaming }) =>
     Effect.gen(function* () {
       const reported: Array<string> = [];

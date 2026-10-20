@@ -18,10 +18,18 @@ export type Issue = (typeof Issue)["Type"];
 const standardIssues = SchemaIssue.makeFormatterStandardSchemaV1();
 
 /**
- * The request's input does not decode against the action's input. HTTP answers every such
- * request with it, its message the schema's own description of what is wrong, and `issues`
- * the same description an issue at a time, for a caller that points at a field. A handler
- * failing with it for input that decodes but cannot be served may name its own.
+ * The request's input does not decode against the action's input: its message is the schema's
+ * own description of what is wrong, and `issues` the same an issue at a time, for a caller that
+ * points at a field. A handler fails with it, naming `issues` of its own, for input that decodes
+ * but cannot be served, instead of declaring a second error for bad input.
+ *
+ * **Gotchas**
+ *
+ * - Raised by the library for input that does not decode, before `authorize` and the handler; what each surface answers is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `runStdio`, `ActionRpc.layer`, `ActionToolkit.make` and `ActionCli.command`.
+ * - Failed by a handler, it is answered as a declared error on every surface.
+ * - What receives encoded input, a route, an MCP tool, an rpc, a CLI flag or `--input`, refuses an undeclared field with it, nested ones too, naming its path; a typed client drops such a field instead, as its JSDoc says.
+ * - Its message and `issues` name paths and what the schema expects, never a field's value; a path names every key it passes through, a record's keys included, so never key a record by a secret such as an email or a token.
+ * - A check's message, or a schema's `message` annotation, is sent as written: never put the input in one.
  */
 export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
   "InvalidInput",
@@ -36,10 +44,10 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
   /**
    * The `InvalidInput` for input that did not decode, as every surface answers it: the
    * schema's message, and each of its issues by path, for code that decodes input of its own,
-   * such as a header or a route parameter. Neither carries a value of the input: decoding
-   * runs without `reportInput`, so no issue holds one to format. A symbol key is sent as its
-   * string form, `Symbol(name)`, as JSON has no symbols, which tells it from a string key of
-   * that name.
+   * such as a header or a route parameter:
+   * `Schema.decodeUnknownEffect(schema)(value, { errors: "all" }).pipe(Effect.mapError(Action.InvalidInput.fromSchemaError))`.
+   * A symbol key is sent as its string form, `Symbol(name)`, as JSON has no symbols, which
+   * tells it from a string key of that name.
    */
   static readonly fromSchemaError = ({ issue, message }: Schema.SchemaError): InvalidInput =>
     new InvalidInput({
@@ -55,7 +63,17 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
     });
 }
 
-/** The caller is not authenticated: authentication or an implementation's `authorize` refuses. */
+/**
+ * The caller is not authenticated: authentication refuses the credential, or an implementation's
+ * `authorize` or a handler fails with it.
+ *
+ * **Gotchas**
+ *
+ * - Over HTTP its JSON with a 401: from authentication before the body is read, from a protected action's `authorize` or handler after the input is decoded, each with the scheme's challenge, none for an API key.
+ * - Over MCP: from authentication, the same HTTP 401 in place of a JSON-RPC answer, before the arguments are decoded; from a protected tool's `authorize` or handler, the HTTP 401 with the challenge on an endpoint under Bearer, otherwise an `isError: true` tool result in a 200.
+ * - Over RPC the typed failure, never a status; on a Toolkit and in a CLI as a declared error.
+ * - From another service's client, such as `ActionHttp.client`, one passed on tells a caller whose token is valid to sign in again: map it to an error the action declares, or to a defect.
+ */
 export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
   "Unauthenticated",
   { message: defaultedMessage("Authentication is required.") },
@@ -69,11 +87,19 @@ export const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
 const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
 
 /**
- * The caller may not run this action: an implementation's `authorize` refuses. `scopes`,
- * when given, are every OAuth scope the call needs: a refusal naming them is answered with
- * the `insufficient_scope` challenge an OAuth client re-authorizes on, so name them only where
- * re-authorizing can grant them. What it answers on each surface: `docs/guarantees.md` in this
- * package.
+ * The caller may not run this action: authentication refuses the credential, an
+ * implementation's `authorize` refuses, or a handler fails with it. `scopes`, when given, are every OAuth scope the call needs: a refusal naming
+ * them is answered with the `insufficient_scope` challenge an OAuth client re-authorizes on,
+ * which only a server publishing discovery can follow up, so name them only where
+ * re-authorizing can grant them; with fixed tokens, such as API keys, leave them out
+ * (`scopes: []` is a type error).
+ *
+ * **Gotchas**
+ *
+ * - Over HTTP its JSON with a 403: from authentication before the body is read, from `authorize` or a handler after the input is decoded; on a protected route under Bearer, one naming `scopes` also carries the challenge.
+ * - Over MCP, from authentication the HTTP 403 before the arguments are decoded; from `authorize` or a handler an `isError: true` tool result holding its JSON as text, in a **200**, not a 403; only on an endpoint under Bearer is a protected tool's refusal naming `scopes` the HTTP 403 with the challenge instead.
+ * - Over RPC the typed failure, never a status or a challenge; on a Toolkit and in a CLI as a declared error.
+ * - From another service's client, such as `ActionHttp.client`, one passed on becomes this server's own refusal: map it to an error the action declares, or to a defect.
  */
 export class Forbidden extends Schema.TaggedError<Forbidden>()(
   "Forbidden",
@@ -90,8 +116,7 @@ const refusals = [Unauthenticated, Forbidden] as const;
 
 /**
  * What authentication or an implementation's `authorize` refuses a caller with, instead of
- * running a handler. An error an action declares, such as a rate limit, is not a refusal. As a
- * schema, it tells a refusal apart: `Schema.is(Action.Refusal)(error)`.
+ * running a handler. As a schema, it tells a refusal apart: `Schema.is(Action.Refusal)(error)`.
  */
 export const Refusal = Schema.Union(refusals);
 
@@ -100,7 +125,7 @@ export type Refusal = (typeof Refusal)["Type"];
 
 /**
  * The failures every endpoint and tool declares beyond its action's own, and any handler may
- * fail with: bad input, and every refusal. No action or binding declares them itself.
+ * fail with: bad input, and every refusal. An action or a binding need not declare them; one listed is accepted.
  */
 export const builtIns = [InvalidInput, ...refusals] as const;
 

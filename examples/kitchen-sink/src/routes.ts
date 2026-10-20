@@ -32,15 +32,14 @@ const implementations = [status, identity, issues, attachments, assistant];
 
 // JSON routes at `/api/v1/<action>`, in two layers of one binding, each naming its `actions`.
 // The quota requires the caller, and a public route has none, so `getStatus` is served by a
-// layer without it. The middleware runs inside authentication and before the input is decoded.
+// layer without it.
 const api = Layer.mergeAll(
   ActionHttp.layer(Http, implementations, { actions: [GetStatus] }),
   ActionHttp.layer(Http, implementations, { actions: MemberActions, middleware: [HttpQuota] }),
 );
 
-// The same actions as MCP tools at `/mcp`: a mixed endpoint. Listing the tools and calling
-// `getStatus` need no token; any other request answers the 401 an MCP client signs in on, the
-// one opening a session included, since a session may call any tool.
+// The same actions as MCP tools at `/mcp`: a mixed endpoint, serving the public `getStatus`
+// beside the members' tools.
 const mcp = Layer.unwrap(
   Effect.map(allowedOrigins, (origins) =>
     ActionMcp.layerHttp(implementations, {
@@ -85,8 +84,7 @@ const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 // before them. Two things follow from that order.
 //
 // - `resolveTenant`, in a `Layer.provide` of its own after the authentication, gives the
-//   `Tenant` the Bearer verifier reads per request. In one array with `authenticateBearer` it
-//   would leave `Tenant` owed: an array's members provide to the routes, not to one another.
+//   `Tenant` the Bearer verifier reads per request; tenant.ts says why not in one array.
 // - Global middleware runs in the order it registers, and it registers when its layer is
 //   built. The request policy, provided last, is built first, so it runs before everything:
 //   before CORS, and before the OAuth discovery the Bearer provider registers when it is

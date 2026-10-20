@@ -32,13 +32,13 @@ export class RateLimited extends Schema.TaggedError<RateLimited>()(
 ) {}
 
 // A shared error list: what any write to an existing issue may fail with. Each such action
-// spreads this one array into its `error`, here and in attachments/Attachments.ts, so an error
+// names this one array as its `error`, here and in attachments/Attachments.ts, so an error
 // added to the list is declared by all of them.
 export const IssueWriteErrors = [IssueNotFound, RateLimited] as const;
 
 // An option bundle. What the two actions changing an issue share is one constant object spread
 // into `Action.make`, typed as if written inline. `readOnly` and `description` stay on each
-// action: authorization and an MCP client's hints read them.
+// action.
 const change = {
   caller: CurrentMember,
   error: IssueWriteErrors,

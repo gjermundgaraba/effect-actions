@@ -56,8 +56,6 @@ export const assistant = Action.implement(
         return {
           conversation,
           text: response.text,
-          // A refusal or a declared error is a result too, which the model has read. So is
-          // Effect's result for a call that did not run: left out.
           ran: results
             .filter(({ result }) => !didNotRun(result))
             .map(({ name, isFailure }) => ({ tool: name, failed: isFailure })),
@@ -78,10 +76,7 @@ export const assistant = Action.implement(
         Effect.provideService(LanguageModel.LanguageModel, model),
       );
 
-    // If the model fails after an approved call, the call has run and the `Chat` has recorded
-    // nothing of the turn: the same answer sent again would run the call again. So
-    // `Conversations` ends the conversation of a turn that fails, and the error says what
-    // may have happened.
+    // A failed turn says what may have run.
     const turn = (conversation: string, prompt: Prompt.RawInput) =>
       Effect.flatMap(CurrentMember, (member) =>
         conversations.turn(member, conversation, (chat) => converse(conversation, chat, prompt)),

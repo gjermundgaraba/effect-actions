@@ -4,9 +4,9 @@ import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { type KeyOperator, OperatorKey } from "./Admin.js";
 import { keys } from "./keys.js";
 
-// Typed to return a `KeyOperator`, never the `Operator` union: whatever a key maps to, it
-// cannot be the trusted operator. The verifier receives what its scheme decodes, the header's
-// value, and needs no startup service, so it is passed as it is.
+// Typed to return a `KeyOperator`, never the `Operator` union (Admin.ts says why). The verifier
+// receives what its scheme decodes, the header's value, and needs no startup service, so it is
+// passed as it is.
 const verify = (
   key: Redacted.Redacted<string>,
 ): Effect.Effect<KeyOperator, Action.Unauthenticated> =>

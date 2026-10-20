@@ -10,9 +10,9 @@ import { AdminHttp, Http } from "../src/Api.js";
 import { memory } from "../src/memory.js";
 import { adminRoutes, builders, publicRoutes } from "../src/routes.js";
 
-// The host's surfaces, as routes.ts builds them, answering in memory: no port is opened. Two
-// ports are two `Testing.layer`s, each a layer graph of its own, as two servers are. What they
-// share is provided above both, as server.ts does: the builders, then the services.
+// The host's surfaces, as routes.ts builds them, answering in memory: no port is opened. Each
+// port is a `Testing.layer` of its own, and what they share is provided above both, as
+// server.ts does.
 const shared = builders.pipe(Layer.provideMerge(memory));
 
 const onPublicPort = Effect.provide(Testing.layer(publicRoutes));

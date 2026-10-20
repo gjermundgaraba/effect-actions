@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
-import { connect } from "../src/browser.js";
+import { connect } from "../src/page.js";
 import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
 

@@ -1727,7 +1727,10 @@ export const widenedOptionTypes = () => {
   expectTypeOf<(typeof Widened)["error"]>().toExtend<Action.Any["error"]>();
   expectTypeOf<Action.Any["error"]>().toExtend<(typeof Widened)["error"]>();
   expectTypeOf<(typeof Widened)["caller"]>().toEqualTypeOf<
-    typeof Action.Anyone | Context.Key<unknown, unknown>
+    | typeof Action.Anyone
+    | (Context.Key<unknown, unknown> & {
+        readonly defaultValue?: "An identity is a Context.Service, not a Context.Reference";
+      })
   >();
 };
 

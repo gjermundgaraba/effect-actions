@@ -15,7 +15,8 @@ import { WorkspaceRegistry } from "./workspaces/registry.js";
 
 // Entrypoint: an MCP server a local agent starts as a subprocess, such as
 // `claude mcp add tracker -- "$PWD/node_modules/.bin/tsx" "$PWD/examples/kitchen-sink/src/stdio.ts"`
-// from the repository root: mcp-tools' README says why the paths are full.
+// from the repository root. The host starts the process in a directory it chooses, so `tsx`
+// and the file are named by full path.
 // It lists the implementations it serves itself, and imports nothing of the HTTP router. They
 // are those of the `/mcp` endpoint, with its tools and features and the same `authorize`.
 // stdio is a local surface: it takes no `authentication`, since no token arrives.
@@ -29,7 +30,7 @@ ActionMcp.runStdio([status, identity, issues, attachments], {
   // started it, from its own login or configuration.
   Effect.provideService(CurrentMember, members.ada),
   Effect.provide([NodeStdio.layer, stores, limiter, WorkspaceRegistry.layerMemory]),
-  // stdout carries the protocol alone, so logs and failures go to stderr. Applied last.
+  // stdout carries the protocol alone, so logs and failures go to stderr.
   ActionCli.logToStderr,
   NodeRuntime.runMain,
 );

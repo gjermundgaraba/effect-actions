@@ -13,8 +13,7 @@ export const Task = Schema.Struct({
 
 export type Task = typeof Task.Type;
 
-// A declared error is part of the contract. A tool returns it to the model as a result it can
-// read, and a command prints it on stderr as JSON and exits 1.
+// A declared error is part of the contract.
 export class TaskNotFound extends Schema.TaggedError<TaskNotFound>()("TaskNotFound", {
   id: Schema.String,
 }) {}

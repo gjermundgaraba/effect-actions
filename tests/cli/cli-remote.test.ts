@@ -83,7 +83,7 @@ it.effect("projects commands through the HTTP client", () =>
     });
 
     expect(() => ActionCli.remoteCommand(Http, Lookalike)).toThrow(
-      'Action "remote" is not in this HTTP binding',
+      `Action "remote" is not in this HTTP binding (pass it to the binding's ActionHttp.make, and select with the contract value it received)`,
     );
   }),
 );

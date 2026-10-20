@@ -64,7 +64,7 @@ describe.each([
   { transport: "long-lived", requestScoped: false },
   { transport: "request-scoped", requestScoped: true },
 ])("a mixed MCP endpoint, $transport", ({ requestScoped }) => {
-  it("admits a signed-out caller's public call, and answers a protected tool's call with the 401 a client signs in on", async () => {
+  it("admits a signed-out caller's public call, and answers a protected tool's call with the 401 a client signs in on, then runs it signed in", async () => {
     const { web, calls } = mixedEndpoint({ requestScoped });
 
     expect(await valueOf(await web.handler(rawToolCall("status")))).toEqual({
@@ -85,13 +85,28 @@ describe.each([
         await web.handler(withBearer(rawToolCall("double", { value: "21" }), "reader")),
       ),
     ).toBe(42);
+    expect(calls).toEqual(["double"]);
+  });
 
-    const publicCallWithUnverifiedCredential = withBearer(rawToolCall("status"), "forged");
-    expect((await web.handler(publicCallWithUnverifiedCredential)).status).toBe(401);
+  it("verifies a credential a public call presents: a forged one gets 401 invalid_token, an empty Bearer counts as none", async () => {
+    const { web } = mixedEndpoint({ requestScoped });
+
+    const publicCallWithUnverifiedCredential = await web.handler(
+      withBearer(rawToolCall("status"), "forged"),
+    );
+
+    expect(publicCallWithUnverifiedCredential.status).toBe(401);
+    expect(publicCallWithUnverifiedCredential.headers.get("www-authenticate")).toContain(
+      'error="invalid_token"',
+    );
 
     const publicCallWithEmptyCredential = rawToolCall("status");
     publicCallWithEmptyCredential.headers.set("authorization", "Bearer");
     expect((await web.handler(publicCallWithEmptyCredential)).status).toBe(200);
+  });
+
+  it("answers a signed-in caller lacking a protected tool's scope with the 403 step-up naming it", async () => {
+    const { web, calls } = mixedEndpoint({ requestScoped });
 
     const stepUpForScope = await web.handler(
       withBearer(rawToolCall("renameUser", { id: "1", name: "X" }), "reader"),
@@ -99,7 +114,7 @@ describe.each([
 
     expect(stepUpForScope.status).toBe(403);
     expect(stepUpForScope.headers.get("www-authenticate")).toContain('scope="users:write"');
-    expect(calls).toEqual(["double"]);
+    expect(calls).toEqual([]);
   });
 
   it("reads a base64-encoded Mcp-Name as the runtime routes it: a public call is admitted signed out, a protected one refused, also under a public name", async () => {

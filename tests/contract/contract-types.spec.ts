@@ -125,9 +125,18 @@ const ReferenceWithDefault = Context.Reference<{ readonly id: string }>("spec/De
 Action.make("byDefault", {
   description: "",
   readOnly: true,
-  // @ts-expect-error -- An identity is a Context.Service, not a Context.Reference.
+  // @ts-expect-error -- The diagnostic ends: An identity is a Context.Service, not a Context.Reference.
   caller: ReferenceWithDefault,
 });
+
+export const callerOfATypeParameter = <const C extends Context.Key<unknown, unknown>>(caller: C) =>
+  Action.make("generic", { description: "", readOnly: true, caller });
+
+class Member extends Context.Service<Member, string>()("contract-types/Member") {}
+
+const ByMember = callerOfATypeParameter(Member);
+
+expectTypeOf<(typeof ByMember)["caller"]>().toEqualTypeOf<typeof Member>();
 
 declare const misspelledInOneMember:
   | {

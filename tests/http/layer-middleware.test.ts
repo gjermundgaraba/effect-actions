@@ -156,7 +156,7 @@ it("refuses a middleware listed twice, which native endpoints would install once
     ActionHttp.layer(ActionHttp.make([Public]), app, {
       middleware: [LogCallerOrAnonymous, LogCallerOrAnonymous],
     }),
-  ).toThrow("Duplicate middleware: layer-middleware/LogCaller");
+  ).toThrow("Duplicate middleware: layer-middleware/LogCaller (list each middleware once)");
 });
 
 class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}, { httpApiStatus: 429 }) {}

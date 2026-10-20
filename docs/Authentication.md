@@ -4,158 +4,137 @@ How a remote caller proves the identity a protected action declares. `Authentica
 declares it, as a browser-safe descriptor; `Authentication.layer` is that descriptor's provider,
 running the verifier you write. Verifying a token, login and consent stay in the application.
 
-Read this page alone, in one tool call; if its output says it was truncated, read it again alone.
-When something fails, search [Authentication-failures.md](Authentication-failures.md). Reading
-order: [README.md](README.md).
-
-## API
-
-Import `@gjermundgaraba/effect-actions/Authentication`.
-
-| API                                           | Purpose                                                                                               |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `make(name, identity, { security, error }?)`  | A browser-safe authentication descriptor: how a caller proves `identity`, by one native scheme.       |
-| `layer(descriptor, verify, options?)`         | Its provider: the server-only verifier, or an Effect building it once per layer graph, and discovery. |
-| `Any`                                         | Any descriptor, erased: what a binding's and an MCP endpoint's `authentication` take.                 |
-| `Descriptor`, `Provider`                      | What `make` and `layer` return, to name in a package that emits declarations.                         |
-| `Verify`, `Options`, `LayerOptions`           | The verifier's type, and `make`'s and `layer`'s options.                                              |
-| `ProtectedResource`                           | An OAuth protected resource.                                                                          |
-| `protect`, `bearerTokenOf`, `refusalResponse` | In [Authentication-advanced.md](Authentication-advanced.md#api), with their types and options.        |
-
-| Option              | Of      | Meaning                                                                                 |
-| ------------------- | ------- | --------------------------------------------------------------------------------------- |
-| `security`          | `make`  | One native `HttpApiSecurity` scheme; `HttpApiSecurity.bearer` when omitted.             |
-| `error`             | `make`  | What the verifier may fail with besides a refusal: one schema, or a list.               |
-| `protectedResource` | `layer` | Bearer only: an OAuth protected resource to publish, or an Effect building one or none. |
-
-| Protected resource field | Meaning                                                                                |
-| ------------------------ | -------------------------------------------------------------------------------------- |
-| `resource`               | Required exact OAuth resource identifier; its path and query select the discovery URL. |
-| `authorizationServers`   | Required, nonempty: where clients get tokens.                                          |
-| `scopesSupported`        | Optional OAuth scope tokens: every scope the resource accepts.                         |
-| `scopesRequired`         | Optional, nonempty OAuth scope tokens: every 401 names them.                           |
-| `resourceName`           | Optional human-readable name.                                                          |
+A message the library throws says its fix; for a compiler diagnostic or Effect's own error,
+search [Authentication-failures.md](Authentication-failures.md). For one symbol,
+`grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc
+carries its rules and gotchas, and this page only what an example cannot show.
 
 ## Declare how callers sign in
 
 A protected action declares its identity service, `caller: CurrentUser`
 ([Action.md](Action.md#say-who-may-call-an-action)). Declare the descriptor beside that
-service, and name it in every binding and MCP endpoint that serves a protected action:
+service, in the contract file every client of the binding imports:
 
-```ts
-// identity/Identity.ts
+```ts example=notes-service/src/identity/Identity.ts
+import { Context, Schema } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+
+export const scopes = { read: "notes:read", write: "notes:write" } as const;
+
+export const Scope = Schema.Literals([scopes.read, scopes.write]);
+
+export interface User {
+  readonly id: string;
+  readonly scopes: ReadonlyArray<typeof Scope.Type>;
+}
+
+/**
+ * Who is calling. A protected action declares it, `caller: CurrentUser`; authentication
+ * provides it per request, and a local host, such as the stdio server, provides it itself.
+ */
+export class CurrentUser extends Context.Service<CurrentUser, User>()(
+  "notes-service/CurrentUser",
+) {}
+
+// How a remote caller proves it is CurrentUser: a bearer token, the default scheme. Clients
+// import this descriptor with the binding; its verifier, in verifier.ts, stays on the server.
 export const Login = Authentication.make("notes-service.Login", CurrentUser);
 
-// Api.ts
-export const Http = ActionHttp.make([GetStatus, ...Notes, WhoAmI], {
-  prefix: "/api",
-  authentication: Login,
+export const WhoAmI = Action.make("whoAmI", {
+  description: "Show who the credential identifies and which scopes it holds.",
+  success: { id: Schema.String, scopes: Schema.Array(Scope) },
+  readOnly: true,
+  caller: CurrentUser,
 });
 ```
 
-See [notes-service/src/identity/Identity.ts](../examples/notes-service/src/identity/Identity.ts)
-and [notes-service/src/Api.ts](../examples/notes-service/src/Api.ts). An MCP endpoint names it
-the same way ([notes-service/src/routes.ts](../examples/notes-service/src/routes.ts)), and so
-does an RPC binding ([live-rpc/src/Rpc.ts](../examples/live-rpc/src/Rpc.ts)).
+Name it in every binding and MCP endpoint that serves a protected action: an HTTP binding
+([notes-service/src/Api.ts](../examples/notes-service/src/Api.ts)), an MCP endpoint
+([notes-service/src/routes.ts](../examples/notes-service/src/routes.ts)) and an RPC binding
+([live-rpc/src/Rpc.ts](../examples/live-rpc/src/Rpc.ts)); a local surface takes none
+([Action.md](Action.md#say-who-may-call-an-action)). The name's rules are on
+`Authentication.make`, the scheme's on `Authentication.Options.security`; a second credential
+for one identity is in
+[kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts).
 
-- Every client of the binding imports the descriptor: keep it in the contract file. Keep
-  `layer`, and what its verifier imports, in server-only modules.
-- The name is the descriptor's type identity: use one name for one declaration. It holds only
-  letters, digits, `_`, `.` and `-`.
-- A descriptor names one scheme, and a binding or an endpoint names one descriptor. There is no
-  fallback between schemes: a host accepting two credentials for one identity declares two
-  descriptors and serves them on two bindings or endpoints
-  ([kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts)).
-- Build a server's surfaces and its provider from one descriptor value. `ActionHttp.layer`,
-  `ActionRpc.layer`, `ActionMcp.layerHttp` and `Authentication.protect` refuse, when they build,
-  a descriptor that is another object than the one the provider was given, equal name and
-  options or not.
-- Protecting an action that tests already call breaks them. An `Action.client` call then owes
-  `Type 'CurrentUser' is missing … from type 'Scope'`: provide the caller around each call
-  ([Testing-failures.md](Testing-failures.md)). A test that builds `ActionMcp.layerHttp` itself
-  gets `Property 'authentication' is missing`: serve `routes` with `Testing.layer`
-  ([ActionMcp-failures.md](ActionMcp-failures.md)). A call over HTTP without a credential gets
-  `Unauthenticated` at run time.
-- A local surface has no remote caller and takes no descriptor: the host provides the identity
-  itself, for a CLI ([ActionCli.md](ActionCli.md#name-the-caller)), a Toolkit
-  ([ActionToolkit.md](ActionToolkit.md#name-the-caller)) and an MCP server over stdio
-  ([ActionMcp.md](ActionMcp.md#serve-tools-over-stdio)).
+- **Protecting an action that tests already call breaks them**, at compile time
+  ([Testing-failures.md](Testing-failures.md),
+  [Authentication-failures.md](Authentication-failures.md#types-and-startup)), and a call over
+  HTTP without a credential gets `Unauthenticated` at run time.
 
 ## Verify credentials
 
-Write the verifier in a server-only module, give it to `Authentication.layer`, and provide that
-layer to every layer serving a protected action: `routes.pipe(Layer.provide(authenticate))`. The
-verifier takes the credential and succeeds with the identity, or fails with
-`Action.Unauthenticated`, `Action.Forbidden` or an error the descriptor declares. See
-[notes-service/src/identity/verifier.ts](../examples/notes-service/src/identity/verifier.ts) and
-[notes-service/src/routes.ts](../examples/notes-service/src/routes.ts).
+Write the verifier in a server-only module, give it to `Authentication.layer` and provide that
+layer as [notes-service/src/routes.ts](../examples/notes-service/src/routes.ts) does. What the
+verifier takes, fails with and must check itself is on `Authentication.Verify`; where its layer
+goes, on `Authentication.layer`.
 
-- **The library reads no token.** Everything that makes a credential valid is the verifier's to
-  check, with your authorization server's library: its signature, its expiry, and its audience.
-  A token issued for another resource fails with `Unauthenticated`. Only a missing or empty
-  credential is refused before the verifier runs.
-- **Never provide the identity service, or a tenant, at startup**, in a layer or around
-  `HttpRouter.serve` or the program. It does not satisfy the provider a protected route
-  requires, and a public handler or a route of your own reading it would serve every caller as
-  that identity. A test sends a credential instead
-  ([Testing.md](Testing.md#test-as-a-signed-in-caller)).
-- A verifier that needs startup services, such as a user directory, is passed as an Effect that
-  yields them and returns the verifier: a builder ([Action.md](Action.md#implement-actions)),
-  run once per layer graph
-  ([kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts)).
-- Call `Authentication.layer` once per descriptor and provide that one value wherever a
-  provider is required.
-- A failure that is not the caller's, such as an issuer the verifier cannot reach, is an error
-  the descriptor declares, with `{ httpApiStatus: 503 }`: an `Unauthenticated` would have the
-  caller sign in again
-  ([kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts),
-  [kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)).
-- Over RPC the verifier runs for each message of a protected rpc, not once per connection
-  ([live-rpc/src/identity/verifier.ts](../examples/live-rpc/src/identity/verifier.ts),
-  [kitchen-sink/test/identity/session.test.ts](../examples/kitchen-sink/test/identity/session.test.ts)).
+```ts example=notes-service/src/identity/verifier.ts
+import { Config, Effect, Redacted } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { Login, scopes } from "./Identity.js";
+import { users } from "./users.js";
 
-What each surface answers a missing or refused credential with:
-[guarantees.md](guarantees.md#wire-behavior), as
-[notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts) asserts.
+const isToken = (token: string): token is keyof typeof users => Object.hasOwn(users, token);
+
+// DEMO ONLY: a token is a user's name. A real verifier checks a signed token with your
+// authorization server's library, its audience included. An unknown token is the built-in
+// `Unauthenticated`: a 401 every client decodes.
+const verify = (token: Redacted.Redacted<string>) => {
+  const name = Redacted.value(token);
+
+  return isToken(name)
+    ? Effect.succeed(users[name])
+    : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
+};
+
+// Server only: `Login`'s provider. As an OAuth protected resource it also publishes discovery,
+// so an MCP client that gets a 401 finds where to sign in, asking for read first. The resource
+// is the server's public URL, known only at startup, so it is read from config.
+export const authenticate = Authentication.layer(Login, verify, {
+  protectedResource: Effect.map(
+    Config.String("PUBLIC_URL").pipe(Config.withDefault("http://localhost:3000")),
+    (url) =>
+      ({
+        resource: `${url}/mcp`,
+        // DEMO ONLY: no server is there. Yours is your authorization server's issuer.
+        authorizationServers: ["https://auth.example.com"],
+        scopesSupported: [scopes.read, scopes.write],
+        scopesRequired: [scopes.read],
+      }) satisfies Authentication.ProtectedResource,
+  ),
+});
+```
+
+For a verifier built from startup services, see `authenticateBearer` in
+[kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts);
+for a failure that is not the caller's, `Authentication.Options.error` and `IssuerUnavailable` in
+[kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts); to
+test as a signed-in caller, [Testing.md](Testing.md#test-as-a-signed-in-caller). What each
+surface answers a missing or refused credential with is on `Action.Unauthenticated` and
+`Action.Forbidden`, as
+[kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)
+asserts, status and challenge included.
 
 ## Publish OAuth discovery
 
-Give a Bearer descriptor's `layer` a `protectedResource`. The provider then publishes OAuth
-protected-resource discovery (RFC 9728) and names it in every challenge, so an MCP client that
-gets a 401 finds the authorization server. Without it the challenge names nowhere to sign in,
-so an MCP endpoint whose users sign in through OAuth publishes it. See
-[notes-service/src/identity/verifier.ts](../examples/notes-service/src/identity/verifier.ts)
-and [kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts).
-
-- `resource` is the exact public URL of the endpoint clients connect to: discovery is served at
-  `/.well-known/oauth-protected-resource` followed by its path. Only the deployment knows that
-  URL, so give the resource as an Effect reading configuration; succeeding with `undefined`
-  publishes nothing.
-- That `resource` and `authorizationServers` are HTTPS, or loopback HTTP in development, is the
-  deployment's to ensure: the provider does not check it.
-- Give `scopesRequired` whenever some actions need scopes others do not. An MCP client requests
-  the scopes a 401 names, or every one of `scopesSupported` when it names none.
-- Discovery is public. It answers before routing, to any origin, so no authentication and no
-  route middleware covers it: to restrict who reads it, see
-  [Run a request policy before authentication](Authentication-advanced.md#run-a-request-policy-before-authentication).
+For an MCP endpoint whose users sign in through OAuth, give the Bearer descriptor's `layer` a
+`protectedResource`, as the verifier above does. Its rules are on
+`Authentication.LayerOptions.protectedResource` and on each field of
+`Authentication.ProtectedResource`;
+[kitchen-sink/test/identity/identity.test.ts](../examples/kitchen-sink/test/identity/identity.test.ts)
+asserts the discovery it serves. To restrict who reads it, see
+[Run a request policy before authentication](Authentication-advanced.md#run-a-request-policy-before-authentication).
 
 ### Step up for a scope
 
-A step-up refusal is one an OAuth client acts on: `Action.Unauthenticated`, which it signs in
-on, or an `Action.Forbidden` naming `scopes`, which it re-authorizes on with those scopes
-added. The authorizer, a handler or the verifier may fail with one:
-[notes-service/src/identity/authorize.ts](../examples/notes-service/src/identity/authorize.ts).
-
-- Step-up is a Bearer descriptor's, for protected actions and routes under `protect`: the
-  refusal answers the request with 401 or 403 and its challenge, over MCP in place of the tool
-  result unless the response has started ([guarantees.md](guarantees.md#wire-behavior)).
-- On a public action or under another scheme, an authorizer's or a handler's refusal is
-  answered like a declared error, and RPC never steps up: a refusal is the call's typed failure
-  ([guarantees.md](guarantees.md#wire-behavior)).
-- Name scopes only when re-authorizing can grant them: a server with fixed tokens, such as API
-  keys, leaves `scopes` out. A `Forbidden` without them prompts no login
-  ([kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts));
-  what it answers on each surface is in [guarantees.md](guarantees.md#wire-behavior).
-- Map another service's refusals before failing with them
-  ([Action.md](Action.md#fail-with-declared-and-built-in-errors)): passed on, a `Forbidden`
-  naming that service's scopes sends this server's caller to re-authorize for them.
+To have an OAuth client sign in again, or re-authorize with more scopes, fail the authorizer, a
+handler or the verifier with `Action.Unauthenticated`, or with `Action.Forbidden` naming
+`scopes`
+([notes-service/src/identity/authorize.ts](../examples/notes-service/src/identity/authorize.ts));
+`inService` in
+[kitchen-sink/src/identity/authenticate.ts](../examples/kitchen-sink/src/identity/authenticate.ts)
+refuses with none. What each answers on each surface, and when to name scopes, are on those two
+classes.

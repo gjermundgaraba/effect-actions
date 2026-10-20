@@ -27,5 +27,5 @@ src/
 ├── routes.ts          the surfaces: POST /api/greet and /mcp
 ├── server.ts          entrypoint
 └── client.ts          entrypoint
-test/greeting/         the routes, called in memory
+test/routes.test.ts    the routes, called in memory
 ```

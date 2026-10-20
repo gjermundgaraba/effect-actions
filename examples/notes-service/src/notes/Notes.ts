@@ -81,6 +81,7 @@ export const CreateNote = Action.make("createNote", {
   error: RequestConflict,
   readOnly: false,
   caller: CurrentUser,
+  // No `idempotentHint: true`: a call without a `requestId` creates a note each time.
   mcp: { destructiveHint: false },
 });
 
@@ -99,8 +100,7 @@ export const UpdateNote = Action.make("updateNote", {
   readOnly: false,
   caller: CurrentUser,
   // No `destructiveHint`: an update replaces the body, so it is destructive, MCP's default for
-  // a write, as is any update of what is stored, a flag such as "read" included.
-  // `createNote` and `importNotes`, which only add, say `false`.
+  // a write. `createNote` and `importNotes`, which only add, say `false`.
 });
 
 export const DeleteNote = Action.make("deleteNote", {
@@ -111,10 +111,6 @@ export const DeleteNote = Action.make("deleteNote", {
   caller: CurrentUser,
 });
 
-// Work every surface should offer is an action, a bulk import included: the HTTP API, the MCP
-// tools and the CLI then all have it, and the whole list is decoded, so checked, before the
-// handler writes any of it. A command of your own only reads the file and calls this once
-// (commands.ts). `importNotes` only adds notes, so `destructiveHint` is `false`.
 // Imports share note content with `createNote`, but exclude request keys because bulk creation
 // does not deduplicate.
 export const ImportNotes = Action.make("importNotes", {

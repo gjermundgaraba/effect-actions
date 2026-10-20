@@ -25,9 +25,8 @@ export const protocol = (url: string) =>
     Layer.provide([RpcSerialization.layerJson, Socket.layerWebSocketConstructorGlobal]),
   );
 
-// `open("wss://tracker.example.com/rpc")`: one run on a socket of its own. The socket belongs
-// to the Layer providing the protocol: it opens when that Layer is built, and closes when this
-// `Effect.provide` ends. `Effect.scoped` only holds the client. A page that stays connected
-// builds the Layer once, such as in a `ManagedRuntime`, and runs its programs in it.
+// `open("wss://tracker.example.com/rpc")`: one run on a socket of its own, closed when it ends.
+// A page that stays connected builds the protocol's Layer once, such as in a `ManagedRuntime`,
+// and runs its programs in it.
 export const open = (url: string) =>
   Effect.runPromise(board.pipe(Effect.scoped, Effect.provide(protocol(url))));

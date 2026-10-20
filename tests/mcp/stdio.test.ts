@@ -50,7 +50,7 @@ const connectSubprocess = async (revision: string, script = "tests/support/app/m
 
 const subprocessCompilingTypeScriptTimeout = 30_000;
 
-describe("MCP stdio example", () => {
+describe("the test app's stdio server, as a subprocess", () => {
   it.each(["2026-07-28", "2025-11-25"])(
     "serves list/call to a %s host and keeps logs off protocol stdout",
     async (revision) => {
@@ -534,6 +534,45 @@ describe("runStdio's input schemas", () => {
         const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
 
         expect(tools.map(({ inputSchema }) => inputSchema)).toEqual([closedWithItsDefinitions]);
+      }),
+  );
+
+  it.effect(
+    "lists a pattern only for a RegExp with the u flag, a custom check never, and a description only when annotated before a custom check",
+    () =>
+      Effect.gen(function* () {
+        const nonEmpty = Schema.makeFilter((text: string) => text.length > 0);
+        const described = { description: "Some text." };
+
+        const Checked = Action.make("checked", {
+          description: "Checked fields",
+          readOnly: true,
+          caller: Action.Anyone,
+          input: {
+            unicode: Schema.String.check(Schema.isPattern(/^[a-z]+$/u)),
+            plain: Schema.String.check(Schema.isPattern(/^[a-z]+$/)),
+            describedFirst: Schema.String.annotate(described).check(nonEmpty),
+            describedAfter: Schema.String.check(nonEmpty).annotate(described),
+          },
+        });
+
+        const [listed] = yield* converse(
+          ActionMcp.runStdio(
+            Action.implement(Checked, () => Effect.void),
+            { name: "checked", version: "0" },
+          ),
+          "2026-07-28",
+          [{ method: "tools/list" }],
+        );
+
+        const [tool] = Schema.decodeUnknownSync(Listed)(listed).result.tools;
+
+        expect(tool?.inputSchema.properties).toEqual({
+          unicode: { type: "string", pattern: "^[a-z]+$" },
+          plain: { type: "string" },
+          describedFirst: { type: "string", description: "Some text." },
+          describedAfter: { type: "string" },
+        });
       }),
   );
 });

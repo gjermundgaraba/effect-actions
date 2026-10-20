@@ -27,12 +27,7 @@ export interface Params {
   readonly [key: string]: Schema.Json | undefined;
 }
 
-/**
- * One stateless MCP request of `method` with `params`, as `layerHttp` serves it: the headers
- * routing it, which repeat what its body says, and its JSON-RPC body. The client metadata goes in
- * `_meta`, under any given, such as a `progressToken`; the protocol version is always the
- * request's own.
- */
+/** The routing headers and JSON-RPC body of the request `request` builds. */
 export const statelessRequest = (method: string, params: Params) => {
   const { protocolVersion } = httpProtocol;
   const name = method === "resources/read" ? params.uri : params.name;
@@ -72,7 +67,8 @@ export interface ClientOptions<
 > {
   /**
    * The endpoint, resolved by the `HttpClient`: relative under `Testing.layer`. Defaults to `/mcp`,
-   * the default `layerHttp` path.
+   * the default `layerHttp` path, so a call to an endpoint on another `path` fails with an
+   * `McpCallError` that `answered 404`.
    */
   readonly url?: string;
   /**
@@ -83,7 +79,8 @@ export interface ClientOptions<
   /**
    * The endpoint's descriptor, as `layerHttp` takes it: an error its verifier declares, the
    * endpoint's HTTP answer for a protected tool, is then that error's decoded value, as over
-   * `ActionHttp.client`.
+   * `ActionHttp.client`; without it, the call fails with an `McpCallError` whose `reason` is a
+   * `StatusError`.
    */
   readonly authentication?: D;
 }
@@ -96,6 +93,10 @@ export interface RequestOptions {
    * one.
    */
   readonly url?: string;
+  /**
+   * Headers sent beside the routing ones `request` fills in, such as `Authorization`; a routing
+   * header wins over a given one of its name.
+   */
   readonly headers?: Headers.Input;
 }
 
@@ -106,8 +107,7 @@ class StatusError extends Schema.TaggedError<StatusError>()("StatusError", {
 }) {}
 
 /**
- * The endpoint answered with a JSON-RPC error, such as the native server's for invalid arguments
- * or an unknown tool.
+ * The endpoint answered with a JSON-RPC error, such as the native server's for an unknown tool.
  */
 class ProtocolError extends Schema.TaggedError<ProtocolError>()("ProtocolError", {
   code: Schema.Finite,
@@ -149,6 +149,10 @@ const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
  * `Effect.catchReason("McpCallError", "StatusError", ...)`. `message` names the tool and the
  * reason. Structured content that does not decode as the success is a `SchemaError` instead,
  * and a request that fails an `HttpClientError`.
+ *
+ * **Gotchas**
+ *
+ * - `returned an error: Invalid parameters for tool …`, an `UndeclaredError`, from a call its types allowed: the endpoint serves another contract under that name; give `client` the served contract value.
  */
 export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallError", {
   tool: Schema.String,
@@ -286,10 +290,14 @@ const callTool = (
  * encoded with the action's schema, and the success decoded from its structured content, each
  * media field from the blocks whose `_meta` names it, and a success that is media, or whose
  * every field is, from its blocks alone. A declared error the tool returns, the action's own
- * or a refusal, is its decoded value, and so is a refusal the endpoint's authentication
- * answers with, or an error its verifier declares, given the `authentication`: a test telling a 401 or 403 from a tool result asserts the status of a request
- * `request` builds. The argument may be omitted when `{}` is a valid input. Requires the
- * native `HttpClient`, such as the one `Testing.layer` provides.
+ * or a refusal, is its decoded value, and so is a refusal the endpoint's authentication answers
+ * with: a test telling a 401 or 403 from a tool result asserts the status of a request `request`
+ * builds. The argument may be omitted when `{}` is a valid input. Requires the native
+ * `HttpClient`, such as the one `Testing.layer` provides.
+ *
+ * **Gotchas**
+ *
+ * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
  */
 export function client<
   const Actions extends ReadonlyArray<Action.Any>,

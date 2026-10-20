@@ -19,6 +19,7 @@ import {
   type BuildServices,
   type BuildError,
   assertHeld,
+  notHeld,
   type Holding,
   type Member,
   type RequestOf,
@@ -43,14 +44,17 @@ interface AnyBinding extends Declaring {
 
 /**
  * Make a command of your own fail as a derived command does. Give it what the command calls, the
- * binding of `ActionHttp.client` or `ActionRpc.client`, or the actions of `Action.client`, and pipe the command's
- * whole Effect through it: a failure that is a declared error, the binding's and its
- * authentication's included, or a built-in one becomes a `UserError` whose message is its JSON, and any other, a transport
- * failure for one, a `UserError` naming it and the causes beneath it. An Effect CLI error, your
- * own `new CliError.UserError({ cause, userMessage })` included, passes through as it is. To
- * add context, such as how far a batch got, print it before this in the pipe, with
- * `Effect.tapError(() => Console.error(…))`: a `UserError` wrapped around the result would
- * replace its JSON.
+ * binding of `ActionHttp.client` or `ActionRpc.client`, or the actions of `Action.client`, and
+ * pipe the command's whole Effect through it: a failure that is a declared error, the binding's
+ * and its authentication's included, or a built-in one becomes a `UserError` whose message is its
+ * JSON, and any other, a transport failure for one, a `UserError` naming it and the causes
+ * beneath it. An Effect CLI error, your own `new CliError.UserError({ cause, userMessage })`
+ * included, passes through as it is.
+ *
+ * **Gotchas**
+ *
+ * - A failure left unmapped, one call's included, is reported as a crash, `ERROR (#n)` with a stack trace: pipe the whole Effect through it, once.
+ * - To add context, such as how far a batch got, print it before this in the pipe, `Effect.tapError(() => Console.error(…))`: a `UserError` wrapped around the result puts its JSON mid-sentence and hides the action's failure from `catchReason`.
  */
 export const toUserError = (calls: AnyBinding | ReadonlyArray<Action.Any>) =>
   "actions" in calls
@@ -76,11 +80,16 @@ export interface Options<A extends Action.Any = Action.Any> {
   readonly commands?: { readonly [K in A as K["name"]]?: CommandOptions<K> };
   /**
    * Commands of your own beside the derived ones, as `Command.withSubcommands` takes them:
-   * `[importLinks]`, each made with Effect CLI's `Command.make`. One fails as you make it fail:
-   * with a `CliError.UserError` for `Command.run` to print its `userMessage` on stderr. Written
-   * in the call, or in options held with `satisfies` this type, the list adds its commands'
-   * failures and services to the aggregate's type; in options annotated with this type, it adds
-   * none.
+   * `[importLinks]`, each made with Effect CLI's `Command.make` and printing its output itself,
+   * with `Console.log`. One calls actions through a client in its own handler: `yield*` the
+   * Effect `remote` takes as `client`, which needs no scope, or `Action.client`, acquired inside
+   * `Effect.scoped`. It fails as you make it fail: through `toUserError` as a derived command
+   * does, or with a `CliError.UserError` for `Command.run` to print its `userMessage` on stderr.
+   *
+   * **Gotchas**
+   *
+   * - Write the list in the call, or hold the options with `satisfies ActionCli.Options<…>`: in options annotated `: ActionCli.Options<…>` it adds none of its commands' failures and services to the aggregate's type, so the program compiles, then a command's service is not found.
+   * - Never pipe `Command.withSubcommands` onto the aggregate instead: it replaces the derived commands, which then answer with the usage text.
    */
   readonly subcommands?: Subcommands | undefined;
 }
@@ -163,9 +172,15 @@ const theImplementationOf = (
 ): AnyImplementation => {
   const [app, ...others] = apps.filter((candidate) => candidate.actions.includes(action));
 
-  if (app === undefined) throw new Error(`Action "${action.name}" has no implementation here`);
+  if (app === undefined) {
+    throw new Error(
+      `Action "${action.name}" has no implementation here (pass its implementation, and select with the contract value it implements: an equal-looking action does not match)`,
+    );
+  }
 
-  if (others.length > 0) throw new Error(`Action "${action.name}" is implemented twice here`);
+  if (others.length > 0) {
+    throw new Error(`Action "${action.name}" is implemented twice here (pass one of them)`);
+  }
 
   return app;
 };
@@ -192,7 +207,9 @@ const overHttp = <A extends Action.Any>(
   client: ErasedClient | undefined,
 ) => {
   if (!binding.actions.includes(action)) {
-    throw new Error(`Action "${action.name}" is not in this HTTP binding`);
+    throw new Error(
+      `Action "${action.name}" is not in this HTTP binding (pass it to the binding's ActionHttp.make, and select with the contract value it received)`,
+    );
   }
 
   return makeCommand(
@@ -201,7 +218,11 @@ const overHttp = <A extends Action.Any>(
       Effect.flatMap(client ?? httpClient(binding), (methods) => {
         const method = methods[action.name];
 
-        if (method === undefined) throw new Error(`No client method for ${action.name}`);
+        if (method === undefined) {
+          throw new Error(
+            `No client method for ${action.name} (give \`client\` a client of this binding, made by \`ActionHttp.client\`, whose methods hold this action)`,
+          );
+        }
 
         return method(input);
       }),
@@ -237,7 +258,10 @@ const aggregateCommand = (
         .map((command) => ({ claimant: "subcommands", name: command.name })),
     ],
     ({ name: claimed }) => claimed,
-    ({ claimant }) => claimant,
+    {
+      claimantOf: ({ claimant }) => claimant,
+      fix: "rename one of your subcommands, or give an action's command another name in commands",
+    },
   );
 
   // Why: One `withSubcommands`, as a second one replaces the first's commands.
@@ -256,6 +280,7 @@ const checkedCommandsOf = (
     "commands",
     Object.keys(given),
     actions.map((action) => action.name),
+    "key it by the action's own name, not its command's",
   );
 
   return given;
@@ -264,12 +289,19 @@ const checkedCommandsOf = (
 /**
  * Project one implemented action into a native Effect CLI command that runs its handler in
  * process, behind its implementation's authorization. It is named after the action in kebab
- * case with one flag per field of its input (`--user-id`), or `--input` taking the whole input
- * as JSON when it is not a struct. The flag of an array of strings or numbers is repeated for each value, a boolean
- * field is a switch, `--no-<name>` sending `false` as a required one left out does, and a field's `description` is its flag's help. It needs what the authorization, its handler and its builder
- * need; the host provides the identity. It prints the result on stdout; a failure is a
- * `UserError`, or an Effect CLI error as it is, such as a builder's `CliError.UserError`, which
- * `Command.run` prints on stderr. `remoteCommand` calls a server instead.
+ * case, with one flag per top-level field of its input (`--user-id`), or `--input` taking the
+ * whole input as JSON when it is not a struct of named fields. The host provides the caller on
+ * the command, `Command.provideSync`, beside what the authorization, the handler and the builder
+ * need. `remoteCommand` calls a server instead.
+ *
+ * **Gotchas**
+ *
+ * - A success is its JSON on stdout, indented by two spaces, or `render`'s text; nothing for an action without `success`. Its Effect logs and `Console` output go to stderr; other writes as `logToStderr` says.
+ * - A declared error is its JSON on stderr, under Effect CLI's `ERROR` heading, the command failing with a `UserError` whose `cause` is the error, exit 1 or its `Runtime.errorExitCode`; a refusal as `Action.Unauthenticated` and `Action.Forbidden` say; input that does not decode, in `--input` or a flag's JSON value, is `InvalidInput`'s JSON there, while a missing flag or a rejected choice is Effect CLI's own parse error.
+ * - A failure no schema encodes, a builder's or an accepted error that does not encode, is a `UserError` printed as its tag or name and its message, then its causes, never its other fields; a defect, an undeclared failure, or a success that does not encode is the command's defect, which `runMain` reports as `logToStderr` says.
+ * - Provide services with `Command.provide` on the command, built when an action runs: provided around `Command.run`, they are built before parsing, so `--help` and a mistyped flag open the database.
+ * - Each run builds the action's implementation, its builder and an authorizer an Effect builds, and releases them after the call, even where the host already built them; implementations passed beside it are not built.
+ * - A field named like a global flag (`help`, `version`, `log-level`) is no clash: its flag shadows the global one on this command.
  */
 export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>, const O = {}>(
   implementations: Apps,
@@ -289,9 +321,8 @@ export function command<const Apps extends Served, A extends ActionOf<Member<App
 /**
  * Project one action of an HTTP binding into a native Effect CLI command, derived as `command`
  * derives it, that calls the action through `client`'s method and fails as the method does, or
- * as the Effect building the client does. `client` is an Effect of the binding's client, such as
- * `ActionHttp.client(Http, { baseUrl })`, run each time the command runs; omitted, it is
- * `ActionHttp.client(binding)` on the host's `HttpClient`. It runs nothing locally.
+ * as the Effect building the client does. It runs nothing locally and names no caller: the
+ * server verifies the credentials its client sends.
  */
 export function remoteCommand<
   const H extends AnyHttp,
@@ -303,16 +334,35 @@ export function remoteCommand<
   action: A,
   options?: O &
     NoInfer<CommandOptions<A>> &
-    NoInfer<Known<O, RemoteKeys<CommandOptions<Action.Any>>>> & { readonly client?: C },
+    NoInfer<Known<O, RemoteKeys<CommandOptions<Action.Any>>>> &
+    Calling<C>,
 ): Command.Command<string, never, {}, Failing<CallFailure<H, C, A>>, CallServices<C, A>>;
 export function remoteCommand(
   binding: AnyHttp,
   action: Action.Any,
-  options?: CommandOptions<Action.Any> & { readonly client?: ErasedClient | undefined },
+  options?: CommandOptions<Action.Any> & Calling<ErasedClient>,
 ): Command.Command<string, never, {}, unknown, unknown> {
   const { client, ...syntax } = options ?? {};
 
   return overHttp(binding, action, options === undefined ? undefined : syntax, client);
+}
+
+// Why: One declaration of `client` for `remote` and `remoteCommand`, so its JSDoc has one home.
+export interface Calling<C> {
+  /**
+   * The connection: an Effect of the binding's client, such as
+   * `ActionHttp.client(Http, { baseUrl, transformClient })`, run each time a command runs, so one
+   * reading `Config` is an `Effect.gen` returning `yield* ActionHttp.client(…)` and `--help`
+   * reads nothing. What it requires, the host provides. Omitted, it is
+   * `ActionHttp.client(binding)` on the host's `HttpClient`, with no `baseUrl`.
+   *
+   * **Gotchas**
+   *
+   * - A token read with `Config` and not set fails every command, a public one's too, as `ConfigError: …`, which names no fix: map it to a tagged error whose `message` says what to do, or read an optional one with `Config.option`.
+   * - Credentials go in `transformClient`: a command adds no headers of its own, so without them a protected action answers `Unauthenticated`.
+   * - Never transform the `HttpClient` around the program instead: it rewrites every request the program makes, an absolute URL too, and sends each one the token.
+   */
+  readonly client?: C;
 }
 
 type ClientOf<H extends AnyHttp> = Effect.Effect<Client<H, unknown, unknown>, unknown, unknown>;
@@ -345,13 +395,15 @@ type CallServices<C, A extends Action.Any> =
     : HttpClient.HttpClient;
 
 /**
- * Project every implemented action as a subcommand of one aggregate command, each named after
- * its action in kebab case and run in process. `commands` gives a subcommand the options
- * `command` takes, by action name; `subcommands` adds commands of your own, which
- * `Command.withSubcommands` on the result would put in the derived ones' place. `remote` calls a
- * server instead. A test runs it in memory, with no process:
- * `Command.runWith(command, { version })(args)`.
+ * Project every implemented action as a subcommand of one aggregate command, each derived as
+ * `command` derives it and run in process. `commands` gives a subcommand the options `command`
+ * takes, by action name; `subcommands` adds commands of your own. `remote` calls a server
+ * instead. A test runs it in memory, with no process: `Command.runWith(command, { version })(args)`.
  * Guide: `docs/ActionCli.md` in this package; in an application: `examples/assistant/src/commands.ts`.
+ *
+ * **Gotchas**
+ *
+ * - Services provided on it with `Command.provide` are also built when it runs with no subcommand, before it shows its help.
  */
 export function make<
   const Apps extends Served,
@@ -399,6 +451,7 @@ export function make<
  * `make` derives it, each calling its action through `client`'s method, as `remoteCommand`
  * does. `commands` gives one the options `command` takes; `subcommands` adds commands of your
  * own, which call through the same client by yielding the Effect given as `client`.
+ * In an application: `examples/notes-service/src/commands.ts`.
  */
 export function remote<
   const H extends AnyHttp,
@@ -409,10 +462,8 @@ export function remote<
   binding: H,
   options: O &
     NoInfer<Options<H["actions"][number]>> &
-    NoInfer<KnownOptions<O, RemoteKeys<Options<Action.Any>>, H["actions"][number]>> & {
-      readonly client?: C;
-      readonly subcommands?: Own | undefined;
-    },
+    NoInfer<KnownOptions<O, RemoteKeys<Options<Action.Any>>, H["actions"][number]>> &
+    Calling<C> & { readonly subcommands?: Own | undefined },
 ): Command.Command<
   string,
   {},
@@ -426,7 +477,7 @@ export function remote(
 ): Command.Command<string, {}, {}, unknown, unknown> {
   const listed = options.actions;
 
-  if (listed !== undefined) assertHeld("the binding does not hold it", listed, binding.actions);
+  if (listed !== undefined) assertHeld(notHeld.byBinding, listed, binding.actions);
 
   const commands = checkedCommandsOf(options.commands, binding.actions);
 
@@ -447,11 +498,15 @@ export function remote(
 /**
  * A program whose stdout carries only its results, such as a CLI feeding scripts or an MCP
  * subprocess, applied last, before `NodeRuntime.runMain`: the default logger of every layer
- * provided within writes to stderr, and a failure `runMain` would report, such as a defect or
- * a failure of a layer the host provides, is reported on stderr instead, once. A command's
- * own failure, which `Command.run` has printed, is not reported again. The exit code is the
- * one `runMain` gives: the failure's `Runtime.errorExitCode`, 1 by default, or 130 for an
- * interruption.
+ * provided within writes to stderr, and a failure `runMain` would report on stdout, such as a
+ * defect, a success that does not encode or a failure of a layer the host provides, is reported
+ * on stderr instead, once. A command's own failure, which `Command.run` has printed, is not
+ * reported again. The exit code is the one `runMain` gives: the failure's
+ * `Runtime.errorExitCode`, 1 by default, or 130 for an interruption.
+ *
+ * **Gotchas**
+ *
+ * - It moves the default logger only: a host layer's `Console` output, the global `console.log`, and a logger writing through `Console.log` such as `Logger.consoleJson`, still reach stdout; log JSON with `Logger.withConsoleError(Logger.formatJson)`.
  */
 export const logToStderr = <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, never, R> =>
   self.pipe(

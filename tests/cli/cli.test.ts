@@ -966,7 +966,7 @@ it.effect(
       expect(yield* lines(ActionCli.command(app, Settings), args)).toEqual(['"a b c"']);
 
       expect(() => ActionCli.command(app, Settings, { render: String })).toThrow(
-        "Duplicate flag: --json, claimed by field json and render's --json",
+        "Duplicate flag: --json, claimed by field json and render's --json (rename the field or the alias, or drop `render`)",
       );
 
       const Twice = Action.make("twice", {
@@ -978,10 +978,25 @@ it.effect(
       });
 
       const twice = Action.implement(Twice, () => Effect.succeed(""));
+
       const clash = "Duplicate flag: --user-id, claimed by field userId and field user_id";
 
       expect(() => ActionCli.command(twice, Twice)).toThrow(clash);
       expect(() => ActionCli.make(twice, { name: "tool" })).toThrow(clash);
+
+      const Short = Action.make("short", {
+        description: "A one-character field",
+        readOnly: true,
+        caller: Action.Anyone,
+        input: { n: Schema.String, limit: Schema.String },
+        success: Schema.String,
+      });
+
+      const short = Action.implement(Short, () => Effect.succeed(""));
+
+      expect(() => ActionCli.command(short, Short, { aliases: { limit: "n" } })).toThrow(
+        "Duplicate flag: --n, claimed by field n and alias of field limit",
+      );
     }),
 );
 
@@ -1193,7 +1208,7 @@ it.effect("selects a command's implementation by contract identity, not by name"
     expect(yield* lines(ActionCli.command([first, second], Second), [])).toEqual(['"second"']);
 
     expect(() => ActionCli.command([first], Second)).toThrow(
-      'Action "same" has no implementation here',
+      'Action "same" has no implementation here (pass its implementation, and select with the contract value it implements: an equal-looking action does not match)',
     );
 
     const Missing = Action.make("missing", {
@@ -1206,7 +1221,9 @@ it.effect("selects a command's implementation by contract identity, not by name"
     expect(() =>
       // @ts-expect-error -- `Missing` is not the action of any implementation passed.
       ActionCli.command(first, Missing),
-    ).toThrow('Action "missing" has no implementation here');
+    ).toThrow(
+      'Action "missing" has no implementation here (pass its implementation, and select with the contract value it implements: an equal-looking action does not match)',
+    );
   }),
 );
 
@@ -1247,7 +1264,7 @@ it.effect(
       const guarded = Action.implement(One, () => Effect.succeed("guarded"));
 
       expect(() => ActionCli.command([one, guarded], One)).toThrow(
-        'Action "one" is implemented twice here',
+        'Action "one" is implemented twice here (pass one of them)',
       );
 
       expect(yield* lines(ActionCli.command([one, two, again], Two), [])).toEqual(['"two"']);
@@ -1310,7 +1327,7 @@ it.effect("names commands and flags in kebab case, unless a name is given", () =
     const snake = Action.implement(Snake, () => Effect.succeed("snake"));
 
     expect(() => ActionCli.make([app, snake], { name: "users" })).toThrow(
-      "Duplicate command: get-user, claimed by action getUser and action get_user",
+      "Duplicate command: get-user, claimed by action getUser and action get_user (rename one of your subcommands, or give an action's command another name in commands)",
     );
   }),
 );
@@ -1717,7 +1734,7 @@ it.effect("makes subcommands of the listed actions only, from implementations or
     const erasedBinding: ActionHttp.Any = ActionHttp.make([Read]);
 
     expect(() => ActionCli.remote(erasedBinding, { name: "tool", actions: [Write] })).toThrow(
-      "Listed in actions, but the binding does not hold it: write",
+      "Listed in actions, but the binding does not hold it: write (add it to the binding's actions)",
     );
     const shared = { read: {}, write: { name: "put" } };
     const reader = ActionCli.make(app, { name: "tool", actions: [Read], commands: shared });
@@ -1730,7 +1747,7 @@ it.effect("makes subcommands of the listed actions only, from implementations or
         name: "tool",
         commands: Object.fromEntries([["write", {}]]),
       }),
-    ).toThrow("Unknown commands: write");
+    ).toThrow("Unknown commands: write (key it by the action's own name, not its command's)");
   }),
 );
 
@@ -1870,18 +1887,18 @@ it("refuses positional arguments a parser could not read back", () => {
   const scalar = Action.implement(Scalar, () => Effect.void);
 
   expect(() => ActionCli.command(pair, Pair, { positional: ["first", "first"] })).toThrow(
-    "Duplicate positional argument: first",
+    "Duplicate positional argument: first (list each field once)",
   );
   expect(() => ActionCli.command(pair, Pair, { positional: ["second", "first"] })).toThrow(
-    "Required positional argument after an optional one: first",
+    "Required positional argument after an optional one: first (list every required field first)",
   );
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Untyped caller fixture: a plain-JavaScript caller, whom the types do not stop.
   expect(() => ActionCli.command(pair, Pair, { positional: ["third"] as never })).toThrow(
-    "Not an input field: third",
+    "Not an input field: third (positional names fields of the action's input)",
   );
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Untyped caller fixture, for an input without named fields.
   expect(() => ActionCli.command(scalar, Scalar, { positional: ["length"] as never })).toThrow(
-    "Positional arguments need named input fields: length",
+    "Positional arguments need named input fields: length (the input is not a struct, so it is one --input flag: drop the option)",
   );
 });
 
@@ -1941,10 +1958,10 @@ it.effect("takes an array field as the last positional, one value per argument",
     expect(failure(yield* Effect.exit(exec(tag, ["f", "c"])))).toBeInstanceOf(CliError.ShowHelp);
 
     expect(() => ActionCli.command(app, Tag, { positional: ["tags", "path"] })).toThrow(
-      "Required positional argument after an optional one: path",
+      "Required positional argument after an optional one: path (list every required field first)",
     );
     expect(() => ActionCli.command(app, Remove, { positional: ["paths", "force"] })).toThrow(
-      "Repeated positional argument before another one: paths",
+      "Repeated positional argument before another one: paths (list an array field last)",
     );
   }),
 );
@@ -1987,12 +2004,14 @@ it.effect("gives a flag the alias its options name, and shows a positional's val
 
     expect(() =>
       ActionCli.command(app, List, { positional: ["scale"], aliases: { scale: "s" } }),
-    ).toThrow("Not a flag's input field: scale");
+    ).toThrow(
+      "Not a flag's input field: scale (aliases name fields read from flags, neither positional nor stdin)",
+    );
     expect(() => ActionCli.command(app, List, { aliases: { limit: "n", all: "n" } })).toThrow(
-      "Duplicate flag: --n, claimed by alias of field limit and alias of field all",
+      "Duplicate flag: -n, claimed by alias of field limit and alias of field all (rename the field or the alias)",
     );
     expect(() => ActionCli.command(app, List, { aliases: { limit: "n", all: "-n" } })).toThrow(
-      "Duplicate flag: --n, claimed by alias of field limit and alias of field all",
+      "Duplicate flag: -n",
     );
     expect(() => ActionCli.command(app, List, { aliases: { limit: "all" } })).toThrow(
       "Duplicate flag: --all, claimed by field all and alias of field limit",
@@ -2077,14 +2096,16 @@ it.effect("reads the field its options name from stdin, without the line endings
 
     // @ts-expect-error -- An optional field is not read from stdin.
     expect(() => ActionCli.command(app, Store, { stdin: "note" })).toThrow(
-      "Not a required input field: note",
+      "Not a required input field: note (stdin names a required field of the action's input)",
     );
     expect(() =>
       ActionCli.command(app, Store, { stdin: "apiToken", positional: ["apiToken"] }),
-    ).toThrow("Both positional and stdin: apiToken");
+    ).toThrow("Both positional and stdin: apiToken (take it from one of them)");
     expect(() =>
       ActionCli.command(app, Store, { stdin: "apiToken", aliases: { apiToken: "t" } }),
-    ).toThrow("Not a flag's input field: apiToken");
+    ).toThrow(
+      "Not a flag's input field: apiToken (aliases name fields read from flags, neither positional nor stdin)",
+    );
   }),
 );
 
@@ -2177,7 +2198,7 @@ it.effect("gives a subcommand of an aggregate the options command takes, by acti
     );
     expect(() =>
       ActionCli.make(app, { name: "files", commands: { readFile: { name: "size" } } }),
-    ).toThrow("Duplicate command: size");
+    ).toThrow("Duplicate command: size, claimed by action readFile and action size");
   }),
 );
 
@@ -2825,5 +2846,47 @@ it.effect(
       const [result, lines] = yield* printed(exec(ActionCli.command(app, Open), []));
 
       expect([Exit.isSuccess(result), lines]).toEqual([true, ['"open"']]);
+    }),
+);
+
+it.effect(
+  "gives a positional field no flag, and a piped withSubcommands only its own subcommands",
+  () =>
+    Effect.gen(function* () {
+      const Note = Action.make("note", {
+        description: "Keep a note",
+        readOnly: false,
+        caller: Action.Anyone,
+        input: { text: Schema.String },
+        success: Schema.String,
+      });
+
+      const app = Action.implement(Note, ({ text }) => Effect.succeed(text));
+      const command = ActionCli.command(app, Note, { positional: ["text"] });
+
+      expect(yield* lines(command, ["hi"])).toEqual(['"hi"']);
+
+      const flagged = failure(yield* Effect.exit(exec(command, ["--text", "hi"])));
+
+      expect(flagged).toBeInstanceOf(CliError.ShowHelp);
+
+      if (flagged instanceof CliError.ShowHelp) {
+        expect(flagged.errors[0]).toBeInstanceOf(CliError.UnrecognizedOption);
+      }
+
+      const piped = ActionCli.make(app, { name: "notes" }).pipe(
+        Command.withSubcommands([Command.make("own")]),
+      );
+
+      expect(
+        yield* lines(ActionCli.make(app, { name: "notes" }), ["note", "--text", "hi"]),
+      ).toEqual(['"hi"']);
+      const replaced = failure(yield* Effect.exit(exec(piped, ["note", "--text", "hi"])));
+
+      expect(replaced).toBeInstanceOf(CliError.ShowHelp);
+
+      if (replaced instanceof CliError.ShowHelp) {
+        expect(replaced.errors[0]).toBeInstanceOf(CliError.UnknownSubcommand);
+      }
     }),
 );

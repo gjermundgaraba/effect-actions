@@ -90,7 +90,28 @@ it.each(docsPages)("%s links only inside docs/ and to examples/, which ship with
 it.each(docsPages)("%s names no source path of the library, which does not ship", (page) => {
   const ofAnExample = new RegExp(`(?:${examples.join("|")})/src/`, "g");
 
-  expect(read(page).replaceAll(ofAnExample, "")).not.toMatch(/\bsrc\//);
+  expect(withoutCode(page).replaceAll(ofAnExample, "")).not.toMatch(/\bsrc\//);
+});
+
+it.each(docsPages)("%s fences TypeScript only as a whole example file", (page) => {
+  const fences = Array.from(read(page).matchAll(/^\x60{3}ts(.*)$/gm), ([, rest = ""]) => rest);
+
+  for (const rest of fences) expect(rest, page).toMatch(/^ example=\S+$/);
+});
+
+it("gives every module page a -failures.md beside it, each entry one line", () => {
+  for (const page of docsPages) {
+    if (page.endsWith("-failures.md") || page === "docs/README.md") continue;
+
+    const failures = page.replace(/(-advanced)?\.md$/, "-failures.md");
+    const lines = read(failures).split("\n");
+
+    expect(lines.filter((line) => line.startsWith("- ")).length, failures).toBeGreaterThan(0);
+
+    for (const [index, line] of lines.entries()) {
+      if (line.startsWith("  ")) expect.fail(`${failures}:${index + 1} continues an entry`);
+    }
+  }
 });
 
 it.each(docsPages)("%s stays below the 16 KB safety margin for tool-output truncation", (page) => {
@@ -116,20 +137,19 @@ it("installs Effect at the package's peer range in README.md and docs/setup.md",
 });
 
 it("lists every module the package exports under docs/setup.md's entry points", () => {
-  const section = read("docs/setup.md").split("\n## Entry points\n")[1] ?? "";
+  const section = read("docs/setup.md").split("\n## Entry points\n")[1]?.split("\n## ")[0] ?? "";
 
-  const [block = ""] = Array.from(
-    section.matchAll(/\x60{3}ts\n([\s\S]*?)\n\x60{3}/g),
-    ([, code]) => code,
-  );
+  const sentence = section.replaceAll("\n", " ").match(/The modules: [^.]*\./)?.[0] ?? "";
+
+  const listed = Array.from(sentence.matchAll(/`([A-Za-z]+)`/g), ([, name = ""]) => name);
 
   const modules = Object.keys(manifest.exports).flatMap((path) =>
     path === "./package.json" ? [] : [path.slice("./".length)],
   );
 
-  expect(block.split("\n").toSorted()).toEqual(
-    modules.map((module) => `import * as ${module} from "${manifest.name}/${module}";`).toSorted(),
-  );
+  const byName = (a: string, b: string) => a.localeCompare(b);
+
+  expect(listed.toSorted(byName)).toEqual(modules.toSorted(byName));
 });
 
 it("names, in the JSDoc that ships, only pages and example paths the package holds", () => {
@@ -146,4 +166,54 @@ it("names, in the JSDoc that ships, only pages and example paths the package hol
 
   expect(named.length).toBeGreaterThan(0);
   expect(named.filter(({ path }) => !existsSync(join(root, path)))).toEqual([]);
+});
+
+it("names, in the pages and READMEs, only symbols the public modules export", () => {
+  const sources = readdirSync(join(root, "src"), { recursive: true, encoding: "utf8" });
+
+  const exported = new Map(
+    Object.keys(manifest.exports)
+      .filter((path) => path !== "./package.json")
+      .map((path) => {
+        const module = path.slice("./".length);
+        const file = sources.find((name) => name.endsWith(`/${module}.ts`));
+
+        if (file === undefined) throw new Error(`No public module file for ${module}`);
+
+        const source = read(`src/${file}`);
+
+        const declared = Array.from(
+          source.matchAll(/^export (?:declare )?(?:const|function|interface|type|class) (\w+)/gm),
+          ([, name = ""]) => name,
+        );
+
+        const listed = Array.from(
+          source.matchAll(/^export (?:type )?\{([^}]*)\}/gm),
+          ([, body = ""]) =>
+            body.split(",").flatMap((entry) => {
+              const name =
+                entry
+                  .trim()
+                  .replace(/^type /, "")
+                  .split(" as ")
+                  .at(-1)
+                  ?.trim() ?? "";
+
+              return name === "" ? [] : [name];
+            }),
+        );
+
+        return [module, new Set([...declared, ...listed.flat()])] as const;
+      }),
+  );
+
+  const pointer = new RegExp(`\\x60(${Array.from(exported.keys()).join("|")})\\.(\\w+)`, "g");
+
+  const unresolved = pages.flatMap((page) =>
+    Array.from(read(page).matchAll(pointer)).flatMap(([, module = "", symbol = ""]) =>
+      exported.get(module)?.has(symbol) ? [] : [`${page}: ${module}.${symbol}`],
+    ),
+  );
+
+  expect(unresolved).toEqual([]);
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
 import { AiError, LanguageModel, type Response, Tool, Toolkit } from "effect/ai";
 import { actors } from "../support/app/authorization.js";
 import { chat, layer as approvalHandlers } from "../support/app/toolkit-approval.js";
@@ -150,36 +150,38 @@ describe("ActionToolkit", () => {
       }),
   );
 
-  it.effect("asks, in the approval example, before a model renames anyone but its caller", () =>
-    Effect.gen(function* () {
-      const user1OfAcme = {
-        id: "1",
-        tenantId: "acme",
-        permissions: ["users:read", "users:write"],
-      } as const;
+  it.effect(
+    "asks, in the test app's approval toolkit, before a model renames anyone but its caller",
+    () =>
+      Effect.gen(function* () {
+        const user1OfAcme = {
+          id: "1",
+          tenantId: "acme",
+          permissions: ["users:read", "users:write"],
+        } as const;
 
-      const [asked, renamed] = yield* Effect.all([
-        chat(actors.alice, "rename"),
-        chat(user1OfAcme, "rename"),
-      ]).pipe(
-        Effect.map((responses) => responses.map(approvalsAndResults)),
-        Effect.provideServiceEffect(
-          LanguageModel.LanguageModel,
-          modelCalling(["renameUser", { id: "1", name: "Bea" }]),
-        ),
-        Effect.provide(approvalHandlers.pipe(Layer.provide(Users.layerMemory))),
-      );
+        const [asked, renamed] = yield* Effect.all([
+          chat(actors.alice, "rename"),
+          chat(user1OfAcme, "rename"),
+        ]).pipe(
+          Effect.map((responses) => responses.map(approvalsAndResults)),
+          Effect.provideServiceEffect(
+            LanguageModel.LanguageModel,
+            modelCalling(["renameUser", { id: "1", name: "Bea" }]),
+          ),
+          Effect.provide(approvalHandlers.pipe(Layer.provide(Users.layerMemory))),
+        );
 
-      expect(asked).toEqual({ approvals: ["1"], results: [] });
-      expect(renamed).toEqual({
-        approvals: [],
-        results: [["renameUser", { id: "1", name: "Bea" }]],
-      });
-    }),
+        expect(asked).toEqual({ approvals: ["1"], results: [] });
+        expect(renamed).toEqual({
+          approvals: [],
+          results: [["renameUser", { id: "1", name: "Bea" }]],
+        });
+      }),
   );
 
   it.effect(
-    "runs a call whose check fails without approval, as LanguageModel decides natively",
+    "asks for approval when the check fails, where LanguageModel alone would run the call",
     () =>
       Effect.gen(function* () {
         const calls: string[] = [];
@@ -187,7 +189,6 @@ describe("ActionToolkit", () => {
         const binding = ActionToolkit.make(
           Action.implement(Erase, ({ id }) => Effect.sync(() => (calls.push(id), "erased"))),
           {
-            // @ts-expect-error -- The check's Effect cannot fail in its type; plain JavaScript's can.
             needsApproval: () => Effect.fail("unavailable"),
           },
         );
@@ -204,11 +205,35 @@ describe("ActionToolkit", () => {
         );
 
         expect(approvalsAndResults(response)).toEqual({
-          approvals: [],
-          results: [["erase", "erased"]],
+          approvals: [expect.any(String)],
+          results: [],
         });
-        expect(calls).toEqual(["x"]);
+        expect(calls).toEqual([]);
       }),
+  );
+
+  it.effect("ends the turn on a defect in the check, as LanguageModel does, calling nothing", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+
+      const binding = ActionToolkit.make(
+        Action.implement(Erase, ({ id }) => Effect.sync(() => (calls.push(id), "erased"))),
+        { needsApproval: () => Effect.die("policy bug") },
+      );
+
+      const exit = yield* Effect.exit(
+        LanguageModel.generateText({ prompt: "go", toolkit: binding.toolkit }).pipe(
+          Effect.provide(binding.layer),
+          Effect.provideServiceEffect(
+            LanguageModel.LanguageModel,
+            modelCalling(["erase", { id: "x" }]),
+          ),
+        ),
+      );
+
+      expect(Exit.hasDies(exit)).toBe(true);
+      expect(calls).toEqual([]);
+    }),
   );
 
   it.effect(
@@ -315,6 +340,34 @@ describe("ActionToolkit", () => {
       }),
   );
 
+  it.effect("drops arguments the input does not declare and runs the call without them", () =>
+    Effect.gen(function* () {
+      const received: unknown[] = [];
+
+      const Rename = Action.make("rename", {
+        description: "Rename a file.",
+        readOnly: false,
+        caller: Action.Anyone,
+        input: { name: Schema.String, owner: Schema.Struct({ id: Schema.String }) },
+        success: Schema.String,
+      });
+
+      const binding = ActionToolkit.make(
+        Action.implement(Rename, (input) => Effect.sync(() => (received.push(input), "renamed"))),
+      );
+
+      const result = yield* Effect.flatMap(binding.toolkit, (tools) =>
+        Effect.flatMap(
+          tools.handle("rename", { name: "a", owner: { id: "o", role: "admin" }, force: true }),
+          Stream.runCollect,
+        ),
+      ).pipe(Effect.provide(binding.layer));
+
+      expect(result).toMatchObject([{ isFailure: false, result: "renamed" }]);
+      expect(received).toEqual([{ name: "a", owner: { id: "o" } }]);
+    }),
+  );
+
   it("runs each call with its own identity, filling in one provided to layer for a call without one", async () => {
     const Who = Action.make("who", {
       description: "Current principal",
@@ -403,6 +456,10 @@ describe("ActionToolkit", () => {
         );
 
         expect(Exit.hasDies(withOnlyOtherImplementationsLayer)).toBe(true);
+        expect(
+          Exit.isFailure(withOnlyOtherImplementationsLayer) &&
+            Cause.pretty(withOnlyOtherImplementationsLayer.cause),
+        ).toContain("Cannot read properties of undefined (reading 'context')");
       }),
   );
 

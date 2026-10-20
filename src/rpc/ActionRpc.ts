@@ -78,6 +78,7 @@ export interface Binding<
   E extends Action.Errors = [],
   D extends Authentication | undefined = undefined,
 > {
+  /** The descriptor authenticating its protected actions, or `undefined` when it names none. */
   readonly authentication: D;
   /** The exact actions bound to this binding. */
   readonly actions: Actions;
@@ -103,8 +104,15 @@ export interface Any {
 
 /** Contract-level configuration shared by servers and clients. */
 export interface Options<E extends Action.Errors = Action.Errors> {
-  /** Layer middleware's errors, which every rpc declares: one schema, or a list. */
+  /**
+   * What the layer's `middleware` fails with, which every rpc declares so clients decode it:
+   * one schema, or a list.
+   */
   readonly error?: E | E[number];
+  /**
+   * `Authentication.make(...)` of the protected actions' identity, which authenticates each of
+   * their messages: required when the binding holds a protected action, and of its identity.
+   */
   readonly authentication?: Authentication;
 }
 
@@ -208,15 +216,20 @@ type RpcLayer<
 export interface LayerOptions<M extends Middleware = [], A extends Action.Any = never> {
   /**
    * The actions it serves, among the binding's actions the implementations hold: `[GetUser]`.
-   * Defaults to every one of them. A layer whose middleware requires the identity lists
-   * protected actions only.
+   * Defaults to every one of them.
    */
   readonly actions?: ReadonlyArray<A> | undefined;
   /**
-   * Native rpc middleware every served rpc runs, the first innermost: inside the
-   * authentication of a protected rpc, outside its decoding. Server-only: the binding's group,
-   * which clients use, carries none. A middleware requiring the identity needs a layer
-   * serving only protected actions.
+   * Native rpc middleware every served rpc runs on each message, the first innermost: inside
+   * the authentication of a protected rpc, so none provides what a verifier reads, and outside
+   * its decoding, so it also sees input that does not decode. Server-only: the binding's group,
+   * which clients use, carries none.
+   *
+   * **Gotchas**
+   *
+   * - A middleware requiring the identity leaves it owed on a layer serving a public action: bind the protected actions apart, or read the identity with `Effect.serviceOption`, which a public rpc's call lacks.
+   * - A middleware provides a service only to those listed before it and the handlers, and only in a list written in place as a tuple: listed earlier, or in an array-typed list, it leaves the service owed.
+   * - Router middleware around the layer runs once per WebSocket, at its upgrade, so its value holds for the whole connection: what differs per message needs a listed middleware.
    */
   readonly middleware?: M;
 }
@@ -341,26 +354,24 @@ const handlerOf = (
 
 /**
  * Serve the binding's actions among `implementations` with Effect's own `RpcServer`, or those
- * its `actions` lists, as `ActionHttp.layer` selects them. The host provides the protocol,
- * such as `RpcServer.layerProtocolWebsocket` or `layerProtocolHttp` and its JSON serialization:
- * the layer refuses to build under a protocol that does not speak JSON. A protected rpc
- * authenticates each message from its headers with the binding's descriptor, outermost; then
- * the layer's `middleware` runs, then the input is decoded, a failure answering `InvalidInput`,
- * then the implementation's `authorize` and the handler, as on every surface.
+ * its `actions` lists, as `ActionHttp.layer` selects them, under the protocol and JSON
+ * serialization the host provides. Each message of a protected rpc authenticates from its own
+ * headers with the binding's descriptor; then the listed `middleware` runs, the input decodes,
+ * and the implementation's `authorize` and the handler run, as on every surface. The layer
+ * fails as the builders do and needs at startup what they need; per request it owes, as router
+ * request markers, what the authorizers and handlers read until its `middleware` provides it,
+ * or, over a router-mounted protocol, the route's request context.
+ * A protected action's identity comes from its authentication alone.
  *
- * The server serves its own copy of the binding's group, whose payloads, successes and errors
- * are the actions' JSON and which carries no native middleware: the protocol decodes a payload before
- * any middleware runs, and answers one that does not decode with a defect, so each handler
- * runs the authentication and the middleware itself, then decodes the input. A defect is
- * logged with its cause, reported to the call's `ErrorReporter`s, and answered as its
- * request's generic failure, never failing the connection's other calls; a declared failure is
- * the caller's answer, and not reported.
+ * **Gotchas**
  *
- * The layer fails as the builders do, needs at startup what they need, and per request what
- * each implementation's authorization and the handlers of the actions it serves need, as
- * router request markers, until its `middleware` provides them: over a router-mounted
- * protocol, the route's request context does too. The identity of a protected action is
- * provided by its authentication alone.
+ * - Provide the protocol to this layer, inside what `HttpRouter.serve` serves: `RpcServer.layerProtocolWebsocket` and `layerProtocolHttp` add their route to that router, and provided around `HttpRouter.serve` they leave `HttpRouter` owed.
+ * - An rpc the layer does not serve ends its call with `Unknown request tag`, as does every rpc of a second `ActionRpc.layer` given the same protocol, which never receives a message: serve a protocol's rpcs from one layer, or give the second a protocol on another path.
+ * - A declared error, or `InvalidInput` for input that does not decode, is the call's typed failure; a refusal is answered as `Action.Unauthenticated` and `Action.Forbidden` say; the socket stays open, so a token may expire under it and a client handles `Unauthenticated` itself.
+ * - A defect, an undeclared failure, a middleware that throws, or a success or an error that does not encode ends that call with an `Error` whose message is `Internal server error`, its cause logged and reported to the call's `ErrorReporter`s; the connection's other calls go on.
+ * - An `ErrorReporter` is given only what ends a call with `Internal server error`, never a declared failure, a refusal or `InvalidInput`, unlike `ActionHttp.layer`'s `Info`: an alert counting declared failures counts none from rpcs.
+ * - An rpc's credential is read from its headers alone: an API key `in: "query"` never reaches authentication.
+ * - Over a protocol with no router, such as `RpcServer.layerProtocolSocketServer` or `layerProtocolStdio`, there is no HTTP request or route: a provider publishing a `protectedResource` leaves `HttpRouter` owed, and a verifier yielding a request service leaves it owed.
  */
 export function layer<const B extends Any, const Apps extends Served>(
   binding: B,
@@ -443,9 +454,8 @@ export function layer(
 
 /**
  * What one call of an action `A` fails with, beside the binding's errors `E`: its declared and
- * built-in errors, and Effect's own `RpcClientError`. Input that does not encode is
- * `InvalidInput`, and nothing is sent; an answer that does not decode is a defect, as the
- * native client makes it.
+ * built-in errors, and Effect's own `RpcClientError` when the server could not be reached. An
+ * answer that does not decode is a defect, as the native client makes it.
  */
 export type MethodError<A extends Action.Any, E extends BindingError = never> =
   | A["error"][number]["Type"]
@@ -484,14 +494,17 @@ type NativeClient = { readonly [name: string]: NativeMethod | undefined };
 
 /**
  * Effect's native `RpcClient` for a binding, one method per action taking the action's input
- * directly: `client.greet({ name })`, as `ActionHttp.client`'s. The argument may be omitted
- * when `{}` is a valid input. Requires the native client `Protocol` and a `Scope`, as
- * `RpcClient.make` does; headers set with `RpcClient.withHeaders` around a call go with its
- * message. The native client itself stays available: `RpcClient.make(Rpc.group)`.
+ * directly: `client.greet({ name })`, as `ActionHttp.client`'s, the argument omitted when `{}`
+ * is a valid input, each call failing with its `MethodError`. Requires the native client
+ * `Protocol` and a `Scope`, as `RpcClient.make` does; headers set with `RpcClient.withHeaders`
+ * around a call go with its message. The native client stays available:
+ * `RpcClient.make(Rpc.group)`.
  *
- * A call fails with a declared error value (the action's own, the binding's, a built-in
- * `InvalidInput`, `Unauthenticated` or `Forbidden`, or on a protected rpc its descriptor's),
- * or with Effect's own `RpcClientError` when the server could not be reached.
+ * **Gotchas**
+ *
+ * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
+ * - A browser WebSocket cannot set an `Authorization` header on its upgrade, so under Bearer a protected call without its own token fails with `Unauthenticated`, `A bearer token is required.`: send the token on each call with `RpcClient.withHeaders`.
+ * - The socket belongs to the Layer providing the protocol, not to the `Scope` around the client: provided around one call, it opens a socket for that call alone.
  */
 export function client<const B extends Any>(
   binding: B,
@@ -515,7 +528,10 @@ export function client(
       binding.actions.map((action) => {
         const method = native[action.name];
 
-        if (method === undefined) throw new Error(`No client method for ${action.name}`);
+        if (method === undefined)
+          throw new Error(
+            `No client method for ${action.name} (use the binding \`ActionRpc.make\` returned, whose group holds this action's rpc)`,
+          );
 
         return [action.name, checked(action, (payload) => method(payload))];
       }),

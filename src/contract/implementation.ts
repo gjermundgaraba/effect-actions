@@ -3,7 +3,7 @@ import type { Scope } from "effect";
 import type * as Action from "./Action.js";
 import { Anyone, assertAuthentication, type Proving } from "./caller.js";
 import { projectedErrors } from "./declared.js";
-import { assertDistinct, assertOnce } from "./names.js";
+import { assertDistinct, assertOnce, heldOnce } from "./names.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 
 // Why: Random, not a counter: two installed copies of this module would each count from zero and
@@ -53,14 +53,12 @@ export const memoized = <S, E, R>(
 
 /**
  * Actions bound to their handlers and their authorizer: everything one `Action.implement` call
- * produced, one builder serving every surface.
- * The private fields make this class nominal: a structurally similar object, including one made by
+ * produced, one builder serving every surface. The private fields make this class nominal: a structurally similar object, including one made by
  * spreading an implementation, is not an implementation. Its type parameters may be written
  * out, as a package emitting declarations prints them: `A` its actions, `RequestServices` each
- * action name's handler's per-request requirements, `EX` and `RX` the failures and services of
+ * action name's handler's request-time requirements, `EX` and `RX` the failures and services of
  * its handlers' builder, `RA` what its authorizer reads per request, and `EAX` and `RAX` the
- * failures and services of the authorizer's builder. Public-only selections do not acquire
- * authorization. A plain authorization callback builds nothing.
+ * failures and services of the authorizer's builder.
  */
 export class Implementation<
   A extends Action.Any,
@@ -71,7 +69,7 @@ export class Implementation<
   EAX = never,
   RAX = never,
 > {
-  /** Type-only: each action's handler's per-request requirements. */
+  /** Type-only: each action's handler's request-time requirements. */
   declare readonly "~request": RequestServices;
   /** Type-only: what building its handlers fails with. */
   declare readonly "~buildError": EX;
@@ -117,8 +115,7 @@ export class Implementation<
   /**
    * The builders of `app`, its handlers' and its authorizer's, as a layer. Effect memoizes each
    * by reference within one layer graph, so every surface serving `app` there, and every
-   * implementation sharing its builder, shares one run. Static, so it stays off the
-   * public instance type.
+   * implementation sharing its builder, shares one run.
    */
   static layerOf(app: AnyImplementation): Layer.Layer<never, unknown, unknown> {
     const source = Implementation.own(app);
@@ -155,7 +152,7 @@ export class Implementation<
   private static own<App extends AnyImplementation>(app: App): App {
     if (!(#handlers in app)) {
       throw new Error(
-        "Not an implementation made by this Action.implement: is effect-actions installed twice?",
+        "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice",
       );
     }
 
@@ -301,8 +298,25 @@ export type Holding<App, Listed extends Action.Any> = App extends unknown
     : App
   : never;
 
+export const notHeld = {
+  byImplementation: {
+    why: "no implementation holds it",
+    fix: "pass the implementation holding it, or list the contract it implements",
+    holder: "they do not hold: list the one they hold",
+  },
+  byBinding: {
+    why: "the binding does not hold it",
+    fix: "add it to the binding's actions",
+    holder: "it does not hold: list the one it holds",
+  },
+} as const;
+
+/** The actions' names, joined; one whose name another listed contract shares is marked `(another contract)`. */
+const markingOthers = (actions: ReadonlyArray<Action.Any>, names: ReadonlySet<string>) =>
+  actions.map(({ name }) => (names.has(name) ? `${name} (another contract)` : name)).join(", ");
+
 export const assertHeld = (
-  why: string,
+  { why, fix, holder }: (typeof notHeld)[keyof typeof notHeld],
   listed: ReadonlyArray<Action.Any>,
   held: ReadonlyArray<Action.Any>,
 ): void => {
@@ -310,11 +324,10 @@ export const assertHeld = (
 
   if (missing.length > 0) {
     const names = new Set(held.map(({ name }) => name));
+    const sameName = missing.some(({ name }) => names.has(name));
 
     throw new Error(
-      `Listed in actions, but ${why}: ${missing
-        .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
-        .join(", ")}`,
+      `Listed in actions, but ${why}: ${markingOthers(missing, names)} (${fix}${sameName ? `; one marked (another contract) is a contract of that name ${holder}` : ""})`,
     );
   }
 };
@@ -326,7 +339,7 @@ export const select = (
   if (listed === undefined) return apps;
 
   assertHeld(
-    "no implementation holds it",
+    notHeld.byImplementation,
     listed,
     apps.flatMap((app) => app.actions),
   );
@@ -346,7 +359,7 @@ const servedBy = (
   apps: ReadonlyArray<AnyImplementation>,
   listed: ReadonlyArray<Action.Any> | undefined,
 ): ReadonlyArray<AnyImplementation> => {
-  if (listed !== undefined) assertHeld("the binding does not hold it", listed, bound);
+  if (listed !== undefined) assertHeld(notHeld.byBinding, listed, bound);
 
   const held = apps.flatMap((app) => app.actions);
   const served = select(apps, listed ?? bound.filter((action) => held.includes(action)));
@@ -359,15 +372,11 @@ const servedBy = (
     const names = new Set(bound.map(({ name }) => name));
 
     throw new Error(
-      `No action of these implementations is in this ${what}: ${
-        held
-          .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
-          .join(", ") || "none"
-      }`,
+      `No action of these implementations is in this ${what}: ${markingOthers(held, names) || "none"} (pass an implementation of a bound action, or bind one of these)`,
     );
   }
 
-  assertOnce("served action", actions);
+  assertOnce("served action", actions, heldOnce);
 
   return served;
 };
@@ -394,7 +403,9 @@ export const servingOf = <D extends Proving>(
   // Why: A binding spread with another descriptor, `{ ...binding, authentication }`, type-checks,
   // so what `make` checked no longer holds for it.
   assertAuthentication(actions, binding.authentication);
-  assertDistinct("middleware", options.middleware ?? [], (key) => key.key);
+  assertDistinct("middleware", options.middleware ?? [], (key) => key.key, {
+    fix: "list each middleware once",
+  });
 
   return {
     apps,

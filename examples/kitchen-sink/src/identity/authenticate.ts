@@ -26,10 +26,8 @@ const inService = Effect.gen(function* () {
   });
 });
 
-// As an OAuth protected resource the provider publishes discovery (RFC 9728) and names it in
-// every challenge, so an MCP client that gets a 401 finds where to sign in, asking for the read
-// scope first. The resource is the public URL, known only to the deployment: an Effect, read
-// when the provider is built.
+// The OAuth protected resource whose discovery the provider publishes, so an MCP client that
+// gets a 401 finds where to sign in, asking for the read scope first.
 const protectedResource = Effect.map(
   publicUrl,
   (url) =>
@@ -74,7 +72,7 @@ export const authenticateBearer = Authentication.layer(
 
 // `Session`'s provider: the same identity from another credential. Its verifier receives what
 // its scheme decodes, the cookie's value. A session belongs to one workspace, so it reads no
-// `Tenant`, and under a scheme other than Bearer there is no discovery and no step-up.
+// `Tenant`.
 export const authenticateSession = Authentication.layer(
   Session,
   Effect.gen(function* () {
