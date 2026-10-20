@@ -86,9 +86,10 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     provide to them, the calls, the routes, the alarm and `run`, so a publish adapter is one of
     the services. A stream rpc's handler returns `feed.subscribe(request, { initial, key })`:
     the subscriber's record is kept in the object's storage, keyed by its socket's id and its
-    request's, then `initial` is sent to the socket as one chunk as soon as it is read, so
-    nothing published after the read arrives before it, and the stream never ends; an `initial`
-    that fails ends the stream with its failure and drops the record.
+    request's, then `initial` is sent to the socket as one chunk as soon as it is read, Effect's
+    scheduler yields off from the read to the send, so nothing published after the read arrives
+    before it, and the stream never ends; an `initial` that fails ends the stream with its
+    failure and drops the record.
     `publish(rpc, value, { key })`, typed by the rpc's chunk, sends each subscriber of the rpc,
     or of the key, whose socket is open, the value as Effect's server sends a chunk, from any
     instance, so a value published after the object hibernated reaches a page subscribed

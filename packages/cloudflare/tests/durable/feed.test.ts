@@ -77,7 +77,7 @@ const subscribe = (
 
 const gated = (
   { client }: Connection,
-  gate: "during" | "after",
+  gate: "during" | "after" | "long",
   initial: ReadonlyArray<number>,
   failInitial = false,
 ) =>
@@ -188,6 +188,20 @@ describe("Feed", () => {
         const stub = fresh();
         const calls = yield* callsOf(stub);
         const subscriber = yield* gated(yield* connect(stub), "after", [10]);
+
+        yield* calls.publishWhenRead({ value: 99 });
+
+        expect(yield* subscriber.next(2)).toEqual([10, 99]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "sends a subscriber its initial values before a value published once they are read, though reading them outlasts a fiber's turn",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const subscriber = yield* gated(yield* connect(stub), "long", [10]);
 
         yield* calls.publishWhenRead({ value: 99 });
 

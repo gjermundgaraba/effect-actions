@@ -9,7 +9,7 @@ export const Ticks = Rpc.make("ticks", {
     key: Schema.NullOr(Schema.String),
     initial: Schema.Array(Schema.Int),
     failInitial: Schema.optional(Schema.Boolean),
-    gate: Schema.optional(Schema.Literals(["during", "after"])),
+    gate: Schema.optional(Schema.Literals(["during", "after", "long"])),
   },
   success: Schema.Int,
   error: NoInitial,
@@ -69,6 +69,16 @@ export const feedRoutes = RpcServer.layer(FeedRpcs).pipe(
                   isRead.pipe(Effect.andThen(Deferred.await(released)), Effect.andThen(values)),
                 ),
                 Match.when("after", () => Effect.tap(values, () => isRead)),
+                Match.when("long", () =>
+                  Effect.tap(values, () =>
+                    Effect.andThen(
+                      isRead,
+                      Effect.forEach(Array.from({ length: 20_000 }), () => Effect.void, {
+                        discard: true,
+                      }),
+                    ),
+                  ),
+                ),
                 Match.orElse(() => values),
               ),
               key: keyOf(key),

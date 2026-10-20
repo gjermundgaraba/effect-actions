@@ -313,6 +313,16 @@ void streams.tail;
 
 ActionDurableObject.make({ services: PluginStore.layer, calls: pluginCalls });
 
+ActionDurableObject.handlers(ctx, {
+  services: Layer.succeed(PluginStore)({
+    installed: () => undefined,
+    install: () => 0,
+    started: () => [],
+    start: () => undefined,
+  }),
+  calls: pluginCalls,
+});
+
 ActionDurableObject.make({ services: startup, calls: stubCalls });
 
 ActionDurableObject.make({

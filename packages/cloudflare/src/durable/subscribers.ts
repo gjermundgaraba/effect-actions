@@ -1,4 +1,4 @@
-import { Context, Effect, Exit, Layer, Option, Schema, Stream } from "effect";
+import { Context, Effect, Exit, Layer, Option, References, Schema, Stream } from "effect";
 import { Rpc, type RpcMessage, RpcSchema, RpcSerialization } from "effect/rpc";
 import { recordKey, records, socketOfRecord, socketTag, Subscription } from "./feed.js";
 import { State } from "./state.js";
@@ -19,6 +19,10 @@ export interface SubscribeOptions<A, E = never, R = never> {
    * What the subscriber is sent first, as one chunk, to its socket as soon as it is read, its
    * record kept before: an Effect of the values, such as a store's read of what came after the
    * client's last, or the values. Nothing is sent first without it, or when it is empty.
+   *
+   * **Gotchas**
+   *
+   * - It runs with Effect's scheduler yields off, the fibers it forks included, so its values are sent in the step that reads them: a long synchronous read holds the object's other fibers until it is sent.
    */
   readonly initial?: ReadonlyArray<A> | Effect.Effect<ReadonlyArray<A>, E, R> | undefined;
   /**
@@ -227,11 +231,12 @@ export class Feed extends Context.Service<
               // send its client chunks for it. The values go to the socket as they are read, as a
               // publish sends, rather than through the server, which writes them on a later
               // step: a publish landing in between would reach the client first, and a feed of
-              // snapshots would show the older one last.
+              // snapshots would show the older one last. For the same reason the read and the send
+              // run with no scheduler yield, which would let a publish in between them.
               return yield* Effect.onError(
                 Effect.map(Effect.isEffect(initial) ? initial : Effect.succeed(initial), (values) =>
                   sendInitial(request, values),
-                ),
+                ).pipe(Effect.provideService(References.PreventSchedulerYield, true)),
                 () => drop(key),
               );
             }),
