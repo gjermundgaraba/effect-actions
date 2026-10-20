@@ -39,7 +39,7 @@ export class PluginHost extends DurableObject<Env> implements PluginHostRpc {
   next event builds again from nothing. Nothing holds the object while it builds, so a build
   has no time limit of its own.
 - Without `routes`, `fetch` answers 404, and nothing else is built for it.
-- Without `alarm`, `handlers`' `alarm` runs nothing. Define the class's `alarm` only when it has
+- Without `alarm`, `handlers`' `alarm` runs nothing, once the object is built. Define the class's `alarm` only when it has
   one: workerd refuses `storage.setAlarm` on a class without an `alarm` method.
 - The socket handlers dispatch through `Sockets` and resolve for a socket no protocol accepted.
   To answer sockets of your own, accept them with a tag, and in `webSocketMessage` answer those

@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { Context, Deferred, Effect, Exit, Layer, Scope } from "effect";
+import { Cause, Context, Deferred, Effect, Exit, Layer, Scope } from "effect";
 import {
   FetchHttpClient,
   HttpRouter,
@@ -185,14 +185,22 @@ export const handlers = <
   // memo map whose scope stays open, and its protocols registered with its `Sockets`, so a
   // failure closes its scope and drops the promise holding its memo map and `Sockets`, and the
   // next event builds from nothing.
-  const built = () =>
-    (building ??= Effect.runPromise(
-      Effect.onError(build, () =>
-        Effect.sync(() => {
-          building = undefined;
-        }),
-      ),
-    ));
+  const built = () => {
+    if (building === undefined) {
+      // Why: a build failing before its first async step has failed when `runPromiseExit`
+      // returns, so a reset inside the build would run before the promise is held, and hold the
+      // failure for good; a `then` callback runs only after.
+      building = Effect.runPromiseExit(build).then((exit) => {
+        if (Exit.isSuccess(exit)) return exit.value;
+
+        building = undefined;
+
+        return Promise.reject(Cause.squash(exit.cause));
+      });
+    }
+
+    return building;
+  };
 
   const run = async <A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>): Promise<A> => {
     const { context } = await built();

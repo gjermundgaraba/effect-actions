@@ -10,6 +10,8 @@ import {
   ownSocketRoutes,
   ownTag,
   prefixedRoutes,
+  readyAtOnce,
+  readyRoute,
   retriedRoutes,
   routerProvidedRoutes,
   routes,
@@ -94,6 +96,11 @@ export class OwnSockets extends ActionDurableObject.make({
 export class Retried extends ActionDurableObject.make({
   services: Layer.mergeAll(startup, Builds.layer),
   routes: retriedRoutes,
+}) {}
+
+export class RetriedAtOnce extends ActionDurableObject.make({
+  services: readyAtOnce,
+  routes: readyRoute,
 }) {}
 
 export class Hosted extends DurableObject {

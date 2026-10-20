@@ -272,3 +272,15 @@ export const retriedRoutes = Layer.mergeAll(buildsRoutes, readyOnceSet).pipe(
     ),
   ),
 );
+
+export const readyAtOnce = Layer.effectDiscard(
+  Effect.flatMap(Effect.service(ActionDurableObject.State), ({ storage }) =>
+    storage.kv.get(readyKey) === true ? Effect.void : Effect.fail(new NotReady({ key: readyKey })),
+  ),
+);
+
+export const readyRoute = HttpRouter.add(
+  "GET",
+  "/ready",
+  Effect.succeed(HttpServerResponse.text("ready")),
+);

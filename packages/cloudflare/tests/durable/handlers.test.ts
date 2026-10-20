@@ -166,6 +166,26 @@ describe("handlers", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("builds again on the event after a build that failed before it awaited anything", () =>
+    Effect.gen(function* () {
+      const stub = env.RETRIED_AT_ONCE.getByName("retried-at-once");
+
+      const failure = yield* Effect.flip(
+        Effect.tryPromise(() => stub.fetch("https://object/ready")),
+      );
+
+      expect(String(failure.cause)).toContain("NotReady");
+
+      yield* Effect.promise(() =>
+        runInDurableObject(stub, (_, state) => state.storage.kv.put(readyKey, true)),
+      );
+
+      const response = yield* Effect.promise(() => stub.fetch("https://object/ready"));
+
+      expect(yield* textOf(response)).toBe("ready");
+    }),
+  );
+
   it.effect(
     "runs the alarm on a woken instance once the routes are built, sharing their services",
     () =>
