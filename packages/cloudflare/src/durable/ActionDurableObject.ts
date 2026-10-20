@@ -67,7 +67,7 @@ export interface Options<
    * again after every eviction, and never finalized. They may require `State`, `Sockets` and
    * the services; a request-time requirement must be provided by their middleware or
    * authentication, or be one of the services or a service they provide themselves. Without
-   * them, `fetch` answers 404, and the socket handlers resolve at once.
+   * them, `fetch` answers 404, and there are no socket handlers, as no protocol accepts a socket.
    *
    * **Gotchas**
    *
@@ -113,13 +113,11 @@ type HandlerOf<K extends keyof DurableObject<Cloudflare.Env>> = NonNullable<
 >;
 
 /**
- * The handlers `handlers` returns, each taking the runtime's own arguments, so a Durable Object
- * class delegates those it serves this way and writes the others itself. Each awaits the
- * object's build, started by the first of them called, and rejects with its failure.
+ * The socket handlers of an object serving `routes`, each taking the runtime's own arguments:
+ * `handlers` returns them, and the class `make` returns defines them, only when the options have
+ * `routes`, since without them no protocol accepts a socket.
  */
-export interface Handlers<S = never> {
-  /** Serves the routes, or answers 404 when there are none. */
-  fetch(...args: Parameters<HandlerOf<"fetch">>): Promise<Response>;
+export interface SocketHandlers {
   /**
    * Hands the message to the protocol whose socket it is, through `Sockets`, and resolves for a
    * socket no protocol accepted.
@@ -129,6 +127,17 @@ export interface Handlers<S = never> {
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   /** Ends the socket's protocol client, and resolves for a socket no protocol accepted. */
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
+}
+
+/**
+ * The handlers `handlers` returns, each taking the runtime's own arguments, so a Durable Object
+ * class delegates those it serves this way and writes the others itself: the socket handlers
+ * only with `routes`. Each awaits the object's build, started by the first of them called, and
+ * rejects with its failure.
+ */
+export interface Handlers<S = never> extends SocketHandlers {
+  /** Serves the routes, or answers 404 when there are none. */
+  fetch(...args: Parameters<HandlerOf<"fetch">>): Promise<Response>;
   /**
    * Answers one call over the object's stub, the messages `layerStubClient` sends, with its
    * responses, as values, through `Calls`, once every request it carries has its exit, or
@@ -151,28 +160,7 @@ export interface Handlers<S = never> {
 const notFound: (request: Request) => Promise<Response> = () =>
   Promise.resolve(new Response(null, { status: 404 }));
 
-/**
- * The object's lifecycle, for a Durable Object class that cannot extend the one `make` returns:
- * given its `ctx`, the handlers that build `services`, then `calls`, with `Calls` and
- * `layerStub`, and `routes`, with `Sockets`, once per instance, on the first event, with `State`
- * provided, and share that one build across every event, which awaits it. `fetch` serves the
- * routes, the socket handlers dispatch through `Sockets`, `effectActionsRpc` through `Calls`,
- * `alarm` runs `alarm` and `run` runs an Effect in the object. Delegate the handlers the class
- * serves this way, as methods: `effectActionsRpc(request: StubRequest)` returning the
- * handlers' own.
- *
- * **Gotchas**
- *
- * - An instance lasts until the runtime evicts it, and the next event builds everything again on a new one: nothing the services, calls or routes build is finalized, and in-memory state is lost, so keep state in storage.
- * - A build that fails rejects every event awaiting it, each with the same failure, and is dropped with all it built: the next event builds again.
- * - Nothing holds the object while it builds, so a build has no time limit of its own.
- * - Without `routes`, `fetch` answers 404 and the socket handlers resolve at once, building nothing; without `calls`, `effectActionsRpc` rejects at once, naming the option.
- * - A socket the class accepts itself, with `State`'s `acceptWebSocket`, carries no protocol's tag: the socket handlers resolve for it, so the class answers the sockets carrying its own tag in `webSocketMessage` and delegates the rest.
- * - The class defines `alarm` only when it has one: workerd refuses `storage.setAlarm` on a class without an `alarm` method.
- *
- * Guide: `docs/ActionDurableObject-own-class.md` in this package.
- */
-export const handlers = <
+const handlersOf = <
   S = never,
   SE = never,
   SR extends State = never,
@@ -187,7 +175,7 @@ export const handlers = <
 >(
   ctx: DurableObjectState,
   options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
-): Handlers<S> => {
+) => {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
   const services = (options.services ?? Layer.empty) as Layer.Layer<S, SE, State>;
 
@@ -318,11 +306,7 @@ export const handlers = <
     );
   };
 
-  // Why: without routes no protocol accepted a socket, so its events resolve without a build,
-  // as `Sockets` answers `false` for a socket no protocol accepted.
   const dispatch = async (event: (sockets: Sockets["Service"]) => Effect.Effect<boolean>) => {
-    if (routes === undefined) return;
-
     const { sockets } = await built();
 
     if (sockets !== undefined) await Effect.runPromise(event(sockets));
@@ -347,26 +331,88 @@ export const handlers = <
     | undefined = options.alarm;
 
   return {
-    fetch: async (request) => (await built()).serve(request),
-    webSocketMessage: (socket, message) => dispatch((sockets) => sockets.message(socket, message)),
-    webSocketClose: (socket) => dispatch((sockets) => sockets.close(socket)),
-    webSocketError: (socket) => dispatch((sockets) => sockets.error(socket)),
-    effectActionsRpc: call,
-    alarm: (info) => run(onAlarm?.(info) ?? Effect.void),
-    run,
+    common: {
+      fetch: async (request) => (await built()).serve(request),
+      effectActionsRpc: call,
+      alarm: (info) => run(onAlarm?.(info) ?? Effect.void),
+      run,
+    } satisfies Omit<Handlers<S>, keyof SocketHandlers>,
+    sockets: {
+      webSocketMessage: (socket, message) =>
+        dispatch((sockets) => sockets.message(socket, message)),
+      webSocketClose: (socket) => dispatch((sockets) => sockets.close(socket)),
+      webSocketError: (socket) => dispatch((sockets) => sockets.error(socket)),
+    } satisfies SocketHandlers,
   };
+};
+
+/** What `handlers` returns given `RT`, its `routes`: the socket handlers only with routes. */
+type HandlersOf<S, RT> = [RT] extends [Layer.Any]
+  ? Handlers<S>
+  : Omit<Handlers<S>, keyof SocketHandlers>;
+
+/** What `make` returns given `RT`, its `routes`: the socket handlers only with routes. */
+type InstanceOf<S, Env, RT> = [RT] extends [Layer.Any]
+  ? SocketHandlers & Instance<S, Env>
+  : Instance<S, Env>;
+
+/**
+ * The object's lifecycle, for a Durable Object class that cannot extend the one `make` returns:
+ * given its `ctx`, the handlers that build `services`, then `calls`, with `Calls` and
+ * `layerStub`, and `routes`, with `Sockets`, once per instance, on the first event, with `State`
+ * provided, and share that one build across every event, which awaits it. `fetch` serves the
+ * routes, the socket handlers dispatch through `Sockets`, `effectActionsRpc` through `Calls`,
+ * `alarm` runs `alarm` and `run` runs an Effect in the object. Delegate the handlers the class
+ * serves this way, as methods: `effectActionsRpc(request: StubRequest)` returning the
+ * handlers' own.
+ *
+ * **Gotchas**
+ *
+ * - An instance lasts until the runtime evicts it, and the next event builds everything again on a new one: nothing the services, calls or routes build is finalized, and in-memory state is lost, so keep state in storage.
+ * - A build that fails rejects every event awaiting it, each with the same failure, and is dropped with all it built: the next event builds again.
+ * - Nothing holds the object while it builds, so a build has no time limit of its own.
+ * - Without `routes`, `fetch` answers 404 and it returns no socket handlers: a class accepting its own sockets defines its own; without `calls`, `effectActionsRpc` rejects at once, naming the option.
+ * - A socket the class accepts itself, with `State`'s `acceptWebSocket`, carries no protocol's tag: the socket handlers resolve for it, so the class answers the sockets carrying its own tag in `webSocketMessage` and delegates the rest.
+ * - The class defines `alarm` only when it has one: workerd refuses `storage.setAlarm` on a class without an `alarm` method.
+ *
+ * Guide: `docs/ActionDurableObject-own-class.md` in this package.
+ */
+export const handlers = <
+  S = never,
+  SE = never,
+  SR extends State = never,
+  A = never,
+  E = never,
+  R extends Allowed<A, S> = never,
+  AE = never,
+  AR extends S | State | Scope.Scope = never,
+  CA = never,
+  CE = never,
+  CR extends RpcServer.Protocol | S | State = never,
+  RT = undefined,
+>(
+  ctx: DurableObjectState,
+  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR> & { readonly routes?: RT },
+): HandlersOf<S, RT> => {
+  const { common, sockets } = handlersOf(ctx, options);
+
+  // Why: without routes no protocol accepts a socket, so the socket handlers would only wake a
+  // hibernating object for a socket the class accepted itself, and a close handler that does
+  // not reciprocate leaves the client a 1006 under a `compatibility_date` before `2026-04-07`:
+  // a class accepting its own sockets defines its own.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Options-dependent handlers: the socket handlers are left out exactly when there are no routes, as `HandlersOf` states.
+  return (options.routes === undefined ? common : { ...common, ...sockets }) as HandlersOf<S, RT>;
 };
 
 /**
  * An instance of a class `make` returns, with the handlers it defines, each taking the
- * runtime's own arguments, so a class extending it overrides them as Cloudflare declares them.
- * Its `alarm` is Cloudflare's own, optional: a class made without one has none.
+ * runtime's own arguments, so a class extending it overrides them as Cloudflare declares them,
+ * its `env` the one its `services` function takes. Its `alarm` and socket handlers are
+ * Cloudflare's own, optional: a class made without `alarm` has none, and one made with `routes`
+ * has the `SocketHandlers` in its type too.
  */
-export interface Instance<S = never> extends DurableObject<Cloudflare.Env> {
+export interface Instance<S = never, Env = Cloudflare.Env> extends DurableObject<Env> {
   fetch(...args: Parameters<HandlerOf<"fetch">>): Promise<Response>;
-  webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>): Promise<void>;
-  webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
-  webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
   /** `Handlers`' `effectActionsRpc`: what `layerStubClient` and `client` call. */
   effectActionsRpc(request: StubRequest): ReturnType<Handlers["effectActionsRpc"]>;
   /**
@@ -397,16 +443,18 @@ export function make<
   CA = never,
   CE = never,
   CR extends RpcServer.Protocol | S | State = never,
+  Env = Cloudflare.Env,
+  RT = undefined,
 >(
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
     /**
      * The object's startup services, as `handlers`' `services`, returned by a function of the
      * instance's `env`, `this.env`: a service reads a binding or a variable from the `env` it
-     * is given.
+     * is given, whose type, the function's parameter's, is the class's `env`.
      */
-    readonly services: (env: Cloudflare.Env) => Layer.Layer<S, SE, SR>;
-  },
-): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S>;
+    readonly services: (env: Env) => Layer.Layer<S, SE, SR>;
+  } & { readonly routes?: RT },
+): new (ctx: DurableObjectState, env: Env) => InstanceOf<S, Env, RT>;
 // Why: a `services` function of `env` has its parameter inferred, which fixes the type
 // parameters a default gives before the function's return gives `S`, so its overload has none
 // for the services. The Layer overload stays last, since TypeScript reports an argument of
@@ -422,7 +470,8 @@ export function make<
  *
  * **Gotchas**
  *
- * - A socket no protocol accepted, such as one a class extending it accepts itself, is left to that class: the three socket handlers resolve for it, so an override answers its own sockets and calls `super` for the rest.
+ * - Made with `routes`, it has the `SocketHandlers`, which resolve for a socket no protocol accepted, such as one a class extending it accepts itself: an override answers its own sockets and calls `super` for the rest. Made without, it has none, and a class accepting its own sockets defines its own.
+ * - A `services` function's parameter type is the class's `env`, so an application's own `Env` needs no augmenting of `Cloudflare.Env`; with a Layer, the class's `env` is `Cloudflare.Env`.
  * - Made without `alarm`, the class has no `alarm` handler: workerd refuses `storage.setAlarm` on it with `Your Durable Object class must have an alarm() handler`, and celld 0.6.2 accepts the call and drops the alarm when it is due.
  * - Made with one, `alarm` is optional in `Instance`'s type, as Cloudflare declares it: an override reaches it with `await super.alarm?.(info)`.
  *
@@ -441,9 +490,10 @@ export function make<
   CA = never,
   CE = never,
   CR extends RpcServer.Protocol | S | State = never,
+  RT = undefined,
 >(
-  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
-): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S>;
+  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR> & { readonly routes?: RT },
+): new (ctx: DurableObjectState, env: Cloudflare.Env) => InstanceOf<S, Cloudflare.Env, RT>;
 export function make<
   S = never,
   SE = never,
@@ -473,48 +523,78 @@ export function make<
     | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, S | State | Scope.Scope>)
     | undefined = options.alarm;
 
+  // Why: the handlers are an instance's, reached by the subclasses below, which add the socket
+  // handlers and the alarm only when the options have them; a private field is not visible to a
+  // subclass, and a public one would be callable over the stub.
+  const objects = new WeakMap<DurableObject<Cloudflare.Env>, Handlers<S>>();
+
+  const objectOf = (instance: DurableObject<Cloudflare.Env>) => {
+    const object = objects.get(instance);
+
+    if (object === undefined) throw new Error("Unreachable: an instance's handlers are built");
+
+    return object;
+  };
+
   class ActionDurableObject extends DurableObject<Cloudflare.Env> {
-    readonly #object = handlers<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>(this.ctx, {
-      ...options,
-      services: servicesOf(this.env),
-    });
+    constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
+      super(ctx, env);
+
+      const { common, sockets } = handlersOf<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>(this.ctx, {
+        ...options,
+        services: servicesOf(this.env),
+      });
+
+      objects.set(this, { ...common, ...sockets });
+    }
 
     override fetch(...args: Parameters<HandlerOf<"fetch">>) {
-      return this.#object.fetch(...args);
-    }
-
-    override webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>) {
-      return this.#object.webSocketMessage(...args);
-    }
-
-    override webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>) {
-      return this.#object.webSocketClose(...args);
-    }
-
-    override webSocketError(...args: Parameters<HandlerOf<"webSocketError">>) {
-      return this.#object.webSocketError(...args);
+      return objectOf(this).fetch(...args);
     }
 
     effectActionsRpc(request: StubRequest) {
-      return this.#object.effectActionsRpc(request);
+      return objectOf(this).effectActionsRpc(request);
     }
 
     run<A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>) {
-      return this.#object.run(effect);
+      return objectOf(this).run(effect);
     }
   }
+
+  // Why: without routes no protocol accepts a socket, so socket handlers would only wake a
+  // hibernating object for a socket the class accepted itself, and a close handler that does not
+  // reciprocate leaves the client a 1006 under a `compatibility_date` before `2026-04-07`: a
+  // class accepting its own sockets defines its own.
+  const Served =
+    options.routes === undefined
+      ? ActionDurableObject
+      : class extends ActionDurableObject {
+          override webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>) {
+            return objectOf(this).webSocketMessage(...args);
+          }
+
+          override webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>) {
+            return objectOf(this).webSocketClose(...args);
+          }
+
+          override webSocketError(...args: Parameters<HandlerOf<"webSocketError">>) {
+            return objectOf(this).webSocketError(...args);
+          }
+        };
 
   // Why: workerd refuses `storage.setAlarm` on an instance without an `alarm` handler, at the call
   // that sets it, so a class made without one has none, where a handler rejecting every
   // alarm would fail later, retried. Made with one, `alarm` is a method of a class extending the
   // base, so a class extending that overrides it and calls it through `super`.
-  return onAlarm === undefined
-    ? ActionDurableObject
-    : class extends ActionDurableObject {
-        override alarm(info?: AlarmInvocationInfo) {
-          return this.run(onAlarm(info));
+  return (
+    onAlarm === undefined
+      ? Served
+      : class extends Served {
+          override alarm(info?: AlarmInvocationInfo) {
+            return this.run(onAlarm(info));
+          }
         }
-      };
+  ) as new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S>;
 }
 
 /**

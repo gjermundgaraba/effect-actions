@@ -30,7 +30,17 @@ import {
 import type { Hosted, Manual, Plain, PluginHost } from "../worker.js";
 
 expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqualTypeOf<
-  new (ctx: DurableObjectState, env: Cloudflare.Env) => ActionDurableObject.Instance
+  new (
+    ctx: DurableObjectState,
+    env: Cloudflare.Env,
+  ) => ActionDurableObject.SocketHandlers & ActionDurableObject.Instance
+>();
+
+expectTypeOf(ActionDurableObject.make({ calls: stubCalls, services: startup })).toEqualTypeOf<
+  new (
+    ctx: DurableObjectState,
+    env: Cloudflare.Env,
+  ) => ActionDurableObject.Instance<Layer.Success<typeof startup>>
 >();
 
 expectTypeOf<ActionDurableObject.Instance>().toExtend<DurableObject<Cloudflare.Env>>();
@@ -62,9 +72,17 @@ expectTypeOf<ReturnType<ActionDurableObject.Sockets["Service"]["message"]>>().to
   Effect.Effect<boolean>
 >();
 
-expectTypeOf(ActionDurableObject.handlers(ctx, { services: Builds.layer })).toEqualTypeOf<
-  ActionDurableObject.Handlers<Builds>
+const unrouted = ActionDurableObject.handlers(ctx, { services: Builds.layer });
+
+expectTypeOf(unrouted).toEqualTypeOf<
+  Omit<
+    ActionDurableObject.Handlers<Builds>,
+    "webSocketMessage" | "webSocketClose" | "webSocketError"
+  >
 >();
+
+// @ts-expect-error -- Without routes no protocol accepts a socket: there is no socket handler.
+void unrouted.webSocketClose;
 
 expectTypeOf(
   ActionDurableObject.handlers(ctx, { services: startup, routes: socketRoutes }),
@@ -121,7 +139,7 @@ export class WithCloseCode extends ActionDurableObject.make({
   }
 }
 
-expectTypeOf<Parameters<ActionDurableObject.Instance["webSocketError"]>>().toEqualTypeOf<
+expectTypeOf<Parameters<ActionDurableObject.SocketHandlers["webSocketError"]>>().toEqualTypeOf<
   Parameters<NonNullable<DurableObject<Cloudflare.Env>["webSocketError"]>>
 >();
 
@@ -189,6 +207,35 @@ const FromEnv = ActionDurableObject.make({
 declare const fromEnv: InstanceType<typeof FromEnv>;
 
 expectTypeOf(fromEnv.run(Effect.service(Greeting))).toEqualTypeOf<Promise<string>>();
+
+interface AppEnv {
+  readonly GREETING: string;
+  readonly APP: DurableObjectNamespace<App>;
+}
+
+class App extends ActionDurableObject.make({
+  services: (env: AppEnv) => Layer.succeed(Greeting, env.GREETING),
+}) {
+  peer() {
+    return this.env.APP.getByName("peer");
+  }
+}
+
+expectTypeOf<ConstructorParameters<typeof App>[1]>().toEqualTypeOf<AppEnv>();
+
+expectTypeOf<ReturnType<App["peer"]>>().toEqualTypeOf<DurableObjectStub<App>>();
+
+expectTypeOf<ConstructorParameters<typeof FromEnv>[1]>().toEqualTypeOf<Cloudflare.Env>();
+
+expectTypeOf<ConstructorParameters<typeof WithServices>[1]>().toEqualTypeOf<Cloudflare.Env>();
+
+declare const app: App;
+
+expectTypeOf<App["webSocketClose"]>().toEqualTypeOf<DurableObject<AppEnv>["webSocketClose"]>();
+
+expectTypeOf(app).not.toMatchTypeOf<ActionDurableObject.SocketHandlers>();
+
+expectTypeOf(fromEnv).toMatchTypeOf<ActionDurableObject.SocketHandlers>();
 
 ActionDurableObject.make({
   // @ts-expect-error -- The services a function of env returns are built at startup too.

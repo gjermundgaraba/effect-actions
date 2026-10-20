@@ -98,8 +98,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     startup services, with `State`, then `calls`, given `Calls` and `layerStub()`, and
     `routes`, given `Sockets`; every event awaits that build, and a failed build is dropped with
     all it built, so the next event builds again. `fetch` serves the routes, or answers 404
-    without them; the socket handlers dispatch through `Sockets`, resolving for a socket no
-    protocol accepted, and at once, building nothing, without routes; `effectActionsRpc`
+    without them; the socket handlers, `SocketHandlers`, returned only with routes, since
+    without them no protocol accepts a socket, dispatch through `Sockets`, resolving for a
+    socket no protocol accepted; `effectActionsRpc`
     dispatches through `Calls`, and rejects at once without calls; `alarm(info)` runs `alarm`,
     given the runtime's retry count, through `run`; and `run(effect)` runs an Effect in the
     object with the services, `State` and a `Scope`, for the class's own methods. The calls,
@@ -108,10 +109,13 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     alone. An object serving only calls builds no router. `disableLogger` leaves out the
     request logger.
   - `make(options)` is a Durable Object class delegating every handler and `run` to `handlers`,
-    for a class extending it to override; made without `alarm`, it has no `alarm` handler. Its
-    `services` may be a function of the instance's `env`, called as each instance is
-    constructed, so a class reading its bindings extends it without a constructor or delegates
-    of its own.
+    for a class extending it to override; made without `alarm`, it has no `alarm` handler, and
+    made without `routes`, no socket handlers, so it never wakes for a socket the class
+    accepted itself, and a class accepting its own defines them. Its `services` may be a
+    function of the instance's `env`, called as each instance is constructed, so a class
+    reading its bindings extends it without a constructor or delegates of its own; the
+    function's parameter type is the class's `env`, so an application passes its own `Env`
+    without augmenting `Cloudflare.Env`.
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.

@@ -257,30 +257,49 @@ describe("handlers", () => {
       );
     }),
   );
-  it.effect("answers socket events without routes and calls without calls, building nothing", () =>
+  it.effect(
+    "has no socket handlers without routes, and refuses calls without calls, building nothing",
+    () =>
+      Effect.gen(function* () {
+        const { handlers, refused, builds } = yield* Effect.promise(() =>
+          runInDurableObject(env.HOSTED.getByName("nothing-served"), async (_, state) => {
+            const object = ActionDurableObject.handlers(state, { services: Builds.layer });
+
+            return {
+              handlers: Object.keys(object).toSorted(),
+              refused: await object.effectActionsRpc([]).then(() => "answered", String),
+              builds: await state.storage.get("builds"),
+            };
+          }),
+        );
+
+        expect(handlers).toEqual(["alarm", "effectActionsRpc", "fetch", "run"]);
+        expect(refused).toContain("serves no rpcs over its stub");
+        expect(builds).toBeUndefined();
+      }),
+  );
+
+  it.effect("defines socket handlers on a class made with routes alone", () =>
     Effect.gen(function* () {
-      const { refused, builds } = yield* Effect.promise(() =>
-        runInDurableObject(env.HOSTED.getByName("nothing-served"), async (_, state) => {
-          const object = ActionDurableObject.handlers(state, { services: Builds.layer });
-          const { 1: server } = new WebSocketPair();
+      const names = ["webSocketMessage", "webSocketClose", "webSocketError"];
 
-          state.acceptWebSocket(server);
-
-          await object.webSocketMessage(server, "{}");
-          await object.webSocketClose(server, 1000, "", true);
-          await object.webSocketError(server, new Error("lost"));
-
-          return {
-            refused: await object.effectActionsRpc([]).then(() => "answered", String),
-            builds: await state.storage.get("builds"),
-          };
-        }),
+      const unrouted = yield* Effect.promise(() =>
+        runInDurableObject(env.STREAMED.getByName("no-routes"), (instance) =>
+          names.map((name) => name in instance),
+        ),
       );
 
-      expect(refused).toContain("serves no rpcs over its stub");
-      expect(builds).toBeUndefined();
+      const routed = yield* Effect.promise(() =>
+        runInDurableObject(env.ROOM.getByName("routes"), (instance) =>
+          names.map((name) => name in instance),
+        ),
+      );
+
+      expect(unrouted).toEqual([false, false, false]);
+      expect(routed).toEqual([true, true, true]);
     }),
   );
+
   it.effect("dies on a call through a Calls no protocol registered with", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
