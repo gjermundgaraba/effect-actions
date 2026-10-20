@@ -33,7 +33,7 @@ export class PluginHost extends ActionDurableObject.make({
   ([chat-rooms/src/routes.ts](../examples/chat-rooms/src/routes.ts)).
 - The calls build once per instance, after the services and beside the routes, in one memo map:
   an implementation the services build is the one they serve. They may require the protocol,
-  `State` and the services. A requirement of each call must be provided by the group's
+  which `make` gives them, never one of their own, `State` and the services. A requirement of each call must be provided by the group's
   middleware or be one of those: nothing else reaches a call.
 - An object serving only calls builds no router and no request logger: without `routes`, its
   `fetch` answers 404.

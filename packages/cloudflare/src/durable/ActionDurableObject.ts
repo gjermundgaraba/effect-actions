@@ -68,7 +68,7 @@ export interface Options<
    * What the object serves over its stub, on `effectActionsRpc`: an rpc server, such as
    * `RpcServer.layer(group)` with its handlers, or `ActionRpc.layer`, given `layerStub` as its
    * protocol. Built after the services, beside the routes, again after every eviction, and never
-   * finalized. It may require the protocol, `Calls`, `State` and the services; every call's own
+   * finalized. It may require the protocol, `State` and the services; every call's own
    * requirement must be provided by its middleware or be one of those. Without it, a call over
    * the stub rejects at once.
    */
@@ -153,7 +153,7 @@ export const handlers = <
   AR extends S | State | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | Calls | S | State = never,
+  CR extends RpcServer.Protocol | S | State = never,
 >(
   ctx: DurableObjectState,
   options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
@@ -372,7 +372,7 @@ export const make = <
   AR extends S | State | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | Calls | S | State = never,
+  CR extends RpcServer.Protocol | S | State = never,
 >(
   options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S> => {

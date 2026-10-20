@@ -27,9 +27,10 @@ in the core's `*-failures.md` pages.
   were served on a protocol of their own, or, in a class composing the primitives itself, built
   with another `Calls` than the one the method dispatches through. Leave the protocol to
   `handlers`, or merge `Calls.layer` out of the calls once, in the runtime's Layer.
-- `Two ActionDurableObject.layerStub protocols of one object`, when the calls build: two servers
-  in one object were each given a stub protocol, and one method answers both. Serve one group,
-  `group.merge(other)`.
+- `Two ActionDurableObject.layerStub protocols of one object`, when the calls build: in a class
+  composing the primitives itself, two servers were each given a `layerStub()` registering
+  with one `Calls`, and one method answers both. Serve one group, `group.merge(other)`. `make`
+  and `handlers` give their `calls` the one protocol themselves, and the types refuse another.
 - `The rpc <tag> streams, and ActionDurableObject.layerStub is unary`, a defect at the call, or
   `... ActionDurableObject.client is unary` as `client` is made: a stub call answers once.
   Serve the stream over `layerWebSocket`, or return the collected values.

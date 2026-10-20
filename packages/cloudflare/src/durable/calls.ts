@@ -54,7 +54,9 @@ export class Calls extends Context.Service<
                   "No ActionDurableObject.layerStub protocol registered with this object's Calls: serve a group over it, such as make's calls option",
                 ),
               )
-            : Effect.andThen(running, registry.serve(request)),
+            : Deferred.isDoneUnsafe(registry.running)
+              ? registry.serve(request)
+              : Effect.andThen(running, registry.serve(request)),
         ),
     });
 

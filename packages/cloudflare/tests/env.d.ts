@@ -17,7 +17,6 @@ declare namespace Cloudflare {
     readonly PANE_HOST: DurableObjectNamespace<import("./worker.ts").PaneHost>;
     readonly STUBBED: DurableObjectNamespace<import("./worker.ts").Stubbed>;
     readonly STREAMED: DurableObjectNamespace<import("./worker.ts").Streamed>;
-    readonly TWO_PROTOCOLS: DurableObjectNamespace<import("./worker.ts").TwoProtocols>;
     readonly UNSERVED: DurableObjectNamespace<import("./worker.ts").Unserved>;
   }
 }

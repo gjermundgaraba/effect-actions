@@ -1,5 +1,5 @@
-import { env, evictDurableObject } from "cloudflare:test";
-import { Cause, Effect, Exit, Stream } from "effect";
+import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { Cause, Effect, Exit, Layer, Stream } from "effect";
 import { RpcClient, RpcClientError } from "effect/rpc";
 import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
@@ -12,6 +12,7 @@ import {
   PluginNotFound,
   PluginRpcs,
   StreamRpcs,
+  twoProtocolCalls,
 } from "../support/hosts.js";
 
 const plugin = (id: string) => env.PLUGIN_HOST.getByName(id);
@@ -158,14 +159,23 @@ describe("layerStubClient", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refuses a second stub protocol in one object as its calls build", () =>
+  it.effect("refuses a second stub protocol registering with one Calls as it builds", () =>
     Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        Effect.flatMap(rawOver(env.TWO_PROTOCOLS.getByName("two")), (client) => client.panes()),
+      const failure = yield* Effect.promise(() =>
+        runInDurableObject(env.PLUGIN_HOST.getByName("two"), (_, state) =>
+          Effect.runPromiseExit(
+            Layer.build(
+              twoProtocolCalls.pipe(
+                Layer.provideMerge(ActionDurableObject.Calls.layer),
+                Layer.provide(Layer.succeed(ActionDurableObject.State, state)),
+              ),
+            ).pipe(Effect.scoped),
+          ).then((exit) => String(defectOf(exit))),
+        ),
       );
 
-      expect(String(error.reason.cause)).toContain("Two ActionDurableObject.layerStub protocols");
-    }).pipe(Effect.scoped),
+      expect(failure).toContain("Two ActionDurableObject.layerStub protocols");
+    }),
   );
 
   it.effect("serves an ActionRpc contract, authenticated from each call's headers", () =>

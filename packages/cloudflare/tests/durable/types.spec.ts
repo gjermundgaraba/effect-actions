@@ -251,6 +251,12 @@ ActionDurableObject.make({
 
 ActionDurableObject.make({
   services: PluginStore.layer,
+  // @ts-expect-error -- The object provides its calls' one stub protocol: a second would collide with it.
+  calls: pluginCalls.pipe(Layer.provide(ActionDurableObject.layerStub())),
+});
+
+ActionDurableObject.make({
+  services: PluginStore.layer,
   // @ts-expect-error -- The stub's protocol serves calls, never routes, which no Calls reaches.
   routes: pluginCalls.pipe(Layer.provide(ActionDurableObject.layerStub())),
 });

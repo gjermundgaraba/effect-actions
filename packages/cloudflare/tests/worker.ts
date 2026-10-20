@@ -20,14 +20,7 @@ import {
   startup,
   stubCalls,
 } from "./support/app.js";
-import {
-  Hosts,
-  paneCalls,
-  pluginCalls,
-  PluginStore,
-  streamCalls,
-  twoProtocolCalls,
-} from "./support/hosts.js";
+import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./support/hosts.js";
 
 export class Plain extends DurableObject {
   readonly web = HttpRouter.toWebHandler(
@@ -201,7 +194,5 @@ export class Stubbed extends ActionDurableObject.make({ services: startup, calls
 export class Streamed extends ActionDurableObject.make({ calls: streamCalls }) {}
 
 export class Unserved extends ActionDurableObject.make({ calls: Layer.empty }) {}
-
-export class TwoProtocols extends ActionDurableObject.make({ calls: twoProtocolCalls }) {}
 
 export default { fetch: () => new Response(null, { status: 404 }) };
