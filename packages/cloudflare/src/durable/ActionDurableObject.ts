@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { Cause, Context, Effect, Exit, Layer, Predicate, Scope } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Scope } from "effect";
 import {
   FetchHttpClient,
   HttpEffect,
@@ -44,6 +44,30 @@ type Allowed<A, S> =
   | HttpRouter.Request<"GlobalRequires", ServedPerRequest | A | S>
   | HttpRouter.Request<"Error", unknown>
   | HttpRouter.Request<"GlobalError", unknown>;
+
+// Why: the signatures consumers call write these unions out, since a diagnostic prints an
+// alias by its name, which tells no one what the option may require.
+type ServicesRequire = State | Feed;
+
+type RunRequires<S> = S | State | Feed | Scope.Scope;
+
+type CallsRequire<S> = RpcServer.Protocol | S | State | Feed;
+
+// Why: each option's own types, checked by the signatures that take it, are dropped below
+// them: a Layer's outputs to `never` and its errors to `unknown`, its requirements kept.
+type ErasedOptions<S> = Options<
+  S,
+  unknown,
+  ServicesRequire,
+  never,
+  unknown,
+  never,
+  unknown,
+  RunRequires<S>,
+  never,
+  unknown,
+  CallsRequire<S>
+>;
 
 /** `handlers`' and `make`'s options. */
 export interface Options<
@@ -172,33 +196,27 @@ export interface Handlers<S = never> extends SocketHandlers {
   run<A, E>(effect: Effect.Effect<A, E, S | State | Feed | Scope.Scope>): Promise<A>;
 }
 
-const notFound: (request: Request) => Promise<Response> = () =>
-  Promise.resolve(new Response(null, { status: 404 }));
+const refuse = () =>
+  Promise.reject(
+    new Error(
+      "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer",
+    ),
+  );
 
-const handlersOf = <
-  S = never,
-  SE = never,
-  SR extends State | Feed = never,
-  A = never,
-  E = never,
-  R extends Allowed<A, S> = never,
-  AE = never,
-  AR extends S | State | Feed | Scope.Scope = never,
-  CA = never,
-  CE = never,
-  CR extends RpcServer.Protocol | S | State | Feed = never,
->(
+const handlersKey: unique symbol = Symbol("effect-actions-cloudflare/ActionDurableObject/handlers");
+
+const handlersOf = <S>(
   ctx: DurableObjectState,
-  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
+  options: Omit<ErasedOptions<S>, "routes"> & { readonly routes?: Layer.Any | undefined },
 ) => {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
-  const services = (options.services ?? Layer.empty) as Layer.Layer<S, SE, State | Feed>;
+  const services = (options.services ?? Layer.empty) as Layer.Layer<S, unknown, ServicesRequire>;
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every requirement against `Allowed<A, S>`, the built services supply `S`, merged in, and the router gives each request the services the routes provide, `A`, and its request markers, as `HttpRouter.toWebHandler`'s types say; only those subtractions, which a generic `A` and `S` keep unresolved, are erased.
   const routes = options.routes as
     | Layer.Layer<
         never,
-        E,
+        unknown,
         | State
         | Feed
         | Sockets
@@ -232,11 +250,11 @@ const handlersOf = <
 
       // Why: `Calls` and `Sockets` are built with what registers with them, the calls and the
       // routes, so an object without either has no registry no protocol could fill.
-      const served =
+      const call =
         calls === undefined
-          ? undefined
-          : Context.get(
-              yield* Layer.buildWithMemoMap(
+          ? refuse
+          : yield* Effect.map(
+              Layer.buildWithMemoMap(
                 calls.pipe(
                   Layer.provide(layerStub()),
                   Layer.provideMerge(Calls.layer),
@@ -245,11 +263,17 @@ const handlersOf = <
                 memoMap,
                 scope,
               ),
-              Calls,
+              (served) => (request: StubRequest) =>
+                Effect.runPromise(Context.get(served, Calls).call(request)),
             );
 
       if (routes === undefined) {
-        return { context, calls: served, sockets: undefined, serve: notFound };
+        return {
+          context,
+          call,
+          sockets: undefined,
+          serve: () => Promise.resolve(new Response(null, { status: 404 })),
+        };
       }
 
       const sockets = yield* Layer.buildWithMemoMap(
@@ -283,7 +307,7 @@ const handlersOf = <
         ),
       );
 
-      return { context, calls: served, sockets: Context.get(sockets, Sockets), serve };
+      return { context, call, sockets: Context.get(sockets, Sockets), serve };
     });
 
     return yield* built.pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))));
@@ -314,9 +338,7 @@ const handlersOf = <
     return building;
   };
 
-  const run = async <A, E>(
-    effect: Effect.Effect<A, E, S | State | Feed | Scope.Scope>,
-  ): Promise<A> => {
+  const run = async <A, E>(effect: Effect.Effect<A, E, RunRequires<S>>): Promise<A> => {
     const { context } = await built();
 
     // Why: the services' context carries the instance's memo map, which `run` gave every effect
@@ -342,30 +364,13 @@ const handlersOf = <
     if (sockets !== undefined) await Effect.runPromise(event(sockets));
   };
 
-  const call = async (request: StubRequest) => {
-    if (calls === undefined) {
-      throw new Error(
-        "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer",
-      );
-    }
-
-    const { calls: served } = await built();
-
-    if (served === undefined) throw new Error("Unreachable: calls were given, and built");
-
-    return Effect.runPromise(served.call(request));
-  };
-
-  const onAlarm:
-    | ((
-        info: AlarmInvocationInfo | undefined,
-      ) => Effect.Effect<void, AE, S | State | Feed | Scope.Scope>)
-    | undefined = options.alarm;
+  const onAlarm = options.alarm;
 
   return {
     common: {
       fetch: async (request) => (await built()).serve(request),
-      effectActionsRpc: call,
+      effectActionsRpc:
+        calls === undefined ? refuse : async (request) => (await built()).call(request),
       alarm: (info) => run(onAlarm?.(info) ?? Effect.void),
       run,
     } satisfies Omit<Handlers<S>, keyof SocketHandlers>,
@@ -457,10 +462,8 @@ export interface Instance<S = never, Env = Cloudflare.Env> extends DurableObject
 }
 
 /**
- * `make` with `services` a function of the instance's `env`, called as each instance is
- * constructed: the class `make` returns otherwise, with the services the function returns. A
- * call matching neither form is reported against the Layer form: see
- * `docs/ActionDurableObject-failures.md`.
+ * `make` with `services`, a function of the instance's `env`, whose parameter's type is the
+ * class's `env`: the class `make` returns otherwise.
  *
  * Guide: `docs/ActionDurableObject.md` in this package.
  */
@@ -482,19 +485,21 @@ export function make<
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
     /**
      * The object's startup services, as `handlers`' `services`, returned by a function of the
-     * instance's `env`, `this.env`: a service reads a binding or a variable from the `env` it
-     * is given, whose type, the function's parameter's, is the class's `env`.
+     * instance's `env`, `this.env`, called as each instance is constructed: a service reads a
+     * binding or a variable from the `env` it is given, whose type, the function's parameter's,
+     * is the class's `env`.
      */
     readonly services: (env: Env) => Layer.Layer<S, SE, SR>;
-  } & { readonly routes?: RT },
+    readonly routes?: RT;
+  },
 ): new (ctx: DurableObjectState, env: Env) => InstanceOf<S, Env, RT>;
 // Why: a `services` function of `env` has its parameter inferred, which fixes the type
-// parameters a default gives before the function's return gives `S`, so its overload has none
-// for the services. The Layer overload stays last, since TypeScript reports an argument of
-// neither form against the last overload alone.
+// parameters a default gives before the function's return gives `S`, so its signature has none
+// for the services. The other stays last, since TypeScript reports an argument matching neither
+// against the last alone.
 /**
  * A Durable Object class delegating every handler, and `run`, to `handlers` over its own `ctx`,
- * with `services`, or what a function of its `env` returns: it serves `routes` on `fetch`, the
+ * with the services `services` returns for its `env`: it serves `routes` on `fetch`, the
  * sockets their protocols accept on `webSocketMessage`, `webSocketClose` and `webSocketError`,
  * and `calls` on `effectActionsRpc`, the method a caller's `layerStubClient` or `client` calls
  * over the stub, and runs `alarm`. Export it, or a class extending it, under the name the
@@ -504,7 +509,7 @@ export function make<
  * **Gotchas**
  *
  * - Made with `routes`, it has the `SocketHandlers`, which resolve for a socket no protocol accepted, such as one a class extending it accepts itself: an override answers its own sockets and calls `super` for the rest. Made without, it has none, and a class accepting its own sockets defines its own.
- * - A `services` function's parameter type is the class's `env`, so an application's own `Env` needs no augmenting of `Cloudflare.Env`; with a Layer, the class's `env` is `Cloudflare.Env`.
+ * - The `services` function's parameter type is the class's `env`, so an application's own `Env` needs no augmenting of `Cloudflare.Env`; services reading no `env` are `() => layer`, and a class without one has `Cloudflare.Env`.
  * - Made without `alarm`, the class has no `alarm` handler: workerd refuses `storage.setAlarm` on it with `Your Durable Object class must have an alarm() handler`, and celld 0.6.2 accepts the call and drops the alarm when it is due.
  * - Made with one, `alarm` is optional in `Instance`'s type, as Cloudflare declares it: an override reaches it with `await super.alarm?.(info)`.
  *
@@ -525,95 +530,63 @@ export function make<
   CR extends RpcServer.Protocol | S | State | Feed = never,
   RT = undefined,
 >(
-  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR> & { readonly routes?: RT },
-): new (ctx: DurableObjectState, env: Cloudflare.Env) => InstanceOf<S, Cloudflare.Env, RT>;
-export function make<
-  S = never,
-  SE = never,
-  SR extends State | Feed = never,
-  A = never,
-  E = never,
-  R extends Allowed<A, S> = never,
-  AE = never,
-  AR extends S | State | Feed | Scope.Scope = never,
-  CA = never,
-  CE = never,
-  CR extends RpcServer.Protocol | S | State | Feed = never,
->(
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
+    readonly services?: ((env: Cloudflare.Env) => Layer.Layer<S, SE, SR>) | undefined;
+    readonly routes?: RT;
+  },
+): new (ctx: DurableObjectState, env: Cloudflare.Env) => InstanceOf<S, Cloudflare.Env, RT>;
+export function make<S>(
+  options: Omit<ErasedOptions<S>, "services" | "routes"> & {
+    readonly routes?: Layer.Any | undefined;
     readonly services?:
-      | Layer.Layer<S, SE, SR>
-      | ((env: Cloudflare.Env) => Layer.Layer<S, SE, SR>)
+      | ((env: Cloudflare.Env) => Layer.Layer<S, unknown, ServicesRequire>)
       | undefined;
   },
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S> {
-  const { services } = options;
-
-  const servicesOf = (env: Cloudflare.Env) =>
-    Predicate.isFunction(services) ? services(env) : services;
-
-  const onAlarm:
-    | ((
-        info: AlarmInvocationInfo | undefined,
-      ) => Effect.Effect<void, AE, S | State | Feed | Scope.Scope>)
-    | undefined = options.alarm;
-
-  // Why: the handlers are an instance's, reached by the subclasses below, which add the socket
-  // handlers and the alarm only when the options have them; a private field is not visible to a
-  // subclass, and a public one would be callable over the stub.
-  const objects = new WeakMap<DurableObject<Cloudflare.Env>, Handlers<S>>();
-
-  const objectOf = (instance: DurableObject<Cloudflare.Env>) => {
-    const object = objects.get(instance);
-
-    if (object === undefined) throw new Error("Unreachable: an instance's handlers are built");
-
-    return object;
-  };
-
   class ActionDurableObject extends DurableObject<Cloudflare.Env> {
+    // Why: the handlers are an instance's, reached by the subclasses below, which add the socket
+    // handlers and the alarm only when the options have them; a private field is not visible to
+    // a subclass, and a property a string names would be callable over the stub.
+    readonly [handlersKey]: Handlers<S>;
+
     constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
       super(ctx, env);
 
-      const { common, sockets } = handlersOf<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>(this.ctx, {
+      const { common, sockets } = handlersOf(this.ctx, {
         ...options,
-        services: servicesOf(this.env),
+        services: options.services?.(this.env),
       });
 
-      objects.set(this, { ...common, ...sockets });
+      this[handlersKey] = { ...common, ...sockets };
     }
 
     override fetch(...args: Parameters<HandlerOf<"fetch">>) {
-      return objectOf(this).fetch(...args);
+      return this[handlersKey].fetch(...args);
     }
 
     effectActionsRpc(request: StubRequest) {
-      return objectOf(this).effectActionsRpc(request);
+      return this[handlersKey].effectActionsRpc(request);
     }
 
-    run<A, E>(effect: Effect.Effect<A, E, S | State | Feed | Scope.Scope>) {
-      return objectOf(this).run(effect);
+    run<A, E>(effect: Effect.Effect<A, E, RunRequires<S>>) {
+      return this[handlersKey].run(effect);
     }
   }
 
-  // Why: without routes no protocol accepts a socket, so socket handlers would only wake a
-  // hibernating object for a socket the class accepted itself, and a close handler that does not
-  // reciprocate leaves the client a 1006 under a `compatibility_date` before `2026-04-07`: a
-  // class accepting its own sockets defines its own.
   const Served =
     options.routes === undefined
       ? ActionDurableObject
       : class extends ActionDurableObject {
           override webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>) {
-            return objectOf(this).webSocketMessage(...args);
+            return this[handlersKey].webSocketMessage(...args);
           }
 
           override webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>) {
-            return objectOf(this).webSocketClose(...args);
+            return this[handlersKey].webSocketClose(...args);
           }
 
           override webSocketError(...args: Parameters<HandlerOf<"webSocketError">>) {
-            return objectOf(this).webSocketError(...args);
+            return this[handlersKey].webSocketError(...args);
           }
         };
 
@@ -621,15 +594,16 @@ export function make<
   // that sets it, so a class made without one has none, where a handler rejecting every
   // alarm would fail later, retried. Made with one, `alarm` is a method of a class extending the
   // base, so a class extending that overrides it and calls it through `super`.
-  return (
-    onAlarm === undefined
+  const Made =
+    options.alarm === undefined
       ? Served
       : class extends Served {
           override alarm(info?: AlarmInvocationInfo) {
-            return this.run(onAlarm(info));
+            return this[handlersKey].alarm(info);
           }
-        }
-  ) as new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S>;
+        };
+
+  return Made;
 }
 
 /**

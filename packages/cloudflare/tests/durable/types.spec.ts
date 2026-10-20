@@ -43,7 +43,7 @@ expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqual
   ) => ActionDurableObject.SocketHandlers & ActionDurableObject.Instance
 >();
 
-expectTypeOf(ActionDurableObject.make({ calls: stubCalls, services: startup })).toEqualTypeOf<
+expectTypeOf(ActionDurableObject.make({ calls: stubCalls, services: () => startup })).toEqualTypeOf<
   new (
     ctx: DurableObjectState,
     env: Cloudflare.Env,
@@ -122,7 +122,7 @@ ActionDurableObject.handlers(ctx, {
 });
 
 ActionDurableObject.make({
-  services: startup,
+  services: () => startup,
   routes: socketRoutes,
   alarm: () => Effect.asVoid(Effect.all([Effect.service(ActionDurableObject.State), Effect.scope])),
 });
@@ -138,7 +138,7 @@ ActionDurableObject.make({
 });
 
 export class WithCloseCode extends ActionDurableObject.make({
-  services: startup,
+  services: () => startup,
   routes: socketRoutes,
 }) {
   override webSocketClose(socket: WebSocket, code: number, reason: string, wasClean: boolean) {
@@ -165,7 +165,7 @@ ActionDurableObject.make({
 });
 
 ActionDurableObject.make({
-  services: startup,
+  services: () => startup,
   routes: socketRoutes,
   // @ts-expect-error -- The alarm has no caller unless it names one itself.
   alarm: () => Effect.asVoid(Effect.service(CurrentUser)),
@@ -187,11 +187,14 @@ ActionDurableObject.make({
 
 ActionDurableObject.make({
   // @ts-expect-error -- The services are built at startup, where no request has a caller.
-  services: Layer.effect(Builds)(Effect.as(Effect.service(CurrentUser), 1)),
+  services: () => Layer.effect(Builds)(Effect.as(Effect.service(CurrentUser), 1)),
   routes: Layer.empty,
 });
 
-const WithServices = ActionDurableObject.make({ services: Builds.layer, routes: buildsRoutes });
+const WithServices = ActionDurableObject.make({
+  services: () => Builds.layer,
+  routes: buildsRoutes,
+});
 
 declare const withServices: InstanceType<typeof WithServices>;
 
@@ -201,7 +204,7 @@ expectTypeOf(withServices.run(Effect.service(Builds))).toEqualTypeOf<Promise<num
 void withServices.run(Effect.service(CurrentUser));
 
 ActionDurableObject.make({
-  services: Builds.layer,
+  services: () => Builds.layer,
   routes: buildsRoutes,
   alarm: () => Effect.asVoid(Effect.service(Builds)),
 });
@@ -317,7 +320,7 @@ expectTypeOf(streams.head()).toEqualTypeOf<Effect.Effect<string>>();
 // @ts-expect-error -- An rpc that streams has no method over the stub, which answers once.
 void streams.tail;
 
-ActionDurableObject.make({ services: PluginStore.layer, calls: pluginCalls });
+ActionDurableObject.make({ services: () => PluginStore.layer, calls: pluginCalls });
 
 ActionDurableObject.handlers(ctx, {
   services: Layer.succeed(PluginStore)({
@@ -329,7 +332,7 @@ ActionDurableObject.handlers(ctx, {
   calls: pluginCalls,
 });
 
-ActionDurableObject.make({ services: startup, calls: stubCalls });
+ActionDurableObject.make({ services: () => startup, calls: stubCalls });
 
 ActionDurableObject.make({
   // @ts-expect-error -- The group's handlers are the calls' to provide.
@@ -342,19 +345,19 @@ ActionDurableObject.make({
 });
 
 ActionDurableObject.make({
-  services: startup,
+  services: () => startup,
   // @ts-expect-error -- A protected contract's authentication is the calls' to provide.
   calls: ActionRpc.layer(Rpc, implementation),
 });
 
 ActionDurableObject.make({
-  services: PluginStore.layer,
+  services: () => PluginStore.layer,
   // @ts-expect-error -- The object provides its calls' one stub protocol: a second would collide with it.
   calls: pluginCalls.pipe(Layer.provide(ActionDurableObject.layerStub())),
 });
 
 ActionDurableObject.make({
-  services: PluginStore.layer,
+  services: () => PluginStore.layer,
   // @ts-expect-error -- The stub's protocol serves calls, never routes, which no Calls reaches.
   routes: pluginCalls.pipe(Layer.provide(ActionDurableObject.layerStub())),
 });
@@ -369,7 +372,7 @@ expectTypeOf(ActionDurableObject.Calls.layer).toEqualTypeOf<
 
 const published = Layer.merge(Announcer.layer, Gate.layer);
 
-const Published = ActionDurableObject.make({ services: published, calls: feedCalls });
+const Published = ActionDurableObject.make({ services: () => published, calls: feedCalls });
 
 expectTypeOf(Published).toEqualTypeOf<
   new (
@@ -385,7 +388,8 @@ export const handledPublisher = (ctx: DurableObjectState) =>
 
 ActionDurableObject.make({
   // @ts-expect-error -- The services may require State and Feed alone.
-  services: Announcer.layer.pipe(Layer.provideMerge(Layer.effectDiscard(Effect.service(Greeting)))),
+  services: () =>
+    Announcer.layer.pipe(Layer.provideMerge(Layer.effectDiscard(Effect.service(Greeting)))),
 });
 
 class Offset extends Context.Service<Offset, number>()("types/Offset") {}

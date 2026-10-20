@@ -1,7 +1,7 @@
 # ActionDurableObject in a class of your own
 
 A class with methods, sockets or handlers of its own extends the one `make` returns and
-overrides them, its `services` a function of its `env` when they read its bindings
+overrides them, its `services` a function of its `env`
 ([ActionDurableObject.md](ActionDurableObject.md)). This page is for a class that cannot: one
 extending another base class, or holding its own runtime. It serves actions through the
 primitives `make` is built from. A message the library throws says its fix; for workerd's, a

@@ -86,6 +86,9 @@ export class Calls extends Context.Service<
  * them, where JSON would encode them again. An `Exit`, a `Cause` and an `Option` encode to their
  * tagged objects, a class instance to its fields.
  */
+// Why: `toCodecIso` types its codec without the services its schema's transformations still
+// require, and `CodecFor` names them, as Effect's own JSON serialization casts `toCodecJson`, so
+// a server and a client owe the services their values need to encode and decode.
 export const codecFor = Schema.toCodecIso as RpcSerialization.CodecFor;
 
 const encodeDefect = Schema.encodeSync(codecFor(Schema.Defect()));

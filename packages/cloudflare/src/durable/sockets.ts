@@ -64,6 +64,8 @@ export class Sockets extends Context.Service<
         ...state.getWebSockets().map((socket) => socketIdOf(state.getTags(socket)) + 1),
       );
 
+      // Why: stored as each id is given, before its socket is accepted, so no eviction, however
+      // soon, lets a later instance give that id again: an upgrade costs one storage write.
       const allocate = Effect.suspend(() => {
         const id = next++;
 

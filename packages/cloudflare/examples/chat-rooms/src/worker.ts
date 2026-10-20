@@ -16,7 +16,7 @@ import { lobbyRoutes, roomCalls, roomRoutes } from "./routes.js";
 // first event, again after every eviction. The alarm expires old messages; `post` sets it. It
 // reads the store the instance built for the calls and routes.
 export class ChatRoom extends ActionDurableObject.make({
-  services: Layer.mergeAll(layerSql, layerRoom),
+  services: () => Layer.mergeAll(layerSql, layerRoom),
   routes: roomRoutes,
   calls: roomCalls,
   alarm: () => MessageStore.use((store) => store.expire),

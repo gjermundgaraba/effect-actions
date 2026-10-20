@@ -166,8 +166,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   - `make(options)` is a Durable Object class delegating every handler and `run` to `handlers`,
     for a class extending it to override; made without `alarm`, it has no `alarm` handler, and
     made without `routes`, no socket handlers, so it never wakes for a socket the class
-    accepted itself, and a class accepting its own defines them. Its `services` may be a
-    function of the instance's `env`, called as each instance is constructed, so a class
+    accepted itself, and a class accepting its own defines them. Its `services` is a
+    function of the instance's `env`, `() => layer` for services reading none, called as
+    each instance is constructed, so a class
     reading its bindings extends it without a constructor or delegates of its own; the
     function's parameter type is the class's `env`, so an application passes its own `Env`
     without augmenting `Cloudflare.Env`.

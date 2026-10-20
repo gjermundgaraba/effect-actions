@@ -40,13 +40,13 @@ export class Plain extends DurableObject {
 }
 
 export class Room extends ActionDurableObject.make({
-  services: startup,
+  services: () => startup,
   routes: socketRoutes,
   alarm: () => alarm,
 }) {}
 
 export class Extended extends ActionDurableObject.make({
-  services: startup,
+  services: () => startup,
   routes: socketRoutes,
   alarm: () => alarm,
 }) {
@@ -67,12 +67,12 @@ export class Broken extends ActionDurableObject.make({
 }) {}
 
 export class BrokenServices extends ActionDurableObject.make({
-  services: Layer.effectDiscard(Effect.fail(new Unreachable({ store: "services" }))),
+  services: () => Layer.effectDiscard(Effect.fail(new Unreachable({ store: "services" }))),
   routes: Layer.empty,
 }) {}
 
 export class Counted extends ActionDurableObject.make({
-  services: Builds.layer,
+  services: () => Builds.layer,
   routes: buildsRoutes.pipe(Layer.provide(slowUpstream)),
   alarm: () => buildsAlarm,
 }) {
@@ -86,7 +86,7 @@ export class Counted extends ActionDurableObject.make({
 }
 
 export class OwnSockets extends ActionDurableObject.make({
-  services: startup,
+  services: () => startup,
   routes: ownSocketRoutes,
 }) {
   override webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
@@ -99,12 +99,12 @@ export class OwnSockets extends ActionDurableObject.make({
 }
 
 export class Retried extends ActionDurableObject.make({
-  services: Layer.mergeAll(startup, Builds.layer),
+  services: () => Layer.mergeAll(startup, Builds.layer),
   routes: retriedRoutes,
 }) {}
 
 export class RetriedAtOnce extends ActionDurableObject.make({
-  services: readyAtOnce,
+  services: () => readyAtOnce,
   routes: readyRoute,
 }) {}
 
@@ -183,16 +183,19 @@ export class Manual extends DurableObject {
 }
 
 export class PluginHost extends ActionDurableObject.make({
-  services: PluginStore.layer,
+  services: () => PluginStore.layer,
   calls: pluginCalls,
 }) {}
 
 export class PaneHost extends ActionDurableObject.make({
-  services: Hosts.layer,
+  services: () => Hosts.layer,
   calls: paneCalls,
 }) {}
 
-export class Stubbed extends ActionDurableObject.make({ services: startup, calls: stubCalls }) {}
+export class Stubbed extends ActionDurableObject.make({
+  services: () => startup,
+  calls: stubCalls,
+}) {}
 
 export class Streamed extends ActionDurableObject.make({ calls: streamCalls }) {}
 
@@ -222,7 +225,7 @@ export class Delegating extends DurableObject {
 }
 
 export class Fed extends ActionDurableObject.make({
-  services: Layer.merge(Announcer.layer, Gate.layer),
+  services: () => Layer.merge(Announcer.layer, Gate.layer),
   routes: feedRoutes,
   calls: feedCalls,
 }) {}

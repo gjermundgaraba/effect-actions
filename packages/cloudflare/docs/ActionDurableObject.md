@@ -44,7 +44,7 @@ import { lobbyRoutes, roomCalls, roomRoutes } from "./routes.js";
 // first event, again after every eviction. The alarm expires old messages; `post` sets it. It
 // reads the store the instance built for the calls and routes.
 export class ChatRoom extends ActionDurableObject.make({
-  services: Layer.mergeAll(layerSql, layerRoom),
+  services: () => Layer.mergeAll(layerSql, layerRoom),
   routes: roomRoutes,
   calls: roomCalls,
   alarm: () => MessageStore.use((store) => store.expire),
@@ -80,7 +80,7 @@ export default {
 SQLite migration. The rules of each option, when it builds and what it may require, are on
 `ActionDurableObject.Options`; what an instance builds, and when again, on
 `ActionDurableObject.handlers`; the class itself on `ActionDurableObject.make`, whose
-`services` may be a function of the instance's `env` for services reading its bindings.
+`services` is a function of the instance's `env`, `() => layer` for services reading none.
 
 - A service read from the object is a Layer requiring `State`: a store over its SQLite
   database ([chat-rooms/src/platform/sql-store.ts](../examples/chat-rooms/src/platform/sql-store.ts)),
