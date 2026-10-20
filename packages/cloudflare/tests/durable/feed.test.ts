@@ -500,7 +500,7 @@ describe("Feed", () => {
   );
 
   it.effect(
-    "completes a subscriber ended while its initial values are read, sending them not",
+    "completes a subscriber ended while its initial values are read, interrupting a read that never returns, sending nothing",
     () =>
       Effect.gen(function* () {
         const stub = fresh();
@@ -513,7 +513,28 @@ describe("Feed", () => {
         yield* connection.client.ping();
 
         expect(connection.chunks).toEqual([]);
+        expect(yield* calls.finalized()).toBe(1);
       }).pipe(Effect.scoped),
+  );
+
+  it.effect("completes a subscriber ended while its initial values encode, sending them not", () =>
+    Effect.gen(function* () {
+      const stub = fresh();
+      const calls = yield* callsOf(stub);
+      const connection = yield* connect(stub);
+
+      const subscriber = yield* Effect.forkScoped(Stream.runCollect(connection.client.heldTicks()));
+
+      yield* calls.endWhenEncoding();
+
+      const values = yield* Fiber.join(subscriber);
+
+      yield* connection.client.ping();
+
+      expect(Array.from(values)).toEqual([]);
+      expect(connection.chunks).toEqual([]);
+      expect(yield* calls.finalized()).toBe(1);
+    }).pipe(Effect.scoped),
   );
 
   it.effect(

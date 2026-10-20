@@ -184,7 +184,7 @@ const exitOf = (rpc: Rpc.Any) =>
  * - The stream `subscribe` returns is a handle on the call, not its values, which go to the socket as `publish` sends them: an operator applied to it, such as `Stream.map`, sees none, so transform a value before publishing it, or give subscribers a `key`.
  * - At least once across the join, never lost: a value published while `initial` is read may arrive before it and again in it, never after it out of order, since `initial` goes to the socket as it is read; give values an id the client drops repeats by. A schema whose encoding is asynchronous yields between the read and the send, and a value published then arrives before the snapshot.
  * - A subscriber whose `initial` fails ends with its failure, its record dropped; a value published while it was read reaches the client first, as one chunk its stream emits before it fails.
- * - `end` completes a live subscriber's stream through Effect's server, which runs its finalizers and answers its client, and answers a subscriber whose call hibernation dropped itself; one ended while its `initial` is read is sent nothing.
+ * - `end` completes a live subscriber's stream through Effect's server, which runs its finalizers and answers its client, and answers a subscriber whose call hibernation dropped itself; one ended while its `initial` is read or encoded is sent nothing, the read interrupted.
  * - Only a call over `layerWebSocket` subscribes: one over the stub or another protocol dies at once, `subscribes a call over layerWebSocket alone`.
  * - It serves the sockets of one `layerWebSocket` path, since a record names its rpc by tag alone and a group holds one rpc per tag, a later one replacing an earlier: an object whose routes serve two dies at each `subscribe`, `publish` and `end`, naming them, so serve every rpc that streams on one path.
  * - Access is checked once, as the call subscribes: a subscriber is published to until its socket closes, whatever becomes of its credential or membership, so end a member's subscribers, subscribed under a key of their own, with `end(rpc, { key })`, or close their socket from a handler, found with `State`'s `getWebSockets`.
@@ -192,7 +192,7 @@ const exitOf = (rpc: Rpc.Any) =>
  * - Effect's socket client fails every stream it runs when its socket drops, and a stream may end with a defect, from the server or a chunk the client cannot decode: a page observing only failures misses that end and shows a subscription that is gone, so it reads the stream's `Exit`, `Effect.exit` around its run, then subscribes again from the last value it holds, which `initial` sends on.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone or refusing the send; a socket closing while the object is evicted leaves its records until then.
  * - `storage.deleteAll()` drops every subscriber's record with the application's own data, silently: those subscribers get nothing more, so `end` them before wiping the object's storage.
- * - `publish` reads every subscriber's record from storage, one per open stream of every rpc, and one `publish` or `end` runs at a time, so each subscriber receives values in the order they were published.
+ * - `publish` encodes its value, then reads every subscriber's record from storage, one per open stream of every rpc, one `publish` or `end` sending at a time: a subscriber receives what is published after its `initial` was sent in the order the publishes finished encoding, the order of the calls for a schema that encodes synchronously; between a publish and `initial`, the join's rule above holds.
  * - A value that does not encode as the rpc's chunk is a defect.
  *
  * Guide: `docs/ActionDurableObject-feed.md` in this package.
@@ -285,18 +285,20 @@ export class Feed extends Context.Service<
         values: ReadonlyArray<Rpc.SuccessChunk<R>>,
       ) =>
         Effect.gen(function* () {
+          const chunk = values.length === 0 ? undefined : yield* encoderOf(request.rpc)(values);
+
+          // Why: an `end` interrupts this read once its latch's waiter runs, and an
+          // asynchronous encoding resuming before that would send its chunk after the end: a
+          // client whose access ended would still receive it.
           if (Deferred.isDoneUnsafe(ended)) return Stream.empty;
 
-          if (values.length > 0) {
-            const chunk = yield* encoderOf(request.rpc)(values);
+          if (
+            chunk !== undefined &&
+            !(yield* sendFrame(state, socket, chunkOf(request.requestId, chunk)))
+          ) {
+            yield* drop(key);
 
-            const sent = yield* sendFrame(state, socket, chunkOf(request.requestId, chunk));
-
-            if (!sent) {
-              yield* drop(key);
-
-              return Stream.empty;
-            }
+            return Stream.empty;
           }
 
           return Stream.fromEffectDrain(Deferred.await(ended));
@@ -342,6 +344,7 @@ export class Feed extends Context.Service<
               );
 
               const initial = options?.initial ?? [];
+              const read = Effect.isEffect(initial) ? initial : Effect.succeed(initial);
 
               // Why: the record is kept before `initial` is read, so nothing published meanwhile
               // is lost; a call whose `initial` fails has ended, and a record left behind would
@@ -349,30 +352,33 @@ export class Feed extends Context.Service<
               // publish sends, rather than through the server, which writes them on a later
               // step: a publish landing in between would reach the client first, and a feed of
               // snapshots would show the older one last. For the same reason the read and the send
-              // run with no scheduler yield, which would let a publish in between them.
+              // run with no scheduler yield, which would let a publish in between them. An `end`
+              // meanwhile interrupts them, so a read that never returns holds no call open.
               return yield* Effect.onError(
-                Effect.flatMap(
-                  Effect.isEffect(initial) ? initial : Effect.succeed(initial),
-                  (values) => sendInitial(request, socket, key, ended, values),
+                Effect.raceFirst(
+                  Effect.flatMap(read, (values) =>
+                    sendInitial(request, socket, key, ended, values),
+                  ),
+                  Effect.as(Deferred.await(ended), Stream.empty),
                 ).pipe(Effect.provideService(References.PreventSchedulerYield, true)),
                 () => drop(key),
               );
             }),
           ),
         publish: (rpc, value, options) =>
-          lock.withPermits(1)(
-            Effect.gen(function* () {
-              const values = yield* encoderOf(rpc)([value]);
-
-              for (const { storageKey, socket, requestId } of yield* subscribersOf(
-                rpc,
-                options?.key,
-              )) {
-                if (!(yield* sendFrame(state, socket, chunkOf(requestId, values)))) {
-                  yield* drop(storageKey);
+          Effect.flatMap(encoderOf(rpc)([value]), (values) =>
+            lock.withPermits(1)(
+              Effect.gen(function* () {
+                for (const { storageKey, socket, requestId } of yield* subscribersOf(
+                  rpc,
+                  options?.key,
+                )) {
+                  if (!(yield* sendFrame(state, socket, chunkOf(requestId, values)))) {
+                    yield* drop(storageKey);
+                  }
                 }
-              }
-            }),
+              }),
+            ),
           ),
         end: (rpc, options) =>
           lock.withPermits(1)(

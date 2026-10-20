@@ -101,10 +101,11 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     record. `publish(rpc, value, { key })`, typed by the rpc's chunk and owing what its schema
     needs to encode, sends each subscriber of the rpc, or of the key, whose socket is open, the
     value as Effect's server sends a chunk, from any instance, so a value published after the
-    object hibernated reaches a page subscribed before; one `publish` or `end` runs at a time.
+    object hibernated reaches a page subscribed before; one `publish` or `end` sends at a time,
+    a publish encoding its value first.
     `end(rpc, { key })` completes a live subscriber's stream through Effect's server, its
     finalizers run, answers one hibernation dropped itself, and sends nothing to one ended
-    while its `initial` is read. A feed serves the sockets of one `layerWebSocket` path, which
+    while its `initial` is read or encoded, interrupting the read. A feed serves the sockets of one `layerWebSocket` path, which
     registers with it and requires it: on an object serving two, `subscribe`, `publish` and
     `end` die at once, naming both. A record is
     dropped when its client interrupts the stream or its socket closes, through

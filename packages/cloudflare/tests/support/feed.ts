@@ -42,7 +42,46 @@ const SlowlyEncoded = Schema.Int.pipe(
 
 export const SlowTicks = Rpc.make("slowTicks", { success: SlowlyEncoded, stream: true });
 
-export const FeedRpcs = RpcGroup.make(Ticks, Ping, HeaderNames, SlowTicks);
+export class Gate extends Context.Service<
+  Gate,
+  {
+    readonly read: Deferred.Deferred<void>;
+    readonly released: Deferred.Deferred<void>;
+    readonly finalized: Ref.Ref<number>;
+    readonly encoding: Deferred.Deferred<void>;
+    readonly encoded: Deferred.Deferred<void>;
+  }
+>()("tests/Gate") {
+  static readonly layer = Layer.effect(Gate)(
+    Effect.all({
+      read: Deferred.make<void>(),
+      released: Deferred.make<void>(),
+      finalized: Ref.make(0),
+      encoding: Deferred.make<void>(),
+      encoded: Deferred.make<void>(),
+    }),
+  );
+}
+
+const HeldEncoded = Schema.Int.pipe(
+  Schema.decodeTo(
+    Schema.Int,
+    SchemaTransformation.transformEffect({
+      decode: Effect.succeed,
+      encode: (value) =>
+        Effect.flatMap(Effect.service(Gate), ({ encoding, encoded }) =>
+          Deferred.succeed(encoding, undefined).pipe(
+            Effect.andThen(Deferred.await(encoded)),
+            Effect.as(value),
+          ),
+        ),
+    }),
+  ),
+);
+
+export const HeldTicks = Rpc.make("heldTicks", { success: HeldEncoded, stream: true });
+
+export const FeedRpcs = RpcGroup.make(Ticks, Ping, HeaderNames, SlowTicks, HeldTicks);
 
 export const OtherTicks = Rpc.make("ticks", {
   payload: { initial: Schema.Array(Schema.Int) },
@@ -58,27 +97,11 @@ export const FeedCalls = RpcGroup.make(
   Rpc.make("end", { payload: { key: Schema.NullOr(Schema.String) } }),
   Rpc.make("publishWhenRead", { payload: { value: Schema.Int } }),
   Rpc.make("endWhenRead", { payload: { key: Schema.NullOr(Schema.String) } }),
+  Rpc.make("endWhenEncoding"),
   Rpc.make("release"),
   Rpc.make("finalized", { success: Schema.Int }),
   Rpc.make("publishSlowly", { payload: { value: Schema.Int } }),
 );
-
-export class Gate extends Context.Service<
-  Gate,
-  {
-    readonly read: Deferred.Deferred<void>;
-    readonly released: Deferred.Deferred<void>;
-    readonly finalized: Ref.Ref<number>;
-  }
->()("tests/Gate") {
-  static readonly layer = Layer.effect(Gate)(
-    Effect.all({
-      read: Deferred.make<void>(),
-      released: Deferred.make<void>(),
-      finalized: Ref.make(0),
-    }),
-  );
-}
 
 export class Announcer extends Context.Service<
   Announcer,
@@ -96,7 +119,8 @@ const keyOf = (key: string | null) => key ?? undefined;
 const tickHandlers = FeedRpcs.toLayer(
   Effect.gen(function* () {
     const feed = yield* ActionDurableObject.Feed;
-    const { read, released, finalized } = yield* Gate;
+    const gate = yield* Gate;
+    const { read, released, finalized } = gate;
 
     return FeedRpcs.of({
       ticks: ({ key, initial, failInitial, gate }, request) => {
@@ -133,6 +157,13 @@ const tickHandlers = FeedRpcs.toLayer(
       ping: () => Effect.void,
       headerNames: (_, { headers }) => Effect.succeed(Object.keys(headers)),
       slowTicks: (_, request) => feed.subscribe(request, { initial: [5] }),
+      heldTicks: (_, request) =>
+        feed
+          .subscribe(request, { initial: [5] })
+          .pipe(
+            Stream.provideService(Gate, gate),
+            Stream.ensuring(Ref.update(finalized, (count) => count + 1)),
+          ),
     });
   }),
 );
@@ -170,7 +201,7 @@ export const feedCalls = RpcServer.layer(FeedCalls.merge(FeedRpcs)).pipe(
       Effect.gen(function* () {
         const feed = yield* ActionDurableObject.Feed;
         const announcer = yield* Announcer;
-        const { read, released, finalized } = yield* Gate;
+        const { read, released, finalized, encoding, encoded } = yield* Gate;
 
         return FeedCalls.of({
           announce: ({ value }) => announcer.announce(value),
@@ -183,9 +214,11 @@ export const feedCalls = RpcServer.layer(FeedCalls.merge(FeedRpcs)).pipe(
               Effect.asVoid,
             ),
           endWhenRead: ({ key }) =>
-            Deferred.await(read).pipe(
-              Effect.andThen(feed.end(Ticks, { key: keyOf(key) })),
-              Effect.andThen(Deferred.succeed(released, undefined)),
+            Effect.andThen(Deferred.await(read), feed.end(Ticks, { key: keyOf(key) })),
+          endWhenEncoding: () =>
+            Deferred.await(encoding).pipe(
+              Effect.andThen(feed.end(HeldTicks)),
+              Effect.andThen(Deferred.succeed(encoded, undefined)),
               Effect.asVoid,
             ),
           release: () => Effect.asVoid(Deferred.succeed(released, undefined)),
