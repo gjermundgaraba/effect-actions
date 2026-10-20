@@ -1,5 +1,6 @@
 import { type Cause, Context, Deferred, Effect, Layer, Predicate, Queue, Schema } from "effect";
 import { RpcMessage, type RpcSerialization, RpcServer } from "effect/rpc";
+import { makeRegistries } from "./registry.js";
 
 /**
  * What a call over the stub carries to the object's `effectActionsRpc`: its messages, as values.
@@ -15,9 +16,7 @@ interface Registry {
   readonly running: Deferred.Deferred<void>;
 }
 
-// Why: registering is no concept of the dispatcher's own: only `layerStub` registers, so the
-// registry is reached through the dispatcher here rather than a method consumers would see.
-const registries = new WeakMap<Calls["Service"], Registry>();
+const registries = makeRegistries<Calls["Service"], Registry>("layerStub", "Calls");
 
 /**
  * The object's dispatcher for the calls a caller makes over its stub: `call` hands one call's
@@ -45,7 +44,9 @@ export class Calls extends Context.Service<
 
     // Why: a server starts in a fiber of its own, forked as the calls build, so a first call may
     // arrive before it runs, and waits; calls serving no server on the protocol, such as a
-    // handlers Layer without `RpcServer.layer`, would leave it waiting for good.
+    // handlers Layer without `RpcServer.layer`, would leave it waiting for good. A server runs
+    // within a few scheduler turns of the build, so a second past it means none will, and the
+    // caller hears so long before its own timeout.
     const running = Deferred.await(registry.running).pipe(
       Effect.timeoutOrElse({
         duration: "1 second",
@@ -73,7 +74,7 @@ export class Calls extends Context.Service<
         ),
     });
 
-    registries.set(calls, registry);
+    registries.register(calls, registry);
 
     return calls;
   });
@@ -88,11 +89,6 @@ export class Calls extends Context.Service<
 export const codecFor = Schema.toCodecIso as RpcSerialization.CodecFor;
 
 const encodeDefect = Schema.encodeSync(codecFor(Schema.Defect()));
-
-const unary = (tag: string) =>
-  new Error(
-    `The rpc ${tag} streams, and ActionDurableObject.layerStub is unary: serve streams over layerWebSocket`,
-  );
 
 /**
  * A unary `RpcServer.Protocol` over the object's stub, passing values, modeled on Effect's HTTP
@@ -185,7 +181,13 @@ const makeProtocol = (registry: Registry) =>
 
             return Queue.offer(
               client.responses,
-              RpcMessage.ResponseDefectEncoded(encodeDefect(unary(tag))),
+              RpcMessage.ResponseDefectEncoded(
+                encodeDefect(
+                  new Error(
+                    `The rpc ${tag} streams, and ActionDurableObject.layerStub is unary: serve streams over layerWebSocket`,
+                  ),
+                ),
+              ),
             ).pipe(
               Effect.andThen(Queue.end(client.responses)),
               Effect.andThen(Queue.offer(disconnects, clientId)),
@@ -233,17 +235,5 @@ const makeProtocol = (registry: Registry) =>
  */
 export const layerStub = (): Layer.Layer<RpcServer.Protocol, never, Calls> =>
   Layer.effect(RpcServer.Protocol)(
-    Effect.gen(function* () {
-      const registry = registries.get(yield* Calls);
-
-      if (registry === undefined) {
-        return yield* Effect.die(
-          new Error(
-            "ActionDurableObject.layerStub registers only with a Calls that Calls.layer built: provide Calls.layer",
-          ),
-        );
-      }
-
-      return yield* makeProtocol(registry);
-    }),
+    Effect.service(Calls).pipe(Effect.flatMap(registries.of), Effect.flatMap(makeProtocol)),
   );

@@ -1,7 +1,9 @@
 import { DurableObject } from "cloudflare:workers";
-import { Cause, Context, Deferred, Effect, Exit, Layer, Predicate, Scope } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Predicate, Scope } from "effect";
 import {
   FetchHttpClient,
+  HttpEffect,
+  HttpMiddleware,
   HttpRouter,
   HttpServer,
   type HttpClient,
@@ -192,8 +194,18 @@ const handlersOf = <
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
   const services = (options.services ?? Layer.empty) as Layer.Layer<S, SE, State | Feed>;
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every requirement against `Allowed<A, S>`, the built services supply `S`, merged in, and the handler gives each request the services the routes provide, `A`, as `HttpRouter.toWebHandler`'s types say; only those subtractions, which a generic `A` and `S` keep unresolved, are erased.
-  const routes = options.routes as Layer.Layer<never, E, Allowed<never, never>> | undefined;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every requirement against `Allowed<A, S>`, the built services supply `S`, merged in, and the router gives each request the services the routes provide, `A`, and its request markers, as `HttpRouter.toWebHandler`'s types say; only those subtractions, which a generic `A` and `S` keep unresolved, are erased.
+  const routes = options.routes as
+    | Layer.Layer<
+        never,
+        E,
+        | State
+        | Feed
+        | Sockets
+        | HttpRouter.HttpRouter
+        | Layer.Success<typeof HttpServer.layerServices>
+      >
+    | undefined;
 
   const calls = options.calls;
 
@@ -246,29 +258,32 @@ const handlersOf = <
         scope,
       );
 
-      const routesBuilt = yield* Deferred.make<void, unknown>();
-
-      const web = HttpRouter.toWebHandler(
+      const routed = yield* Layer.buildWithMemoMap(
         routes.pipe(
           Layer.provideMerge(
             Layer.succeedContext<State | Feed | Sockets>(Context.merge(context, sockets)),
           ),
-          Layer.tap(() => Deferred.succeed(routesBuilt, undefined)),
-          Layer.tapCause((cause) => Deferred.failCause(routesBuilt, cause)),
           Layer.provide(HttpServer.layerServices),
+          Layer.provideMerge(HttpRouter.layer),
         ),
-        { memoMap, disableLogger: options.disableLogger },
+        memoMap,
+        scope,
       );
 
-      yield* Scope.addFinalizer(scope, Effect.promise(web.dispose));
-      yield* Deferred.await(routesBuilt);
+      // Why: the handler is made here, as `HttpRouter.toWebHandler` makes it once its Layer is
+      // built, so a defect making it, such as global middleware throwing, fails this build,
+      // which closes its scope and is made again by the next event, where `toWebHandler` would
+      // hold the failed handler for every event of the instance.
+      const serve = yield* Effect.sync(() =>
+        HttpEffect.toWebHandlerWith<never, HttpServerRequest.HttpServerRequest | Scope.Scope>(
+          routed,
+        )(
+          Context.get(routed, HttpRouter.HttpRouter).asHttpEffect(),
+          options.disableLogger === true ? undefined : HttpMiddleware.logger,
+        ),
+      );
 
-      return {
-        context,
-        calls: served,
-        sockets: Context.get(sockets, Sockets),
-        serve: web.handler,
-      };
+      return { context, calls: served, sockets: Context.get(sockets, Sockets), serve };
     });
 
     return yield* built.pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))));

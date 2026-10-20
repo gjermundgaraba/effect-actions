@@ -132,14 +132,17 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     class serving them, with `RpcClient.make(group)` or `ActionRpc.client`; a failure of the
     stub itself, such as an object serving no calls or a call past Workers RPC's 32 MiB limit,
     is an `RpcClientError`; it holds its stub, which many exceptions leave broken, so a caller
-    recovering from its failure builds it over a new one. `client(group)` makes one client, in
+    recovering from its failure builds it over a new one; an answer completes a call only with
+    that request's exit, or a connection's end, so one for another request fails as an answer
+    that ended too soon. `client(group)` makes one client, in
     the caller's `Scope`, for every object of a class, and returns `(stubOf) => client`, which
     calls `stubOf` for a new stub as each call is sent, so no stub is held and a client over
     one object is kept for good; its calls fail with their declared errors alone, a stub's
     failure being a defect: an application's
     `hosts.plugin(id).start()` is an `Effect<{ pane }, PluginNotFound | PluginHasNoPane>`,
-    where it wrapped a hand-typed stub method's promise and rebuilt the errors. It refuses a
-    group with an rpc that streams. `Stub` and `Client<typeof group>` are their types, and
+    where it wrapped a hand-typed stub method's promise and rebuilt the errors. An rpc that
+    streams has no method, as `Client` types it, the object's defect at its first chunk being
+    the stub's one refusal of a stream. `Stub` and `Client<typeof group>` are their types, and
     `StubRequest` the method's parameter, so a class delegating it writes
     `effectActionsRpc(request: ActionDurableObject.StubRequest)`.
   - `handlers(ctx, { services, routes, calls, alarm, disableLogger })` returns a class's
@@ -147,8 +150,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     `effectActionsRpc`, `alarm` and `run`, each taking the runtime's arguments, for a class
     of your own to delegate to. The first event builds the object once: `services`, its
     startup services, which may require `State` and `Feed`, then `calls`, given `Calls` and `layerStub()`, and
-    `routes`, given `Sockets`; every event awaits that build, and a failed build is dropped with
-    all it built, so the next event builds again. `fetch` serves the routes, or answers 404
+    `routes`, given `Sockets`; every event awaits that build, which makes the routes' web handler too,
+    so a defect making it, such as global middleware throwing, fails it, and a failed build is
+    dropped with all it built, so the next event builds again. `fetch` serves the routes, or answers 404
     without them; the socket handlers, `SocketHandlers`, returned only with routes, since
     without them no protocol accepts a socket, dispatch through `Sockets`, resolving for a
     socket no protocol accepted; `effectActionsRpc`

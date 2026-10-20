@@ -4,8 +4,8 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { Cause, Effect, Exit } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { Cause, Effect, Exit, Layer } from "effect";
+import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 import { describe, expect, it } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
@@ -172,6 +172,52 @@ describe("handlers", () => {
 
       expect(yield* textOf(response)).toBe("2");
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "fails a build whose web handler fails as it is made, finalizing what it built, and builds again",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* Effect.promise(() =>
+          runInDurableObject(room("handler-made"), async (_, state) => {
+            const counts = { builds: 0, finalized: 0 };
+
+            const object = ActionDurableObject.handlers(state, {
+              services: Layer.effectDiscard(
+                Effect.acquireRelease(
+                  Effect.sync(() => void counts.builds++),
+                  () => Effect.sync(() => void counts.finalized++),
+                ),
+              ),
+              routes: HttpRouter.middleware(
+                (effect) => {
+                  if (counts.builds === 1) throw new Error("handler made once");
+
+                  return effect;
+                },
+                { global: true },
+              ),
+              disableLogger: true,
+            });
+
+            const fetched = () =>
+              object
+                .fetch(new Request("https://object/"))
+                .then((response) => response.status, String);
+
+            const first = await fetched();
+
+            return { first, second: await fetched(), ...counts };
+          }),
+        );
+
+        expect(result).toEqual({
+          first: "Error: handler made once",
+          second: 404,
+          builds: 2,
+          finalized: 1,
+        });
+      }),
   );
 
   it.effect("builds again on the event after a build that failed before it awaited anything", () =>

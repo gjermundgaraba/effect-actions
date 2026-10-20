@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Option, Predicate, Queue, Schema } from "effect
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import { forget } from "./feed.js";
+import { makeRegistries } from "./registry.js";
 import { nextSocketKey, sendFrame, socketHeaders, socketIdOf, socketTag } from "./socket.js";
 import { State } from "./state.js";
 
@@ -16,9 +17,7 @@ interface Registry {
   readonly allocate: Effect.Effect<number>;
 }
 
-// Why: registering is no concept of the dispatcher's own: only `layerWebSocket` registers, so
-// the registry is reached through the dispatcher here rather than a method consumers would see.
-const registries = new WeakMap<Sockets["Service"], Registry>();
+const registries = makeRegistries<Sockets["Service"], Registry>("layerWebSocket", "Sockets");
 
 /**
  * The object's dispatcher for the sockets the protocols of its routes accept, such as
@@ -93,7 +92,7 @@ export class Sockets extends Context.Service<
         error: (socket) => dispatch(socket, (receiver) => receiver.close(socket)),
       });
 
-      registries.set(sockets, { receivers, allocate });
+      registries.register(sockets, { receivers, allocate });
 
       return sockets;
     }),
@@ -316,15 +315,7 @@ export const layerWebSocket = (
   Layer.effect(RpcServer.Protocol)(
     Effect.gen(function* () {
       const state = yield* State;
-      const registry = registries.get(yield* Sockets);
-
-      if (registry === undefined) {
-        return yield* Effect.die(
-          new Error(
-            "ActionDurableObject.layerWebSocket registers only with a Sockets that Sockets.layer built: provide Sockets.layer",
-          ),
-        );
-      }
+      const registry = yield* registries.of(yield* Sockets);
 
       return yield* makeProtocol(state, registry, options.path);
     }),

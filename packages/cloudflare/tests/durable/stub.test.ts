@@ -108,6 +108,28 @@ describe("layerStubClient", () => {
   );
 
   it.effect(
+    "fails with RpcClientError when the answer's exit is another request's, or no response",
+    () =>
+      Effect.gen(function* () {
+        const answers: ReadonlyArray<ReadonlyArray<unknown>> = [
+          [{ _tag: "Exit", requestId: "another request", exit: { _tag: "Success", value: [] } }],
+          [{ _tag: "Exit" }],
+          [null],
+        ];
+
+        for (const answer of answers) {
+          const client = yield* rawOver({ effectActionsRpc: () => Promise.resolve(answer) });
+
+          const error = yield* Effect.flip(client.panes());
+
+          expect(error.reason.message, JSON.stringify(answer)).toContain(
+            "The object's answer ended before the call completed",
+          );
+        }
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
     "fails with RpcClientError on an object whose calls run no server on the protocol",
     () =>
       Effect.gen(function* () {
@@ -319,11 +341,14 @@ describe("client", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refuses a group with an rpc that streams as it is made", () =>
+  it.effect("calls a group's unary rpcs, an rpc that streams having no method", () =>
     Effect.gen(function* () {
-      const exit = yield* Effect.exit(ActionDurableObject.client(StreamRpcs));
+      const streams = (yield* ActionDurableObject.client(StreamRpcs))(() =>
+        env.STREAMED.getByName("client-streams"),
+      );
 
-      expect(String(defectOf(exit))).toContain("The rpc tail streams");
+      expect(Object.keys(streams)).toEqual(["head"]);
+      expect(yield* streams.head()).toBe("head");
     }).pipe(Effect.scoped),
   );
 
