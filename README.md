@@ -12,13 +12,8 @@ example.
 
 A contract says what an action takes and answers, and who may call it:
 
-```ts example=quickstart/src/greeting/Greeting.ts
-import { Schema } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-
-// A contract: what the action takes and answers, whether it changes anything, and who may
-// call it. It imports no server code, so any client can import it, a browser page included.
-export const Greet = Action.make("greet", {
+```ts
+const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: { name: Schema.String },
   success: Schema.String,
@@ -29,43 +24,27 @@ export const Greet = Action.make("greet", {
 
 An implementation binds it to its handler:
 
-```ts example=quickstart/src/greeting/handlers.ts
-import { Effect } from "effect";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
-import { Greet } from "./Greeting.js";
-
-// The implementation: the contract bound to its handler. Every surface takes this one value.
-export const greeting = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+```ts
+const greeting = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
 ```
 
 A binding gives it a route, for the server to serve and a client to call:
 
-```ts example=quickstart/src/Api.ts
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import { Greet } from "./greeting/Greeting.js";
-
-// The HTTP binding: `POST /api/greet`. The server serves it and the client calls it.
-export const Http = ActionHttp.make([Greet]);
+```ts
+const Http = ActionHttp.make([Greet]); // POST /api/greet
 ```
 
 And the same implementation is served on every surface the host wants:
 
-```ts example=quickstart/src/routes.ts
-import { Layer } from "effect";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import { Http } from "./Api.js";
-import { greeting } from "./greeting/handlers.js";
-
-// One implementation, two surfaces: a JSON route and an MCP tool at `/mcp`.
-export const routes = Layer.mergeAll(
+```ts
+const routes = Layer.mergeAll(
   ActionHttp.layer(Http, greeting),
   ActionMcp.layerHttp(greeting, { name: "greetings", version: "1.0.0" }),
 );
 ```
 
 Serve `routes` with Effect's `HttpRouter.serve` and a platform server, as
-[examples/quickstart/src/server.ts](examples/quickstart/src/server.ts) does, and you have
+[examples/quickstart](examples/quickstart) does, file by file, and you have
 `POST /api/greet` and an MCP tool named `greet` at `/mcp`. The same `greeting`
 implementation is also:
 
@@ -81,21 +60,12 @@ const rpc = ActionRpc.layer(ActionRpc.make([Greet]), greeting); // Effect RPC, o
 
 And the client is Effect's own `HttpApiClient`, typed from the same contract, one method per action:
 
-```ts example=quickstart/src/client.ts
-import { NodeRuntime } from "@effect/platform-node";
-import { Console, Effect } from "effect";
-import { FetchHttpClient } from "effect/http";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import { Http } from "./Api.js";
-
-// Entrypoint: `node --import tsx examples/quickstart/src/client.ts`, with the server running.
-// One typed method per action of the binding.
-// DEMO ONLY: a deployed client reads its `baseUrl` from configuration (kitchen-sink/src/seed.ts).
+```ts
 Effect.gen(function* () {
-  const client = yield* ActionHttp.client(Http, { baseUrl: "http://127.0.0.1:3000" });
+  const client = yield* ActionHttp.client(Http, { baseUrl });
 
-  yield* Console.log(yield* client.greet({ name: "Ada" }));
-}).pipe(Effect.provide(FetchHttpClient.layer), NodeRuntime.runMain);
+  return yield* client.greet({ name: "Ada" }); // "Hello, Ada!"
+});
 ```
 
 ## Why
