@@ -3,7 +3,7 @@
 Install the package, import its modules, write the smallest program, lay out an application and
 bundle a browser client.
 
-A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [setup-failures.md](setup-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
+A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [setup-failures.md](setup-failures.md).
 
 ## Install
 

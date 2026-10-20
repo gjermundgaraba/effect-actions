@@ -20,7 +20,7 @@ vp test examples/live-rpc
 
 `client.ts` runs the browser's client from Node: two members on one socket, then each declared
 error and refusal a page handles. `browser.ts` is imported by a page, not run: `openChat` for a
-page that is an Effect program, `connect(url)` for one that calls with promises.
+page that is an Effect program; `page.ts` wraps it as `connect(url)` for one that calls with promises.
 
 ## Layout
 
@@ -61,7 +61,7 @@ test/
 | Handlers reading that service, and the rule that reads it              | `src/chat/handlers.ts`, `src/chat/authorize.ts` |
 | A public rpc beside protected ones                                     | `src/chat/Chat.ts`                              |
 | A socket client sending its token and room on each message             | `src/browser.ts`                                |
-| Who owns the socket, and how a promise page keeps it open              | `src/browser.ts`                                |
+| Who owns the socket, and how a promise page keeps it open              | `src/browser.ts`, `src/page.ts`                 |
 | A declared error and the built-in refusals handled by tag              | `src/browser.ts`                                |
 | Running that client from Node, two callers on one socket               | `src/client.ts`                                 |
 | Testing handlers and authorization with no transport                   | `test/chat/chat.test.ts`                        |

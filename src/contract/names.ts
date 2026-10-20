@@ -14,27 +14,40 @@ export const assertDistinct = <T>(
   what: string,
   items: ReadonlyArray<T>,
   nameOf: (item: T) => string,
-  { claimantOf = nameOf, fix }: { readonly claimantOf?: (item: T) => string; readonly fix: string },
+  {
+    claimantOf = nameOf,
+    labelOf = nameOf,
+    fix,
+  }: {
+    readonly claimantOf?: (item: T) => string;
+    readonly labelOf?: (item: T) => string;
+    readonly fix: string;
+  },
 ): void => {
-  const seen = new Map<string, string>();
+  const seen = new Map<string, T>();
 
   for (const item of items) {
     const name = nameOf(item);
-    const claimant = claimantOf(item);
     const other = seen.get(name);
 
     if (other !== undefined) {
-      const by = other === claimant ? "" : `, claimed by ${other} and ${claimant}`;
+      const claimants = [claimantOf(other), claimantOf(item)];
+      const by = claimants[0] === claimants[1] ? "" : `, claimed by ${claimants.join(" and ")}`;
 
-      throw new Error(`Duplicate ${what}: ${name}${by} (${fix})`);
+      throw new Error(`Duplicate ${what}: ${labelOf(other)}${by} (${fix})`);
     }
 
-    seen.set(name, claimant);
+    seen.set(name, item);
   }
 };
 
-export const assertOnce = (what: string, actions: ReadonlyArray<Action.Any>): void =>
-  assertDistinct(what, actions, (action) => action.name, { fix: "list it once, or rename one" });
+export const heldOnce = "pass one implementation of it, or rename one";
+
+export const assertOnce = (
+  what: string,
+  actions: ReadonlyArray<Action.Any>,
+  fix: string = "list it once, or rename one",
+): void => assertDistinct(what, actions, (action) => action.name, { fix });
 
 export const assertKnown = (
   what: string,

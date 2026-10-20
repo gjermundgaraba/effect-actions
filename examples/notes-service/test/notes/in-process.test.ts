@@ -8,7 +8,8 @@ import { NoteNotFound } from "../../src/notes/Notes.js";
 import { NoteStore } from "../../src/notes/store.js";
 
 // What the implementation does, with no transport: `Action.client` runs the same decoding,
-// `authorize` and handler a server runs.
+// `authorize` and handler a server runs. The caller is provided around each call, as a server
+// provides it per request.
 const as = (user: keyof typeof users) => Effect.provideService(CurrentUser, users[user]);
 
 describe("notes, in process", () => {

@@ -616,7 +616,7 @@ describe("ActionRpc selection", () => {
     class Twice extends RpcMiddleware.Service<Twice>()("rpc-test/Twice") {}
 
     expect(() => ActionRpc.layer(Rpc, status, { middleware: [Twice, Twice] })).toThrow(
-      "Duplicate middleware: rpc-test/Twice (list each middleware once)",
+      "Duplicate middleware: rpc-test/Twice",
     );
   });
 

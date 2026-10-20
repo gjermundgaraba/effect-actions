@@ -3,7 +3,7 @@ import type { Scope } from "effect";
 import type * as Action from "./Action.js";
 import { Anyone, assertAuthentication, type Proving } from "./caller.js";
 import { projectedErrors } from "./declared.js";
-import { assertDistinct, assertOnce } from "./names.js";
+import { assertDistinct, assertOnce, heldOnce } from "./names.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
 
 // Why: Random, not a counter: two installed copies of this module would each count from zero and
@@ -311,6 +311,10 @@ export const notHeld = {
   },
 } as const;
 
+/** The actions' names, joined; one whose name another listed contract shares is marked `(another contract)`. */
+const markingOthers = (actions: ReadonlyArray<Action.Any>, names: ReadonlySet<string>) =>
+  actions.map(({ name }) => (names.has(name) ? `${name} (another contract)` : name)).join(", ");
+
 export const assertHeld = (
   { why, fix, holder }: (typeof notHeld)[keyof typeof notHeld],
   listed: ReadonlyArray<Action.Any>,
@@ -323,11 +327,7 @@ export const assertHeld = (
     const sameName = missing.some(({ name }) => names.has(name));
 
     throw new Error(
-      `Listed in actions, but ${why}: ${missing
-        .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
-        .join(
-          ", ",
-        )} (${fix}${sameName ? `; one marked (another contract) is a contract of that name ${holder}` : ""})`,
+      `Listed in actions, but ${why}: ${markingOthers(missing, names)} (${fix}${sameName ? `; one marked (another contract) is a contract of that name ${holder}` : ""})`,
     );
   }
 };
@@ -372,15 +372,11 @@ const servedBy = (
     const names = new Set(bound.map(({ name }) => name));
 
     throw new Error(
-      `No action of these implementations is in this ${what}: ${
-        held
-          .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
-          .join(", ") || "none"
-      } (pass an implementation of a bound action, or bind one of these)`,
+      `No action of these implementations is in this ${what}: ${markingOthers(held, names) || "none"} (pass an implementation of a bound action, or bind one of these)`,
     );
   }
 
-  assertOnce("served action", actions);
+  assertOnce("served action", actions, heldOnce);
 
   return served;
 };

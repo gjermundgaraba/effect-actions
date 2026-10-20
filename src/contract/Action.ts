@@ -2,7 +2,7 @@ import { Array as Arr, Cause, Context, Effect, type Layer, Predicate, Schema } f
 import type { Scope } from "effect";
 import { Anyone } from "./caller.js";
 import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
-import { assertKnown, assertName, assertOnce } from "./names.js";
+import { assertKnown, assertName, assertOnce, heldOnce } from "./names.js";
 import { type Call, inputOf } from "./call.js";
 import { type BuiltIn, InvalidInput, type Refusal } from "./errors.js";
 import {
@@ -681,6 +681,7 @@ export function client(
   assertOnce(
     "action",
     apps.flatMap((app) => app.actions),
+    heldOnce,
   );
 
   return Effect.map(built(apps), (bound) =>

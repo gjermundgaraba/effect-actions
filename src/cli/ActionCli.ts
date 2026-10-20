@@ -340,7 +340,7 @@ export function remoteCommand<
 export function remoteCommand(
   binding: AnyHttp,
   action: Action.Any,
-  options?: CommandOptions<Action.Any> & { readonly client?: ErasedClient | undefined },
+  options?: CommandOptions<Action.Any> & Calling<ErasedClient>,
 ): Command.Command<string, never, {}, unknown, unknown> {
   const { client, ...syntax } = options ?? {};
 

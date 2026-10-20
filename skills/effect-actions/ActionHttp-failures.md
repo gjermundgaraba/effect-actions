@@ -9,7 +9,7 @@ The tasks are in [ActionHttp.md](ActionHttp.md).
 - `Method 'POST' already declared for route '<prefix>/<action>'` when the host builds: two `ActionHttp.layer` calls serve one action; give each layer its own `actions`.
 - `Duplicate OpenAPI operationId: <name>` from `OpenApi.fromApi`: two bindings combined into one `HttpApi` share an action name; rename one, or document each binding alone.
 - `Type 'Handlers<…>' is not assignable to type '`Endpoint not handled: ${string}`'` at `HttpApiBuilder.group(binding.api, …)`, or `Service not found: effect-actions/Authentication/Security/…` when the host builds: a binding is served with the native `HttpApiBuilder`; serve it with `ActionHttp.layer`.
-- `Unsupported content-type: <type>` as a 415 body: the request's `Content-Type` is not `application/json`, which Effect refuses before the route runs; send `application/json`. The library answers `none` itself for a request without the header.
+- `Unsupported content-type: <type>` as a 415 body: Effect refuses a `Content-Type` other than `application/json`, after authentication and before the handler; send `application/json`.
 
 ## Types
 

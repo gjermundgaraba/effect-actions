@@ -1163,7 +1163,7 @@ describe("HTTP bindings", () => {
     );
     expect(() => ActionHttp.layer(bound, [alpha, beta])).not.toThrow();
     expect(() => ActionHttp.layer(bound, [alpha, alpha])).toThrow(
-      "Duplicate served action: alpha (list it once, or rename one)",
+      "Duplicate served action: alpha (pass one implementation of it, or rename one)",
     );
     expect(() =>
       ActionHttp.layer(bound, [alpha, Action.implement(Alpha, () => Effect.succeed("y"))]),

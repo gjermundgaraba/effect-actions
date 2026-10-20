@@ -4,7 +4,7 @@ import type * as Action from "../contract/Action.js";
 import type { BuiltIns } from "../contract/errors.js";
 import { projectedErrors } from "../contract/declared.js";
 import { hintsOf } from "../contract/hints.js";
-import { assertOnce } from "../contract/names.js";
+import { assertOnce, heldOnce } from "../contract/names.js";
 import {
   acquire,
   type ActionOf,
@@ -92,9 +92,10 @@ export interface Options<A extends Action.Any> {
   /**
    * Whether a model's call needs approval before it runs: a boolean, or an Effect of one, for
    * each call, with Effect's native approval context. `LanguageModel` asks for approval
-   * instead of calling the tool when it is `true`, and when the Effect fails or dies, so a
-   * policy that cannot be read asks. The Effect runs in the caller's context and requires
-   * nothing, so it reads the caller with `Effect.serviceOption`. Defaults to none.
+   * instead of calling the tool when it is `true`, and when the Effect fails, so a policy that
+   * cannot be read asks; a defect, a throw included, ends the turn as Effect's own does. The
+   * Effect runs in the caller's context and requires nothing, so it reads the caller with
+   * `Effect.serviceOption`. Defaults to none.
    *
    * **Gotchas**
    *
@@ -189,6 +190,7 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   assertOnce(
     "tool",
     served.flatMap((app) => app.actions),
+    heldOnce,
   );
 
   // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id carries
@@ -202,12 +204,10 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
         : jsonToolOf(action).setNeedsApproval((input, context) => {
             const decided = needsApproval({ name: action.name, action, input }, context);
 
-            // Why: A policy that cannot be read asks; Effect's own default on a failure is to run the call.
+            // Why: A policy that cannot be read asks, where Effect's own default on a failure runs the
+            // call; a defect is a bug, left to end the turn as Effect ends it.
             return Effect.isEffect(decided)
-              ? decided.pipe(
-                  Effect.catch(() => Effect.succeed(true)),
-                  Effect.catchDefect(() => Effect.succeed(true)),
-                )
+              ? Effect.catch(decided, () => Effect.succeed(true))
               : decided;
           }),
       { id: `${Implementation.runKey(app)}/${action.name}` },

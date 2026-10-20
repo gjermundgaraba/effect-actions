@@ -29,7 +29,7 @@ import {
 import { Anyone, assertAuthentication } from "../contract/caller.js";
 import { projectedErrors } from "../contract/declared.js";
 import { hintsOf } from "../contract/hints.js";
-import { assertOnce } from "../contract/names.js";
+import { assertOnce, heldOnce } from "../contract/names.js";
 import { inputParseOptions } from "../contract/call.js";
 import {
   defaultPath,
@@ -371,6 +371,7 @@ const server = <Out, R>(
   assertOnce(
     "MCP tool",
     apps.flatMap((app) => app.actions),
+    heldOnce,
   );
 
   const lifted = apps.flatMap((app) =>

@@ -694,7 +694,8 @@ const inputConfig = <A extends Action.Any>(
   };
 };
 
-// Why: Effect CLI prints a one-character alias as `-n`, and every other flag as `--name`.
+// Why: Effect CLI keys a field's flag and an alias alike, by bare name, and prints a
+// one-character alias as `-n`, every other flag as `--name`.
 const aliasFlag = (alias: string) => (alias.length === 1 ? `-${alias}` : `--${alias}`);
 
 export const command = <A extends Action.Any, E, R>(
@@ -718,18 +719,26 @@ export const command = <A extends Action.Any, E, R>(
   assertDistinct(
     "flag",
     [
-      ...Object.keys(flags).map((field) => [`--${kebab(field)}`, `field ${field}`] as const),
-      ...(render === undefined ? [] : [["--json", "render's --json"] as const]),
-      ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) =>
-        Predicate.isString(alias)
-          ? [[aliasFlag(alias.replace(/^-+/, "")), `alias of field ${field}`] as const]
-          : [],
+      ...Object.keys(flags).map(
+        (field) => [kebab(field), `--${kebab(field)}`, `field ${field}`] as const,
       ),
+      ...(render === undefined ? [] : [["json", "--json", "render's --json"] as const]),
+      ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) => {
+        const bare = Predicate.isString(alias) ? alias.replace(/^-+/, "") : undefined;
+
+        return bare === undefined
+          ? []
+          : [[bare, aliasFlag(bare), `alias of field ${field}`] as const];
+      }),
     ],
-    ([flag]) => flag,
+    ([key]) => key,
     {
-      claimantOf: ([, claimant]) => claimant,
-      fix: "rename the field or the alias, or drop `render`",
+      labelOf: ([, label]) => label,
+      claimantOf: ([, , claimant]) => claimant,
+      fix:
+        render === undefined
+          ? "rename the field or the alias"
+          : "rename the field or the alias, or drop `render`",
     },
   );
 

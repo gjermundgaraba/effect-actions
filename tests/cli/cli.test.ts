@@ -983,6 +983,20 @@ it.effect(
 
       expect(() => ActionCli.command(twice, Twice)).toThrow(clash);
       expect(() => ActionCli.make(twice, { name: "tool" })).toThrow(clash);
+
+      const Short = Action.make("short", {
+        description: "A one-character field",
+        readOnly: true,
+        caller: Action.Anyone,
+        input: { n: Schema.String, limit: Schema.String },
+        success: Schema.String,
+      });
+
+      const short = Action.implement(Short, () => Effect.succeed(""));
+
+      expect(() => ActionCli.command(short, Short, { aliases: { limit: "n" } })).toThrow(
+        "Duplicate flag: --n, claimed by field n and alias of field limit",
+      );
     }),
 );
 
@@ -1994,7 +2008,7 @@ it.effect("gives a flag the alias its options name, and shows a positional's val
       "Not a flag's input field: scale (aliases name fields read from flags, neither positional nor stdin)",
     );
     expect(() => ActionCli.command(app, List, { aliases: { limit: "n", all: "n" } })).toThrow(
-      "Duplicate flag: -n, claimed by alias of field limit and alias of field all (rename the field or the alias, or drop `render`)",
+      "Duplicate flag: -n, claimed by alias of field limit and alias of field all (rename the field or the alias)",
     );
     expect(() => ActionCli.command(app, List, { aliases: { limit: "n", all: "-n" } })).toThrow(
       "Duplicate flag: -n",

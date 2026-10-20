@@ -212,6 +212,30 @@ describe("ActionToolkit", () => {
       }),
   );
 
+  it.effect("ends the turn on a defect in the check, as LanguageModel does, calling nothing", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+
+      const binding = ActionToolkit.make(
+        Action.implement(Erase, ({ id }) => Effect.sync(() => (calls.push(id), "erased"))),
+        { needsApproval: () => Effect.die("policy bug") },
+      );
+
+      const exit = yield* Effect.exit(
+        LanguageModel.generateText({ prompt: "go", toolkit: binding.toolkit }).pipe(
+          Effect.provide(binding.layer),
+          Effect.provideServiceEffect(
+            LanguageModel.LanguageModel,
+            modelCalling(["erase", { id: "x" }]),
+          ),
+        ),
+      );
+
+      expect(Exit.hasDies(exit)).toBe(true);
+      expect(calls).toEqual([]);
+    }),
+  );
+
   it.effect(
     "names each tool after its action, takes and gives its JSON encoding, as a model speaks, and decodes it for the handler",
     () =>

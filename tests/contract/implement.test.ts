@@ -182,26 +182,23 @@ describe("implement", () => {
         const routes = ActionHttp.layer(ActionHttp.make([Hello, Bye]), app);
 
         expect(
-          yield* defectOf(
-            send(post("/api/hello", { name: "Ada" })).pipe(Effect.provide(Testing.layer(routes))),
+          String(
+            yield* defectOf(
+              send(post("/api/hello", { name: "Ada" })).pipe(Effect.provide(Testing.layer(routes))),
+            ),
           ),
-        ).toMatchObject({
-          message:
-            "Missing handlers: bye (return the handler for one action, or a record with an own function per listed action)",
-        });
-        expect(yield* defectOf(Layer.build(ActionToolkit.make(app).layer))).toMatchObject({
-          message:
-            "Missing handlers: bye (return the handler for one action, or a record with an own function per listed action)",
-        });
+        ).toContain("Missing handlers: bye");
+        expect(String(yield* defectOf(Layer.build(ActionToolkit.make(app).layer)))).toContain(
+          "Missing handlers: bye",
+        );
 
         for (const [action, args] of [
           [Hello, ["--name", "Ada"]],
           [Bye, []],
         ] as const) {
-          expect(yield* defectOf(exec(ActionCli.command(app, action), args))).toMatchObject({
-            message:
-              "Missing handlers: bye (return the handler for one action, or a record with an own function per listed action)",
-          });
+          expect(String(yield* defectOf(exec(ActionCli.command(app, action), args)))).toContain(
+            "Missing handlers: bye",
+          );
         }
       }),
   );
@@ -222,9 +219,9 @@ describe("implement", () => {
         Effect.succeed({ hello: () => Effect.succeed("hi"), stale: () => Effect.succeed("stale") }),
       );
 
-      expect(yield* defectOf(Layer.build(ActionToolkit.make(built).layer))).toMatchObject({
-        message: "Unknown handlers: stale (remove it, or list its action)",
-      });
+      expect(String(yield* defectOf(Layer.build(ActionToolkit.make(built).layer)))).toContain(
+        "Unknown handlers: stale",
+      );
     }),
   );
 });

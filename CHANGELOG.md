@@ -44,7 +44,8 @@ and the copied implementation's no longer asks `is effect-actions installed twic
 ### Other changes
 
 - `ActionToolkit.Options.needsApproval` may return an Effect that fails, and a call whose
-  policy fails or dies asks for approval, where Effect's own default ran it unapproved.
+  policy fails asks for approval, where Effect's own default ran it unapproved; a defect ends
+  the turn, as Effect's own does.
 - `ActionCli.Calling`, the `client` option `remote` and `remoteCommand` take, is exported.
 - A `protectedResource.resource` that is not an absolute URL, such as `/mcp`, is refused at
   `Authentication.layer` and `refusalResponse` with the library's own message naming the fix,

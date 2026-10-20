@@ -66,9 +66,9 @@ sends each caller's credential instead
 ## Implement actions
 
 `Action.implement` binds a handler to one action, or a record of handlers keyed by name to a
-list. Either may instead be a builder: an Effect, run once at startup, that returns the handler
-or the record, whose services are startup services. What a handler yields per call, the caller
-first, is a request-time requirement.
+list. Either may instead be a builder: an Effect returning the handler or the record, whose
+services are startup services. What a handler yields per call, the caller first, is a
+request-time requirement.
 
 ```ts example=notes-service/src/notes/handlers.ts
 import { Effect } from "effect";

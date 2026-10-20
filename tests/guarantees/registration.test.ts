@@ -1146,7 +1146,7 @@ describe("MCP registration", () => {
     ];
 
     const options = { name: "test", version: "0" };
-    const shared = "same (list it once, or rename one)";
+    const shared = "same (pass one implementation of it, or rename one)";
 
     expect(() => ActionMcp.layerHttp(apps, options)).toThrow(`Duplicate MCP tool: ${shared}`);
     expect(() => ActionMcp.runStdio(apps, options)).toThrow(`Duplicate MCP tool: ${shared}`);

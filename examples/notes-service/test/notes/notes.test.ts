@@ -1,15 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Array, Effect, Exit, References } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import { CurrentUser } from "../../src/identity/Identity.js";
-import { users } from "../../src/identity/users.js";
 import { notes } from "../../src/notes/handlers.js";
 import { NoteChanged, NoteNotFound } from "../../src/notes/Notes.js";
 import { NoteStore } from "../../src/notes/store.js";
+import { as } from "./as.js";
 
 // The store's rules, with no transport, as in-process.test.ts calls the implementation: a
 // revision check, and a race two fibers run under every interleaving.
-const as = (user: keyof typeof users) => Effect.provideService(CurrentUser, users[user]);
 
 describe("notes, in process", () => {
   it.effect("deletes a note for its owner", () =>

@@ -168,47 +168,52 @@ it("names, in the JSDoc that ships, only pages and example paths the package hol
   expect(named.filter(({ path }) => !existsSync(join(root, path)))).toEqual([]);
 });
 
-it("names, in docs/ and README.md, only symbols the public modules export", () => {
-  const modules = readdirSync(join(root, "src"), { recursive: true, encoding: "utf8" })
-    .filter((name) => /^[a-z]+\/[A-Z]\w*\.ts$/.test(name))
-    .map(
-      (name) => [name.slice(name.indexOf("/") + 1, -".ts".length), read(`src/${name}`)] as const,
-    );
+it("names, in the pages and READMEs, only symbols the public modules export", () => {
+  const sources = readdirSync(join(root, "src"), { recursive: true, encoding: "utf8" });
 
   const exported = new Map(
-    modules.map(([module, source]) => {
-      const declared = Array.from(
-        source.matchAll(/^export (?:declare )?(?:const|function|interface|type|class) (\w+)/gm),
-        ([, name = ""]) => name,
-      );
+    Object.keys(manifest.exports)
+      .filter((path) => path !== "./package.json")
+      .map((path) => {
+        const module = path.slice("./".length);
+        const file = sources.find((name) => name.endsWith(`/${module}.ts`));
 
-      const listed = Array.from(
-        source.matchAll(/^export (?:type )?\{([^}]*)\}/gm),
-        ([, body = ""]) =>
-          body.split(",").flatMap((entry) => {
-            const name = entry.trim().split(" as ").at(-1)?.trim() ?? "";
+        if (file === undefined) throw new Error(`No public module file for ${module}`);
 
-            return name === "" ? [] : [name];
-          }),
-      );
+        const source = read(`src/${file}`);
 
-      return [module, new Set([...declared, ...listed.flat()])] as const;
-    }),
+        const declared = Array.from(
+          source.matchAll(/^export (?:declare )?(?:const|function|interface|type|class) (\w+)/gm),
+          ([, name = ""]) => name,
+        );
+
+        const listed = Array.from(
+          source.matchAll(/^export (?:type )?\{([^}]*)\}/gm),
+          ([, body = ""]) =>
+            body.split(",").flatMap((entry) => {
+              const name =
+                entry
+                  .trim()
+                  .replace(/^type /, "")
+                  .split(" as ")
+                  .at(-1)
+                  ?.trim() ?? "";
+
+              return name === "" ? [] : [name];
+            }),
+        );
+
+        return [module, new Set([...declared, ...listed.flat()])] as const;
+      }),
   );
 
   const pointer = new RegExp(`\\x60(${Array.from(exported.keys()).join("|")})\\.(\\w+)`, "g");
 
-  const pages = [
-    ...readdirSync(join(root, "docs")).map((name) => `docs/${name}`),
-    "README.md",
-  ].filter((path) => path.endsWith(".md"));
-
   const unresolved = pages.flatMap((page) =>
-    Array.from(read(page).matchAll(pointer), ([, module = "", symbol = ""]) =>
+    Array.from(read(page).matchAll(pointer)).flatMap(([, module = "", symbol = ""]) =>
       exported.get(module)?.has(symbol) ? [] : [`${page}: ${module}.${symbol}`],
     ),
   );
 
-  expect(exported.size).toBe(8);
-  expect(unresolved.flat()).toEqual([]);
+  expect(unresolved).toEqual([]);
 });

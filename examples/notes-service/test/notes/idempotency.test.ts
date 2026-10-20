@@ -1,13 +1,10 @@
 import { expect, it } from "@effect/vitest";
 import { Arbitrary, Array, Effect, References, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import { CurrentUser } from "../../src/identity/Identity.js";
-import { users } from "../../src/identity/users.js";
 import { notes } from "../../src/notes/handlers.js";
 import { CreateNote, RequestConflict } from "../../src/notes/Notes.js";
 import { NoteStore } from "../../src/notes/store.js";
-
-const as = (user: keyof typeof users) => Effect.provideService(CurrentUser, users[user]);
+import { as } from "./as.js";
 
 it.effect("creates a new note on every call without a request key", () =>
   Effect.gen(function* () {
