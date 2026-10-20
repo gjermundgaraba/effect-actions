@@ -30,6 +30,7 @@
       { "name": "FROM_ENV", "class_name": "FromEnv" },
       { "name": "DELEGATING", "class_name": "Delegating" },
       { "name": "FED", "class_name": "Fed" },
+      { "name": "TWO_PATHS", "class_name": "TwoPaths" },
     ],
   },
   "migrations": [
@@ -58,6 +59,7 @@
         "FromEnv",
         "Delegating",
         "Fed",
+        "TwoPaths",
       ],
     },
   ],

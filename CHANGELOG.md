@@ -78,7 +78,7 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     serving with each message's own headers, and one whose attachment does not decode answers
     each message with a defect, rather than failing the event.
   - `Sockets` is the object's dispatcher for its protocols' sockets, one per instance from
-    `Sockets.layer`, which `layerWebSocket` registers with and requires. Its `message`,
+    `Sockets.layer`, which `layerWebSocket` registers with and requires, as it does `Feed`. Its `message`,
     `close(socket, code, reason)` and `error` hand a socket's event to its protocol and succeed
     with `true`, or with `false` for a socket no protocol accepted, such as one the class
     accepted itself. `close` completes the closing handshake, replying with the client's code
@@ -92,11 +92,10 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     the services. It is a push channel addressed by each call's request id, not a stream
     pipeline: a stream rpc's handler returns `feed.subscribe(request, { initial, key })`, a
     handle holding the call open, which an operator such as `Stream.map` sees nothing through.
-    Only a call over `layerWebSocket` subscribes, proven by headers the protocol sets and signs
-    with a per-instance secret, stripping any of those names the client sent; a call over the
-    stub or HTTP dies at once. The subscriber's record is kept in the object's storage, keyed by
-    its socket's id and its request id, a number and a string kept apart, and names its rpc and
-    its socket path; then `initial` is sent to the socket as one chunk as soon as it is read,
+    Only a call over `layerWebSocket` subscribes, the protocol giving its handler the socket in
+    a way no caller sets; a call over the stub or HTTP dies at once. The subscriber's record is
+    kept in the object's storage, keyed by its socket and its request id, a number and a string
+    kept apart, and names its rpc; then `initial` is sent to the socket as one chunk as soon as it is read,
     Effect's scheduler yields off from the read to the send, so nothing published after the read
     arrives before it; an `initial` that fails ends the stream with its failure and drops the
     record. `publish(rpc, value, { key })`, typed by the rpc's chunk and owing what its schema
@@ -105,8 +104,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     object hibernated reaches a page subscribed before; one `publish` or `end` runs at a time.
     `end(rpc, { key })` completes a live subscriber's stream through Effect's server, its
     finalizers run, answers one hibernation dropped itself, and sends nothing to one ended
-    while its `initial` is read. One object's stream rpcs need distinct names across its socket
-    paths: a publish or end of a name subscribed on two paths dies, naming both. A record is
+    while its `initial` is read. A feed serves the sockets of one `layerWebSocket` path, which
+    registers with it and requires it: on an object serving two, `subscribe`, `publish` and
+    `end` die at once, naming both. A record is
     dropped when its client interrupts the stream or its socket closes, through
     `layerWebSocket`, and when a send finds its socket gone or refusing it, as one the object
     closed does. A subscriber gets every value published from when its record is kept at least

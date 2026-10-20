@@ -1,9 +1,9 @@
 import { Context, Effect, Layer, Option, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
-import { forget } from "./feed.js";
+import { CurrentSocket, Feed, forget, servePath } from "./feed.js";
+import { sendFrame, socketIdOf, socketTag } from "./frames.js";
 import { makeRegistries } from "./registry.js";
-import { nextSocketKey, sendFrame, socketHeaders, socketIdOf, socketTag } from "./socket.js";
 import { State } from "./state.js";
 
 interface Receiver {
@@ -16,6 +16,8 @@ interface Registry {
   /** The next socket's id, never one an earlier socket of the object had. */
   readonly allocate: Effect.Effect<number>;
 }
+
+const nextSocketKey = "effect-actions/socket/next";
 
 const registries = makeRegistries<Sockets["Service"], Registry>("layerWebSocket", "Sockets");
 
@@ -196,18 +198,15 @@ const makeProtocol = (
                   Predicate.isTagged(message, "Interrupt")
                     ? forget(state.storage, clientId, message.requestId)
                     : Effect.void,
+                  // Why: Effect's server runs a request's handler in the context of the fiber
+                  // that wrote it, so the socket reaches `Feed.subscribe` in it, where no caller
+                  // can set it, as one could a header.
                   write(
                     clientId,
                     Predicate.isTagged(message, "Request")
-                      ? {
-                          ...message,
-                          headers: socketHeaders(state, clientId, path, [
-                            ...headers,
-                            ...message.headers,
-                          ]),
-                        }
+                      ? { ...message, headers: [...headers, ...message.headers] }
                       : message,
-                  ),
+                  ).pipe(Effect.provideService(CurrentSocket, Option.some(clientId))),
                 ),
               { discard: true },
             );
@@ -292,7 +291,7 @@ export interface LayerWebSocketOptions {
  * `RpcClient.layerProtocolSocket`. A socket keeps its upgrade request's headers, as Effect's own
  * socket protocol does, its credential included, and each message is authenticated with those
  * under its own, its own winning. It registers with the instance's `Sockets`, which hands it
- * their events, and requires it.
+ * their events, and its `Feed`, which serves its sockets, and requires both.
  *
  * **Gotchas**
  *
@@ -313,12 +312,15 @@ export interface LayerWebSocketOptions {
  */
 export const layerWebSocket = (
   options: LayerWebSocketOptions,
-): Layer.Layer<RpcServer.Protocol, never, Sockets | State | HttpRouter.HttpRouter> =>
+): Layer.Layer<RpcServer.Protocol, never, Sockets | Feed | State | HttpRouter.HttpRouter> =>
   Layer.effect(RpcServer.Protocol)(
     Effect.gen(function* () {
       const state = yield* State;
       const registry = yield* registries.of(yield* Sockets);
+      const protocol = yield* makeProtocol(state, registry, options.path);
 
-      return yield* makeProtocol(state, registry, options.path);
+      yield* servePath(yield* Feed, options.path);
+
+      return protocol;
     }),
   );

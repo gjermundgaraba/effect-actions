@@ -56,7 +56,10 @@ expectTypeOf(ActionDurableObject.layerWebSocket({ path: "/rpc" })).toEqualTypeOf
   Layer.Layer<
     RpcServer.Protocol,
     never,
-    ActionDurableObject.Sockets | ActionDurableObject.State | HttpRouter.HttpRouter
+    | ActionDurableObject.Sockets
+    | ActionDurableObject.Feed
+    | ActionDurableObject.State
+    | HttpRouter.HttpRouter
   >
 >();
 

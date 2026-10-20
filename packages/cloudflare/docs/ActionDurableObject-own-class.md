@@ -28,9 +28,10 @@ A class with its own `ManagedRuntime` builds what `handlers` would, in one memo 
 the runtime and `HttpRouter.toWebHandler`:
 
 - `State`, the object's `ctx`, for the services, provided with `Layer.succeed`.
-- `Feed.layer`, the object's subscribers, requiring `State`, for the services, calls or routes
-  that subscribe or publish: one, in the shared memo map, since `end` completes the live
-  subscriptions of the `Feed` they subscribed through.
+- `Feed.layer`, the object's subscribers, requiring `State`, for `layerWebSocket`, which
+  registers its path with it, and the services, calls or routes that subscribe or publish: one,
+  in the shared memo map, since `end` completes the live subscriptions of the `Feed` they
+  subscribed through.
 - `Sockets.layer`, the dispatcher `layerWebSocket` registers with: the class's socket handlers
   call `Sockets`' `message`, `close` and `error`, once the routes are built, and answer the
   sockets for which they succeed with `false`.

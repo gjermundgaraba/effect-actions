@@ -1,5 +1,5 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   Cause,
   Deferred,
@@ -9,15 +9,17 @@ import {
   Fiber,
   Layer,
   Option,
+  Predicate,
   Queue,
   Schema,
   Stream,
 } from "effect";
-import { RpcClient, type RpcMessage, RpcSerialization } from "effect/rpc";
+import { RpcClient, RpcGroup, type RpcMessage, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { recordKey } from "../../src/durable/feed.js";
-import { FeedCalls, FeedRpcs, Gate, NoInitial, Ticks } from "../support/feed.js";
+import { socketIdOf } from "../../src/durable/frames.js";
+import { FeedCalls, FeedRpcs, Gate, NoInitial, OtherTicks, Ticks } from "../support/feed.js";
 import { upgradeTo, upgradeToRpc } from "../support/socket.js";
 
 let objects = 0;
@@ -412,39 +414,70 @@ describe("Feed", () => {
   );
 
   it.effect(
-    "fails a publish and an end of a name subscribed on two socket paths, naming both, sending neither",
+    "refuses a subscribe, a publish and an end on an object serving two socket paths, naming both, though one alone has subscribers, sending nothing",
     () =>
       Effect.gen(function* () {
-        const stub = fresh();
+        const stub = env.TWO_PATHS.getByName(`two-paths-${objects++}`);
         const calls = yield* callsOf(stub);
-        const connection = yield* connect(stub);
-        const subscriber = yield* subscribe(connection, [10]);
-        const other = yield* opened(stub, "/other");
+        const socket = yield* upgradeTo(stub, "https://object/other");
+        const received: Array<string> = [];
 
-        yield* other.send({
-          _tag: "Request",
-          id: 1,
-          tag: "ticks",
-          payload: { initial: [20] },
-          headers: [],
+        socket.addEventListener("message", ({ data }) => {
+          if (Predicate.isString(data)) received.push(data);
         });
 
-        const otherInitial = yield* other.next;
+        yield* Effect.promise(() =>
+          runInDurableObject(stub, async (_, state) => {
+            const [other] = state.getWebSockets("effect-actions/rpc:/other");
+
+            if (other === undefined) throw new Error("No socket on /other");
+
+            await state.storage.put(recordKey(socketIdOf(state.getTags(other)), 1), {
+              tag: "ticks",
+              key: undefined,
+              requestId: 1,
+            });
+          }),
+        );
+
+        socket.send(
+          JSON.stringify({
+            _tag: "Request",
+            id: 2,
+            tag: "ticks",
+            payload: { initial: [20] },
+            headers: [],
+          }),
+        );
+
         const published = yield* Effect.exit(calls.publish({ value: 1, key: null }));
         const ended = yield* Effect.exit(calls.end({ key: null }));
-
-        yield* connection.client.ping();
-
-        expect(otherInitial).toEqual({ _tag: "Chunk", requestId: 1, values: [20] });
+        const refusal = "serves /rpc and /other";
 
         for (const exit of [published, ended]) {
-          expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
-            "has subscribers on the socket paths /rpc and /other",
-          );
+          expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(refusal);
         }
 
-        expect(subscriber.sent()).toBe(1);
+        yield* Effect.promise(() => vi.waitUntil(() => received.length > 0, { timeout: 5_000 }));
+
+        expect(received).toEqual([expect.stringContaining(refusal)]);
       }).pipe(Effect.scoped),
+  );
+
+  it("holds one rpc per tag in a group, a later one replacing an earlier", () => {
+    const group = RpcGroup.make(Ticks, OtherTicks);
+
+    expect([...group.requests.values()]).toEqual([OtherTicks]);
+  });
+
+  it.effect("gives a handler over the socket no header naming its socket", () =>
+    Effect.gen(function* () {
+      const { client } = yield* connect(fresh());
+
+      expect(
+        (yield* client.headerNames()).filter((name) => name.startsWith("effect-actions")),
+      ).toEqual([]);
+    }).pipe(Effect.scoped),
   );
 
   it.effect(
@@ -607,12 +640,13 @@ describe("Feed", () => {
   );
 
   it.effect(
-    "drops a record no socket holds, as one closed while its object was evicted leaves, when a publish meets it",
+    "drops a record no socket holds, as one closed while its object was evicted leaves, when a publish meets it, still sending the others",
     () =>
       Effect.gen(function* () {
         const stub = fresh();
         const calls = yield* callsOf(stub);
-        const key = recordKey(99, "0");
+        const subscriber = yield* subscribe(yield* connect(stub), [10]);
+        const key = recordKey(99, 0);
 
         const stored = Effect.promise(() =>
           runInDurableObject(stub, (_, state) => state.storage.get(key)),
@@ -629,7 +663,8 @@ describe("Feed", () => {
         yield* calls.publish({ value: 1, key: null });
 
         expect(yield* stored).toBeUndefined();
-      }),
+        expect(yield* subscriber.next(1)).toEqual([1]);
+      }).pipe(Effect.scoped),
   );
 });
 

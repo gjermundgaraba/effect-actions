@@ -22,7 +22,7 @@ import {
   stubCalls,
 } from "./support/app.js";
 import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./support/hosts.js";
-import { Announcer, feedCalls, feedRoutes, Gate } from "./support/feed.js";
+import { Announcer, feedCalls, feedRoutes, Gate, twoPathRoutes } from "./support/feed.js";
 import { nativeCalls } from "./support/native.js";
 
 export class Plain extends DurableObject {
@@ -133,6 +133,7 @@ export class Manual extends DurableObject {
   readonly #services = Layer.mergeAll(
     startup,
     ActionDurableObject.Sockets.layer,
+    ActionDurableObject.Feed.layer,
     pluginCalls.pipe(
       Layer.provide(ActionDurableObject.layerStub()),
       Layer.provideMerge(ActionDurableObject.Calls.layer),
@@ -227,5 +228,11 @@ export class Delegating extends DurableObject {
 export class Fed extends ActionDurableObject.make({
   services: () => Layer.merge(Announcer.layer, Gate.layer),
   routes: feedRoutes,
+  calls: feedCalls,
+}) {}
+
+export class TwoPaths extends ActionDurableObject.make({
+  services: () => Layer.merge(Announcer.layer, Gate.layer),
+  routes: twoPathRoutes,
   calls: feedCalls,
 }) {}

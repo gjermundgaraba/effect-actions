@@ -12,7 +12,8 @@ import {
   Stream,
 } from "effect";
 import { Rpc, type RpcMessage, RpcSchema, RpcSerialization } from "effect/rpc";
-import { sendFrame, socketOfHeaders } from "./socket.js";
+import { RequestId, sendFrame } from "./frames.js";
+import { makeRegistries } from "./registry.js";
 import { State } from "./state.js";
 
 const recordPrefix = "effect-actions/feed/";
@@ -27,14 +28,13 @@ export const recordKey = (socket: number, requestId: string | number) =>
   `${ofSocket(socket)}${Predicate.isNumber(requestId) ? "n" : "s"}${requestId}`;
 
 /**
- * A subscription, as storage keeps it: its rpc's tag and its socket protocol's path, the key it
- * was given, and its request's id as the client sent it, which the client finds its call by.
+ * A subscription, as storage keeps it: its rpc's tag, the key it was given, and its request's id
+ * as the client sent it, which the client finds its call by.
  */
 const Subscription = Schema.Struct({
   tag: Schema.String,
-  path: Schema.String,
   key: Schema.UndefinedOr(Schema.String),
-  requestId: Schema.Union([Schema.String, Schema.Number]),
+  requestId: RequestId,
 });
 
 const recordOf = Schema.decodeUnknownOption(Subscription);
@@ -65,6 +65,22 @@ export const forget = (
       await storage.delete(keys.slice(start, start + 128));
     }
   });
+
+/**
+ * The socket a call came in on, its id, which `layerWebSocket` provides around each message it
+ * hands its server, so the handler's fiber inherits it, and none for a call over any other
+ * protocol.
+ */
+export const CurrentSocket = Context.Reference<Option.Option<number>>(
+  "effect-actions-cloudflare/ActionDurableObject/CurrentSocket",
+  { defaultValue: Option.none },
+);
+
+const registries = makeRegistries<Feed["Service"], Set<string>>("layerWebSocket", "Feed");
+
+/** Registers `path`, a `layerWebSocket`'s, as one whose sockets `feed` serves. */
+export const servePath = (feed: Feed["Service"], path: string) =>
+  Effect.map(registries.of(feed), (paths) => void paths.add(path));
 
 /**
  * What `subscribe` reads of a stream rpc's call: its handler's second argument, as Effect's
@@ -170,7 +186,7 @@ const exitOf = (rpc: Rpc.Any) =>
  * - A subscriber whose `initial` fails ends with its failure, its record dropped; a value published while it was read reaches the client first, as one chunk its stream emits before it fails.
  * - `end` completes a live subscriber's stream through Effect's server, which runs its finalizers and answers its client, and answers a subscriber whose call hibernation dropped itself; one ended while its `initial` is read is sent nothing.
  * - Only a call over `layerWebSocket` subscribes: one over the stub or another protocol dies at once, `subscribes a call over layerWebSocket alone`.
- * - A record keeps its rpc's name and its socket path, and one object's stream rpcs need distinct names across its paths: a `publish` or `end` of a name with subscribers on two paths dies, naming both.
+ * - It serves the sockets of one `layerWebSocket` path, since a record names its rpc by tag alone and a group holds one rpc per tag, a later one replacing an earlier: an object whose routes serve two dies at each `subscribe`, `publish` and `end`, naming them, so serve every rpc that streams on one path.
  * - Access is checked once, as the call subscribes: a subscriber is published to until its socket closes, whatever becomes of its credential or membership, so end a member's subscribers, subscribed under a key of their own, with `end(rpc, { key })`, or close their socket from a handler, found with `State`'s `getWebSockets`.
  * - The feed waits for no acknowledgement: a page that stops acknowledging still receives every value, and each chunk Effect's client acknowledges wakes a hibernating object, whose server ignores the ack.
  * - Effect's socket client fails every stream it runs when its socket drops, and a stream may end with a defect, from the server or a chunk the client cannot decode: a page observing only failures misses that end and shows a subscription that is gone, so it reads the stream's `Exit`, `Effect.exit` around its run, then subscribes again from the last value it holds, which `initial` sends on.
@@ -217,10 +233,26 @@ export class Feed extends Context.Service<
 
       const drop = (key: string) => Effect.promise(() => storage.delete(key));
 
+      // Why: a record names its rpc by tag alone, the one identity of an rpc that survives
+      // hibernation, and a tag is one rpc only on one path, whose group holds one rpc per tag:
+      // so the feed serves one path, or none, and refuses before it sends anything.
+      const paths = new Set<string>();
+
+      const oneServed = Effect.suspend(() =>
+        paths.size > 1
+          ? Effect.die(
+              new Error(
+                `ActionDurableObject.Feed serves the sockets of one layerWebSocket path, and the object serves ${[...paths].join(" and ")}, whose rpcs it cannot tell apart: serve every rpc that streams on one path`,
+              ),
+            )
+          : Effect.void,
+      );
+
       const subscribersOf = (rpc: Rpc.Any, key: string | undefined) =>
         Effect.gen(function* () {
+          yield* oneServed;
+
           const all = yield* Effect.promise(() => storage.list({ prefix: recordPrefix }));
-          const paths = new Set<string>();
 
           const matching: Array<{
             readonly storageKey: string;
@@ -234,21 +266,12 @@ export class Feed extends Context.Service<
 
             if (socket === undefined || Option.isNone(record)) {
               yield* drop(storageKey);
-            } else if (record.value.tag === rpc._tag) {
-              paths.add(record.value.path);
-
-              if (key === undefined || record.value.key === key) {
-                matching.push({ storageKey, socket, requestId: record.value.requestId });
-              }
+            } else if (
+              record.value.tag === rpc._tag &&
+              (key === undefined || record.value.key === key)
+            ) {
+              matching.push({ storageKey, socket, requestId: record.value.requestId });
             }
-          }
-
-          if (paths.size > 1) {
-            return yield* Effect.die(
-              new Error(
-                `ActionDurableObject.Feed: the stream rpc ${rpc._tag} has subscribers on the socket paths ${[...paths].join(" and ")}, which a publish of its name cannot tell apart: give the stream rpcs of one object distinct names`,
-              ),
-            );
           }
 
           return matching;
@@ -279,11 +302,11 @@ export class Feed extends Context.Service<
           return Stream.fromEffectDrain(Deferred.await(ended));
         });
 
-      return Feed.of({
+      const feed = Feed.of({
         subscribe: (request, options) =>
           Stream.unwrap(
             Effect.gen(function* () {
-              const found = socketOfHeaders(state, request.headers);
+              const found = yield* CurrentSocket;
 
               if (Option.isNone(found)) {
                 return yield* Effect.die(
@@ -293,7 +316,9 @@ export class Feed extends Context.Service<
                 );
               }
 
-              const { socket, path } = found.value;
+              yield* oneServed;
+
+              const socket = found.value;
               const key = recordKey(socket, request.requestId);
               const ended = yield* Deferred.make<void>();
 
@@ -310,7 +335,6 @@ export class Feed extends Context.Service<
                   key,
                   Subscription.make({
                     tag: request.rpc._tag,
-                    path,
                     key: options?.key,
                     requestId: request.requestId,
                   }),
@@ -373,6 +397,10 @@ export class Feed extends Context.Service<
             }),
           ),
       });
+
+      registries.register(feed, paths);
+
+      return feed;
     }),
   );
 }

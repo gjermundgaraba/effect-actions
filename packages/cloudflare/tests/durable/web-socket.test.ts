@@ -294,6 +294,9 @@ describe("layerWebSocket", () => {
                     close: () => Effect.succeed(false),
                     error: () => Effect.succeed(false),
                   }),
+                  ActionDurableObject.Feed.layer.pipe(
+                    Layer.provide(Layer.succeed(ActionDurableObject.State, state)),
+                  ),
                   HttpRouter.layer,
                 ]),
               ),

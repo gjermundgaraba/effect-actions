@@ -28,6 +28,8 @@ export const Ticks = Rpc.make("ticks", {
 
 export const Ping = Rpc.make("ping");
 
+export const HeaderNames = Rpc.make("headerNames", { success: Schema.Array(Schema.String) });
+
 const SlowlyEncoded = Schema.Int.pipe(
   Schema.decodeTo(
     Schema.Int,
@@ -40,7 +42,7 @@ const SlowlyEncoded = Schema.Int.pipe(
 
 export const SlowTicks = Rpc.make("slowTicks", { success: SlowlyEncoded, stream: true });
 
-export const FeedRpcs = RpcGroup.make(Ticks, Ping, SlowTicks);
+export const FeedRpcs = RpcGroup.make(Ticks, Ping, HeaderNames, SlowTicks);
 
 export const OtherTicks = Rpc.make("ticks", {
   payload: { initial: Schema.Array(Schema.Int) },
@@ -129,6 +131,7 @@ const tickHandlers = FeedRpcs.toLayer(
         ).pipe(Stream.ensuring(Ref.update(finalized, (count) => count + 1)));
       },
       ping: () => Effect.void,
+      headerNames: (_, { headers }) => Effect.succeed(Object.keys(headers)),
       slowTicks: (_, request) => feed.subscribe(request, { initial: [5] }),
     });
   }),
@@ -150,6 +153,10 @@ export const feedRoutes = Layer.mergeAll(
     Layer.provide(RpcServer.layerProtocolHttp({ path: "/http" })),
     Layer.provide(RpcSerialization.layerNdjson),
   ),
+);
+
+export const twoPathRoutes = Layer.merge(
+  feedRoutes,
   RpcServer.layer(OtherRpcs).pipe(
     Layer.provide(otherHandlers),
     Layer.provide(ActionDurableObject.layerWebSocket({ path: "/other" })),
