@@ -211,9 +211,10 @@ export const openRoom = (token: string) =>
 
 - **Opened at the first value.** Effect's client tells a page nothing when its subscription is
   kept, so a stream with nothing `initial` opens at its first published value.
-- **What a page may see twice.** A value published while the handler reads `initial` may reach
-  the page twice, in `initial` and as published: a value carries an id, such as a message's,
-  and the page skips one it has seen.
+- **What a page may see twice.** `initial` goes to the socket as soon as it is read, so a value
+  published after the read always follows it, and a page of whole snapshots never ends on an older
+  one. A value published while the handler reads `initial` may reach the page before it and again
+  in it: a value carries an id, such as a message's, and the page skips one it has seen.
 - **What wakes the object.** Effect's client acknowledges every chunk it is sent, and each
   acknowledgement wakes a hibernating object, as a call does.
 - **Testing it.** `evictDurableObject(stub)` between a page subscribing and a post shows the

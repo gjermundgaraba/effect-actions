@@ -75,6 +75,24 @@ const subscribe = (
     return { first, next, fiber, received, sent };
   });
 
+const gated = (
+  { client }: Connection,
+  gate: "during" | "after",
+  initial: ReadonlyArray<number>,
+  failInitial = false,
+) =>
+  Effect.gen(function* () {
+    const received = yield* Queue.unbounded<number>();
+
+    const fiber = yield* Effect.forkScoped(
+      client
+        .ticks({ key: null, initial, failInitial, gate })
+        .pipe(Stream.runForEach((value) => Queue.offer(received, value))),
+    );
+
+    return { fiber, next: (count: number) => Queue.takeN(received, count) };
+  });
+
 describe("Feed", () => {
   it.effect("sends a subscriber what a stub call publishes, after its initial values", () =>
     Effect.gen(function* () {
@@ -160,6 +178,69 @@ describe("Feed", () => {
 
       expect(failed).toBeInstanceOf(NoInitial);
       expect(connection.chunks.length).toBe(kept.sent());
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "sends a subscriber its initial values before a value published once they are read",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const subscriber = yield* gated(yield* connect(stub), "after", [10]);
+
+        yield* calls.publishWhenRead({ value: 99 });
+
+        expect(yield* subscriber.next(2)).toEqual([10, 99]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "sends a subscriber a value published while its initial values are read before them",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const subscriber = yield* gated(yield* connect(stub), "during", [10]);
+
+        yield* calls.publishWhenRead({ value: 99 });
+
+        expect(yield* subscriber.next(2)).toEqual([99, 10]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "sends a subscriber a value published while its initial values fail as one chunk, then its failure",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const connection = yield* connect(stub);
+        const subscriber = yield* gated(connection, "during", [10], true);
+
+        yield* calls.publishWhenRead({ value: 99 });
+
+        expect(yield* subscriber.next(1)).toEqual([99]);
+        expect(yield* Effect.flip(Fiber.join(subscriber.fiber))).toBeInstanceOf(NoInitial);
+        expect(connection.chunks.map((chunk) => chunk.values)).toEqual([[99]]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends no chunk for empty initial values, and keeps the subscriber", () =>
+    Effect.gen(function* () {
+      const stub = fresh();
+      const calls = yield* callsOf(stub);
+      const connection = yield* connect(stub);
+      const subscriber = yield* gated(connection, "after", []);
+
+      yield* calls.publishWhenRead({ value: 1 });
+
+      expect(yield* subscriber.next(1)).toEqual([1]);
+
+      yield* calls.end({ key: null });
+      yield* Fiber.join(subscriber.fiber);
+
+      expect(connection.chunks.map((chunk) => chunk.values)).toEqual([[1]]);
     }).pipe(Effect.scoped),
   );
 

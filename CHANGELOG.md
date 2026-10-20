@@ -86,15 +86,16 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     provide to them, the calls, the routes, the alarm and `run`, so a publish adapter is one of
     the services. A stream rpc's handler returns `feed.subscribe(request, { initial, key })`:
     the subscriber's record is kept in the object's storage, keyed by its socket's id and its
-    request's, then `initial` is sent as one chunk, and the stream never ends; an `initial` that
-    fails ends the stream with its failure and drops the record.
+    request's, then `initial` is sent to the socket as one chunk as soon as it is read, so
+    nothing published after the read arrives before it, and the stream never ends; an `initial`
+    that fails ends the stream with its failure and drops the record.
     `publish(rpc, value, { key })`, typed by the rpc's chunk, sends each subscriber of the rpc,
     or of the key, whose socket is open, the value as Effect's server sends a chunk, from any
     instance, so a value published after the object hibernated reaches a page subscribed
     before; `end(rpc, { key })` completes their streams. A record is dropped when its client
     interrupts the stream or its socket closes, through `layerWebSocket`, and when a publish
-    finds its socket gone. A subscriber gets every value published after its `initial` at least
-    once; each chunk's ack wakes the object; Effect's socket client fails its streams when its
+    finds its socket gone. A subscriber gets every value published from when its record is kept
+    at least once, one published while `initial` is read possibly arriving before it and again in it; each chunk's ack wakes the object; Effect's socket client fails its streams when its
     socket drops, so a page subscribes again from the last value it holds. The records and the
     socket-id counter sit in the object's storage beside the application's data, so
     `storage.deleteAll()` drops every subscriber: `end` them first.

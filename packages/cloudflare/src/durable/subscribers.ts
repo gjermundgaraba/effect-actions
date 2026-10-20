@@ -16,9 +16,9 @@ export interface Subscriber<R extends Rpc.Any> {
 /** `Feed`'s `subscribe` options. */
 export interface SubscribeOptions<A, E = never, R = never> {
   /**
-   * What the subscriber is sent first, as one chunk, read after its record is kept: an Effect
-   * of the values, such as a store's read of what came after the client's last, or the values.
-   * Nothing is sent first without it, or when it is empty.
+   * What the subscriber is sent first, as one chunk, to its socket as soon as it is read, its
+   * record kept before: an Effect of the values, such as a store's read of what came after the
+   * client's last, or the values. Nothing is sent first without it, or when it is empty.
    */
   readonly initial?: ReadonlyArray<A> | Effect.Effect<ReadonlyArray<A>, E, R> | undefined;
   /**
@@ -42,13 +42,23 @@ export interface EndOptions {
 
 const json = RpcSerialization.json;
 
-type Encode = (values: ReadonlyArray<unknown>) => Effect.Effect<unknown>;
+const RequestId = Schema.Union([Schema.String, Schema.Number]);
 
-const encoders = new WeakMap<Rpc.Any, Encode>();
+// Why: what the client reads is these frames, as Effect's server encodes its responses: a chunk
+// of encoded values, and an exit encoded with the rpc's exit schema.
+const ChunkFrame = Schema.TaggedStruct("Chunk", { requestId: RequestId, values: Schema.Unknown });
+
+const ExitFrame = Schema.TaggedStruct("Exit", { requestId: RequestId, exit: Schema.Unknown });
+
+type Chunk = (requestId: string | number) => typeof ChunkFrame.Type;
+
+type Chunks = (values: ReadonlyArray<unknown>) => Chunk;
+
+const encoders = new WeakMap<Rpc.Any, Chunks>();
 
 // Why: a chunk is sent as Effect's server sends one, which encodes it with the rpc's stream
 // schemas through the protocol's JSON codec, so the client decodes it as the server's own.
-const chunkEncoderOf = (rpc: Rpc.Any): Encode => {
+const chunksOf = (rpc: Rpc.Any): Chunks => {
   const cached = encoders.get(rpc);
 
   if (cached !== undefined) return cached;
@@ -62,16 +72,20 @@ const chunkEncoderOf = (rpc: Rpc.Any): Encode => {
     );
   }
 
-  const encode = Schema.encodeUnknownEffect(
+  const encode = Schema.encodeUnknownSync(
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased rpc schemas: the feed provides a chunk's schema no service, so one needing a service to encode dies as it encodes.
     json.codecFor(Schema.NonEmptyArray(success.success)) as Schema.Codec<unknown, unknown>,
   );
 
-  const encoder: Encode = (values) => Effect.orDie(encode(values));
+  const chunks: Chunks = (values) => {
+    const encoded = encode(values);
 
-  encoders.set(rpc, encoder);
+    return (requestId) => ChunkFrame.make({ requestId, values: encoded });
+  };
 
-  return encoder;
+  encoders.set(rpc, chunks);
+
+  return chunks;
 };
 
 const exitOf = (rpc: Rpc.Any) =>
@@ -81,14 +95,6 @@ const exitOf = (rpc: Rpc.Any) =>
   )(Exit.void);
 
 const recordOf = Schema.decodeUnknownOption(Subscription);
-
-const RequestId = Schema.Union([Schema.String, Schema.Number]);
-
-// Why: what the client reads is these frames, as Effect's server encodes its responses: a chunk
-// of encoded values, and an exit encoded with the rpc's exit schema.
-const ChunkFrame = Schema.TaggedStruct("Chunk", { requestId: RequestId, values: Schema.Unknown });
-
-const ExitFrame = Schema.TaggedStruct("Exit", { requestId: RequestId, exit: Schema.Unknown });
 
 /**
  * The object's subscribers to the rpcs that stream over `layerWebSocket`, kept in its storage, so
@@ -100,9 +106,8 @@ const ExitFrame = Schema.TaggedStruct("Exit", { requestId: RequestId, exit: Sche
  *
  * **Gotchas**
  *
- * - A subscriber whose `initial` fails ends with its failure, its record dropped.
- * - At least once across the join, never lost: a value published while a subscriber's `initial` is read may reach it twice, in `initial` and as published, so give values an id the client drops repeats by.
- * - A value published while `initial` is read may arrive before it: the stream is in order from the first value published after `initial` is sent.
+ * - At least once across the join, never lost: a value published while `initial` is read may arrive before it and again in it, never after it out of order, since `initial` goes to the socket as it is read; give values an id the client drops repeats by.
+ * - A subscriber whose `initial` fails ends with its failure, its record dropped; a value published while it was read reaches the client first, as one chunk its stream emits before it fails.
  * - Each chunk's ack wakes a hibernating object: Effect's client acknowledges every chunk it is sent, which the object's server ignores for a call it no longer runs.
  * - Effect's socket client fails every stream it runs when its socket drops, and a stream may end with a defect, from the server or a chunk the client cannot decode: a page observing only failures misses that end and shows a subscription that is gone, so it reads the stream's `Exit`, `Effect.exit` around its run, then subscribes again from the last value it holds, which `initial` sends on.
  * - Only a call over `layerWebSocket` subscribes: over another protocol it has no socket, and the first `publish` drops its record.
@@ -118,7 +123,8 @@ export class Feed extends Context.Service<
   {
     /**
      * The stream a stream rpc's handler returns to make its call a subscriber: its record kept
-     * first, then `initial` sent as one chunk, then every value published to it, never ending.
+     * first, then `initial` sent to the socket as one chunk as it is read, then every value
+     * published to it, never ending.
      */
     readonly subscribe: <R extends Rpc.Any, E = never, RR = never>(
       request: Subscriber<R>,
@@ -148,7 +154,7 @@ export class Feed extends Context.Service<
       const sendTo = (
         tag: string,
         key: string | undefined,
-        frame: (requestId: string | number) => typeof ChunkFrame.Type | typeof ExitFrame.Type,
+        frame: Chunk | ((requestId: string | number) => typeof ExitFrame.Type),
         after: (storageKey: string) => Effect.Effect<void>,
       ) =>
         Effect.flatMap(records(storage), (all) =>
@@ -182,6 +188,21 @@ export class Feed extends Context.Service<
           ),
         );
 
+      const sendInitial = <R extends Rpc.Any>(
+        request: Subscriber<R>,
+        values: ReadonlyArray<Rpc.SuccessChunk<R>>,
+      ) => {
+        if (values.length > 0) {
+          const encoded = parser.encode(chunksOf(request.rpc)(values)(request.requestId));
+
+          for (const socket of state.getWebSockets(socketTag(request.client.id))) {
+            if (encoded !== undefined) socket.send(encoded);
+          }
+        }
+
+        return Stream.never;
+      };
+
       return Feed.of({
         subscribe: (request, options) =>
           Stream.unwrap(
@@ -203,24 +224,22 @@ export class Feed extends Context.Service<
 
               // Why: the record is kept before `initial` is read, so nothing published meanwhile
               // is lost; a call whose `initial` fails has ended, and a record left behind would
-              // send its client chunks for it.
-              const values = Effect.isEffect(initial)
-                ? yield* Effect.onError(initial, () => drop(key))
-                : initial;
-
-              return Stream.concat(Stream.fromArray(values), Stream.never);
+              // send its client chunks for it. The values go to the socket as they are read, as a
+              // publish sends, rather than through the server, which writes them on a later
+              // step: a publish landing in between would reach the client first, and a feed of
+              // snapshots would show the older one last.
+              return yield* Effect.onError(
+                Effect.map(Effect.isEffect(initial) ? initial : Effect.succeed(initial), (values) =>
+                  sendInitial(request, values),
+                ),
+                () => drop(key),
+              );
             }),
           ),
         publish: (rpc, value, options) =>
           Effect.flatMap(
-            Effect.suspend(() => chunkEncoderOf(rpc)([value])),
-            (values) =>
-              sendTo(
-                rpc._tag,
-                options?.key,
-                (requestId) => ChunkFrame.make({ requestId, values }),
-                () => Effect.void,
-              ),
+            Effect.sync(() => chunksOf(rpc)([value])),
+            (chunk) => sendTo(rpc._tag, options?.key, chunk, () => Effect.void),
           ),
         end: (rpc, options) =>
           Effect.suspend(() => {
