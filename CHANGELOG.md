@@ -48,7 +48,12 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   with its own schemas; the binding's `group` is both, and its `rpcs` the native ones as served.
   Under the binding's `authentication`, each of their messages authenticates as a protected
   action's does, through native middleware the binding adds: its handler reads the identity, and
-  a refusal is the call's typed `Unauthenticated`, or the verifier's declared error.
+  a refusal is the call's typed `Unauthenticated`, or the verifier's declared error, and the
+  verifier's defect `Internal server error`, its cause reported. The authentication is the
+  binding's, whatever `layer`'s `actions` selects, runs before the group's own middleware, and is
+  provided beneath the server, so no Layer of the host's under its key replaces it; `layer`
+  refuses a protected binding whose native rpc does not run it first, such as one added with
+  `rpcs.add` after `make`. A native rpc runs no `authorize`: its handler authorizes the identity.
   `ActionRpc.client` has their methods beside the actions', a stream rpc's a `Stream`.
   `ActionRpc.layer` serves them with their own schemas on the same protocol, and requires their
   handlers, which the host provides with `Rpc.rpcs.toLayer(handlers)`, so a layer without them

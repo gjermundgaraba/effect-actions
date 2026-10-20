@@ -33,6 +33,19 @@ describe("layerWebSocket", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "authenticates each message of a native rpc with its own token over the saved one",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* scopedClientOver(
+          yield* upgradeToRpc(room("own-native"), bearer("ada")),
+        );
+
+        expect(yield* client.whose().pipe(RpcClient.withHeaders(bearer("grace")))).toBe("grace");
+        expect(yield* client.whose()).toBe("ada");
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("refuses a socket's protected calls without a token, and serves its public ones", () =>
     Effect.gen(function* () {
       const client = yield* scopedClientOver(yield* upgradeToRpc(room("anonymous")));

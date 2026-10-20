@@ -1,6 +1,6 @@
 import { Context, Data, Effect, Layer, Redacted, Schema } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
-import { RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
+import { Rpc as NativeRpc, RpcGroup, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -75,7 +75,12 @@ const actions = [Whoami, Spend, ReadNote, Schedule, Alarms, Pause] as const;
 
 export const Http = ActionHttp.make([Whoami, Spend, Schedule, Alarms], { authentication: Login });
 
-export const Rpc = ActionRpc.make(actions, { authentication: Login });
+export const Rpc = ActionRpc.make(actions, {
+  authentication: Login,
+  rpcs: RpcGroup.make(NativeRpc.make("whose", { success: Schema.String })),
+});
+
+const whose = Rpc.rpcs.toLayer({ whose: () => Effect.service(CurrentUser) });
 
 const users = ["ada", "grace"] as const;
 
@@ -141,6 +146,7 @@ export const slowUpstream = Layer.effectDiscard(
 );
 
 const rpcRoutes = ActionRpc.layer(Rpc, implementation, { middleware: [ResolveNote] }).pipe(
+  Layer.provide(whose),
   Layer.provide(resolveNote),
 );
 
@@ -169,6 +175,7 @@ export const socketRoutes = Layer.mergeAll(
 ).pipe(Layer.provide(authenticate), Layer.provide(slowUpstream));
 
 export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
+  Layer.provide(whose),
   Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
   HttpRouter.provideRequest(Layer.succeed(CurrentNote, "router")),
   Layer.provide(authenticate),
@@ -177,6 +184,7 @@ export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
 
 const mountedAt = (prefix: string) =>
   ActionRpc.layer(Rpc, implementation, { middleware: [ResolveNote] }).pipe(
+    Layer.provide(whose),
     Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
     Layer.updateService(HttpRouter.HttpRouter, (router) => router.prefixed(prefix)),
   );

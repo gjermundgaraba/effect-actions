@@ -395,3 +395,37 @@ export const servedWithoutHandlers: Layer.Layer<never, never, HostOwed> = Action
   Layer.provide(Authentication.layer(Checked, verify)),
   Layer.provide(Layer.succeed(BuilderClock, 0)),
 );
+
+class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}
+
+class Gate extends RpcMiddleware.Service<Gate>()("rpc-types/Gate", {
+  error: Schema.Union([Denied]),
+}) {}
+
+const Gated = ActionRpc.make([], { rpcs: RpcGroup.make(NativeRpc.make("one")).middleware(Gate) });
+
+const gatedUnprovided = ActionRpc.layer(Gated, []).pipe(
+  Layer.provide(Gated.rpcs.toLayer({ one: () => Effect.void })),
+);
+
+expectTypeOf<Layer.Services<typeof gatedUnprovided>>().toEqualTypeOf<RpcServer.Protocol | Gate>();
+
+const GatedWatch = ActionRpc.make([Open, Get], {
+  authentication: Checked,
+  rpcs: RpcGroup.make(Watch).middleware(Gate),
+});
+
+const gatedWatchUnprovided = ActionRpc.layer(GatedWatch, app).pipe(
+  Layer.provide(
+    GatedWatch.rpcs.toLayer({
+      watch: ({ after }) =>
+        Stream.unwrap(Effect.map(Actor, (actor) => Stream.make(`${actor}:${after}`))),
+    }),
+  ),
+  Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(Authentication.layer(Checked, verify)),
+  Layer.provide(Layer.succeed(BuilderClock, 0)),
+);
+
+expectTypeOf<Layer.Services<typeof gatedWatchUnprovided>>().toEqualTypeOf<HostOwed | Gate>();

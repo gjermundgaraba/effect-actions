@@ -1,13 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Schema, Stream } from "effect";
-import { Rpc, RpcClient, RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
-import { authenticate } from "../support/app/authentication.js";
+import {
+  Cause,
+  Effect,
+  ErrorReporter,
+  Exit,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
+import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
+import { authenticate, verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
 import { Status, WhoAmI } from "../support/app/contracts.js";
 import { status, userActions } from "../support/app/handlers.js";
 import { Users } from "../support/app/users.js";
+import { recorder } from "../support/reporter.js";
 import * as Action from "../../src/contract/Action.js";
+import * as Authentication from "../../src/authentication/Authentication.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Testing from "../../src/testing/Testing.js";
 
@@ -77,6 +89,23 @@ const withProtected = <A, E, R>(
 
 const as = (token: string) => RpcClient.withHeaders({ authorization: `Bearer ${token}` });
 
+class Shadow extends RpcMiddleware.Service<Shadow>()("effect-actions/ActionRpc/Authenticated") {}
+
+const passThrough = Layer.succeed(Shadow)((effect) => effect);
+
+const OnlyNative = ActionRpc.make([], { authentication: Login, rpcs: Native });
+
+const whoseOver = <B extends ActionRpc.Any, E, R>(
+  binding: B,
+  server: Layer.Layer<never, E, R>,
+  call: (client: ActionRpc.Client<B>) => Effect.Effect<string, unknown>,
+) =>
+  Effect.flatMap(ActionRpc.client(binding), call).pipe(
+    Effect.scoped,
+    Effect.provide(overHttp(server)),
+    Effect.provide(Users.layerMemory),
+  );
+
 describe("ActionRpc native rpcs", () => {
   it.effect("streams a native rpc's chunks to its client, its handler given the identity", () =>
     Effect.gen(function* () {
@@ -143,6 +172,140 @@ describe("ActionRpc native rpcs", () => {
 
       expect(chunks).toEqual(["anyone:2", "anyone:1"]);
     }),
+  );
+
+  it.effect(
+    "authenticates a protected binding's native rpcs whatever actions it serves, a host's Layer under the middleware's key passing nothing through",
+    () =>
+      Effect.gen(function* () {
+        const servers = {
+          publicOnly: ActionRpc.layer(Protected, [status, userActions], { actions: [Status] }),
+          noAction: ActionRpc.layer(OnlyNative, []),
+        };
+
+        for (const server of Object.values(servers)) {
+          const routes = server.pipe(Layer.provide(signedIn), Layer.provide(authenticate));
+
+          for (const outer of [Layer.empty, passThrough]) {
+            const served = routes.pipe(Layer.provide(outer));
+
+            const refused = yield* Effect.flip(
+              whoseOver(Protected, served, (client) => client.whose()),
+            );
+
+            const signed = yield* whoseOver(Protected, served, (client) =>
+              client.whose().pipe(as("alice")),
+            );
+
+            expect(refused).toBeInstanceOf(Action.Unauthenticated);
+            expect(signed).toBe("alice");
+          }
+        }
+      }),
+  );
+
+  it.effect(
+    "runs a native rpc's own group middleware after its authentication, given the identity, and never for a refused call",
+    () =>
+      Effect.gen(function* () {
+        const seen: Array<string> = [];
+
+        class Seen extends RpcMiddleware.Service<Seen>()("native-test/Seen") {}
+
+        const Watched = ActionRpc.make([Status], {
+          authentication: Login,
+          rpcs: RpcGroup.make(Whose).middleware(Seen),
+        });
+
+        const server = ActionRpc.layer(Watched, [status]).pipe(
+          Layer.provide(
+            Watched.rpcs.toLayer({ whose: () => Effect.map(CurrentActor, (actor) => actor.id) }),
+          ),
+          Layer.provide(authenticate),
+          Layer.provide(
+            Layer.succeed(Seen)((effect) =>
+              Effect.flatMap(Effect.serviceOption(CurrentActor), (actor) => {
+                seen.push(Option.match(actor, { onNone: () => "nobody", onSome: ({ id }) => id }));
+
+                return effect;
+              }),
+            ),
+          ),
+        );
+
+        const refused = yield* Effect.flip(whoseOver(Watched, server, (client) => client.whose()));
+
+        const signed = yield* whoseOver(Watched, server, (client) =>
+          client.whose().pipe(as("bob")),
+        );
+
+        expect(refused).toBeInstanceOf(Action.Unauthenticated);
+        expect(signed).toBe("bob");
+        expect(seen).toEqual(["bob"]);
+      }),
+  );
+
+  it.effect(
+    "refuses to serve a protected binding's native rpc that does not run its authentication first",
+    () =>
+      Effect.gen(function* () {
+        const Extra = Rpc.make("extra", { success: Schema.String });
+
+        class Outer extends RpcMiddleware.Service<Outer>()("native-test/Outer") {}
+
+        const modified = {
+          added: { ...Protected, rpcs: Protected.rpcs.add(Extra) },
+          wrapped: { ...Protected, rpcs: Protected.rpcs.middleware(Outer) },
+        };
+
+        for (const [name, binding] of Object.entries(modified)) {
+          const exit = yield* Effect.exit(
+            whoseOver(
+              Protected,
+              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: a binding modified past its types, as plain JavaScript could.
+              ActionRpc.layer(binding as typeof Protected, [status, userActions]).pipe(
+                Layer.provide(signedIn),
+                Layer.provide(authenticate),
+              ),
+              (client) => client.whose().pipe(as("alice")),
+            ),
+          );
+
+          expect(Exit.isFailure(exit) && Cause.pretty(exit.cause), name).toContain(
+            "of a protected binding does not run its authentication first",
+          );
+        }
+      }),
+  );
+
+  it.effect(
+    "answers a verifier's defect on a native rpc with Internal server error, its cause reported",
+    () =>
+      Effect.gen(function* () {
+        const reported: Array<string> = [];
+
+        const server = ActionRpc.layer(Protected, [status, userActions]).pipe(
+          Layer.provide(signedIn),
+          Layer.provide(
+            Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
+              Redacted.value(token) === "dying"
+                ? Effect.die(new Error("verifier secret"))
+                : verify(token),
+            ),
+          ),
+          Layer.provide(ErrorReporter.layer([recorder(reported)])),
+        );
+
+        const exit = yield* Effect.exit(
+          whoseOver(Protected, server, (client) => client.whose().pipe(as("dying"))),
+        );
+
+        const answered = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+
+        expect(answered).toEqual(new Error("Internal server error"));
+        expect(String(answered)).not.toContain("secret");
+        expect(reported).toEqual([expect.stringContaining("verifier secret")]);
+      }),
   );
 
   it("refuses a native rpc named after one of the binding's actions", () => {

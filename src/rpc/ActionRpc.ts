@@ -77,11 +77,16 @@ type RefusalOf<E extends Action.Errors> = Schema.Union<
   ReadonlyArray<typeof Unauthenticated | E[number]>
 >;
 
+declare const authenticatedBrand: unique symbol;
+
 /**
  * The middleware authenticating a binding's native rpcs, as Effect's server reads it: what it
  * provides their handlers, and what it fails with.
  */
 interface Authenticated<I, E extends Action.Errors = Action.Errors> {
+  // Why: the brand is this middleware's alone, so `NativeServer` excluding it from a layer's
+  // requirements never excludes a host's middleware of the same shape, which stays owed.
+  readonly [authenticatedBrand]: typeof authenticatedBrand;
   readonly [RpcMiddleware.TypeId]: {
     readonly provides: I;
     readonly requires: never;
@@ -171,14 +176,16 @@ export interface Options<E extends Action.Errors = Action.Errors> {
    * **Gotchas**
    *
    * - `layer` requires their handlers, which the host provides from the binding's own `rpcs`: `Rpc.rpcs.toLayer(handlers)`, whose types then leave the identity unowed.
-   * - The layer's `middleware` runs on actions alone: a native rpc runs the native middleware its group adds.
+   * - A native rpc runs no implementation's `authorize`: its handler authorizes the identity itself, as an action's `authorize` would, or every authenticated caller is served.
+   * - The layer's `middleware` runs on actions alone: a native rpc runs the native middleware its group adds, inside its authentication.
+   * - Serve `rpcs` as the binding holds them: `layer` refuses a protected binding whose native rpc does not run its authentication outermost, such as one added with `rpcs.add` after `make`; add rpcs and middleware to the group given here.
    * - A native rpc named after one of the actions is refused as the binding is made.
    */
   readonly rpcs?: RpcGroup.Any;
 }
 
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native group boundary: every native group is a `RpcGroup` of native rpcs; only its invariant static rpcs are dropped.
-const nativeOf = (group: RpcGroup.Any) => group as RpcGroup.RpcGroup<Rpc.Any>;
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native group boundary: every native group is a `RpcGroup` of native rpcs, each carrying its schemas and middleware; only its invariant static rpcs are dropped.
+const nativeOf = (group: RpcGroup.Any) => group as RpcGroup.RpcGroup<Rpc.AnyWithProps>;
 
 type RpcsOf<O> = O extends { readonly rpcs: infer G } ? RpcGroup.Rpcs<G> : never;
 
@@ -359,15 +366,14 @@ type Step = (
   options: CallOptions,
 ) => Effect.Effect<unknown, unknown, unknown>;
 
-const authenticationStepOf = (authentication: Authentication) =>
+const authenticatorOf = (authentication: Authentication) =>
   Effect.map(
     providerOf(authentication),
-    (provider): Step =>
-      (effect, { headers }) =>
-        credentialFromRpcHeaders(authentication.security, headers).pipe(
-          Effect.flatMap(provider.authenticate),
-          Effect.flatMap((actor) => Effect.provideService(effect, authentication.identity, actor)),
-        ),
+    (provider) => (headers: Headers.Headers) =>
+      Effect.flatMap(
+        credentialFromRpcHeaders(authentication.security, headers),
+        provider.authenticate,
+      ),
   );
 
 class InternalError extends Error {
@@ -402,14 +408,14 @@ const DeclaredFromJson = Schema.Json.pipe(
   ),
 );
 
+const internal = (cause: Cause.Cause<unknown>) =>
+  Effect.logError(cause).pipe(
+    Effect.andThen(ErrorReporter.report(cause)),
+    Effect.andThen(Effect.die(new InternalError())),
+  );
+
 const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
   const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(error));
-
-  const internal = (cause: Cause.Cause<unknown>) =>
-    Effect.logError(cause).pipe(
-      Effect.andThen(ErrorReporter.report(cause)),
-      Effect.andThen(Effect.die(new InternalError())),
-    );
 
   return <A, R>(effect: Effect.Effect<A, unknown, R>): Effect.Effect<A, unknown, R> =>
     Effect.catchCause(effect, (cause) => {
@@ -501,7 +507,7 @@ const carryingJson = <P extends { readonly codecFor: RpcSerialization.CodecFor }
  * - Over a protocol with no router, such as `RpcServer.layerProtocolSocketServer` or `layerProtocolStdio`, there is no HTTP request or route: a provider publishing a `protectedResource` leaves `HttpRouter` owed, and a verifier yielding a request service leaves it owed.
  * - A protocol passing values, such as a Durable Object stub's, serves too: the actions' values cross as JSON whatever its codec, which the layer replaces with JSON's.
  * - A codec that does not keep a JSON value as it is, such as schema-binary's, fails the build with `ActionRpc puts JSON in a protocol's messages`, naming the codecs to provide.
- * - The binding's native `rpcs` are served on the same protocol with their own schemas, every one, whatever `actions` lists, and their handlers are owed until provided: `Rpc.rpcs.toLayer(handlers)`; a native rpc's defect or undeclared failure is answered as Effect's server answers it, never `Internal server error`.
+ * - The binding's native `rpcs` are served on the same protocol with their own schemas, every one, whatever `actions` lists, and their handlers are owed until provided: `Rpc.rpcs.toLayer(handlers)`; a native rpc's defect or undeclared failure is answered as Effect's server answers it, never `Internal server error`, and only its verifier's defect is.
  */
 export function layer<const B extends Any, const Apps extends Served>(
   binding: B,
@@ -527,6 +533,13 @@ export function layer(
 
   const middleware = options.middleware ?? [];
 
+  const natives = nativeOf(binding.rpcs);
+
+  // Why: native authentication is the binding's, whatever `actions` selects, since every native
+  // rpc is served; its middleware's implementation is always this layer's own, provided beneath
+  // the server, so no Layer of the host's under its key reaches it.
+  const nativeAuthentication = natives.requests.size === 0 ? undefined : binding.authentication;
+
   const jsonGroup = RpcGroup.make(
     ...actions.map((action) =>
       Rpc.make(action.name, {
@@ -539,56 +552,76 @@ export function layer(
 
   const handlers = Layer.unwrap(
     Effect.gen(function* () {
+      if (nativeAuthentication !== undefined) {
+        for (const rpc of natives.requests.values()) {
+          if ([...rpc.middlewares].at(-1)?.key !== authenticatedKey) {
+            return yield* Effect.die(
+              new Error(
+                `ActionRpc.layer: the native rpc ${rpc._tag} of a protected binding does not run its authentication first: serve the rpcs the binding ActionRpc.make returned holds, adding rpcs and middleware to the group given as its rpcs`,
+              ),
+            );
+          }
+        }
+      }
+
       const listedMiddleware: ReadonlyArray<Step> = yield* Effect.forEach(middleware, (key) =>
         Effect.service(key),
       );
 
+      const descriptor = authentication ?? nativeAuthentication;
+
       const authenticate =
-        authentication === undefined ? undefined : yield* authenticationStepOf(authentication);
+        descriptor === undefined ? undefined : yield* authenticatorOf(descriptor);
 
       const bound = yield* acquire(apps);
 
       const byName = Object.fromEntries(
-        bound.map(
-          ([action, run]) =>
-            [
-              action.name,
-              handlerOf(
-                action,
-                run,
-                action.caller === Anyone || authenticate === undefined
-                  ? listedMiddleware
-                  : [...listedMiddleware, authenticate],
-                Schema.Union(bindingErrors(action, binding)),
-              ),
-            ] as const,
-        ),
+        bound.map(([action, run]) => {
+          const steps: ReadonlyArray<Step> =
+            action.caller === Anyone || authenticate === undefined || descriptor === undefined
+              ? listedMiddleware
+              : [
+                  ...listedMiddleware,
+                  (effect, { headers }) =>
+                    Effect.flatMap(authenticate(headers), (actor) =>
+                      Effect.provideService(effect, descriptor.identity, actor),
+                    ),
+                ];
+
+          return [
+            action.name,
+            handlerOf(action, run, steps, Schema.Union(bindingErrors(action, binding))),
+          ] as const;
+        }),
       );
 
-      return jsonGroup.toLayer(byName);
+      const served = jsonGroup.toLayer(byName);
+
+      if (authenticate === undefined || nativeAuthentication === undefined) return served;
+
+      // Why: a verifier's defect is masked as on an action, `Internal server error` with its
+      // cause reported: Effect's server would answer a native rpc's defect with its message and
+      // cause, and the authentication step is the library's, not the host's handler.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased middleware: the step passes the call's success through, or fails with a refusal or the verifier's error, which the middleware declares, and provides the identity it declares.
+      const authenticated = ((effect, { headers }) =>
+        Effect.suspend(() => authenticate(headers)).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasDies(cause) ? internal(cause) : Effect.failCause(cause),
+          ),
+          Effect.flatMap((actor) =>
+            Effect.provideService(effect, nativeAuthentication.identity, actor),
+          ),
+        )) as RpcMiddleware.RpcMiddleware<unknown, unknown, never>;
+
+      return Layer.merge(
+        served,
+        Layer.succeed(authenticatedOf(nativeAuthentication))(authenticated),
+      );
     }),
   ).pipe(provideHandlers(apps));
 
-  const authenticated =
-    authentication === undefined || nativeOf(binding.rpcs).requests.size === 0
-      ? Layer.empty
-      : Layer.effect(authenticatedOf(authentication))(
-          Effect.map(
-            authenticationStepOf(authentication),
-            (step) =>
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased middleware: the step passes the call's success through, or fails with a refusal or the verifier's error, which the middleware declares, and provides the identity it declares.
-              ((effect, options) =>
-                Effect.suspend(() => step(effect, options))) as RpcMiddleware.RpcMiddleware<
-                unknown,
-                unknown,
-                never
-              >,
-          ),
-        );
-
   return RpcServer.layer(jsonGroup.merge(binding.rpcs), { disableFatalDefects: true }).pipe(
     Layer.provide(handlers),
-    Layer.provide(authenticated),
     Layer.provide(
       Layer.effect(RpcServer.Protocol)(Effect.flatMap(RpcServer.Protocol, carryingJson)),
     ),
