@@ -513,6 +513,47 @@ describe("Feed", () => {
   );
 
   it.effect(
+    "ends only the subscribers of the path the rebuilt object serves, sending a socket accepted on another no exit, and drops both records",
+    () =>
+      Effect.gen(function* () {
+        const stub = env.MOVED.getByName(`moved-${objects++}`);
+
+        const follow = (id: string) =>
+          ({ _tag: "Request", id, tag: "follow", payload: {}, headers: [] }) as const;
+
+        const old = yield* opened(stub, "/a");
+
+        yield* old.send(follow("old"));
+
+        expect(yield* old.next).toEqual({ _tag: "Chunk", requestId: "old", values: [10] });
+
+        yield* Effect.promise(() =>
+          runInDurableObject(stub, (_, state) => state.storage.put(pathKey, "/b")),
+        );
+        yield* Effect.promise(() => evictDurableObject(stub));
+
+        const current = yield* opened(stub, "/b");
+
+        yield* current.send(follow("current"));
+
+        expect(yield* current.next).toEqual({ _tag: "Chunk", requestId: "current", values: [10] });
+
+        yield* Effect.promise(() => stub.end());
+
+        const records = yield* Effect.promise(() =>
+          runInDurableObject(
+            stub,
+            async (_, state) => (await state.storage.list({ prefix: "effect-actions/feed/" })).size,
+          ),
+        );
+
+        expect(yield* current.next).toEqual({ _tag: "Exit", requestId: "current" });
+        expect(records).toBe(0);
+        expect(yield* old.pending).toBe(0);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
     "refuses a publish while the services build, before the routes register their path, and sends one once they are built",
     () =>
       Effect.gen(function* () {
