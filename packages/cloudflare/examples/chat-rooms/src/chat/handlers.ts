@@ -45,7 +45,9 @@ export const messages = Action.implement(
 // Implemented on the binding's own `rpcs`, which provide `CurrentMember` per message, as an
 // action's authentication does; the one authorization rule runs first, as it does for the
 // actions. The feed keeps the subscription in the object's storage, so a message posted after
-// the object hibernated still reaches the page.
+// the object hibernated still reaches the page. The rule runs as the page subscribes, not for
+// each message: a member the room removed would go on receiving until their socket closes, so
+// a room that removes members closes their sockets, or gives each its own feed `key` to `end`.
 export const watch = RoomRpc.rpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* MessageStore;

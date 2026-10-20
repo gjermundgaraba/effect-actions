@@ -1,5 +1,15 @@
-import { Context, Deferred, Effect, Layer, Match, Schema, Stream } from "effect";
-import { Rpc, RpcGroup, RpcServer } from "effect/rpc";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Layer,
+  Match,
+  Ref,
+  Schema,
+  SchemaTransformation,
+  Stream,
+} from "effect";
+import { Rpc, RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 
 export class NoInitial extends Schema.TaggedError<NoInitial>()("NoInitial", {}) {}
@@ -18,21 +28,53 @@ export const Ticks = Rpc.make("ticks", {
 
 export const Ping = Rpc.make("ping");
 
-export const FeedRpcs = RpcGroup.make(Ticks, Ping);
+const SlowlyEncoded = Schema.Int.pipe(
+  Schema.decodeTo(
+    Schema.Int,
+    SchemaTransformation.transformEffect({
+      decode: Effect.succeed,
+      encode: (value) => Effect.as(Effect.sleep("1 millis"), value),
+    }),
+  ),
+);
+
+export const SlowTicks = Rpc.make("slowTicks", { success: SlowlyEncoded, stream: true });
+
+export const FeedRpcs = RpcGroup.make(Ticks, Ping, SlowTicks);
+
+export const OtherTicks = Rpc.make("ticks", {
+  payload: { initial: Schema.Array(Schema.Int) },
+  success: Schema.Int,
+  stream: true,
+});
+
+const OtherRpcs = RpcGroup.make(OtherTicks);
 
 export const FeedCalls = RpcGroup.make(
   Rpc.make("publish", { payload: { value: Schema.Int, key: Schema.NullOr(Schema.String) } }),
   Rpc.make("announce", { payload: { value: Schema.Int } }),
   Rpc.make("end", { payload: { key: Schema.NullOr(Schema.String) } }),
   Rpc.make("publishWhenRead", { payload: { value: Schema.Int } }),
+  Rpc.make("endWhenRead", { payload: { key: Schema.NullOr(Schema.String) } }),
+  Rpc.make("release"),
+  Rpc.make("finalized", { success: Schema.Int }),
+  Rpc.make("publishSlowly", { payload: { value: Schema.Int } }),
 );
 
 export class Gate extends Context.Service<
   Gate,
-  { readonly read: Deferred.Deferred<void>; readonly released: Deferred.Deferred<void> }
+  {
+    readonly read: Deferred.Deferred<void>;
+    readonly released: Deferred.Deferred<void>;
+    readonly finalized: Ref.Ref<number>;
+  }
 >()("tests/Gate") {
   static readonly layer = Layer.effect(Gate)(
-    Effect.all({ read: Deferred.make<void>(), released: Deferred.make<void>() }),
+    Effect.all({
+      read: Deferred.make<void>(),
+      released: Deferred.make<void>(),
+      finalized: Ref.make(0),
+    }),
   );
 }
 
@@ -49,58 +91,79 @@ export class Announcer extends Context.Service<
 
 const keyOf = (key: string | null) => key ?? undefined;
 
-export const feedRoutes = RpcServer.layer(FeedRpcs).pipe(
-  Layer.provide(
-    FeedRpcs.toLayer(
-      Effect.gen(function* () {
-        const feed = yield* ActionDurableObject.Feed;
-        const { read, released } = yield* Gate;
+const tickHandlers = FeedRpcs.toLayer(
+  Effect.gen(function* () {
+    const feed = yield* ActionDurableObject.Feed;
+    const { read, released, finalized } = yield* Gate;
 
-        return FeedRpcs.of({
-          ticks: ({ key, initial, failInitial, gate }, request) => {
-            const values =
-              failInitial === true ? Effect.fail(new NoInitial()) : Effect.succeed(initial);
+    return FeedRpcs.of({
+      ticks: ({ key, initial, failInitial, gate }, request) => {
+        const values =
+          failInitial === true ? Effect.fail(new NoInitial()) : Effect.succeed(initial);
 
-            const isRead = Deferred.succeed(read, undefined);
+        const isRead = Deferred.succeed(read, undefined);
 
-            const stream = feed.subscribe(request, {
-              initial: Match.value(gate).pipe(
-                Match.when("during", () =>
-                  isRead.pipe(Effect.andThen(Deferred.await(released)), Effect.andThen(values)),
+        const stream = feed.subscribe(request, {
+          initial: Match.value(gate).pipe(
+            Match.when("during", () =>
+              isRead.pipe(Effect.andThen(Deferred.await(released)), Effect.andThen(values)),
+            ),
+            Match.when("after", () => Effect.tap(values, () => isRead)),
+            Match.when("long", () =>
+              Effect.tap(values, () =>
+                Effect.andThen(
+                  isRead,
+                  Effect.forEach(Array.from({ length: 20_000 }), () => Effect.void, {
+                    discard: true,
+                  }),
                 ),
-                Match.when("after", () => Effect.tap(values, () => isRead)),
-                Match.when("long", () =>
-                  Effect.tap(values, () =>
-                    Effect.andThen(
-                      isRead,
-                      Effect.forEach(Array.from({ length: 20_000 }), () => Effect.void, {
-                        discard: true,
-                      }),
-                    ),
-                  ),
-                ),
-                Match.orElse(() => values),
               ),
-              key: keyOf(key),
-            });
-
-            return gate === "after" ? Stream.tap(stream, () => Deferred.await(released)) : stream;
-          },
-          ping: () => Effect.void,
+            ),
+            Match.orElse(() => values),
+          ),
+          key: keyOf(key),
         });
-      }),
-    ),
-  ),
-  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+
+        return (
+          gate === "after" ? Stream.tap(stream, () => Deferred.await(released)) : stream
+        ).pipe(Stream.ensuring(Ref.update(finalized, (count) => count + 1)));
+      },
+      ping: () => Effect.void,
+      slowTicks: (_, request) => feed.subscribe(request, { initial: [5] }),
+    });
+  }),
 );
 
-export const feedCalls = RpcServer.layer(FeedCalls).pipe(
+const otherHandlers = OtherRpcs.toLayer(
+  Effect.map(Effect.service(ActionDurableObject.Feed), (feed) =>
+    OtherRpcs.of({ ticks: ({ initial }, request) => feed.subscribe(request, { initial }) }),
+  ),
+);
+
+export const feedRoutes = Layer.mergeAll(
+  RpcServer.layer(FeedRpcs).pipe(
+    Layer.provide(tickHandlers),
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+  ),
+  RpcServer.layer(FeedRpcs).pipe(
+    Layer.provide(tickHandlers),
+    Layer.provide(RpcServer.layerProtocolHttp({ path: "/http" })),
+    Layer.provide(RpcSerialization.layerNdjson),
+  ),
+  RpcServer.layer(OtherRpcs).pipe(
+    Layer.provide(otherHandlers),
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/other" })),
+  ),
+);
+
+export const feedCalls = RpcServer.layer(FeedCalls.merge(FeedRpcs)).pipe(
+  Layer.provide(tickHandlers),
   Layer.provide(
     FeedCalls.toLayer(
       Effect.gen(function* () {
         const feed = yield* ActionDurableObject.Feed;
         const announcer = yield* Announcer;
-        const { read, released } = yield* Gate;
+        const { read, released, finalized } = yield* Gate;
 
         return FeedCalls.of({
           announce: ({ value }) => announcer.announce(value),
@@ -112,6 +175,15 @@ export const feedCalls = RpcServer.layer(FeedCalls).pipe(
               Effect.andThen(Deferred.succeed(released, undefined)),
               Effect.asVoid,
             ),
+          endWhenRead: ({ key }) =>
+            Deferred.await(read).pipe(
+              Effect.andThen(feed.end(Ticks, { key: keyOf(key) })),
+              Effect.andThen(Deferred.succeed(released, undefined)),
+              Effect.asVoid,
+            ),
+          release: () => Effect.asVoid(Deferred.succeed(released, undefined)),
+          finalized: () => Ref.get(finalized),
+          publishSlowly: ({ value }) => feed.publish(SlowTicks, value),
         });
       }),
     ),

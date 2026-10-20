@@ -1,7 +1,8 @@
 import { Context, Effect, Layer, Option, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
-import { forget, nextSocketKey, socketIdOf, socketTag } from "./feed.js";
+import { forget } from "./feed.js";
+import { nextSocketKey, sendFrame, socketHeaders, socketIdOf, socketTag } from "./socket.js";
 import { State } from "./state.js";
 
 interface Receiver {
@@ -61,7 +62,7 @@ export class Sockets extends Context.Service<
 
       let next = Math.max(
         Option.getOrElse(storedIdOf(stored), () => 1),
-        ...state.getWebSockets().map((socket) => (socketIdOf(state.getTags(socket)) ?? 0) + 1),
+        ...state.getWebSockets().map((socket) => socketIdOf(state.getTags(socket)) + 1),
       );
 
       const allocate = Effect.suspend(() => {
@@ -101,9 +102,6 @@ export class Sockets extends Context.Service<
 
 const storedIdOf = Schema.decodeUnknownOption(Schema.Int);
 
-const isSendableCloseCode = (code: number) =>
-  code >= 1000 && code !== 1005 && code !== 1006 && code !== 1015;
-
 // Why: without the runtime's `web_socket_auto_reply_to_close`, before the `compatibility_date`
 // `2026-04-07`, nothing answers a client's close frame, and every page closing a socket sees a
 // 1006. Replying here, as Cloudflare's hibernation example does in `webSocketClose`, completes
@@ -111,7 +109,11 @@ const isSendableCloseCode = (code: number) =>
 // which is ignored.
 const replyToClose = (socket: WebSocket, code: number, reason: string) =>
   Effect.ignore(
-    Effect.try(() => (isSendableCloseCode(code) ? socket.close(code, reason) : socket.close())),
+    Effect.try(() =>
+      code >= 1000 && code !== 1005 && code !== 1006 && code !== 1015
+        ? socket.close(code, reason)
+        : socket.close(),
+    ),
   );
 
 const Attachment = Schema.Struct({
@@ -123,9 +125,6 @@ const attachmentOf = Schema.decodeUnknownSync(Schema.NullishOr(Attachment));
 const json = RpcSerialization.json;
 
 const encodeDefect = Schema.encodeSync(json.codecFor(Schema.Defect()));
-
-const isRequest = (message: RpcMessage.FromClientEncoded): message is RpcMessage.RequestEncoded =>
-  Predicate.isTagged(message, "Request");
 
 /**
  * A hibernating `RpcServer.Protocol` over the object's WebSockets, speaking JSON, and its
@@ -154,7 +153,7 @@ const makeProtocol = (
       );
     }
 
-    const idOf = (socket: WebSocket) => socketIdOf(state.getTags(socket)) ?? Number.NaN;
+    const idOf = (socket: WebSocket) => socketIdOf(state.getTags(socket));
 
     // Why: Effect's socket client pings every five seconds. Answered by the runtime, a ping never
     // wakes a hibernating object, which would otherwise stay billed for as long as a page is open.
@@ -166,14 +165,6 @@ const makeProtocol = (
     );
 
     const disconnects = yield* Queue.make<number>();
-
-    const sendTo = (clientId: number, response: RpcMessage.FromServerEncoded) => {
-      const encoded = parser.encode(response);
-
-      if (encoded === undefined) return;
-
-      for (const socket of state.getWebSockets(socketTag(clientId))) socket.send(encoded);
-    };
 
     const protocol = yield* RpcServer.Protocol.make((write) => {
       receivers.set(group, {
@@ -202,12 +193,18 @@ const makeProtocol = (
                   // Why: a subscriber's record outlives the server's request, which hibernation
                   // drops, so the client's interruption is what ends it.
                   Predicate.isTagged(message, "Interrupt")
-                    ? forget(state.storage, clientId, String(message.requestId))
+                    ? forget(state.storage, clientId, message.requestId)
                     : Effect.void,
                   write(
                     clientId,
-                    isRequest(message)
-                      ? { ...message, headers: [...headers, ...message.headers] }
+                    Predicate.isTagged(message, "Request")
+                      ? {
+                          ...message,
+                          headers: socketHeaders(state, clientId, path, [
+                            ...headers,
+                            ...message.headers,
+                          ]),
+                        }
                       : message,
                   ),
                 ),
@@ -215,10 +212,9 @@ const makeProtocol = (
             );
           }).pipe(
             Effect.catchDefect((defect) =>
-              Effect.sync(() =>
-                sendTo(clientId, RpcMessage.ResponseDefectEncoded(encodeDefect(defect))),
-              ),
+              sendFrame(state, clientId, RpcMessage.ResponseDefectEncoded(encodeDefect(defect))),
             ),
+            Effect.asVoid,
             Effect.provideContext(context),
           );
         },
@@ -232,7 +228,7 @@ const makeProtocol = (
 
       return Effect.succeed({
         disconnects,
-        send: (clientId, response) => Effect.sync(() => sendTo(clientId, response)),
+        send: (clientId, response) => Effect.asVoid(sendFrame(state, clientId, response)),
         end: (clientId) =>
           Effect.sync(() => {
             for (const socket of state.getWebSockets(socketTag(clientId))) socket.close(1000);
@@ -275,9 +271,7 @@ const makeProtocol = (
 
         state.acceptWebSocket(server, [group, socketTag(yield* allocate)]);
 
-        return HttpServerResponse.raw(new Response(null, { status: 101, webSocket: client }), {
-          status: 101,
-        });
+        return HttpServerResponse.raw(new Response(null, { status: 101, webSocket: client }));
       }),
     );
 

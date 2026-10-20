@@ -1,7 +1,13 @@
 import type { DurableObject } from "cloudflare:workers";
-import { Context, Effect, Layer, type Scope } from "effect";
+import { Context, Effect, Layer, Schema, SchemaTransformation, type Scope, Stream } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
-import { RpcClient, type RpcClientError, type RpcMessage, RpcServer } from "effect/rpc";
+import {
+  Rpc as NativeRpc,
+  RpcClient,
+  type RpcClientError,
+  type RpcMessage,
+  RpcServer,
+} from "effect/rpc";
 import { expectTypeOf } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -381,3 +387,26 @@ ActionDurableObject.make({
   // @ts-expect-error -- The services may require State and Feed alone.
   services: Announcer.layer.pipe(Layer.provideMerge(Layer.effectDiscard(Effect.service(Greeting)))),
 });
+
+class Offset extends Context.Service<Offset, number>()("types/Offset") {}
+
+const Offsetted = NativeRpc.make("offsetted", {
+  success: Schema.Int.pipe(
+    Schema.decodeTo(
+      Schema.Int,
+      SchemaTransformation.transformEffect({
+        decode: Effect.succeed,
+        encode: (value) => Effect.map(Effect.service(Offset), (offset) => value + offset),
+      }),
+    ),
+  ),
+  stream: true,
+});
+
+declare const feed: ActionDurableObject.Feed["Service"];
+
+declare const subscriber: ActionDurableObject.Subscriber<typeof Offsetted>;
+
+expectTypeOf(feed.publish(Offsetted, 1)).toEqualTypeOf<Effect.Effect<void, never, Offset>>();
+
+expectTypeOf(feed.subscribe(subscriber)).toEqualTypeOf<Stream.Stream<number, never, Offset>>();

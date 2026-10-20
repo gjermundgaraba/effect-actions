@@ -89,22 +89,33 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   - `Feed` pushes to a stream rpc's subscribers over `layerWebSocket`, across hibernation, one
     per instance from `Feed.layer`, which `handlers` and `make` build before the services and
     provide to them, the calls, the routes, the alarm and `run`, so a publish adapter is one of
-    the services. A stream rpc's handler returns `feed.subscribe(request, { initial, key })`:
-    the subscriber's record is kept in the object's storage, keyed by its socket's id and its
-    request's, then `initial` is sent to the socket as one chunk as soon as it is read, Effect's
-    scheduler yields off from the read to the send, so nothing published after the read arrives
-    before it, and the stream never ends; an `initial` that fails ends the stream with its
-    failure and drops the record.
-    `publish(rpc, value, { key })`, typed by the rpc's chunk, sends each subscriber of the rpc,
-    or of the key, whose socket is open, the value as Effect's server sends a chunk, from any
-    instance, so a value published after the object hibernated reaches a page subscribed
-    before; `end(rpc, { key })` completes their streams. A record is dropped when its client
-    interrupts the stream or its socket closes, through `layerWebSocket`, and when a publish
-    finds its socket gone. A subscriber gets every value published from when its record is kept
-    at least once, one published while `initial` is read possibly arriving before it and again in it; each chunk's ack wakes the object; Effect's socket client fails its streams when its
-    socket drops, so a page subscribes again from the last value it holds. The records and the
-    socket-id counter sit in the object's storage beside the application's data, so
-    `storage.deleteAll()` drops every subscriber: `end` them first.
+    the services. It is a push channel addressed by each call's request id, not a stream
+    pipeline: a stream rpc's handler returns `feed.subscribe(request, { initial, key })`, a
+    handle holding the call open, which an operator such as `Stream.map` sees nothing through.
+    Only a call over `layerWebSocket` subscribes, proven by headers the protocol sets and signs
+    with a per-instance secret, stripping any of those names the client sent; a call over the
+    stub or HTTP dies at once. The subscriber's record is kept in the object's storage, keyed by
+    its socket's id and its request id, a number and a string kept apart, and names its rpc and
+    its socket path; then `initial` is sent to the socket as one chunk as soon as it is read,
+    Effect's scheduler yields off from the read to the send, so nothing published after the read
+    arrives before it; an `initial` that fails ends the stream with its failure and drops the
+    record. `publish(rpc, value, { key })`, typed by the rpc's chunk and owing what its schema
+    needs to encode, sends each subscriber of the rpc, or of the key, whose socket is open, the
+    value as Effect's server sends a chunk, from any instance, so a value published after the
+    object hibernated reaches a page subscribed before; one `publish` or `end` runs at a time.
+    `end(rpc, { key })` completes a live subscriber's stream through Effect's server, its
+    finalizers run, answers one hibernation dropped itself, and sends nothing to one ended
+    while its `initial` is read. One object's stream rpcs need distinct names across its socket
+    paths: a publish or end of a name subscribed on two paths dies, naming both. A record is
+    dropped when its client interrupts the stream or its socket closes, through
+    `layerWebSocket`, and when a send finds its socket gone or refusing it, as one the object
+    closed does. A subscriber gets every value published from when its record is kept at least
+    once, one published while `initial` is read possibly arriving before it and again in it; the
+    feed waits for no ack, and each chunk's ack wakes the object; a subscriber is published to
+    until its socket closes, whatever becomes of its access; Effect's socket client fails its
+    streams when its socket drops, so a page subscribes again from the last value it holds. The
+    records and the socket-id counter sit in the object's storage beside the application's
+    data, so `storage.deleteAll()` drops every subscriber: `end` them first.
   - `layerStub()` is the protocol `RpcServer.layer(group)` and `ActionRpc.layer` serve on over
     the object's stub, with Cloudflare's own RPC: one call of the object's
     `effectActionsRpc` method carries one call's messages and returns its responses once its

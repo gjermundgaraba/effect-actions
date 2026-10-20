@@ -1,12 +1,24 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Equal, Fiber, Layer, Option, Queue, Schema, Stream } from "effect";
-import { RpcClient, RpcSerialization } from "effect/rpc";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Equal,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Queue,
+  Schema,
+  Stream,
+} from "effect";
+import { RpcClient, type RpcMessage, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { recordKey } from "../../src/durable/feed.js";
-import { FeedCalls, FeedRpcs, NoInitial } from "../support/feed.js";
-import { upgradeToRpc } from "../support/socket.js";
+import { FeedCalls, FeedRpcs, Gate, NoInitial, Ticks } from "../support/feed.js";
+import { upgradeTo, upgradeToRpc } from "../support/socket.js";
 
 let objects = 0;
 
@@ -92,6 +104,48 @@ const gated = (
 
     return { fiber, next: (count: number) => Queue.takeN(received, count) };
   });
+
+const RequestId = Schema.Union([Schema.String, Schema.Number]);
+
+const Frame = Schema.fromJsonString(
+  Schema.Union([
+    Schema.Struct({
+      _tag: Schema.Literal("Chunk"),
+      requestId: RequestId,
+      values: Schema.Array(Schema.Int),
+    }),
+    Schema.Struct({ _tag: Schema.Literal("Exit"), requestId: RequestId }),
+  ]),
+);
+
+const frameOf = Schema.decodeUnknownOption(Frame);
+
+const opened = (stub: DurableObjectStub, path: string) =>
+  Effect.gen(function* () {
+    const socket = yield* upgradeTo(stub, `https://object${path}`);
+    const frames = yield* Queue.unbounded<typeof Frame.Type>();
+
+    socket.addEventListener("message", ({ data }) => {
+      Option.map(frameOf(data), (frame) => Queue.offerUnsafe(frames, frame));
+    });
+
+    return {
+      send: (message: RpcMessage.FromClientEncoded) =>
+        Effect.sync(() => socket.send(JSON.stringify(message))),
+      next: Queue.take(frames),
+    };
+  });
+
+const forged = {
+  "effect-actions-socket": "guessed 1",
+  "effect-actions-socket-path": "/rpc",
+};
+
+const onSocketAlone = "subscribes a call over layerWebSocket alone";
+
+const defectOf = Schema.decodeUnknownOption(
+  Schema.Struct({ defect: Schema.Struct({ message: Schema.String }) }),
+);
 
 describe("Feed", () => {
   it.effect("sends a subscriber what a stub call publishes, after its initial values", () =>
@@ -258,6 +312,233 @@ describe("Feed", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "fails a stream rpc called over the stub or HTTP at once, its headers naming a socket or not, sending that socket nothing",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const connection = yield* connect(stub);
+        const subscriber = yield* subscribe(connection, [10]);
+
+        const overStub = [];
+
+        for (const headers of [[], Object.entries(forged)]) {
+          overStub.push(
+            yield* Effect.promise(() =>
+              stub.effectActionsRpc([
+                {
+                  _tag: "Request",
+                  id: "0",
+                  tag: "ticks",
+                  payload: { key: null, initial: [42] },
+                  headers,
+                },
+              ]),
+            ),
+          );
+        }
+
+        const overHttp = yield* Effect.flatMap(RpcClient.make(FeedRpcs), (client) =>
+          Effect.exit(
+            Stream.runDrain(client.ticks({ key: null, initial: [42] }, { headers: forged })),
+          ),
+        ).pipe(
+          Effect.provide(
+            RpcClient.layerProtocolHttp({ url: "https://object/http" }).pipe(
+              Layer.provide(RpcSerialization.layerNdjson),
+              Layer.provide(ActionDurableObject.layerHttpClient(stub)),
+            ),
+          ),
+        );
+
+        yield* connection.client.ping();
+
+        const refusals = overStub.map((answer) =>
+          answer
+            .flatMap((frame) => Option.toArray(defectOf(frame)))
+            .map(({ defect }) => defect.message),
+        );
+
+        expect(refusals).toEqual([
+          [expect.stringContaining(onSocketAlone)],
+          [expect.stringContaining(onSocketAlone)],
+        ]);
+        expect(Exit.isFailure(overHttp) && Cause.pretty(overHttp.cause)).toContain(onSocketAlone);
+        expect(connection.chunks.length).toBe(subscriber.sent());
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "keeps a numeric and a string request id of one socket apart, interrupts included",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const socket = yield* opened(stub, "/rpc");
+        const payload = { key: null, initial: [10] };
+
+        yield* socket.send({ _tag: "Request", id: 1, tag: "ticks", payload, headers: [] });
+        yield* socket.send({ _tag: "Request", id: "1", tag: "ticks", payload, headers: [] });
+
+        const initial = [yield* socket.next, yield* socket.next];
+
+        yield* calls.publish({ value: 7, key: null });
+
+        const published = [yield* socket.next, yield* socket.next];
+
+        yield* socket.send({ _tag: "Interrupt", requestId: 1 });
+        yield* socket.send({ _tag: "Request", id: 2, tag: "ping", payload: null, headers: [] });
+
+        const settled = [yield* socket.next, yield* socket.next];
+
+        yield* calls.publish({ value: 8, key: null });
+
+        expect(initial).toEqual([
+          { _tag: "Chunk", requestId: 1, values: [10] },
+          { _tag: "Chunk", requestId: "1", values: [10] },
+        ]);
+        expect(published).toEqual([
+          { _tag: "Chunk", requestId: 1, values: [7] },
+          { _tag: "Chunk", requestId: "1", values: [7] },
+        ]);
+        expect(settled).toEqual(
+          expect.arrayContaining([
+            { _tag: "Exit", requestId: 1 },
+            { _tag: "Exit", requestId: 2 },
+          ]),
+        );
+        expect(yield* socket.next).toEqual({ _tag: "Chunk", requestId: "1", values: [8] });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "fails a publish and an end of a name subscribed on two socket paths, naming both, sending neither",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const connection = yield* connect(stub);
+        const subscriber = yield* subscribe(connection, [10]);
+        const other = yield* opened(stub, "/other");
+
+        yield* other.send({
+          _tag: "Request",
+          id: 1,
+          tag: "ticks",
+          payload: { initial: [20] },
+          headers: [],
+        });
+
+        const otherInitial = yield* other.next;
+        const published = yield* Effect.exit(calls.publish({ value: 1, key: null }));
+        const ended = yield* Effect.exit(calls.end({ key: null }));
+
+        yield* connection.client.ping();
+
+        expect(otherInitial).toEqual({ _tag: "Chunk", requestId: 1, values: [20] });
+
+        for (const exit of [published, ended]) {
+          expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
+            "has subscribers on the socket paths /rpc and /other",
+          );
+        }
+
+        expect(subscriber.sent()).toBe(1);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "ends a live subscriber's stream through the server, running its finalizers, each time it subscribes again",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const connection = yield* connect(stub);
+
+        for (const round of [1, 2, 3]) {
+          const subscriber = yield* subscribe(connection, [round]);
+
+          yield* calls.end({ key: null });
+          yield* Fiber.join(subscriber.fiber);
+        }
+
+        expect(yield* calls.finalized()).toBe(3);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "completes a subscriber ended while its initial values are read, sending them not",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const connection = yield* connect(stub);
+        const subscriber = yield* gated(connection, "during", [10]);
+
+        yield* calls.endWhenRead({ key: null });
+        yield* Fiber.join(subscriber.fiber);
+        yield* connection.client.ping();
+
+        expect(connection.chunks).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "drops, and never throws for, a socket the object closed before the runtime reported it",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const connection = yield* connect(stub);
+
+        yield* subscribe(connection, [10], "kept");
+        yield* gated(connection, "during", [20]);
+
+        const left = yield* Effect.promise(() =>
+          runInDurableObject(stub, async (instance, state) => {
+            await instance.run(
+              Effect.flatMap(Effect.service(Gate), ({ read }) => Deferred.await(read)),
+            );
+
+            for (const socket of state.getWebSockets("effect-actions/socket#1")) socket.close(1000);
+
+            await instance.run(
+              Effect.gen(function* () {
+                const feed = yield* ActionDurableObject.Feed;
+                const { released } = yield* Gate;
+
+                yield* feed.end(Ticks, { key: "kept" });
+                yield* feed.publish(Ticks, 1);
+                yield* Deferred.succeed(released, undefined);
+              }),
+            );
+
+            return (await state.storage.list({ prefix: "effect-actions/feed/" })).size;
+          }),
+        );
+
+        expect(left).toBe(0);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("sends a stream rpc whose values encode asynchronously, as its server would", () =>
+    Effect.gen(function* () {
+      const stub = fresh();
+      const calls = yield* callsOf(stub);
+      const { client } = yield* connect(stub);
+      const received = yield* Queue.unbounded<number>();
+
+      yield* Effect.forkScoped(
+        Stream.runForEach(client.slowTicks(), (value) => Queue.offer(received, value)),
+      );
+
+      const initial = yield* Queue.take(received);
+
+      yield* calls.publishSlowly({ value: 6 });
+
+      expect([initial, yield* Queue.take(received)]).toEqual([5, 6]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("sends nothing more to a subscriber whose client interrupted its stream", () =>
     Effect.gen(function* () {
       const stub = fresh();
@@ -292,19 +573,20 @@ describe("Feed", () => {
 
           if (socket === undefined) throw new Error("No socket #1");
 
-          const before = (await state.storage.list({ prefix: recordKey(1, "") })).size;
+          const count = async () =>
+            (await state.storage.list({ prefix: "effect-actions/feed/" })).size;
+
+          const before = await count();
 
           await instance.webSocketClose(socket, 1000, "", true);
 
-          const after = (await state.storage.list({ prefix: recordKey(1, "") })).size;
-
-          return { before, after };
+          return { before, after: await count() };
         }),
       );
 
       yield* calls.publish({ value: 1, key: null });
 
-      expect(records).toEqual({ before: 1, after: 0 });
+      expect(records).toEqual({ before: 2, after: 1 });
       expect(yield* kept.next(1)).toEqual([1]);
     }).pipe(Effect.scoped),
   );

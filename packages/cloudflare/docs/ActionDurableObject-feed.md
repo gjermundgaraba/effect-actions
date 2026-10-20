@@ -4,11 +4,11 @@ An object pushes what changes to the pages connected to it over their sockets, a
 hibernated too: a page calls an rpc that streams, its handler makes the call a **subscriber**
 with `Feed`, and any part of the object publishes to it. A subscriber is kept in the object's
 storage, keyed by its socket, so a value published by a new instance, after an eviction,
-reaches the page that subscribed on the one before, as long as its socket stays open. The
-records sit beside the application's own data, so `storage.deleteAll()` drops them too, and
-every subscriber with them: `end` the feed before wiping the object's storage. An
-action answers once, so the stream is a native rpc in the binding's `rpcs`, beside its actions
-(the core's `docs/ActionRpc.md`).
+reaches the page that subscribed on the one before, as long as its socket stays open. The feed
+is a push channel addressed by the call's request id, not a stream pipeline: a value published
+goes to the socket as Effect's server would send it, and the stream the handler returns only
+holds the call open until `end`. An action answers once, so the stream is a native rpc in the
+binding's `rpcs`, beside its actions (the core's `docs/ActionRpc.md`).
 
 `Feed`'s rules and traps are on `ActionDurableObject.Feed`. This page uses the chat-rooms
 example, whose pages follow a room's messages.
@@ -88,7 +88,9 @@ export const messages = Action.implement(
 // Implemented on the binding's own `rpcs`, which provide `CurrentMember` per message, as an
 // action's authentication does; the one authorization rule runs first, as it does for the
 // actions. The feed keeps the subscription in the object's storage, so a message posted after
-// the object hibernated still reaches the page.
+// the object hibernated still reaches the page. The rule runs as the page subscribes, not for
+// each message: a member the room removed would go on receiving until their socket closes, so
+// a room that removes members closes their sockets, or gives each its own feed `key` to `end`.
 export const watch = RoomRpc.rpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* MessageStore;
@@ -123,18 +125,14 @@ A native rpc runs no action's `authorize`, so the handler runs the same rule its
 
 - **One feed of many.** Give a subscriber a `key`, such as a topic or a document, and
   `publish(rpc, value, { key })` reaches only those given it.
-- **End the streams.** `end(rpc, { key })` completes each subscriber's stream, as when what it
-  followed is gone.
+- **End the streams.** `end(rpc, { key })` completes each subscriber's stream, its finalizers
+  run, as when what it followed is gone.
 
 ## Follow from a page
 
 The page runs the stream and observes its whole life: opened at its first value, each value,
-then closed with the stream's `Exit`. A page watching only for failures misses a stream that
-ends with a defect, from the server or a value the page cannot decode, and goes on showing a
-subscription that ended; `Effect.exit` around the run hands it every end, an interruption
-included. Effect's socket client fails every stream it runs when its socket drops, so on
-`closed` the page waits as long as it chooses and subscribes again from the last value it holds,
-dropping a value it already has:
+then closed with the stream's `Exit`, after which it subscribes again from the last value it
+holds:
 
 ```ts example=chat-rooms/src/browser.ts
 import { Effect, type Exit, Layer, Stream } from "effect";
@@ -211,12 +209,6 @@ export const openRoom = (token: string) =>
 
 - **Opened at the first value.** Effect's client tells a page nothing when its subscription is
   kept, so a stream with nothing `initial` opens at its first published value.
-- **What a page may see twice.** `initial` goes to the socket as soon as it is read, so a value
-  published after the read always follows it, and a page of whole snapshots never ends on an older
-  one. A value published while the handler reads `initial` may reach the page before it and again
-  in it: a value carries an id, such as a message's, and the page skips one it has seen.
-- **What wakes the object.** Effect's client acknowledges every chunk it is sent, and each
-  acknowledgement wakes a hibernating object, as a call does.
 - **Testing it.** `evictDurableObject(stub)` between a page subscribing and a post shows the
   value reach it from a new instance
   ([chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)); under celld,

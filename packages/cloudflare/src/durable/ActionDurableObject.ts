@@ -11,7 +11,7 @@ import type { RpcMessage, RpcServer } from "effect/rpc";
 import { Calls, layerStub, type StubRequest } from "./calls.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
-import { Feed } from "./subscribers.js";
+import { Feed } from "./feed.js";
 
 export { Calls, layerStub, type StubRequest } from "./calls.js";
 
@@ -25,7 +25,7 @@ export {
   type PublishOptions,
   type SubscribeOptions,
   type Subscriber,
-} from "./subscribers.js";
+} from "./feed.js";
 
 export { client, layerStubClient, type Client, type Stub } from "./stub.js";
 
