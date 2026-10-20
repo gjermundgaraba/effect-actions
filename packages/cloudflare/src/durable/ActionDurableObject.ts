@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { Context, Deferred, Effect, Layer, type Scope } from "effect";
+import { Context, Deferred, Effect, Layer, Scope } from "effect";
 import {
   FetchHttpClient,
   HttpRouter,
@@ -12,7 +12,7 @@ import { makeProtocol, type Receiver, Receivers } from "./sockets.js";
 
 /**
  * The object's own `DurableObjectState`, `ctx`: its storage, its id, its alarm and its sockets.
- * A startup service of `make`'s routes and alarm, one per instance, so a store over
+ * A startup service of `make`'s services, routes and alarm, one per instance, so a store over
  * `storage.sql` is a Layer requiring it.
  */
 export class State extends Context.Service<State, DurableObjectState>()(
@@ -21,30 +21,48 @@ export class State extends Context.Service<State, DurableObjectState>()(
 
 type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
 
-type Allowed<A> =
+type Allowed<A, S> =
   | State
+  | S
   | HttpRouter.HttpRouter
   | Layer.Success<typeof HttpServer.layerServices>
-  | HttpRouter.Request<"Requires", ServedPerRequest | A>
-  | HttpRouter.Request<"GlobalRequires", ServedPerRequest | A>
+  | HttpRouter.Request<"Requires", ServedPerRequest | A | S>
+  | HttpRouter.Request<"GlobalRequires", ServedPerRequest | A | S>
   | HttpRouter.Request<"Error", unknown>
   | HttpRouter.Request<"GlobalError", unknown>;
 
 /** `make`'s options. */
-export interface Options<A = never, E = never, R = never, AE = never, AR = never> {
+export interface Options<
+  S = never,
+  SE = never,
+  SR = never,
+  A = never,
+  E = never,
+  R = never,
+  AE = never,
+  AR = never,
+> {
+  /**
+   * The object's startup services, such as a store over `State`'s `storage.sql`: built once per
+   * instance, before the routes, again after every eviction, and never finalized. The routes,
+   * every request, the alarm and `run` share that one build, and an implementation the services
+   * build, such as an in-process `Action.client`'s, is the one the routes serve. They may
+   * require `State` alone.
+   */
+  readonly services?: Layer.Layer<S, SE, SR> | undefined;
   /**
    * What `fetch` serves: routes, as `HttpRouter.toWebHandler` serves them, such as
    * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built when the instance is,
-   * again after every eviction, and never finalized. They may require `State`; a request-time
-   * requirement must be provided by their middleware or authentication, or be a service they
-   * provide themselves, such as one merged in with `Layer.provideMerge`.
+   * again after every eviction, and never finalized. They may require `State` and the
+   * services; a request-time requirement must be provided by their middleware or
+   * authentication, or be one of the services or a service they provide themselves.
    */
   readonly routes: Layer.Layer<A, E, R>;
   /**
    * What the object's `alarm` runs, scheduled with `State`'s `storage.setAlarm`, given the
-   * runtime's `retryCount` and `isRetry`. It may require `State` and a `Scope`, closed when it
-   * ends. It runs once the routes are built, and a layer it and the routes both provide is built
-   * once per instance. A failure rejects `alarm`, which Cloudflare retries.
+   * runtime's `retryCount` and `isRetry`. It may require the services, `State` and a `Scope`,
+   * closed when it ends. It runs through `run`. A failure rejects `alarm`, which Cloudflare
+   * retries.
    */
   readonly alarm?:
     | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, AR>)
@@ -62,21 +80,22 @@ type HandlerOf<K extends keyof DurableObject<Cloudflare.Env>> = NonNullable<
  * runtime's own arguments, so a class extending it overrides them as Cloudflare declares them.
  * Its `alarm` is Cloudflare's own, optional: a class made without one has none.
  */
-export interface Instance extends DurableObject<Cloudflare.Env> {
+export interface Instance<S = never> extends DurableObject<Cloudflare.Env> {
   fetch(...args: Parameters<HandlerOf<"fetch">>): Promise<Response>;
   webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>): Promise<void>;
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
   /**
-   * Runs `effect` in the object, with `State` and a `Scope`, closed when it ends, once the
-   * routes are built: a failed build rejects it. What the object's `alarm` runs through, and
-   * what a method of a class extending it runs its Effect with, such as a method a Worker calls
-   * over the object's stub. Provide the effect the same Layer value the routes are given, with
-   * `Effect.provide`: the instance builds it once for the routes, the alarm and every `run`.
-   * A Durable Object's public methods are callable over its stub, this one too, but it takes an
-   * Effect, which no stub can send: a caller over the stub gets a rejection, nothing more.
+   * Runs `effect` in the object, with the services the instance built, `State` and a `Scope`,
+   * closed when it ends, once the services and routes are built: a failed build rejects it.
+   * What the object's `alarm` runs through, and what a method of a class extending it runs its
+   * Effect with, such as a method a Worker calls over the object's stub. A Layer the effect
+   * provides itself, or an `Action.client` it acquires, is built for that call alone: give
+   * `make` what a call shares as `services`. A Durable Object's public methods are callable
+   * over its stub, this one too, but it takes an Effect, which no stub can send: a caller over
+   * the stub gets a rejection, nothing more.
    */
-  run<A, E>(effect: Effect.Effect<A, E, State | Scope.Scope>): Promise<A>;
+  run<A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>): Promise<A>;
 }
 
 /**
@@ -86,49 +105,71 @@ export interface Instance extends DurableObject<Cloudflare.Env> {
  * that class: the three handlers resolve for it, so an override answers its own sockets and
  * calls `super` for the rest. `run` runs an Effect in the object, for its own methods. Export it,
  * or a class extending it, under the name the Wrangler configuration binds. Each instance
- * builds the routes once, in its constructor, with `State` provided, and holds every event
- * until they are built, as `blockConcurrencyWhile` does: a build that fails resets the
- * instance, and the next event builds them again. The runtime evicts an idle instance and
- * constructs a new one for the next event, so nothing the routes build is finalized, and
- * in-memory state lasts no longer than an instance. Made without `alarm`, the class has no
- * alarm handler: workerd refuses `storage.setAlarm` on it, and celld 0.6.2 accepts the call and
- * consumes the alarm silently.
+ * builds the services, then the routes, once, in its constructor, with `State` provided, and
+ * holds every event until they are built, as `blockConcurrencyWhile` does: a build that fails
+ * resets the instance, and the next event builds them again. The runtime evicts an idle
+ * instance and constructs a new one for the next event, so nothing the services or routes
+ * build is finalized, and in-memory state lasts no longer than an instance. Made without
+ * `alarm`, the class has no alarm handler: workerd refuses `storage.setAlarm` on it, and celld
+ * 0.6.2 accepts the call and consumes the alarm silently.
  *
  * Guide: `docs/ActionDurableObject.md` in this package; in an application:
  * `examples/chat-rooms/`.
  */
 export const make = <
-  A,
-  E,
-  R extends Allowed<A>,
+  S = never,
+  SE = never,
+  SR extends State = never,
+  A = never,
+  E = never,
+  R extends Allowed<A, S> = never,
   AE = never,
-  AR extends State | Scope.Scope = never,
+  AR extends S | State | Scope.Scope = never,
 >(
-  options: Options<A, E, R, AE, AR>,
-): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance => {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every request requirement against `Allowed<A>`, and `toWebHandler` gives each request the services the routes provide, `A`, as its own types say; only that subtraction, which a generic `A` keeps unresolved, is erased.
-  const routes = options.routes as Layer.Layer<never, E, Allowed<never>>;
+  options: Options<S, SE, SR, A, E, R, AE, AR>,
+): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S> => {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
+  const services = (options.services ?? Layer.empty) as Layer.Layer<S, SE, State>;
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every requirement against `Allowed<A, S>`, the built services supply `S`, merged in, and `toWebHandler` gives each request the services the routes provide, `A`, as its own types say; only those subtractions, which a generic `A` and `S` keep unresolved, are erased.
+  const routes = options.routes as Layer.Layer<never, E, Allowed<never, never>>;
 
   const onAlarm:
-    | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, State | Scope.Scope>)
+    | ((info: AlarmInvocationInfo | undefined) => Effect.Effect<void, AE, S | State | Scope.Scope>)
     | undefined = options.alarm;
 
   class ActionDurableObject extends DurableObject<Cloudflare.Env> {
+    // Why: an implementation of the core is shared through the memo map of the graph it is
+    // built in, so services and routes build in this one map: an implementation the services
+    // build is the one the routes serve, where two maps would build two.
     readonly #memoMap = Layer.makeMemoMapUnsafe();
 
     readonly #receivers = new Map<string, Receiver>();
 
-    readonly #built = Deferred.makeUnsafe<void, unknown>();
+    readonly #routesBuilt = Deferred.makeUnsafe<void, unknown>();
 
     // Why: the runtime holds back a timer set outside the callback until it returns, so a build
     // started before it would wait on itself; started inside it, the build holds every event.
-    readonly #web = this.ctx.blockConcurrencyWhile(async () => {
+    readonly #built = this.ctx.blockConcurrencyWhile(async () => {
+      const state = Layer.succeed(State, this.ctx);
+
+      // Why: built once, here, into the context the routes and every `run` are given; their
+      // scope is never closed, so nothing is finalized while the instance lives.
+      const context = await Effect.runPromise(
+        Layer.buildWithMemoMap(
+          services.pipe(Layer.provide(state)),
+          this.#memoMap,
+          Scope.makeUnsafe(),
+        ),
+      );
+
       const web = HttpRouter.toWebHandler(
         routes.pipe(
-          Layer.tap(() => Deferred.succeed(this.#built, undefined)),
-          Layer.tapCause((cause) => Deferred.failCause(this.#built, cause)),
+          Layer.provideMerge(Layer.succeedContext<never>(context)),
+          Layer.tap(() => Deferred.succeed(this.#routesBuilt, undefined)),
+          Layer.tapCause((cause) => Deferred.failCause(this.#routesBuilt, cause)),
           Layer.provide([
-            Layer.succeed(State, this.ctx),
+            state,
             Layer.succeed(Receivers, this.#receivers),
             HttpServer.layerServices,
           ]),
@@ -136,23 +177,32 @@ export const make = <
         { memoMap: this.#memoMap, disableLogger: options.disableLogger },
       );
 
-      await Effect.runPromise(Deferred.await(this.#built));
+      await Effect.runPromise(Deferred.await(this.#routesBuilt));
 
-      return web;
+      return { web, context };
     });
 
     override async fetch(request: Request) {
-      return (await this.#web).handler(request);
+      return (await this.#built).web.handler(request);
     }
 
-    async run<A, E>(effect: Effect.Effect<A, E, State | Scope.Scope>): Promise<A> {
-      await this.#web;
+    async run<A, E>(effect: Effect.Effect<A, E, S | State | Scope.Scope>): Promise<A> {
+      const { context } = await this.#built;
 
+      // Why: the services' context carries the instance's memo map, which `run` gave every
+      // effect before, so a Layer it provided itself was shared when the services or routes had
+      // built that very value, and rebuilt per call otherwise, without a word. A map of its own
+      // makes the rule one: the services are shared, and what a `run` provides is per call.
       return Effect.runPromise(
-        effect.pipe(
-          Effect.scoped,
-          Effect.provideService(State, this.ctx),
-          Effect.provideService(Layer.CurrentMemoMap, this.#memoMap),
+        Effect.scopedWith((scope) =>
+          Effect.provideContext(
+            effect,
+            context.pipe(
+              Context.add(State, this.ctx),
+              Context.add(Scope.Scope, scope),
+              Context.add(Layer.CurrentMemoMap, Layer.makeMemoMapUnsafe()),
+            ),
+          ),
         ),
       );
     }

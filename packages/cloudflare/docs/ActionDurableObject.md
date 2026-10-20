@@ -14,18 +14,20 @@ Reading order: [README.md](README.md).
 
 Import `@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject`.
 
-| API                                        | Purpose                                                                          |
-| ------------------------------------------ | -------------------------------------------------------------------------------- |
-| `make({ routes, alarm?, disableLogger? })` | A Durable Object class serving `routes` on `fetch` and its sockets' events.      |
-| `State`                                    | The object's `DurableObjectState`, `ctx`: a startup service of routes and alarm. |
-| `layerWebSocket({ path })`                 | The hibernating `RpcServer.Protocol` `ActionRpc.layer` serves on.                |
-| `layerHttpClient(stub)`                    | An `HttpClient` sending every request to a stub or a service binding.            |
+| API                                                   | Purpose                                                                                    |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `make({ services?, routes, alarm?, disableLogger? })` | A Durable Object class serving `routes` on `fetch` and its sockets' events.                |
+| `State`                                               | The object's `DurableObjectState`, `ctx`: a startup service of services, routes and alarm. |
+| `layerWebSocket({ path })`                            | The hibernating `RpcServer.Protocol` `ActionRpc.layer` serves on.                          |
+| `layerHttpClient(stub)`                               | An `HttpClient` sending every request to a stub or a service binding.                      |
 
 Exported types: `Options` of `make`, `LayerWebSocketOptions` of `layerWebSocket`, and `Instance`,
-an instance of the class `make` returns, whose `run(effect)` runs an Effect in the object.
+an instance of the class `make` returns, whose `run(effect)` runs an Effect in the object with
+its services.
 
 | Option                   | Meaning                                                                                             |
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
+| `make`: `services`       | The object's startup services, a Layer requiring `State` alone, built once per instance.            |
 | `make`: `routes`         | A Layer of routes, as `HttpRouter.toWebHandler` serves them: `ActionRpc.layer`, `ActionHttp.layer`. |
 | `make`: `alarm`          | A function of the runtime's alarm information to the Effect the object's `alarm` runs.              |
 | `make`: `disableLogger`  | Leave out the request logger `toWebHandler` adds.                                                   |
@@ -33,14 +35,17 @@ an instance of the class `make` returns, whose `run(effect)` runs an Effect in t
 
 ## Serve actions from an object
 
-Give `make` the routes, as the core's surfaces build them, and export the class it returns,
-or one extending it, under the name the Wrangler configuration binds. Each instance builds the
-routes once, in its constructor, with `State` and the platform's services provided, and holds
-every event until they are built.
+Give `make` the routes, as the core's surfaces build them, and their startup services as
+`services`, and export the class it returns, or one extending it, under the name the Wrangler
+configuration binds. Each instance builds the services once, in its constructor, with `State`
+provided, then the routes, with the services, `State` and the platform's services, and holds
+every event until they are built. The routes, every request, the alarm and `run` share that
+one build of the services.
 
 ```ts
 export class ChatRoom extends ActionDurableObject.make({
-  routes: roomRoutes.pipe(Layer.provide([layerSql, layerRoom])),
+  services: Layer.mergeAll(layerSql, layerRoom),
+  routes: roomRoutes,
 }) {}
 ```
 
@@ -51,9 +56,11 @@ it with a SQLite migration.
 - Run with the compatibility flag `web_socket_auto_reply_to_close`, on by default from the
   `compatibility_date` `2026-04-07`: with it the runtime replies to a client's close frame
   itself. `layerWebSocket` sends no reply of its own.
-- `make` provides `State`, the router and the platform's services: provide every other service
-  the routes require to them, or merge it in with `Layer.provideMerge`, which also gives it to
-  every request, as `toWebHandler` does.
+- `make` provides `State`, the router and the platform's services to the routes as they build,
+  and the services to the routes and to every request. A service the alarm or a `run` needs too
+  belongs in `services`; one only the routes need may be provided to them instead.
+- An implementation the services build, with `Action.layer` or an in-process `Action.client`
+  acquired in a Layer, is the one the routes serve: they build in one graph.
 - A service read from the object, such as a SQLite store, is a Layer requiring `State`
   ([chat-rooms/src/platform/sql-store.ts](../examples/chat-rooms/src/platform/sql-store.ts)).
   So is what the object is, such as its name
@@ -63,9 +70,9 @@ it with a SQLite migration.
   `Action.md` shows for a store
   ([chat-rooms/src/chat/authorize.ts](../examples/chat-rooms/src/chat/authorize.ts)).
 - JSON routes and rpcs merge in one routes Layer: both are served on `fetch`.
-- The routes are a module-level value, built once per instance, so they reach bindings through
-  the `env` import of `cloudflare:workers`, read as they build or serve, never as the module
-  evaluates ([chat-rooms/src/platform/room-stubs.ts](../examples/chat-rooms/src/platform/room-stubs.ts)).
+- The services and routes are module-level values, built once per instance, so they reach
+  bindings through the `env` import of `cloudflare:workers`, read as they build or serve, never
+  as the module evaluates ([chat-rooms/src/platform/room-stubs.ts](../examples/chat-rooms/src/platform/room-stubs.ts)).
 
 ## Serve rpcs over hibernating WebSockets
 
@@ -110,15 +117,15 @@ ActionRpc.layer(RoomRpc, room).pipe(
 ## Run an alarm
 
 Give `make` an `alarm`, and set it from a handler or a store with `State`'s
-`storage.setAlarm`. It runs once the routes are built, with `State` and a `Scope`, closed when
-it ends.
+`storage.setAlarm`. It runs through `run`, once the services and routes are built, with the
+services, `State` and a `Scope`, closed when it ends.
 
 ```ts
-alarm: () => MessageStore.use((store) => store.expire).pipe(Effect.provide(layerSql)),
+alarm: () => MessageStore.use((store) => store.expire),
 ```
 
-- Provide it the same Layer value the routes are given: an instance builds it once for both,
-  as [chat-rooms/src/worker.ts](../examples/chat-rooms/src/worker.ts) does with `layerSql`.
+- It reads the store the routes read, built once per instance
+  ([chat-rooms/src/worker.ts](../examples/chat-rooms/src/worker.ts)).
 - Its argument is the runtime's `AlarmInvocationInfo`, `retryCount` and `isRetry`, or
   `undefined` when the object's `alarm` is called with none.
 - A class extending the one `make` returns may override `alarm`, and reaches `make`'s with
@@ -134,19 +141,20 @@ alarm: () => MessageStore.use((store) => store.expire).pipe(Effect.provide(layer
 
 Two paths. Where the Worker is the object's only caller and its API is internal, give a class
 extending the one `make` returns methods the Worker calls over the stub with Cloudflare's RPC,
-each running its Effect with `run`, provided the same Layer value as the routes, which the
-instance builds once for both. Where the object's API should be an effect-actions surface, with
-its contract, clients and authentication, call its actions over `layerHttpClient`.
+each running its Effect with `run`, which gives it the object's services. Where the object's API
+should be an effect-actions surface, with its contract, clients and authentication, call its
+actions over `layerHttpClient`.
 
 ```ts
-const routes = pluginRoutes.pipe(Layer.provide(services));
-
-export class Plugin extends ActionDurableObject.make({ routes }) {
+export class Plugin extends ActionDurableObject.make({ services, routes: pluginRoutes }) {
   install(code: string) {
-    return this.run(Effect.provide(install(code), services));
+    return this.run(install(code));
   }
 }
 ```
+
+A Layer a `run`'s Effect provides itself, or an `Action.client` it acquires, is built for that
+call alone, and finalized when it ends: what calls share belongs in `services`.
 
 Provide the core's client `layerHttpClient` with the object's stub: every request goes to the
 object's `fetch` in place of the network.
@@ -188,8 +196,8 @@ open a socket by upgrading through its `fetch`, handing `response.webSocket` to
 
 ## Limits
 
-- **An instance lasts until it is evicted.** Nothing the routes build is finalized, in-memory
-  state is lost, and the next instance builds everything again. Keep state in storage.
+- **An instance lasts until it is evicted.** Nothing the services or routes build is finalized,
+  in-memory state is lost, and the next instance builds everything again. Keep state in storage.
 - **The build holds the object.** It runs in `blockConcurrencyWhile`, which the runtime limits
   to 30 seconds. A build that fails or exceeds it resets the object: the event's caller gets
   the error, and the next event builds again.

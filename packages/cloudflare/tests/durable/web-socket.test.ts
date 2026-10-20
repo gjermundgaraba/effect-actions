@@ -11,7 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { Http, noteHeader, Overdrawn, ownTag } from "../support/app.js";
+import { alarmBuildsKey, Http, noteHeader, Overdrawn, ownTag } from "../support/app.js";
 import type { OwnSockets, Room } from "../worker.js";
 import { scopedClientOver, upgradeToRpc } from "../support/socket.js";
 
@@ -400,17 +400,29 @@ describe("make", () => {
     }),
   );
 
-  it.effect("builds a layer once for the routes and a stub method's run, fetched first", () =>
+  it.effect("builds the services once for the routes, a stub method's run and the alarm", () =>
     Effect.gen(function* () {
       const stub = env.COUNTED.getByName("fetched-first");
       const response = yield* Effect.promise(() => stub.fetch("https://object/builds"));
 
       expect(yield* Effect.promise(() => response.text())).toBe("1");
       expect(yield* Effect.promise(() => stub.builds())).toBe(1);
+
+      yield* Effect.promise(() =>
+        runInDurableObject(stub, (_, state) => state.storage.setAlarm(Date.now() + 60_000)),
+      );
+
+      expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
+      expect(
+        yield* Effect.promise(() =>
+          runInDurableObject(stub, (_, state) => state.storage.get(alarmBuildsKey)),
+        ),
+      ).toBe(1);
+      expect(yield* Effect.promise(() => stub.builds())).toBe(1);
     }),
   );
 
-  it.effect("runs a stub method on an instance never fetched once the routes are built", () =>
+  it.effect("runs a stub method on an instance never fetched once the services are built", () =>
     Effect.gen(function* () {
       const stub = env.COUNTED.getByName("called-first");
 
@@ -419,6 +431,34 @@ describe("make", () => {
       const response = yield* Effect.promise(() => stub.fetch("https://object/builds"));
 
       expect(yield* Effect.promise(() => response.text())).toBe("1");
+    }),
+  );
+
+  it.effect("builds a Layer a run provides itself for that run alone", () =>
+    Effect.gen(function* () {
+      const stub = env.COUNTED.getByName("provided");
+
+      expect(yield* Effect.promise(() => stub.builds())).toBe(1);
+      expect(yield* Effect.promise(() => stub.providedBuilds())).toBe(2);
+      expect(yield* Effect.promise(() => stub.providedBuilds())).toBe(3);
+      expect(yield* Effect.promise(() => stub.builds())).toBe(1);
+    }),
+  );
+
+  it.effect("fails fetch and run with the services' build failure", () =>
+    Effect.gen(function* () {
+      const stub = env.BROKEN_SERVICES.getByName("broken-services");
+
+      const failures = yield* Effect.all([
+        Effect.flip(Effect.tryPromise(() => stub.fetch("https://object/"))),
+        Effect.flip(
+          Effect.tryPromise(() =>
+            runInDurableObject(stub, (instance) => instance.run(Effect.void)),
+          ),
+        ),
+      ]);
+
+      for (const failure of failures) expect(String(failure.cause)).toContain("Unreachable");
     }),
   );
 
@@ -473,7 +513,7 @@ describe("make", () => {
   );
 
   it.effect(
-    "runs the alarm on a woken instance once the routes are built, sharing their build",
+    "runs the alarm on a woken instance once the routes are built, sharing their services",
     () =>
       Effect.gen(function* () {
         const stub = room("alarm");

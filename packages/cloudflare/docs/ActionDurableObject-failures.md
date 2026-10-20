@@ -4,11 +4,12 @@ What you see when something is wrong, and the fix. Search for a fragment of the 
 The tasks are in [ActionDurableObject.md](ActionDurableObject.md); a surface's own failures are
 in the core's `*-failures.md` pages.
 
-- `is not assignable to type 'Allowed<never>'` at `make`'s `routes`, or `Allowed<X>` where the
-  routes provide `X` themselves: the routes require a service no layer provides. The union before it lists every requirement; those
-  other than `State`, `HttpRouter` and the platform's (`FileSystem`, `Path`, `HttpPlatform`,
-  `Generator`) are missing: provide their Layers to the routes. Where it names
-  `Request<"Requires", X>`, a handler or an authorizer reads `X` per request: see the core's
+- `is not assignable to type 'Allowed<never, never>'` at `make`'s `routes`, or `Allowed<X, Y>`
+  where the routes provide `X` themselves and `services` provides `Y`: the routes require a
+  service no layer provides. The union before it lists every requirement; those other than
+  `State`, `HttpRouter`, the platform's (`FileSystem`, `Path`, `HttpPlatform`, `Generator`) and
+  `Y` are missing: add their Layers to `services`, or provide them to the routes. Where it names
+  `Request<"Requires", Z>`, a handler or an authorizer reads `Z` per request: see the core's
   `ActionRpc-failures.md` and `ActionHttp-failures.md`.
 - A call over the socket dies with `Internal server error` though router middleware or
   `HttpRouter.provideRequest` provides a service its handler reads: those run for the upgrade
@@ -32,9 +33,9 @@ in the core's `*-failures.md` pages.
   the runtime dropped the socket's attachment, where its upgrade headers are kept, as celld
   0.6.2 does when it evicts an idle object. Send the token on each message, with
   `RpcClient.withHeaders`.
-- A stub's `fetch`, or a method calling `run`, rejects with the routes' build failure, every
-  call alike: the routes fail to build. The object is reset, and the next event builds them
-  again; fix the failure the rejection names.
+- A stub's `fetch`, or a method calling `run`, rejects with a build failure, every call alike:
+  the services or the routes fail to build, and either shows the same. The object is reset,
+  and the next event builds them again; fix the failure the rejection names.
 - An upgrade answered `426 Expected a WebSocket upgrade`: the request to the socket's `path` is
   not an upgrade. Connect with a WebSocket client, or forward the page's `Request` itself from
   the Worker, which forwards its `Upgrade` header.

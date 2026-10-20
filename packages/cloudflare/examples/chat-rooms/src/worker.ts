@@ -1,4 +1,4 @@
-import { Effect, Layer, Schema } from "effect";
+import { Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { RoomName } from "./chat/Chat.js";
@@ -12,12 +12,13 @@ import { lobbyRoutes, roomRoutes } from "./routes.js";
 // object. It chooses the store and the room, and routes each request.
 
 // A room's Durable Object, bound as CHAT_ROOM in wrangler.jsonc under this export's name. Each
-// instance builds its routes when the runtime constructs it, again after every eviction. The
-// alarm expires old messages; `post` sets it. It is given the same store layer as the routes,
-// so an instance builds the store once for both.
+// instance builds its services, the store and the room, then its routes, when the runtime
+// constructs it, again after every eviction. The alarm expires old messages; `post` sets it.
+// It reads the store the instance built for the routes.
 export class ChatRoom extends ActionDurableObject.make({
-  routes: roomRoutes.pipe(Layer.provide([layerSql, layerRoom])),
-  alarm: () => MessageStore.use((store) => store.expire).pipe(Effect.provide(layerSql)),
+  services: Layer.mergeAll(layerSql, layerRoom),
+  routes: roomRoutes,
+  alarm: () => MessageStore.use((store) => store.expire),
 }) {}
 
 // The lobby's handler, built once, when the module loads: building it does no I/O, which a

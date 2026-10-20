@@ -5,9 +5,18 @@ import type { RpcServer } from "effect/rpc";
 import { expectTypeOf } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { CurrentUser, Http, implementation, socketRoutes } from "../support/app.js";
+import {
+  Builds,
+  buildsRoutes,
+  CurrentUser,
+  Http,
+  implementation,
+  routerProvidedRoutes,
+  socketRoutes,
+  startup,
+} from "../support/app.js";
 
-expectTypeOf(ActionDurableObject.make({ routes: socketRoutes })).toEqualTypeOf<
+expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqualTypeOf<
   new (ctx: DurableObjectState, env: Cloudflare.Env) => ActionDurableObject.Instance
 >();
 
@@ -18,6 +27,7 @@ expectTypeOf(ActionDurableObject.layerWebSocket({ path: "/rpc" })).toEqualTypeOf
 >();
 
 ActionDurableObject.make({
+  services: startup,
   routes: socketRoutes,
   alarm: () => Effect.asVoid(Effect.all([Effect.service(ActionDurableObject.State), Effect.scope])),
 });
@@ -32,7 +42,10 @@ ActionDurableObject.make({
   ).pipe(Layer.provideMerge(Layer.succeed(Merged, 1))),
 });
 
-export class WithCloseCode extends ActionDurableObject.make({ routes: socketRoutes }) {
+export class WithCloseCode extends ActionDurableObject.make({
+  services: startup,
+  routes: socketRoutes,
+}) {
   override webSocketClose(socket: WebSocket, code: number, reason: string, wasClean: boolean) {
     return super.webSocketClose(socket, code, reason, wasClean);
   }
@@ -57,6 +70,7 @@ ActionDurableObject.make({
 });
 
 ActionDurableObject.make({
+  services: startup,
   routes: socketRoutes,
   // @ts-expect-error -- The alarm has no caller unless it names one itself.
   alarm: () => Effect.asVoid(Effect.service(CurrentUser)),
@@ -70,3 +84,29 @@ expectTypeOf(
 
 // @ts-expect-error -- A run has no caller unless it names one itself.
 void instance.run(Effect.service(CurrentUser));
+
+ActionDurableObject.make({
+  // @ts-expect-error -- The routes require startup services no Layer provides.
+  routes: socketRoutes,
+});
+
+ActionDurableObject.make({
+  // @ts-expect-error -- The services are built at startup, where no request has a caller.
+  services: Layer.effect(Builds)(Effect.as(Effect.service(CurrentUser), 1)),
+  routes: Layer.empty,
+});
+
+const WithServices = ActionDurableObject.make({ services: Builds.layer, routes: buildsRoutes });
+
+declare const withServices: InstanceType<typeof WithServices>;
+
+expectTypeOf(withServices.run(Effect.service(Builds))).toEqualTypeOf<Promise<number>>();
+
+// @ts-expect-error -- A run has only the services the object was given.
+void withServices.run(Effect.service(CurrentUser));
+
+ActionDurableObject.make({
+  services: Builds.layer,
+  routes: buildsRoutes,
+  alarm: () => Effect.asVoid(Effect.service(Builds)),
+});

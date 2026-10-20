@@ -77,13 +77,14 @@ test/
 ```
 
 - **An instance is built per wake.** The runtime evicts an idle object and constructs a new
-  instance for its next event, which builds the routes again: anything in memory is gone, and
-  `layerSql` creates its table if it is not there. The database and the sockets stay.
+  instance for its next event, which builds its services and routes again: anything in memory
+  is gone, and `layerSql` creates its table if it is not there. The database and the sockets
+  stay.
 - **The room is a startup service, the caller is not.** An instance holds one room, so the
   authorizer yields `Room` once, when it is built, as a builder yields a store. `CurrentMember`
   comes from authentication, per message.
-- **The entrypoint chooses everything.** `worker.ts` gives the routes the SQLite store and the
-  room, gives the alarm the same store layer, so an instance builds it once for both, and gives
+- **The entrypoint chooses everything.** `worker.ts` gives the object the SQLite store and the
+  room as its services, which an instance builds once for the routes and the alarm, and gives
   the lobby the stubs.
 - **The Worker forwards, the object answers.** Forwarding a request forwards its upgrade, so
   the Worker passes a page's socket request to the room's object unchanged but its path.

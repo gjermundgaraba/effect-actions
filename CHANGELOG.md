@@ -30,16 +30,21 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
 - **`@gjermundgaraba/effect-actions-cloudflare` serves actions from Cloudflare Durable Objects**,
   released with this package at the same version and requiring it at `~` that version. Its
   module `ActionDurableObject`:
-  - `make({ routes, alarm, disableLogger })` is a Durable Object class: each instance builds the
-    routes once, with the object's `State` as a startup service, and holds every event until
-    they are built; it serves them on `fetch`, hands its sockets' events to them and runs
-    `alarm(info)`, given the runtime's retry count, sharing one build with the routes.
-    `disableLogger` leaves out the request logger. An instance's `run(effect)` runs an Effect
-    in the object once the routes are built, with `State` and a `Scope`, for the methods of a
-    class extending it, such as those a Worker calls over the stub: given the same Layer value
-    as the routes, it shares their build, as the alarm does. Its socket handlers leave a socket
-    no protocol of the routes accepted, such as one the class accepts itself, to the class's own
-    override, resolving for it.
+  - `make({ services, routes, alarm, disableLogger })` is a Durable Object class: each instance
+    builds `services`, its startup services, once, with the object's `State` as a startup
+    service, then the routes, with them, and holds every event until they are built; it serves
+    the routes on `fetch`, hands its sockets' events to them and runs `alarm(info)`, given the
+    runtime's retry count. `disableLogger` leaves out the request logger. An instance's
+    `run(effect)` runs an Effect in the object once they are built, with the services, `State`
+    and a `Scope`, for the methods of a class extending it, such as those a Worker calls over
+    the stub; the alarm runs through it. The routes, every request, the alarm and every `run`
+    share the one build of `services`, and a Layer a `run` provides itself, or an
+    `Action.client` it acquires, is built for that call alone. This reverses `run`'s earlier
+    contract on this branch, where it shared the routes' memo map: a Layer provided to it was
+    shared only if the routes had built that very value, and rebuilt per call otherwise, with
+    no error; move such a Layer into `services` and drop its `Effect.provide`. Its socket
+    handlers leave a socket no protocol of the routes accepted, such as one the class accepts
+    itself, to the class's own override, resolving for it.
   - `layerWebSocket({ path })` is the protocol `ActionRpc.layer` serves on: WebSockets the
     runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
     Effect's own socket protocol does, and each message is authenticated with them under its

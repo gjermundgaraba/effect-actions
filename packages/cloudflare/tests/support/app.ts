@@ -126,7 +126,15 @@ export const implementation = Action.implement(
   { authorize: Action.allowAll },
 );
 
-export const startup = Layer.provideMerge(Action.layer(implementation), StartupRead.layer);
+export class Actions extends Context.Service<Actions, Action.Client<typeof implementation>>()(
+  "test/Actions",
+) {
+  static readonly layer = Layer.effect(Actions)(Action.client(implementation));
+}
+
+export const startup = Layer.mergeAll(Action.layer(implementation), Actions.layer).pipe(
+  Layer.provideMerge(StartupRead.layer),
+);
 
 export const slowUpstream = Layer.effectDiscard(
   Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 20))),
@@ -156,7 +164,7 @@ export const socketRoutes = Layer.mergeAll(
   ActionHttp.layer(Http, implementation),
   rpcRoutes.pipe(Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" }))),
   greetingRoute,
-).pipe(Layer.provide(authenticate), Layer.provide(startup), Layer.provide(slowUpstream));
+).pipe(Layer.provide(authenticate), Layer.provide(slowUpstream));
 
 export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
   Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
@@ -179,16 +187,18 @@ export const prefixedRoutes = Layer.mergeAll(mountedAt("/a"), mountedAt("/b")).p
 
 export const alarm = Effect.gen(function* () {
   const { storage } = yield* ActionDurableObject.State;
-  const client = yield* Action.client(implementation);
+  const client = yield* Actions;
 
   yield* client.spend({ amount: 1 }).pipe(Effect.provideService(CurrentUser, "alarm"));
 
   const ran = (yield* Effect.promise(() => storage.get<number>(alarmsKey))) ?? 0;
 
   yield* Effect.promise(() => storage.put(alarmsKey, ran + 1));
-}).pipe(Effect.provide(startup));
+});
 
 const buildsKey = "builds";
+
+export const alarmBuildsKey = "alarmBuilds";
 
 export class Builds extends Context.Service<Builds, number>()("test/Builds") {
   static readonly layer = Layer.effect(Builds)(
@@ -207,7 +217,14 @@ export const buildsRoutes = HttpRouter.add(
   "GET",
   "/builds",
   Effect.map(Effect.service(Builds), (builds) => HttpServerResponse.text(String(builds))),
-).pipe(Layer.provideMerge(Builds.layer));
+);
+
+export const buildsAlarm = Effect.gen(function* () {
+  const { storage } = yield* ActionDurableObject.State;
+  const builds = yield* Builds;
+
+  yield* Effect.promise(() => storage.put(alarmBuildsKey, builds));
+});
 
 export const ownTag = "own";
 
