@@ -339,11 +339,34 @@ const handlerOf = (
   };
 };
 
+const jsonProbe: Schema.Json = { probe: [1, "a", null, true] };
+
+// Why: an action is a JSON contract on every surface, so its values cross as JSON whatever the
+// protocol's own codec: a protocol passing values, such as a Durable Object stub's, carries them
+// as they are, unencoded twice, and one whose codec encodes JSON otherwise, as schema-binary's
+// makes bytes the framing would not hold, is refused.
+const carryingJson = <P extends { readonly codecFor: RpcSerialization.CodecFor }>(protocol: P) =>
+  Effect.try(() => Schema.encodeSync(protocol.codecFor(Schema.Json))(jsonProbe)).pipe(
+    Effect.map((encoded) => JSON.stringify(encoded) === JSON.stringify(jsonProbe)),
+    Effect.orElseSucceed(() => false),
+    Effect.flatMap((carries) =>
+      carries
+        ? Effect.succeed({ ...protocol, codecFor: RpcSerialization.json.codecFor })
+        : Effect.die(
+            new Error(
+              "ActionRpc puts JSON in a protocol's messages, which its codec must keep as it is: RpcSerialization.layerJson, layerNdjson, layerJsonRpc or layerNdJsonRpc, or a protocol passing values, not another codec, such as schema-binary's",
+            ),
+          ),
+    ),
+  );
+
 /**
  * Serve the binding's actions among `implementations` with Effect's own `RpcServer`, or those
  * its `actions` lists, as `ActionHttp.layer` selects them. The host provides the protocol,
- * such as `RpcServer.layerProtocolWebsocket` or `layerProtocolHttp` and its JSON serialization:
- * the layer refuses to build under a protocol that does not speak JSON. A protected rpc
+ * such as `RpcServer.layerProtocolWebsocket` or `layerProtocolHttp` and its JSON serialization,
+ * or a protocol passing values: the actions' values cross as JSON whatever the protocol's codec,
+ * and the layer refuses to build under a codec that does not keep a JSON value as it is, such as
+ * schema-binary's. A protected rpc
  * authenticates each message from its headers with the binding's descriptor, outermost; then
  * the layer's `middleware` runs, then the input is decoded, a failure answering `InvalidInput`,
  * then the implementation's `authorize` and the handler, as on every surface.
@@ -398,16 +421,6 @@ export function layer(
 
   const handlers = Layer.unwrap(
     Effect.gen(function* () {
-      const { codecFor } = yield* RpcServer.Protocol;
-
-      if (codecFor !== RpcSerialization.json.codecFor) {
-        return yield* Effect.die(
-          new Error(
-            "ActionRpc serves a protocol speaking JSON: RpcSerialization.layerJson, layerNdjson, layerJsonRpc or layerNdJsonRpc, not another codec, such as schema-binary's",
-          ),
-        );
-      }
-
       const listedMiddleware: ReadonlyArray<Step> = yield* Effect.forEach(middleware, (key) =>
         Effect.service(key),
       );
@@ -438,7 +451,12 @@ export function layer(
     }),
   ).pipe(provideHandlers(apps));
 
-  return RpcServer.layer(jsonGroup, { disableFatalDefects: true }).pipe(Layer.provide(handlers));
+  return RpcServer.layer(jsonGroup, { disableFatalDefects: true }).pipe(
+    Layer.provide(handlers),
+    Layer.provide(
+      Layer.effect(RpcServer.Protocol)(Effect.flatMap(RpcServer.Protocol, carryingJson)),
+    ),
+  );
 }
 
 /**
@@ -487,7 +505,9 @@ type NativeClient = { readonly [name: string]: NativeMethod | undefined };
  * directly: `client.greet({ name })`, as `ActionHttp.client`'s. The argument may be omitted
  * when `{}` is a valid input. Requires the native client `Protocol` and a `Scope`, as
  * `RpcClient.make` does; headers set with `RpcClient.withHeaders` around a call go with its
- * message. The native client itself stays available: `RpcClient.make(Rpc.group)`.
+ * message. The native client itself stays available: `RpcClient.make(Rpc.group)`. The actions'
+ * values cross as JSON whatever the protocol's codec, as `layer` serves them, and a codec that
+ * does not keep a JSON value as it is, such as schema-binary's, is refused as the client is made.
  *
  * A call fails with a declared error value (the action's own, the binding's, a built-in
  * `InvalidInput`, `Unauthenticated` or `Forbidden`, or on a protected rpc its descriptor's),
@@ -508,7 +528,14 @@ export function client(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native group boundary: every binding's group is a native group `make` built, one rpc per action, each taking its action's input; only its invariant static rpcs are dropped.
   const group = binding.group as RpcGroup.RpcGroup<ClientRpc>;
 
-  return Effect.map(RpcClient.make(group, options), (client) => {
+  const made = RpcClient.make(group, options).pipe(
+    Effect.provideServiceEffect(
+      RpcClient.Protocol,
+      Effect.flatMap(Effect.service(RpcClient.Protocol), carryingJson),
+    ),
+  );
+
+  return Effect.map(made, (client) => {
     const native: NativeClient = client;
 
     return Object.fromEntries(

@@ -36,6 +36,7 @@ import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { recorder } from "../support/reporter.js";
 import { sendRawNdjson, valueOrSquashedCause } from "../support/requests.js";
+import { inMemoryValuesProtocolTo } from "../support/values.js";
 
 const Rpc = ActionRpc.make([Status, GetUser, RenameUser, Double, WhoAmI], {
   authentication: Login,
@@ -272,7 +273,7 @@ describe("ActionRpc serializations", () => {
 
       expect(Exit.isFailure(built) && Cause.squash(built.cause)).toEqual(
         new Error(
-          "ActionRpc serves a protocol speaking JSON: RpcSerialization.layerJson, layerNdjson, layerJsonRpc or layerNdJsonRpc, not another codec, such as schema-binary's",
+          "ActionRpc puts JSON in a protocol's messages, which its codec must keep as it is: RpcSerialization.layerJson, layerNdjson, layerJsonRpc or layerNdJsonRpc, or a protocol passing values, not another codec, such as schema-binary's",
         ),
       );
     }).pipe(Effect.provide(Users.layerMemory)),
@@ -900,5 +901,47 @@ describe("ActionRpc over a socket server", () => {
       expect(alice).toEqual({ id: "alice", tenantId: "acme" });
       expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
     }).pipe(Effect.provide(server), Effect.provide(Users.layerMemory)),
+  );
+});
+
+const Crashes = ActionRpc.make([Crashy]);
+
+describe("ActionRpc over a protocol passing values", () => {
+  const served = ActionRpc.layer(Rpc, [status, userActions, double]).pipe(
+    Layer.provide(Authentication.layer(Login, verify)),
+  );
+
+  const overValues = <A, E, R>(
+    program: (client: ActionRpc.Client<typeof Rpc>) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.flatMap(ActionRpc.client(Rpc), program).pipe(
+      Effect.scoped,
+      Effect.provide(inMemoryValuesProtocolTo(served)),
+      Effect.provide(Users.layerMemory),
+    );
+
+  it.effect("carries an action's input, success and declared error as their JSON", () =>
+    overValues((client) =>
+      Effect.gen(function* () {
+        expect(yield* client.double({ value: 21 }).pipe(signedInAs("alice"))).toBe(42);
+        expect(yield* Effect.flip(client.getUser({ id: "9" }).pipe(signedInAs("alice")))).toEqual(
+          new UserNotFound({ id: "9" }),
+        );
+        expect(yield* client.status()).toEqual({ service: "effect-actions", users: 2 });
+      }),
+    ),
+  );
+
+  it.effect("answers a defect as its request's generic failure", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.flatMap(ActionRpc.client(Crashes), (client) =>
+        Effect.exit(client.crashy()),
+      ).pipe(
+        Effect.scoped,
+        Effect.provide(inMemoryValuesProtocolTo(ActionRpc.layer(Crashes, crashy))),
+      );
+
+      expect(valueOrSquashedCause(exit)).toEqual(internalServerErrorDefect);
+    }),
   );
 });

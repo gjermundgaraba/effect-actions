@@ -80,7 +80,8 @@ const socket = rpc.pipe(
 - Export the rpc layer before it is given a protocol. `Testing.layer` cannot upgrade a
   WebSocket, so a test gives that layer the HTTP protocol ([Testing.md](Testing.md#test-rpcs)).
 - Provide a JSON serialization, the same one on the client: `RpcSerialization.layerJson`,
-  `layerNdjson`, `layerJsonRpc()` or `layerNdJsonRpc()`.
+  `layerNdjson`, `layerJsonRpc()` or `layerNdJsonRpc()`. A protocol passing values, such as a
+  Durable Object stub's, serves too: the actions' values cross it as JSON, whatever its codec.
 - Bound a WebSocket message on the server: `HttpServerRequest.MaxBodySize` does not, and Node's
   reads up to 100 MiB whole. `server.ts` passes `websocket: { maxPayload }` to
   `NodeHttpServer.layer`; a larger message closes the socket.

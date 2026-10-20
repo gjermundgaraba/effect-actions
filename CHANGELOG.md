@@ -96,6 +96,14 @@ error reusing a built-in error's `_tag` threw; a binding's message now names the
 
 ### Other changes
 
+- **`ActionRpc` serves and calls over a protocol passing values**, such as a Durable Object
+  stub's, whose codec is not JSON's: the actions' values cross as JSON whatever the protocol's
+  codec, so `layer` and `client` give the protocol JSON's codec, and refuse one that does not
+  keep a JSON value as it is, such as schema-binary's. `layer` refused every codec but JSON's;
+  `client` now refuses schema-binary's too, as it is made. The message is
+  `ActionRpc puts JSON in a protocol's messages, which its codec must keep as it is: …`, where
+  it was `ActionRpc serves a protocol speaking JSON: …`.
+
 - A built-in error listed in an action's `error`, a binding's or an authentication's is accepted,
   in the types and at `make`, where it was refused: every surface declares it anyway. A helper
   whose type parameter stands for `make`'s `error` compiles.
