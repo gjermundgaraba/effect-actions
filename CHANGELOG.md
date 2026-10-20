@@ -98,7 +98,10 @@ and the copied implementation's no longer asks `is effect-actions installed twic
       as `Stream.map` sees none, so transform a value before publishing it.
     - Only a call over `layerWebSocket` subscribes; one over the stub or HTTP dies at once. A
       feed serves the sockets of one `layerWebSocket` path: on an object serving two,
-      `subscribe`, `publish` and `end` die at once, naming both.
+      `subscribe`, `publish` and `end` die at once, naming both, as they do before the routes
+      register their path, such as from a service as it is built. A socket another path
+      accepted, still open after an eviction from an instance serving that path, is sent
+      nothing.
     - A subscriber gets every value published once it subscribed, at least once: one published
       while `initial` is read may arrive before it and again in it, and with a schema that
       encodes asynchronously, one published between the read and the send arrives before it.
@@ -151,7 +154,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     without them; the socket handlers, `SocketHandlers`, returned only with routes, since
     without them no protocol accepts a socket, dispatch through `Sockets`, resolving for a
     socket no protocol accepted; `effectActionsRpc`
-    dispatches through `Calls`, and rejects without calls, once the object is built; `alarm(info)` runs `alarm`,
+    dispatches through `Calls`, and rejects without calls, once the object is built, reversing
+    an earlier refusal at once that built nothing, so the build's refusal is the only one: a
+    call to an object whose build fails gets that failure; `alarm(info)` runs `alarm`,
     given the runtime's retry count, through `run`; and `run(effect)` runs an Effect in the
     object with the services, `State`, `Feed` and a `Scope`, for the class's own methods. The calls,
     the routes, every request, the alarm and every `run` share the one build of `services`; a

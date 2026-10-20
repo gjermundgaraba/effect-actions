@@ -187,17 +187,19 @@ const exitOf = (rpc: Rpc.Any) =>
  * **Gotchas**
  *
  * - The stream `subscribe` returns is a handle on the call, not its values, which go to the socket as `publish` sends them: an operator applied to it, such as `Stream.map`, sees none, so transform a value before publishing it, or give subscribers a `key`.
- * - At least once across the join, never lost: a value published while `initial` is read may arrive before it and again in it, never after it out of order, since `initial` goes to the socket as it is read; give values an id the client drops repeats by. A schema whose encoding is asynchronous yields between the read and the send, and a value published then arrives before the snapshot.
+ * - Every value published once a subscriber subscribed reaches it, at least once, in one order: one published while `initial` is read may arrive before it and again in it, and with a schema that encodes asynchronously, one published between the read and the send arrives before it and not in it; after `initial`, values arrive in the order their publishes finished encoding, the order of the calls for a schema that encodes synchronously. Give values an id the client drops repeats by.
  * - A subscriber whose `initial` fails ends with its failure, its record dropped; a value published while it was read reaches the client first, as one chunk its stream emits before it fails.
  * - `end` completes a live subscriber's stream through Effect's server, which runs its finalizers and answers its client, and answers a subscriber whose call hibernation dropped itself; one ended while its `initial` is read or encoded is sent nothing, the read interrupted.
  * - Only a call over `layerWebSocket` subscribes: one over the stub or another protocol dies at once, `subscribes a call over layerWebSocket alone`.
  * - It serves the sockets of one `layerWebSocket` path, since a record names its rpc by tag alone and a group holds one rpc per tag, a later one replacing an earlier: an object whose routes serve two dies at each `subscribe`, `publish` and `end`, naming them, so serve every rpc that streams on one path.
+ * - It serves no path until the routes register theirs, after the services are built: a `subscribe`, `publish` or `end` before, such as a service's as it is built, dies, `none is registered yet`, so publish from a handler, the alarm or `run`.
+ * - A socket another path accepted, still open from an instance that served that path before an eviction, is sent nothing, and its records are dropped as a closed socket's.
  * - Access is checked once, as the call subscribes: a subscriber is published to until its socket closes or `end` reaches it, whatever becomes of its credential or membership, so give each member's subscriptions a `key` of their own and `end(rpc, { key })` them: a subscriber has one key, which then follows no topic.
  * - The feed waits for no acknowledgement: a page that stops acknowledging still receives every value, and each chunk Effect's client acknowledges wakes a hibernating object, whose server ignores the ack.
  * - Effect's socket client fails every stream it runs when its socket drops, and a stream may end with a defect, from the server or a chunk the client cannot decode: a page observing only failures misses that end and shows a subscription that is gone, so it reads the stream's `Exit`, `Effect.exit` around its run, then subscribes again from the last value it holds, which `initial` sends on.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone or refusing the send; a socket closing while the object is evicted leaves its records until then.
  * - `storage.deleteAll()` drops every subscriber's record with the application's own data, silently: those subscribers get nothing more, so `end` them before wiping the object's storage.
- * - `publish` encodes its value, then reads every subscriber's record from storage, one per open stream of every rpc, one `publish` or `end` sending at a time: a subscriber receives what is published after its `initial` was sent in the order the publishes finished encoding, the order of the calls for a schema that encodes synchronously; between a publish and `initial`, the join's rule above holds.
+ * - `publish` reads every subscriber's record from storage, one per open stream of every rpc, and one `publish` or `end` sends at a time, after the publish encoded its value.
  * - A value that does not encode as the rpc's chunk is a defect.
  *
  * Guide: `docs/ActionDurableObject-feed.md` in this package.
@@ -240,23 +242,33 @@ export class Feed extends Context.Service<
 
       // Why: a record names its rpc by tag alone, the one identity of an rpc that survives
       // hibernation, and a tag is one rpc only on one path, whose group holds one rpc per tag:
-      // so the feed serves one path, or none, and refuses before it sends anything.
+      // so the feed serves the one path its routes registered, refusing before then, as the
+      // services build, and sends only to the sockets that path accepted, though a socket an
+      // instance serving another path accepted stays open across an eviction.
       const paths = new Set<string>();
 
-      const oneServed = Effect.suspend(() =>
-        paths.size > 1
-          ? Effect.die(
+      const served = Effect.suspend(() => {
+        const [path, ...others] = paths;
+
+        if (path === undefined) {
+          return Effect.die(
+            new Error(
+              "ActionDurableObject.Feed serves the sockets of the layerWebSocket path the routes register, and none is registered yet, as while the services build: publish from a handler, the alarm or run, once the routes are built",
+            ),
+          );
+        }
+
+        return others.length === 0
+          ? Effect.succeed(path)
+          : Effect.die(
               new Error(
                 `ActionDurableObject.Feed serves the sockets of one layerWebSocket path, and the object serves ${[...paths].join(" and ")}, whose rpcs it cannot tell apart: serve every rpc that streams on one path`,
               ),
-            )
-          : Effect.void,
-      );
+            );
+      });
 
       const subscribersOf = (rpc: Rpc.Any, key: string | undefined) =>
         Effect.gen(function* () {
-          yield* oneServed;
-
           const all = yield* Effect.promise(() => storage.list({ prefix: recordPrefix }));
 
           const matching: Array<{
@@ -284,6 +296,7 @@ export class Feed extends Context.Service<
 
       const sendInitial = <R extends Rpc.Any>(
         request: Subscriber<R>,
+        path: string,
         socket: number,
         key: string,
         ended: Deferred.Deferred<void>,
@@ -299,7 +312,7 @@ export class Feed extends Context.Service<
 
           if (
             chunk !== undefined &&
-            !(yield* sendFrame(state, socket, chunkOf(request.requestId, chunk)))
+            !(yield* sendFrame(state, socket, chunkOf(request.requestId, chunk), path))
           ) {
             yield* drop(key);
 
@@ -323,8 +336,7 @@ export class Feed extends Context.Service<
                 );
               }
 
-              yield* oneServed;
-
+              const path = yield* served;
               const socket = found.value;
               const key = recordKey(socket, request.requestId);
               const ended = yield* Deferred.make<void>();
@@ -362,7 +374,7 @@ export class Feed extends Context.Service<
               return yield* Effect.onError(
                 Effect.raceFirst(
                   Effect.flatMap(read, (values) =>
-                    sendInitial(request, socket, key, ended, values),
+                    sendInitial(request, path, socket, key, ended, values),
                   ),
                   Effect.as(Deferred.await(ended), Stream.empty),
                 ).pipe(Effect.provideService(References.PreventSchedulerYield, true)),
@@ -374,11 +386,13 @@ export class Feed extends Context.Service<
           Effect.flatMap(encoderOf(rpc)([value]), (values) =>
             lock.withPermits(1)(
               Effect.gen(function* () {
+                const path = yield* served;
+
                 for (const { storageKey, socket, requestId } of yield* subscribersOf(
                   rpc,
                   options?.key,
                 )) {
-                  if (!(yield* sendFrame(state, socket, chunkOf(requestId, values)))) {
+                  if (!(yield* sendFrame(state, socket, chunkOf(requestId, values), path))) {
                     yield* drop(storageKey);
                   }
                 }
@@ -388,6 +402,8 @@ export class Feed extends Context.Service<
         end: (rpc, options) =>
           lock.withPermits(1)(
             Effect.gen(function* () {
+              const path = yield* served;
+
               for (const { storageKey, socket, requestId } of yield* subscribersOf(
                 rpc,
                 options?.key,
@@ -400,6 +416,7 @@ export class Feed extends Context.Service<
                       socket,
                       // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect's wire frame, which `RpcMessage` types and makes no constructor for: its type checks every field.
                       { _tag: "Exit", requestId, exit: exitOf(rpc) },
+                      path,
                     )
                   : Deferred.succeed(live, undefined);
 

@@ -15,22 +15,30 @@ export const socketIdOf = (tags: ReadonlyArray<string>) => {
   return tag === undefined ? 0 : Number(tag.slice(socketPrefix.length));
 };
 
+/** The tag a socket carries for the `layerWebSocket` path that accepted it. */
+export const groupTag = (path: string) => `effect-actions/rpc:${path}`;
+
 /** A request's id on the wire, a number or a string, which a client tells apart. */
 export const RequestId = Schema.Union([Schema.String, Schema.Number]);
 
 const parser = RpcSerialization.json.makeUnsafe();
 
 /**
- * Sends `frame` to the socket `id`: `true` when it went, `false` when no socket holds the id, or
- * the one that does refuses it, as one the object already closed does, which drops it.
+ * Sends `frame` to the socket `id`, given `path`, only if `path` accepted it: `true` when it
+ * went, `false` when no such socket holds the id, or the one that does refuses it, as one the
+ * object already closed does, which drops it.
  */
 export const sendFrame = (
   state: DurableObjectState,
   id: number,
   frame: RpcMessage.FromServerEncoded,
+  path?: string,
 ) =>
   Effect.sync(() => {
-    const sockets = state.getWebSockets(socketTag(id));
+    const sockets = state
+      .getWebSockets(socketTag(id))
+      .filter((socket) => path === undefined || state.getTags(socket).includes(groupTag(path)));
+
     const encoded = parser.encode(frame);
 
     if (sockets.length === 0 || encoded === undefined) return false;

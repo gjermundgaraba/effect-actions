@@ -20,6 +20,7 @@ import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { recordKey } from "../../src/durable/feed.js";
 import { socketIdOf } from "../../src/durable/frames.js";
 import { FeedCalls, FeedRpcs, Gate, NoInitial, OtherTicks, Ticks } from "../support/feed.js";
+import { pathKey, startupKey } from "../support/moved.js";
 import { upgradeTo, upgradeToRpc } from "../support/socket.js";
 
 let objects = 0;
@@ -135,6 +136,7 @@ const opened = (stub: DurableObjectStub, path: string) =>
       send: (message: RpcMessage.FromClientEncoded) =>
         Effect.sync(() => socket.send(JSON.stringify(message))),
       next: Queue.take(frames),
+      pending: Queue.size(frames),
     };
   });
 
@@ -461,6 +463,75 @@ describe("Feed", () => {
         yield* Effect.promise(() => vi.waitUntil(() => received.length > 0, { timeout: 5_000 }));
 
         expect(received).toEqual([expect.stringContaining(refusal)]);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "sends a socket accepted on a path the rebuilt object no longer serves nothing, dropping its record, and the path it serves what is published",
+    () =>
+      Effect.gen(function* () {
+        const stub = env.MOVED.getByName(`moved-${objects++}`);
+
+        const follow = (id: string) =>
+          ({ _tag: "Request", id, tag: "follow", payload: {}, headers: [] }) as const;
+
+        const old = yield* opened(stub, "/a");
+
+        yield* old.send(follow("old"));
+
+        expect(yield* old.next).toEqual({ _tag: "Chunk", requestId: "old", values: [10] });
+
+        yield* Effect.promise(() =>
+          runInDurableObject(stub, (_, state) => state.storage.put(pathKey, "/b")),
+        );
+        yield* Effect.promise(() => evictDurableObject(stub));
+
+        const current = yield* opened(stub, "/b");
+
+        yield* current.send(follow("current"));
+
+        expect(yield* current.next).toEqual({ _tag: "Chunk", requestId: "current", values: [10] });
+
+        yield* Effect.promise(() => stub.publish(99));
+
+        const records = yield* Effect.promise(() =>
+          runInDurableObject(
+            stub,
+            async (_, state) => (await state.storage.list({ prefix: "effect-actions/feed/" })).size,
+          ),
+        );
+
+        yield* Effect.promise(() => stub.end());
+
+        expect([yield* current.next, yield* current.next]).toEqual([
+          { _tag: "Chunk", requestId: "current", values: [99] },
+          { _tag: "Exit", requestId: "current" },
+        ]);
+        expect(records).toBe(1);
+        expect(yield* old.pending).toBe(0);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "refuses a publish while the services build, before the routes register their path, and sends one once they are built",
+    () =>
+      Effect.gen(function* () {
+        const stub = env.MOVED.getByName(`moved-${objects++}`);
+        const socket = yield* opened(stub, "/a");
+
+        yield* socket.send({ _tag: "Request", id: 1, tag: "follow", payload: {}, headers: [] });
+
+        expect(yield* socket.next).toEqual({ _tag: "Chunk", requestId: 1, values: [10] });
+
+        yield* Effect.promise(() => evictDurableObject(stub));
+        yield* Effect.promise(() => stub.publish(99));
+
+        const startup = yield* Effect.promise(() =>
+          runInDurableObject(stub, (_, state) => state.storage.get(startupKey)),
+        );
+
+        expect(yield* socket.next).toEqual({ _tag: "Chunk", requestId: 1, values: [99] });
+        expect(String(startup)).toContain("none is registered yet");
       }).pipe(Effect.scoped),
   );
 

@@ -23,6 +23,7 @@ import {
 } from "./support/app.js";
 import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./support/hosts.js";
 import { Announcer, feedCalls, feedRoutes, Gate, twoPathRoutes } from "./support/feed.js";
+import { Follow, movedRoutes, startupPublisher } from "./support/moved.js";
 import { nativeCalls } from "./support/native.js";
 
 export class Plain extends DurableObject {
@@ -236,3 +237,18 @@ export class TwoPaths extends ActionDurableObject.make({
   routes: twoPathRoutes,
   calls: feedCalls,
 }) {}
+
+export class Moved extends ActionDurableObject.make({
+  services: () => startupPublisher,
+  routes: movedRoutes,
+}) {
+  publish(value: number) {
+    return this.run(
+      Effect.flatMap(ActionDurableObject.Feed, (feed) => feed.publish(Follow, value)),
+    );
+  }
+
+  end() {
+    return this.run(Effect.flatMap(ActionDurableObject.Feed, (feed) => feed.end(Follow)));
+  }
+}

@@ -2,7 +2,7 @@ import { Context, Effect, Layer, Option, Predicate, Queue, Schema } from "effect
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import { CurrentSocket, Feed, forget, servePath } from "./feed.js";
-import { sendFrame, socketIdOf, socketTag } from "./frames.js";
+import { groupTag, sendFrame, socketIdOf, socketTag } from "./frames.js";
 import { makeRegistries } from "./registry.js";
 import { State } from "./state.js";
 
@@ -144,7 +144,7 @@ const makeProtocol = (
     const context = yield* Effect.context<never>();
     const parser = json.makeUnsafe();
 
-    const group = `effect-actions/rpc:${path}`;
+    const group = groupTag(path);
 
     // Why: the router does not tell a protocol the prefix it is mounted under, so two protocols
     // at one `path` would share their sockets' tags and answer each other's sockets.
