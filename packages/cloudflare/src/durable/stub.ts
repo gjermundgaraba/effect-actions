@@ -107,7 +107,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  *
  * - It holds `stub`, and many exceptions leave a stub broken, failing every later call through it with the same error: after a failure, provide the client a `layerStubClient` over a new stub.
  * - Workers RPC limits a call's arguments and its answer to 32 MiB, serialized: past it, the call fails with the runtime's `limited to 32MiB` error.
- * - An object serving no `calls`, or a class without the method, fails each call at once, with the object's or the runtime's message as the error's cause.
+ * - An object serving no `calls`, once built, or a class without the method, fails each call, with the object's or the runtime's message as the error's cause.
  * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.
  * - Unary: an rpc that streams fails with a defect at its first chunk, so a handler returning a stream that never emits leaves the call waiting for good.
  *
