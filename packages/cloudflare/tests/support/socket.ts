@@ -29,3 +29,22 @@ export const scopedClientOver = (socket: WebSocket) =>
     ),
     (protocol) => ActionRpc.client(Rpc).pipe(Effect.provideContext(protocol)),
   );
+
+export const upgradeTo = (stub: DurableObjectStub, url: string) =>
+  Effect.promise(async () => {
+    const { webSocket } = await stub.fetch(url, { headers: { upgrade: "websocket" } });
+
+    if (webSocket === null) throw new Error("No WebSocket");
+
+    webSocket.accept();
+
+    return webSocket;
+  });
+
+export const nextMessage = (socket: WebSocket) =>
+  Effect.promise(
+    () =>
+      new Promise<string>((resolve) =>
+        socket.addEventListener("message", ({ data }) => resolve(String(data)), { once: true }),
+      ),
+  );

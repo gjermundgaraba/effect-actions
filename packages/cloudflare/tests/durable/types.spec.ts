@@ -23,8 +23,65 @@ expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqual
 expectTypeOf<ActionDurableObject.Instance>().toExtend<DurableObject<Cloudflare.Env>>();
 
 expectTypeOf(ActionDurableObject.layerWebSocket({ path: "/rpc" })).toEqualTypeOf<
-  Layer.Layer<RpcServer.Protocol, never, ActionDurableObject.State | HttpRouter.HttpRouter>
+  Layer.Layer<
+    RpcServer.Protocol,
+    never,
+    ActionDurableObject.Sockets | ActionDurableObject.State | HttpRouter.HttpRouter
+  >
 >();
+
+declare const ctx: DurableObjectState;
+
+void Effect.runPromise(
+  // @ts-expect-error -- A protocol registers with the instance's Sockets, which nothing here provides.
+  Layer.build(
+    ActionDurableObject.layerWebSocket({ path: "/rpc" }).pipe(
+      Layer.provide([Layer.succeed(ActionDurableObject.State, ctx), HttpRouter.layer]),
+    ),
+  ).pipe(Effect.scoped),
+);
+
+expectTypeOf(ActionDurableObject.Sockets.layer).toEqualTypeOf<
+  Layer.Layer<ActionDurableObject.Sockets, never, ActionDurableObject.State>
+>();
+
+expectTypeOf<ReturnType<ActionDurableObject.Sockets["Service"]["message"]>>().toEqualTypeOf<
+  Effect.Effect<boolean>
+>();
+
+expectTypeOf(ActionDurableObject.handlers(ctx, { services: Builds.layer })).toEqualTypeOf<
+  ActionDurableObject.Handlers<Builds>
+>();
+
+expectTypeOf(
+  ActionDurableObject.handlers(ctx, { services: startup, routes: socketRoutes }),
+).toEqualTypeOf<ActionDurableObject.Handlers<Layer.Success<typeof startup>>>();
+
+expectTypeOf<Parameters<ActionDurableObject.Handlers["webSocketClose"]>>().toEqualTypeOf<
+  Parameters<NonNullable<DurableObject<Cloudflare.Env>["webSocketClose"]>>
+>();
+
+expectTypeOf<Parameters<ActionDurableObject.Handlers["alarm"]>>().toEqualTypeOf<
+  Parameters<NonNullable<DurableObject<Cloudflare.Env>["alarm"]>>
+>();
+
+declare const hosted: ActionDurableObject.Handlers<Builds>;
+
+expectTypeOf(hosted.run(Effect.service(Builds))).toEqualTypeOf<Promise<number>>();
+
+// @ts-expect-error -- A run has only the services the object was given.
+void hosted.run(Effect.service(CurrentUser));
+
+ActionDurableObject.handlers(ctx, {
+  // @ts-expect-error -- The routes require startup services no Layer provides.
+  routes: socketRoutes,
+});
+
+ActionDurableObject.handlers(ctx, {
+  services: Builds.layer,
+  // @ts-expect-error -- The alarm has no caller unless it names one itself.
+  alarm: () => Effect.asVoid(Effect.service(CurrentUser)),
+});
 
 ActionDurableObject.make({
   services: startup,

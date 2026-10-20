@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Redacted, Schema } from "effect";
+import { Context, Data, Effect, Layer, Redacted, Schema } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import { RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
@@ -249,3 +249,26 @@ const ownSocketRoute = HttpRouter.use((router) =>
 );
 
 export const ownSocketRoutes = Layer.mergeAll(socketRoutes, ownSocketRoute);
+
+export const readyKey = "ready";
+
+export class NotReady extends Data.TaggedError("NotReady")<{ readonly key: string }> {}
+
+const readyOnceSet = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const { storage } = yield* ActionDurableObject.State;
+
+    if ((yield* Effect.promise(() => storage.get(readyKey))) !== true) {
+      return yield* new NotReady({ key: readyKey });
+    }
+  }),
+);
+
+export const retriedRoutes = Layer.mergeAll(buildsRoutes, readyOnceSet).pipe(
+  Layer.provide(
+    rpcRoutes.pipe(
+      Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+      Layer.provide(authenticate),
+    ),
+  ),
+);

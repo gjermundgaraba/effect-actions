@@ -9,5 +9,8 @@ declare namespace Cloudflare {
     readonly BROKEN_SERVICES: DurableObjectNamespace<import("./worker.ts").BrokenServices>;
     readonly COUNTED: DurableObjectNamespace<import("./worker.ts").Counted>;
     readonly OWN_SOCKETS: DurableObjectNamespace<import("./worker.ts").OwnSockets>;
+    readonly RETRIED: DurableObjectNamespace<import("./worker.ts").Retried>;
+    readonly HOSTED: DurableObjectNamespace<import("./worker.ts").Hosted>;
+    readonly MANUAL: DurableObjectNamespace<import("./worker.ts").Manual>;
   }
 }

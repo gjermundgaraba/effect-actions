@@ -15,7 +15,9 @@ authentication and each surface, is in the core package's docs, at
    truncation; if an output says it was truncated, read that page again alone.
 2. **Start from [chat-rooms](../examples/chat-rooms/)**, the one example: its README has a
    layout tree and a "Where to look" table naming the file for each thing.
-3. **Read [ActionDurableObject.md](ActionDurableObject.md) completely**, its limits included.
+3. **Read [ActionDurableObject.md](ActionDurableObject.md) completely**, its limits included,
+   then [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) for a class of your
+   own.
 4. **When something fails, search
    [ActionDurableObject-failures.md](ActionDurableObject-failures.md)** for a fragment of the
    message, then the core's `*-failures.md` pages.
@@ -29,10 +31,11 @@ runtime's types, from `wrangler types` or `@cloudflare/workers-types`.
 
 ## Pages
 
-| Read                                                               | When you need to                                                                                                 |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| [ActionDurableObject.md](ActionDurableObject.md)                   | serve actions from an object, over hibernating WebSockets or JSON; run its alarm; call it from a Worker; test it |
-| [ActionDurableObject-failures.md](ActionDurableObject-failures.md) | find what an error or a refused upgrade means, and the fix                                                       |
+| Read                                                                 | When you need to                                                                                                 |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [ActionDurableObject.md](ActionDurableObject.md)                     | serve actions from an object, over hibernating WebSockets or JSON; run its alarm; call it from a Worker; test it |
+| [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a Durable Object class of your own, delegating to `handlers` or composing the primitives         |
+| [ActionDurableObject-failures.md](ActionDurableObject-failures.md)   | find what an error or a refused upgrade means, and the fix                                                       |
 
 ## Words
 

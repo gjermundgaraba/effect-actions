@@ -12,9 +12,9 @@ import { lobbyRoutes, roomRoutes } from "./routes.js";
 // object. It chooses the store and the room, and routes each request.
 
 // A room's Durable Object, bound as CHAT_ROOM in wrangler.jsonc under this export's name. Each
-// instance builds its services, the store and the room, then its routes, when the runtime
-// constructs it, again after every eviction. The alarm expires old messages; `post` sets it.
-// It reads the store the instance built for the routes.
+// instance builds its services, the store and the room, then its routes, on its first event,
+// again after every eviction. The alarm expires old messages; `post` sets it. It reads the
+// store the instance built for the routes.
 export class ChatRoom extends ActionDurableObject.make({
   services: Layer.mergeAll(layerSql, layerRoom),
   routes: roomRoutes,
