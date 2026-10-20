@@ -2,7 +2,7 @@ import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { Cause, Effect, Exit, Layer, Predicate, Schedule } from "effect";
 import { HttpRouter } from "effect/http";
 import { RpcClient } from "effect/rpc";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { noteHeader, Overdrawn } from "../support/app.js";
@@ -254,22 +254,16 @@ describe("layerWebSocket", () => {
     Effect.gen(function* () {
       const socket = yield* upgradeToRpc(room("answers-unreadable"), bearer("ada"));
 
-      const received = yield* Effect.promise(
-        () =>
-          new Promise<ReadonlyArray<unknown>>((resolve) => {
-            const messages: Array<unknown> = [];
+      const received: Array<unknown> = [];
 
-            socket.addEventListener("message", ({ data }) =>
-              messages.push(JSON.parse(String(data))),
-            );
-            socket.send("{");
-            socket.send("null");
-            socket.send(
-              JSON.stringify({ _tag: "Request", id: 5, tag: "whoami", payload: {}, headers: null }),
-            );
-            setTimeout(resolve, 100, messages);
-          }),
+      socket.addEventListener("message", ({ data }) => received.push(JSON.parse(String(data))));
+      socket.send("{");
+      socket.send("null");
+      socket.send(
+        JSON.stringify({ _tag: "Request", id: 5, tag: "whoami", payload: {}, headers: null }),
       );
+
+      yield* Effect.promise(() => vi.waitUntil(() => received.length >= 3, { timeout: 5_000 }));
 
       expect(received).toEqual([
         expect.objectContaining({ _tag: "Defect" }),

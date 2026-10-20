@@ -52,7 +52,7 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   verifier's defect `Internal server error`, its cause reported. The authentication is the
   binding's, whatever `layer`'s `actions` selects, runs before the group's own middleware, and is
   provided beneath the server, so no Layer of the host's under its key replaces it; `layer`
-  refuses a protected binding whose native rpc does not run it first, such as one added with
+  refuses a protected binding whose native rpc does not run it outermost, such as one added with
   `rpcs.add` after `make`. A native rpc runs no `authorize`: its handler authorizes the identity.
   `ActionRpc.client` has their methods beside the actions', a stream rpc's a `Stream`.
   `ActionRpc.layer` serves them with their own schemas on the same protocol, and requires their
@@ -86,37 +86,30 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     without the runtime's `web_socket_auto_reply_to_close`. It gives each
     socket an id unique across the object's protocols, kept in storage so no later socket has an
     earlier one's.
-  - `Feed` pushes to a stream rpc's subscribers over `layerWebSocket`, across hibernation, one
-    per instance from `Feed.layer`, which `handlers` and `make` build before the services and
-    provide to them, the calls, the routes, the alarm and `run`, so a publish adapter is one of
-    the services. It is a push channel addressed by each call's request id, not a stream
-    pipeline: a stream rpc's handler returns `feed.subscribe(request, { initial, key })`, a
-    handle holding the call open, which an operator such as `Stream.map` sees nothing through.
-    Only a call over `layerWebSocket` subscribes, the protocol giving its handler the socket in
-    a way no caller sets; a call over the stub or HTTP dies at once. The subscriber's record is
-    kept in the object's storage, keyed by its socket and its request id, a number and a string
-    kept apart, and names its rpc; then `initial` is sent to the socket as one chunk as soon as it is read,
-    Effect's scheduler yields off from the read to the send, so nothing published after the read
-    arrives before it; an `initial` that fails ends the stream with its failure and drops the
-    record. `publish(rpc, value, { key })`, typed by the rpc's chunk and owing what its schema
-    needs to encode, sends each subscriber of the rpc, or of the key, whose socket is open, the
-    value as Effect's server sends a chunk, from any instance, so a value published after the
-    object hibernated reaches a page subscribed before; one `publish` or `end` sends at a time,
-    a publish encoding its value first.
-    `end(rpc, { key })` completes a live subscriber's stream through Effect's server, its
-    finalizers run, answers one hibernation dropped itself, and sends nothing to one ended
-    while its `initial` is read or encoded, interrupting the read. A feed serves the sockets of one `layerWebSocket` path, which
-    registers with it and requires it: on an object serving two, `subscribe`, `publish` and
-    `end` die at once, naming both. A record is
-    dropped when its client interrupts the stream or its socket closes, through
-    `layerWebSocket`, and when a send finds its socket gone or refusing it, as one the object
-    closed does. A subscriber gets every value published from when its record is kept at least
-    once, one published while `initial` is read possibly arriving before it and again in it; the
-    feed waits for no ack, and each chunk's ack wakes the object; a subscriber is published to
-    until its socket closes, whatever becomes of its access; Effect's socket client fails its
-    streams when its socket drops, so a page subscribes again from the last value it holds. The
-    records and the socket-id counter sit in the object's storage beside the application's
-    data, so `storage.deleteAll()` drops every subscriber: `end` them first.
+  - `Feed` pushes values to the pages following a stream rpc over `layerWebSocket`, after the
+    object hibernated or was evicted too, as long as their sockets stay open. `Feed.layer`
+    makes one per instance, which `handlers` and `make` provide to the services, the calls, the
+    routes, the alarm and `run`, so any of them publishes. A stream rpc's handler returns
+    `feed.subscribe(request, { initial, key })`; `publish(rpc, value, { key })` sends the value
+    to each subscriber of the rpc, or of the key, and `end(rpc, { key })` completes their
+    streams, finalizers included. `ChunkServices<R>` names what `publish` and `subscribe` of
+    `R` owe, the services its values need to encode. What to know:
+    - The stream `subscribe` returns is a handle on the call, not its values: an operator such
+      as `Stream.map` sees none, so transform a value before publishing it.
+    - Only a call over `layerWebSocket` subscribes; one over the stub or HTTP dies at once. A
+      feed serves the sockets of one `layerWebSocket` path: on an object serving two,
+      `subscribe`, `publish` and `end` die at once, naming both.
+    - A subscriber gets every value published once it subscribed, at least once: one published
+      while `initial` is read may arrive before it and again in it, and with a schema that
+      encodes asynchronously, one published between the read and the send arrives before it.
+      After `initial`, values arrive in the order their publishes finished encoding.
+    - An `end` while `initial` is read or encoded interrupts it and sends nothing.
+    - Access is checked once, as the call subscribes: a subscriber is published to until its
+      socket closes or `end` reaches it, so end a member's subscriptions by a key of their own.
+    - The feed waits for no acknowledgement. A page whose socket drops subscribes again from the
+      last value it holds, which `initial` sends on.
+    - Subscribers are kept in the object's storage beside the application's data:
+      `storage.deleteAll()` drops them, so `end` them first.
   - `layerStub()` is the protocol `RpcServer.layer(group)` and `ActionRpc.layer` serve on over
     the object's stub, with Cloudflare's own RPC: one call of the object's
     `effectActionsRpc` method carries one call's messages and returns its responses once its
@@ -127,14 +120,15 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     registers with `Calls`, the object's dispatcher for those calls, one per instance from
     `Calls.layer`, whose `call(request)` answers one. One
     stub protocol serves an object; a second fails to build. It is unary: an rpc that streams
-    is answered with a defect at its first chunk. Nothing authenticates a stub call, which only
+    is answered with a defect at its first chunk, so one that never emits leaves its call
+    waiting. Nothing authenticates a stub call, which only
     a binding reaches; a caller forwards a principal in a header or the payload.
   - `layerStubClient(stub)` is the `RpcClient.Protocol` calling an object's rpcs over a stub of a
     class serving them, with `RpcClient.make(group)` or `ActionRpc.client`; a failure of the
     stub itself, such as an object serving no calls or a call past Workers RPC's 32 MiB limit,
     is an `RpcClientError`; it holds its stub, which many exceptions leave broken, so a caller
     recovering from its failure builds it over a new one; an answer completes a call only with
-    that request's exit, or a connection's end, so one for another request fails as an answer
+    that request's exit, its id of the same type, or a connection's end, so one for another request fails as an answer
     that ended too soon. `client(group)` makes one client, in
     the caller's `Scope`, for every object of a class, and returns `(stubOf) => client`, which
     calls `stubOf` for a new stub as each call is sent, so no stub is held and a client over
@@ -157,7 +151,7 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     without them; the socket handlers, `SocketHandlers`, returned only with routes, since
     without them no protocol accepts a socket, dispatch through `Sockets`, resolving for a
     socket no protocol accepted; `effectActionsRpc`
-    dispatches through `Calls`, and rejects at once without calls; `alarm(info)` runs `alarm`,
+    dispatches through `Calls`, and rejects without calls, once the object is built; `alarm(info)` runs `alarm`,
     given the runtime's retry count, through `run`; and `run(effect)` runs an Effect in the
     object with the services, `State`, `Feed` and a `Scope`, for the class's own methods. The calls,
     the routes, every request, the alarm and every `run` share the one build of `services`; a

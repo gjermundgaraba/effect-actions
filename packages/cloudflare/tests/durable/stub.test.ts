@@ -1,5 +1,5 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { Cause, Effect, Exit, Layer, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, Predicate, Stream } from "effect";
 import { RpcClient, RpcClientError } from "effect/rpc";
 import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
@@ -108,21 +108,35 @@ describe("layerStubClient", () => {
   );
 
   it.effect(
-    "fails with RpcClientError when the answer's exit is another request's, or no response",
+    "fails with RpcClientError when the answer's exit is another request's, its id's digits of the other type included, or no response",
     () =>
       Effect.gen(function* () {
-        const answers: ReadonlyArray<ReadonlyArray<unknown>> = [
-          [{ _tag: "Exit", requestId: "another request", exit: { _tag: "Success", value: [] } }],
-          [{ _tag: "Exit" }],
-          [null],
+        const exitOf = (requestId: string | number) => [
+          { _tag: "Exit", requestId, exit: { _tag: "Success", value: [] } },
+        ];
+
+        const answers: ReadonlyArray<
+          (request: ActionDurableObject.StubRequest) => ReadonlyArray<unknown>
+        > = [
+          () => exitOf("another request"),
+          (request) =>
+            request.flatMap((message) =>
+              Predicate.isTagged(message, "Request")
+                ? exitOf(Predicate.isString(message.id) ? Number(message.id) : String(message.id))
+                : [],
+            ),
+          () => [{ _tag: "Exit" }],
+          () => [null],
         ];
 
         for (const answer of answers) {
-          const client = yield* rawOver({ effectActionsRpc: () => Promise.resolve(answer) });
+          const client = yield* rawOver({
+            effectActionsRpc: (request) => Promise.resolve(answer(request)),
+          });
 
           const error = yield* Effect.flip(client.panes());
 
-          expect(error.reason.message, JSON.stringify(answer)).toContain(
+          expect(error.reason.message, String(answer)).toContain(
             "The object's answer ended before the call completed",
           );
         }

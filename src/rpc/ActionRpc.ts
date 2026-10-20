@@ -367,14 +367,14 @@ type Step = (
 ) => Effect.Effect<unknown, unknown, unknown>;
 
 const authenticatorOf = (authentication: Authentication) =>
-  Effect.map(
-    providerOf(authentication),
-    (provider) => (headers: Headers.Headers) =>
+  Effect.map(providerOf(authentication), (provider) => ({
+    authentication,
+    verify: (headers: Headers.Headers) =>
       Effect.flatMap(
         credentialFromRpcHeaders(authentication.security, headers),
         provider.authenticate,
       ),
-  );
+  }));
 
 class InternalError extends Error {
   override readonly [ErrorReporter.ignore] = true;
@@ -557,7 +557,7 @@ export function layer(
           if ([...rpc.middlewares].at(-1)?.key !== authenticatedKey) {
             return yield* Effect.die(
               new Error(
-                `ActionRpc.layer: the native rpc ${rpc._tag} of a protected binding does not run its authentication first: serve the rpcs the binding ActionRpc.make returned holds, adding rpcs and middleware to the group given as its rpcs`,
+                `ActionRpc.layer: the native rpc ${rpc._tag} of a protected binding does not run its authentication outermost: serve the rpcs the binding ActionRpc.make returned holds, adding rpcs and middleware to the group given as its rpcs`,
               ),
             );
           }
@@ -570,7 +570,7 @@ export function layer(
 
       const descriptor = authentication ?? nativeAuthentication;
 
-      const authenticate =
+      const authenticator =
         descriptor === undefined ? undefined : yield* authenticatorOf(descriptor);
 
       const bound = yield* acquire(apps);
@@ -578,13 +578,13 @@ export function layer(
       const byName = Object.fromEntries(
         bound.map(([action, run]) => {
           const steps: ReadonlyArray<Step> =
-            action.caller === Anyone || authenticate === undefined || descriptor === undefined
+            action.caller === Anyone || authenticator === undefined
               ? listedMiddleware
               : [
                   ...listedMiddleware,
                   (effect, { headers }) =>
-                    Effect.flatMap(authenticate(headers), (actor) =>
-                      Effect.provideService(effect, descriptor.identity, actor),
+                    Effect.flatMap(authenticator.verify(headers), (actor) =>
+                      Effect.provideService(effect, authenticator.authentication.identity, actor),
                     ),
                 ];
 
@@ -597,25 +597,25 @@ export function layer(
 
       const served = jsonGroup.toLayer(byName);
 
-      if (authenticate === undefined || nativeAuthentication === undefined) return served;
+      if (natives.requests.size === 0 || authenticator === undefined) return served;
 
       // Why: a verifier's defect is masked as on an action, `Internal server error` with its
       // cause reported: Effect's server would answer a native rpc's defect with its message and
       // cause, and the authentication step is the library's, not the host's handler.
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased middleware: the step passes the call's success through, or fails with a refusal or the verifier's error, which the middleware declares, and provides the identity it declares.
       const authenticated = ((effect, { headers }) =>
-        Effect.suspend(() => authenticate(headers)).pipe(
+        Effect.suspend(() => authenticator.verify(headers)).pipe(
           Effect.catchCause((cause) =>
             Cause.hasDies(cause) ? internal(cause) : Effect.failCause(cause),
           ),
           Effect.flatMap((actor) =>
-            Effect.provideService(effect, nativeAuthentication.identity, actor),
+            Effect.provideService(effect, authenticator.authentication.identity, actor),
           ),
         )) as RpcMiddleware.RpcMiddleware<unknown, unknown, never>;
 
       return Layer.merge(
         served,
-        Layer.succeed(authenticatedOf(nativeAuthentication))(authenticated),
+        Layer.succeed(authenticatedOf(authenticator.authentication))(authenticated),
       );
     }),
   ).pipe(provideHandlers(apps));

@@ -91,7 +91,7 @@ export const messages = Action.implement(
 // actions. The feed keeps the subscription in the object's storage, so a message posted after
 // the object hibernated still reaches the page. The rule runs as the page subscribes, not for
 // each message: a member the room removed would go on receiving until their socket closes, so
-// a room that removes members closes their sockets, or gives each its own feed `key` to `end`.
+// a room that removes members gives each member's `watch` a feed `key` of their own to `end`.
 export const watch = RoomRpc.rpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* MessageStore;

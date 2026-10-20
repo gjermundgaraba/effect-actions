@@ -246,7 +246,7 @@ describe("ActionRpc native rpcs", () => {
   );
 
   it.effect(
-    "refuses to serve a protected binding's native rpc that does not run its authentication first",
+    "refuses to serve a protected binding's native rpc that does not run its authentication outermost",
     () =>
       Effect.gen(function* () {
         const Extra = Rpc.make("extra", { success: Schema.String });
@@ -272,7 +272,7 @@ describe("ActionRpc native rpcs", () => {
           );
 
           expect(Exit.isFailure(exit) && Cause.pretty(exit.cause), name).toContain(
-            "of a protected binding does not run its authentication first",
+            "of a protected binding does not run its authentication outermost",
           );
         }
       }),

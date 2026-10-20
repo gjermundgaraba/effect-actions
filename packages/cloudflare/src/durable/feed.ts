@@ -88,8 +88,12 @@ export const servePath = (feed: Feed["Service"], path: string) =>
  */
 export type Subscriber<R extends Rpc.Any> = Parameters<Rpc.ToHandlerFn<R>>[1];
 
-/** What the values of a stream rpc `R` need to encode, as its schema declares it. */
-type ChunkServices<R extends Rpc.Any> =
+/**
+ * The services the values of a stream rpc `R` need to encode, as its stream schema declares
+ * them: what `publish` and `subscribe` of `R` owe, for a signature of the application's own,
+ * such as a port publishing to `R`, to name.
+ */
+export type ChunkServices<R extends Rpc.Any> =
   Rpc.SuccessSchema<R> extends RpcSchema.Stream<infer A, infer _E> ? A["EncodingServices"] : never;
 
 /** `Feed`'s `subscribe` options. */
@@ -175,7 +179,8 @@ const exitOf = (rpc: Rpc.Any) =>
  * a value published reaches them after the object hibernated, was evicted or rebuilt, as long as
  * their sockets stay open: a push channel addressed by each call's request id, not a stream
  * pipeline. `subscribe` makes a stream rpc's call one, `publish` sends each of the rpc's
- * subscribers a value, and `end` completes their streams. `Feed.layer` makes one per instance;
+ * subscribers a value, and `end` completes their streams; `subscribe` and `publish` of an rpc owe
+ * its `ChunkServices`. `Feed.layer` makes one per instance;
  * `handlers` and `make` provide it to the services, the calls, the routes, the alarm and `run`,
  * so any of them publishes.
  *
@@ -187,7 +192,7 @@ const exitOf = (rpc: Rpc.Any) =>
  * - `end` completes a live subscriber's stream through Effect's server, which runs its finalizers and answers its client, and answers a subscriber whose call hibernation dropped itself; one ended while its `initial` is read or encoded is sent nothing, the read interrupted.
  * - Only a call over `layerWebSocket` subscribes: one over the stub or another protocol dies at once, `subscribes a call over layerWebSocket alone`.
  * - It serves the sockets of one `layerWebSocket` path, since a record names its rpc by tag alone and a group holds one rpc per tag, a later one replacing an earlier: an object whose routes serve two dies at each `subscribe`, `publish` and `end`, naming them, so serve every rpc that streams on one path.
- * - Access is checked once, as the call subscribes: a subscriber is published to until its socket closes, whatever becomes of its credential or membership, so end a member's subscribers, subscribed under a key of their own, with `end(rpc, { key })`, or close their socket from a handler, found with `State`'s `getWebSockets`.
+ * - Access is checked once, as the call subscribes: a subscriber is published to until its socket closes or `end` reaches it, whatever becomes of its credential or membership, so give each member's subscriptions a `key` of their own and `end(rpc, { key })` them: a subscriber has one key, which then follows no topic.
  * - The feed waits for no acknowledgement: a page that stops acknowledging still receives every value, and each chunk Effect's client acknowledges wakes a hibernating object, whose server ignores the ack.
  * - Effect's socket client fails every stream it runs when its socket drops, and a stream may end with a defect, from the server or a chunk the client cannot decode: a page observing only failures misses that end and shows a subscription that is gone, so it reads the stream's `Exit`, `Effect.exit` around its run, then subscribes again from the last value it holds, which `initial` sends on.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone or refusing the send; a socket closing while the object is evicted leaves its records until then.

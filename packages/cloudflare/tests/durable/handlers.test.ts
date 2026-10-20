@@ -303,26 +303,22 @@ describe("handlers", () => {
       );
     }),
   );
-  it.effect(
-    "has no socket handlers without routes, and refuses calls without calls, building nothing",
-    () =>
-      Effect.gen(function* () {
-        const { handlers, refused, builds } = yield* Effect.promise(() =>
-          runInDurableObject(env.HOSTED.getByName("nothing-served"), async (_, state) => {
-            const object = ActionDurableObject.handlers(state, { services: Builds.layer });
+  it.effect("has no socket handlers without routes, and refuses calls without calls", () =>
+    Effect.gen(function* () {
+      const { handlers, refused } = yield* Effect.promise(() =>
+        runInDurableObject(env.HOSTED.getByName("nothing-served"), async (_, state) => {
+          const object = ActionDurableObject.handlers(state, { services: Builds.layer });
 
-            return {
-              handlers: Object.keys(object).toSorted(),
-              refused: await object.effectActionsRpc([]).then(() => "answered", String),
-              builds: await state.storage.get("builds"),
-            };
-          }),
-        );
+          return {
+            handlers: Object.keys(object).toSorted(),
+            refused: await object.effectActionsRpc([]).then(() => "answered", String),
+          };
+        }),
+      );
 
-        expect(handlers).toEqual(["alarm", "effectActionsRpc", "fetch", "run"]);
-        expect(refused).toContain("serves no rpcs over its stub");
-        expect(builds).toBeUndefined();
-      }),
+      expect(handlers).toEqual(["alarm", "effectActionsRpc", "fetch", "run"]);
+      expect(refused).toContain("serves no rpcs over its stub");
+    }),
   );
 
   it.effect("defines socket handlers on a class made with routes alone", () =>

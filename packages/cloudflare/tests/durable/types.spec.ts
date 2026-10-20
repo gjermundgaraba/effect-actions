@@ -33,7 +33,7 @@ import {
   PluginStore,
   StreamRpcs,
 } from "../support/hosts.js";
-import { Announcer, feedCalls, Gate } from "../support/feed.js";
+import { Announcer, feedCalls, Gate, Ticks } from "../support/feed.js";
 import type { Hosted, Manual, Plain, PluginHost } from "../worker.js";
 
 expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqualTypeOf<
@@ -417,3 +417,7 @@ declare const subscriber: ActionDurableObject.Subscriber<typeof Offsetted>;
 expectTypeOf(feed.publish(Offsetted, 1)).toEqualTypeOf<Effect.Effect<void, never, Offset>>();
 
 expectTypeOf(feed.subscribe(subscriber)).toEqualTypeOf<Stream.Stream<number, never, Offset>>();
+
+expectTypeOf<ActionDurableObject.ChunkServices<typeof Offsetted>>().toEqualTypeOf<Offset>();
+
+expectTypeOf<ActionDurableObject.ChunkServices<typeof Ticks>>().toEqualTypeOf<never>();

@@ -8,6 +8,7 @@ import {
   type RpcGroup,
 } from "effect/rpc";
 import { codecFor, type StubRequest } from "./calls.js";
+import { RequestId } from "./frames.js";
 
 /**
  * What a call reaches an object's rpcs through: a `DurableObjectStub` of a class `make` returns,
@@ -28,7 +29,7 @@ const completionOf = Schema.decodeUnknownOption(
   Schema.Union([
     Schema.Struct({
       _tag: Schema.Literal("Exit"),
-      requestId: Schema.Union([Schema.String, Schema.Number]),
+      requestId: RequestId,
     }),
     Schema.Struct({ _tag: Schema.Literals(["Defect", "ClientProtocolError"]) }),
   ]),
@@ -57,9 +58,10 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
                   ),
               });
 
-              // Why: an answer completes this call only with its own request's exit, or a
-              // connection's end; an exit for another request leaves the client waiting for
-              // good, so it is refused as an answer that ended too soon.
+              // Why: an answer completes this call only with its own request's exit, its id of
+              // the same type, as the client keys its calls, or a connection's end; an exit for
+              // another request leaves the client waiting for good, so it is refused as an
+              // answer that ended too soon.
               const completes =
                 isAnswer(answer) &&
                 answer.some((response) =>
@@ -67,7 +69,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
                     completionOf(response),
                     (completion) =>
                       !Predicate.isTagged(completion, "Exit") ||
-                      String(completion.requestId) === String(request.id),
+                      completion.requestId === request.id,
                   ),
                 );
 
@@ -107,7 +109,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * - Workers RPC limits a call's arguments and its answer to 32 MiB, serialized: past it, the call fails with the runtime's `limited to 32MiB` error.
  * - An object serving no `calls`, or a class without the method, fails each call at once, with the object's or the runtime's message as the error's cause.
  * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.
- * - Unary: an rpc that streams fails with a defect at its first chunk.
+ * - Unary: an rpc that streams fails with a defect at its first chunk, so a handler returning a stream that never emits leaves the call waiting for good.
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */

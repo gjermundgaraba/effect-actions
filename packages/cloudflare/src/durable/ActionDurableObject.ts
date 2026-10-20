@@ -23,6 +23,7 @@ export { State } from "./state.js";
 
 export {
   Feed,
+  type ChunkServices,
   type EndOptions,
   type PublishOptions,
   type SubscribeOptions,
@@ -53,8 +54,6 @@ type RunRequires<S> = S | State | Feed | Scope.Scope;
 
 type CallsRequire<S> = RpcServer.Protocol | S | State | Feed;
 
-// Why: each option's own types, checked by the signatures that take it, are dropped below
-// them: a Layer's outputs to `never` and its errors to `unknown`, its requirements kept.
 type ErasedOptions<S> = Options<
   S,
   unknown,
@@ -117,7 +116,7 @@ export interface Options<
    * protocol. Built after the services, beside the routes, again after every eviction, and never
    * finalized. It may require the protocol, `State`, `Feed` and the services; every call's own
    * requirement must be provided by its middleware or be one of those. Without it, a call over
-   * the stub rejects at once.
+   * the stub rejects once the object is built, naming the option.
    *
    * **Gotchas**
    *
@@ -180,7 +179,7 @@ export interface Handlers<S = never> extends SocketHandlers {
   /**
    * Answers one call over the object's stub, the messages `layerStubClient` sends, with its
    * responses, as values, through `Calls`, once every request it carries has its exit, or
-   * rejects at once without `calls`. Workers RPC calls it by this name, the package's, so it
+   * rejects without `calls`. Workers RPC calls it by this name, the package's, so it
    * does not collide with the class's own methods.
    */
   effectActionsRpc(request: StubRequest): Promise<ReadonlyArray<RpcMessage.FromServerEncoded>>;
@@ -195,13 +194,6 @@ export interface Handlers<S = never> extends SocketHandlers {
    */
   run<A, E>(effect: Effect.Effect<A, E, S | State | Feed | Scope.Scope>): Promise<A>;
 }
-
-const refuse = () =>
-  Promise.reject(
-    new Error(
-      "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer",
-    ),
-  );
 
 const handlersKey: unique symbol = Symbol("effect-actions-cloudflare/ActionDurableObject/handlers");
 
@@ -248,11 +240,14 @@ const handlersOf = <S>(
 
       const given = Layer.succeedContext(context);
 
-      // Why: `Calls` and `Sockets` are built with what registers with them, the calls and the
-      // routes, so an object without either has no registry no protocol could fill.
       const call =
         calls === undefined
-          ? refuse
+          ? () =>
+              Promise.reject(
+                new Error(
+                  "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer",
+                ),
+              )
           : yield* Effect.map(
               Layer.buildWithMemoMap(
                 calls.pipe(
@@ -369,8 +364,7 @@ const handlersOf = <S>(
   return {
     common: {
       fetch: async (request) => (await built()).serve(request),
-      effectActionsRpc:
-        calls === undefined ? refuse : async (request) => (await built()).call(request),
+      effectActionsRpc: async (request) => (await built()).call(request),
       alarm: (info) => run(onAlarm?.(info) ?? Effect.void),
       run,
     } satisfies Omit<Handlers<S>, keyof SocketHandlers>,
@@ -409,7 +403,7 @@ type InstanceOf<S, Env, RT> = [RT] extends [Layer.Any]
  * - An instance lasts until the runtime evicts it, and the next event builds everything again on a new one: nothing the services, calls or routes build is finalized, and in-memory state is lost, so keep state in storage.
  * - A build that fails rejects every event awaiting it, each with the same failure, and is dropped with all it built: the next event builds again.
  * - Nothing holds the object while it builds, so a build has no time limit of its own.
- * - Without `routes`, `fetch` answers 404 and it returns no socket handlers: a class accepting its own sockets defines its own; without `calls`, `effectActionsRpc` rejects at once, naming the option.
+ * - Without `routes`, `fetch` answers 404 and it returns no socket handlers: a class accepting its own sockets defines its own; without `calls`, `effectActionsRpc` rejects once the object is built, naming the option.
  * - A socket the class accepts itself, with `State`'s `acceptWebSocket`, carries no protocol's tag: the socket handlers resolve for it, so the class answers the sockets carrying its own tag in `webSocketMessage` and delegates the rest.
  * - The class defines `alarm` only when it has one: workerd refuses `storage.setAlarm` on a class without an `alarm` method.
  *
