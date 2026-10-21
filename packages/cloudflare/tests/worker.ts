@@ -25,6 +25,7 @@ import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./suppo
 import { Announcer, feedCalls, feedRoutes, Gate, twoPathRoutes } from "./support/feed.js";
 import { Follow, movedRoutes, startupPublisher } from "./support/moved.js";
 import { nativeCalls } from "./support/native.js";
+import { versionedRoutes } from "./support/versioned.js";
 
 export class Plain extends DurableObject {
   readonly web = HttpRouter.toWebHandler(
@@ -252,3 +253,5 @@ export class Moved extends ActionDurableObject.make({
     return this.run(Effect.flatMap(ActionDurableObject.Feed, (feed) => feed.end(Follow)));
   }
 }
+
+export class Versioned extends ActionDurableObject.make({ routes: versionedRoutes }) {}

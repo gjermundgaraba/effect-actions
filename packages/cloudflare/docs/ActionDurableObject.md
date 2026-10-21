@@ -108,19 +108,23 @@ import { RoomCalls } from "./chat/Calls.js";
 import { calls, messages, preview, watch } from "./chat/handlers.js";
 import { authenticate } from "./identity/verifier.js";
 import { lobby } from "./lobby/handlers.js";
+import { refuseOtherVersions } from "./platform/protocol-version.js";
 import { RoomRpc } from "./Rpc.js";
 
 const room = [preview, messages];
 
 // What a room's object serves. Its rpcs on WebSockets the runtime holds while the object
 // hibernates: a socket keeps the token its upgrade request carried, and each message is
-// authenticated with it, or with the message's own. `watch`'s handler is the host's, as an
-// Effect rpc's is. Its JSON routes at `/api/<action>`. It requires `MessageStore` and `Room` at
-// startup: worker.ts chooses them.
+// authenticated with it, or with the message's own. The socket's route refuses a page of
+// another version, its middleware running for the upgrade alone. `watch`'s handler is the
+// host's, as an Effect rpc's is. Its JSON routes at `/api/<action>`. It requires `MessageStore`
+// and `Room` at startup: worker.ts chooses them.
 export const roomRoutes = Layer.mergeAll(
   ActionRpc.layer(RoomRpc, room).pipe(
     Layer.provide(watch),
-    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+    Layer.provide(
+      ActionDurableObject.layerWebSocket({ path: "/rpc" }).pipe(Layer.provide(refuseOtherVersions)),
+    ),
   ),
   ActionHttp.layer(RoomHttp, room),
 ).pipe(Layer.provide(authenticate));
@@ -134,7 +138,10 @@ export const lobbyRoutes = ActionHttp.layer(LobbyHttp, lobby);
 ```
 
 What a socket keeps across hibernation, how each message authenticates, and what the runtime
-answers itself are on `ActionDurableObject.layerWebSocket`. A page's client speaks JSON over
+answers itself are on `ActionDurableObject.layerWebSocket`. Router middleware provided to it
+runs for the upgrade alone, and refuses a page of another version by answering 101 and closing
+the socket with a code the page's client reads, as a browser cannot read a refused upgrade's
+status ([chat-rooms/src/platform/protocol-version.ts](../examples/chat-rooms/src/platform/protocol-version.ts)). A page's client speaks JSON over
 `RpcClient.layerProtocolSocket` and `Socket.layerWebSocket(url)`, its token on each message
 ([chat-rooms/src/browser.ts](../examples/chat-rooms/src/browser.ts)), and the Worker forwards a
 page's upgrade to the room's object by forwarding its `Request`, as `worker.ts` does above. The

@@ -3,7 +3,7 @@ import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import type { Message } from "./chat/Chat.js";
-import { RoomRpc } from "./Rpc.js";
+import { protocolVersion, RoomRpc } from "./Rpc.js";
 
 // Client module: what a web page imports. It holds the binding and nothing of the server.
 
@@ -18,13 +18,16 @@ export interface Following<E> {
 }
 
 // Effect's own client protocol, one WebSocket to a room's object, speaking JSON: the socket's
-// URL is `wss://<host>/rooms/<room>/rpc`. The layer owns the socket, so provide it once, around
-// the page's whole program; a page provides `Socket.layerWebSocketConstructorGlobal`, the
+// URL is `wss://<host>/rooms/<room>/rpc`, given the version of the rpcs the page was built
+// with. A room serving another closes the socket at once with `unsupportedProtocol`, which
+// fails every call and stream with a `SocketCloseError` of that code: show "reload", since
+// reconnecting is refused again. The layer owns the socket, so provide it once, around the
+// page's whole program; a page provides `Socket.layerWebSocketConstructorGlobal`, the
 // browser's own WebSocket. The client pings every five seconds and the object's runtime
 // answers, so a page left open does not wake the object.
 export const connection = (url: string) =>
   RpcClient.layerProtocolSocket().pipe(
-    Layer.provide(Socket.layerWebSocket(url)),
+    Layer.provide(Socket.layerWebSocket(`${url}?protocol=${protocolVersion}`)),
     Layer.provide(RpcSerialization.layerJson),
   );
 

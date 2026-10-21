@@ -24,6 +24,7 @@ declare namespace Cloudflare {
     readonly FED: DurableObjectNamespace<import("./worker.ts").Fed>;
     readonly TWO_PATHS: DurableObjectNamespace<import("./worker.ts").TwoPaths>;
     readonly MOVED: DurableObjectNamespace<import("./worker.ts").Moved>;
+    readonly VERSIONED: DurableObjectNamespace<import("./worker.ts").Versioned>;
     readonly GREETING: string;
   }
 }

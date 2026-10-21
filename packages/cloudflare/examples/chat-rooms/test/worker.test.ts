@@ -10,7 +10,7 @@ import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/
 import { LobbyHttp, RoomHttp } from "../src/Api.js";
 import { openRoom } from "../src/browser.js";
 import type { Message } from "../src/chat/Chat.js";
-import { RoomRpc } from "../src/Rpc.js";
+import { RoomRpc, unsupportedProtocol } from "../src/Rpc.js";
 import { roomSocket } from "./support/socket.js";
 
 const day = 24 * 60 * 60 * 1000;
@@ -115,6 +115,22 @@ describe("the Worker and its rooms", () => {
         _tag: "RpcClientError",
       });
     }).pipe(Effect.scoped, Effect.provide(worker)),
+  );
+
+  it.effect(
+    "refuses a page built for another version of the rpcs, closing its socket with the code it reads",
+    () =>
+      Effect.gen(function* () {
+        const { protocol } = yield* roomSocket("general", {}, "0");
+        const page = yield* following(yield* Effect.provideContext(openRoom("ada"), protocol), 0);
+        const closed = yield* page.closed;
+
+        expect(Exit.findErrorOption(closed).pipe(Option.getOrUndefined)).toMatchObject({
+          _tag: "RpcClientError",
+          reason: { _tag: "SocketCloseError", code: unsupportedProtocol },
+        });
+        expect(yield* page.opened).toBe(false);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("reports a page's subscription closed with a defect it cannot decode", () =>

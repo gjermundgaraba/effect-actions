@@ -32,6 +32,7 @@
       { "name": "FED", "class_name": "Fed" },
       { "name": "TWO_PATHS", "class_name": "TwoPaths" },
       { "name": "MOVED", "class_name": "Moved" },
+      { "name": "VERSIONED", "class_name": "Versioned" },
     ],
   },
   "migrations": [
@@ -62,6 +63,7 @@
         "Fed",
         "TwoPaths",
         "Moved",
+        "Versioned",
       ],
     },
   ],
