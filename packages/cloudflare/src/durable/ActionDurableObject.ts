@@ -22,7 +22,7 @@ export { layerWebSocket, refuseUpgrade, Sockets, type LayerWebSocketOptions } fr
 
 export { name, State } from "./state.js";
 
-export { layerFeed } from "./feed.js";
+export { layerFeed, wipe } from "./feed.js";
 
 export { client, layerStubClient, type Client, type Stub } from "./stub.js";
 

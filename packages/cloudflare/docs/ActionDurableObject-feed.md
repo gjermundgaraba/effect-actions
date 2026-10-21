@@ -11,8 +11,9 @@ It is a push channel addressed by the call's request id, not a stream pipeline: 
 published goes to the socket as Effect's server would send it. Domain code yields the core's
 `Feed` and imports nothing of this package, whichever feed the entrypoint provides.
 
-The rules every feed keeps are on the core's `Feed`, and what an object's adds, its storage, its
-one socket path and wiping it, on `ActionDurableObject.layerFeed`. This page uses the chat-rooms
+The rules every feed keeps are on the core's `Feed`, what an object's adds, its storage and its
+one socket path, on `ActionDurableObject.layerFeed`, and wiping its storage on
+`ActionDurableObject.wipe`. This page uses the chat-rooms
 example, whose pages follow a room's messages.
 
 ## Declare an rpc that streams
@@ -134,7 +135,8 @@ identity, and `ActionRpc.layer` requires them: `routes.ts` provides them to it
 ([ActionDurableObject.md](ActionDurableObject.md#serve-rpcs-over-hibernating-websockets)).
 
 What a `key` reaches and what `end` completes are the core's `Feed`'s rules; what this feed
-adds, wiping the object's storage among them, is on `ActionDurableObject.layerFeed`.
+adds is on `ActionDurableObject.layerFeed`. Wipe the object's storage with
+`ActionDurableObject.wipe`, which ends the subscribers first.
 
 ## Follow from a page
 

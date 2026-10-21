@@ -202,7 +202,6 @@ export const feedCalls = RpcServer.layer(FeedCalls.merge(FeedRpcs)).pipe(
     FeedCalls.toLayer(
       Effect.gen(function* () {
         const feed = yield* Feed.Feed;
-        const state = yield* ActionDurableObject.State;
         const announcer = yield* Announcer;
         const { read, released, finalized, encoding, encoded } = yield* Gate;
 
@@ -227,11 +226,7 @@ export const feedCalls = RpcServer.layer(FeedCalls.merge(FeedRpcs)).pipe(
           release: () => Effect.asVoid(Deferred.succeed(released, undefined)),
           finalized: () => Ref.get(finalized),
           publishSlowly: ({ value }) => feed.publish(SlowTicks, value),
-          wipe: () =>
-            Effect.andThen(
-              feed.end(),
-              Effect.promise(() => state.storage.deleteAll()),
-            ),
+          wipe: () => ActionDurableObject.wipe,
         });
       }),
     ),

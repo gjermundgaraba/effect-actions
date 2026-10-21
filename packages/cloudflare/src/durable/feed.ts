@@ -158,7 +158,7 @@ const completed = Schema.encodeSync(
  * - A socket another path accepted, still open from an instance that served that path before an eviction, is sent nothing, and its records are dropped as a closed socket's.
  * - The feed waits for no acknowledgement: a page that stops acknowledging still receives every value, and each chunk Effect's client acknowledges wakes a hibernating object, whose server ignores the ack.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone or refusing the send; a socket closing while the object is evicted leaves its records until then.
- * - Wipe the object's storage with `yield* feed.end()`, then `storage.deleteAll()`: `end()` completes every subscriber's stream, and the wipe drops their records with the socket-id counter, so a socket given a closed one's id is sent nothing it did not subscribe to; a wipe without `end()` cuts every subscriber off, its stream open and sent nothing.
+ * - Its records live in the object's storage, beside the application's data: wipe that storage with `wipe`, never `storage.deleteAll()` alone, which cuts every subscriber off.
  * - `publish` reads every subscriber's record from storage, one per open stream of every rpc, and one `publish` or `end` sends at a time, after the publish encoded its value.
  * - A value that does not encode as the rpc's chunk is a defect.
  *
@@ -368,3 +368,31 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
     return feed;
   }),
 );
+
+/**
+ * Wipes the object's storage, `storage.deleteAll()`, its feed's subscribers ended first, as one
+ * step no other event of the object runs within: `end()` completes every subscriber's stream,
+ * those this instance runs and those hibernation dropped, and then every key the object stores
+ * is dropped, its SQL included, with the feed's records and the socket-id counter.
+ *
+ * **Gotchas**
+ *
+ * - `storage.deleteAll()` alone cuts every subscriber off: its record is gone, so no `publish` or `end` reaches it, and its stream stays open, sent nothing, until its socket closes.
+ * - The alarm is not dropped, as `deleteAll` leaves it: call `storage.deleteAlarm()` for it.
+ * - It runs under the runtime's `blockConcurrencyWhile`, so no message, call or fetch reaches the object until the wipe completes; a subscribe that has not yet reached the feed subscribes after the wipe, reading what is left.
+ */
+export const wipe: Effect.Effect<void, never, State | Feed> = Effect.gen(function* () {
+  const state = yield* State;
+  const feed = yield* Feed;
+
+  yield* Effect.promise(() =>
+    state.blockConcurrencyWhile(() =>
+      Effect.runPromise(
+        Effect.andThen(
+          feed.end(),
+          Effect.promise(() => state.storage.deleteAll()),
+        ),
+      ),
+    ),
+  );
+});

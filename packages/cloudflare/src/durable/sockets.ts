@@ -39,7 +39,7 @@ const registries = makeRegistries<Sockets["Service"], Registry>(
  * - A message dispatched before the routes are built finds no protocol registered and is answered `false`: in a class composing the primitives itself, await the routes' build first, or delegate to `handlers`, which does.
  * - The runtime dispatching through `Sockets` and `toWebHandler` must build in one memo map: given two, each builds `Sockets.layer`, `layerWebSocket` registers with one, and every socket's messages go unanswered, with no error.
  * - A socket accepted by an earlier version of the routes at another `path` carries a tag no protocol holds now, and is answered `false`: close it, or serve that `path` again.
- * - The socket-id counter is kept in the object's storage, beside the application's data, so `storage.deleteAll()` drops it: wipe as `layerFeed` says.
+ * - The socket-id counter is kept in the object's storage, beside the application's data: wipe that storage with `wipe`.
  */
 export class Sockets extends Context.Service<
   Sockets,
