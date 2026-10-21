@@ -114,7 +114,8 @@ const makeProtocol = (registry: Registry) =>
 
     interface Client {
       readonly responses: Queue.Queue<RpcMessage.FromServerEncoded, Cause.Done>;
-      readonly pending: Map<string, { readonly id: string | number; readonly tag: string }>;
+      // Why: keyed by each request's id as sent, as Effect's ids `1` and `"1"` are two requests.
+      readonly pending: Map<string | number, string>;
     }
 
     const clients = new Map<number, Client>();
@@ -126,7 +127,7 @@ const makeProtocol = (registry: Registry) =>
     // failed by the same defect. One call over the stub is one client, so the defect is the exit
     // of each request it carries without one, sent as that request's.
     const failPending = (client: Client, defect: RpcMessage.ResponseDefectEncoded) => {
-      const requests = [...client.pending.values()];
+      const requests = [...client.pending.keys()];
 
       client.pending.clear();
 
@@ -134,7 +135,7 @@ const makeProtocol = (registry: Registry) =>
         client.responses,
         requests.length === 0
           ? [defect]
-          : requests.map(({ id }) =>
+          : requests.map((id) =>
               RpcMessage.ResponseExitDieEncoded({
                 requestId: RpcMessage.RequestId(id),
                 encodedDefect: defect.defect,
@@ -172,7 +173,7 @@ const makeProtocol = (registry: Registry) =>
               request,
               (message) => {
                 if (Predicate.isTagged(message, "Request"))
-                  client.pending.set(String(message.id), { id: message.id, tag: message.tag });
+                  client.pending.set(message.id, message.tag);
 
                 return write(clientId, message);
               },
@@ -200,8 +201,7 @@ const makeProtocol = (registry: Registry) =>
             if (Predicate.isTagged(response, "Defect")) return failPending(client, response);
 
             if (!Predicate.isTagged(response, "Chunk")) {
-              if (Predicate.isTagged(response, "Exit"))
-                client.pending.delete(String(response.requestId));
+              if (Predicate.isTagged(response, "Exit")) client.pending.delete(response.requestId);
 
               return Queue.offer(client.responses, response);
             }
@@ -209,7 +209,7 @@ const makeProtocol = (registry: Registry) =>
             // Why: one method call answers once, so a stream's chunks have nowhere to go: the
             // call is answered with a defect naming the rpc, and its client ended and
             // disconnected, which interrupts the stream.
-            const tag = client.pending.get(String(response.requestId))?.tag ?? "";
+            const tag = client.pending.get(response.requestId) ?? "";
 
             return failPending(
               client,

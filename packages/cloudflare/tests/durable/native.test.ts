@@ -172,6 +172,28 @@ describe("values over the stub", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    'answer each request of one call by its id as sent, 1 and "1" apart, one finishing before the other dies',
+    () =>
+      Effect.gen(function* () {
+        const answer = yield* Effect.promise(() =>
+          env.NATIVE.getByName("batched").effectActionsRpc([
+            { _tag: "Request", id: 1, tag: "crashAfter", payload: { millis: 30 }, headers: [] },
+            { _tag: "Request", id: "1", tag: "answerAfter", payload: { millis: 5 }, headers: [] },
+          ]),
+        );
+
+        expect(answer).toEqual([
+          { _tag: "Exit", requestId: "1", exit: { _tag: "Success", value: undefined } },
+          {
+            _tag: "Exit",
+            requestId: 1,
+            exit: { _tag: "Failure", cause: [{ _tag: "Die", defect: new Error("late boom") }] },
+          },
+        ]);
+      }),
+  );
+
   it.effect("carry a schema with no JSON form, which the socket's JSON refuses", () =>
     Effect.gen(function* () {
       const client = yield* native;

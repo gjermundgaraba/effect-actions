@@ -30,6 +30,8 @@ export const NativeRpcs = RpcGroup.make(
   Rpc.make("crashUnclonable"),
   Rpc.make("instant", { payload: { at: Instant }, success: Instant }),
   Rpc.make("bytes", { payload: { size: Schema.Int }, success: Schema.Uint8Array }),
+  Rpc.make("crashAfter", { payload: { millis: Schema.Int } }),
+  Rpc.make("answerAfter", { payload: { millis: Schema.Int } }),
 );
 
 export const nativeCalls = RpcServer.layer(NativeRpcs).pipe(
@@ -43,6 +45,9 @@ export const nativeCalls = RpcServer.layer(NativeRpcs).pipe(
       crashUnclonable: () => Effect.die(new Unclonable()),
       instant: ({ at }) => Effect.succeed(at),
       bytes: ({ size }) => Effect.sync(() => new Uint8Array(size)),
+      crashAfter: ({ millis }) =>
+        Effect.andThen(Effect.sleep(millis), Effect.die(new Error("late boom"))),
+      answerAfter: ({ millis }) => Effect.sleep(millis),
     }),
   ),
 );
