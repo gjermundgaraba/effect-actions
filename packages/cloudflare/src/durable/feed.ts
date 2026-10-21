@@ -402,18 +402,20 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
  * - `storage.deleteAll()` alone cuts every subscriber off: its record is gone, so no `publish` or `end` reaches it, and its stream stays open, sent nothing, until its socket closes.
  * - The alarm is not dropped, as `deleteAll` leaves it: call `storage.deleteAlarm()` for it.
  * - An object serving no `layerWebSocket` path, such as one without routes, or two, where every `subscribe` dies, has no subscriber, and `wipe` runs `deleteAll` alone there.
+ * - Its steps run with the caller's context, its services and references, and to their end: an interrupt of the caller waits for a wipe already under the gate to complete, never leaving it half done.
  * - A failure of either step, an `end` that dies or a `deleteAll` that rejects, fails `wipe` with that defect, and the object stays whole, though a callback that rejects inside `blockConcurrencyWhile` resets it: the steps' exit is returned through the gate, then raised.
  * - It runs under the runtime's `blockConcurrencyWhile`, so no message, call or fetch reaches the object until the wipe completes; a subscribe already running in the instance is ended too, even one whose record was still being written, and one that has not yet reached the feed subscribes after the wipe, reading what is left.
  */
 export const wipe: Effect.Effect<void, never, State | Feed> = Effect.gen(function* () {
   const state = yield* State;
   const feed = yield* Feed;
+  const context = yield* Effect.context<never>();
 
   // Why: a callback that rejects inside `blockConcurrencyWhile` resets the object, failing every
   // call in flight, so the steps' exit crosses the gate as a value and fails `wipe` outside it.
   const exit = yield* Effect.promise(() =>
     state.blockConcurrencyWhile(() =>
-      Effect.runPromiseExit(
+      Effect.runPromiseExitWith(context)(
         Effect.andThen(
           feed.end(),
           Effect.promise(() => state.storage.deleteAll()),
@@ -423,4 +425,8 @@ export const wipe: Effect.Effect<void, never, State | Feed> = Effect.gen(functio
   );
 
   return yield* exit;
-});
+}).pipe(
+  // Why: once under the gate the steps run to their end, as a half-done wipe has ended its
+  // subscribers and kept the data they followed; an interrupt waits for them.
+  Effect.uninterruptible,
+);

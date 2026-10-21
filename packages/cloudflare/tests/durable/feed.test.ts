@@ -2,6 +2,7 @@ import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
   Cause,
+  Context,
   Deferred,
   Effect,
   Equal,
@@ -27,6 +28,10 @@ import { upgradeTo, upgradeToRpc } from "../support/socket.js";
 let objects = 0;
 
 const fresh = () => env.FED.getByName(`feed-${objects++}`);
+
+const Marker = Context.Reference<string>("tests/feed/Marker", {
+  defaultValue: () => "the default",
+});
 
 const callsOf = (stub: DurableObjectStub<import("../worker.ts").Fed>) =>
   Effect.map(ActionDurableObject.client(FeedCalls), (calls) => calls(() => stub));
@@ -908,6 +913,67 @@ describe("Feed", () => {
         expect(outcome).toEqual({ wiped: new Error("The end died."), kept: 1 });
         expect(after).toBe("served");
       }),
+  );
+
+  it.effect("wipe runs its steps with the caller's context", () =>
+    Effect.gen(function* () {
+      const outcome = yield* Effect.promise(() =>
+        runInDurableObject(fresh(), (instance) =>
+          instance.run(
+            Effect.gen(function* () {
+              const feed = yield* Feed.Feed;
+              const seen: Array<string> = [];
+
+              yield* ActionDurableObject.wipe.pipe(
+                Effect.provideService(Feed.Feed, {
+                  ...feed,
+                  end: () => Effect.map(Effect.service(Marker), (marker) => void seen.push(marker)),
+                }),
+                Effect.provideService(Marker, "the caller's"),
+              );
+
+              return seen;
+            }),
+          ),
+        ),
+      );
+
+      expect(outcome).toEqual(["the caller's"]);
+    }),
+  );
+
+  it.effect("wipe runs to its end under the gate though its caller is interrupted", () =>
+    Effect.gen(function* () {
+      const outcome = yield* Effect.promise(() =>
+        runInDurableObject(fresh(), async (instance, state) => {
+          await state.storage.put("tests/application", 1);
+
+          await instance.run(
+            Effect.gen(function* () {
+              const feed = yield* Feed.Feed;
+
+              const fiber = yield* Effect.forkChild(
+                Effect.provideService(ActionDurableObject.wipe, Feed.Feed, {
+                  ...feed,
+                  end: () =>
+                    Effect.andThen(
+                      Effect.promise(() => state.storage.get("tests/application")),
+                      feed.end(),
+                    ),
+                }),
+              );
+
+              yield* Effect.yieldNow;
+              yield* Fiber.interrupt(fiber);
+            }),
+          );
+
+          return (await state.storage.list()).size;
+        }),
+      );
+
+      expect(outcome).toBe(0);
+    }),
   );
 
   it.effect("drops the records of a socket the runtime reported closed", () =>
