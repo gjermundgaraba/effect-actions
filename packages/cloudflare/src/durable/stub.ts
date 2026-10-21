@@ -106,7 +106,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  *
  * **Gotchas**
  *
- * - A stub given is held, and many exceptions leave a stub broken, failing every later call through it with the same error: give a function, `() => env.ROOM.getByName(name)`, called as each call is sent, for a new stub each time.
+ * - A stub given is held, and many exceptions leave a stub broken, failing every later call through it with the same error: give a function, `() => env.ROOM.getByName(name)`, called as each call is sent, for a new stub each time; one that throws is a defect, not an `RpcClientError`, as it is no failure of the stub.
  * - For typed transport errors and a retry of your own, call `RpcClient.make(group)` over `layerStubClient(() => stub)`: each `RpcClientError`'s `RpcClientDefect` holds the runtime's error as its `cause`, whose `.retryable`, when true, says this call may be repeated, as Cloudflare's guide allows, and whose `.durableObjectReset`, when true, that the next call needs a new stub, which the function gives.
  * - Workers RPC limits a call's arguments and its answer to 32 MiB, serialized: past it, the call fails with the runtime's `limited to 32MiB` error.
  * - An object serving no `calls`, once built, or a class without the method, fails each call, with the object's or the runtime's message as the error's cause; an object whose build fails fails it with that failure first.
