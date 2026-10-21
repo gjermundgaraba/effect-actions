@@ -4,11 +4,11 @@ import * as Feed from "../../src/feed/Feed.js";
 import {
   controlHandlers,
   Controls,
-  feedContract,
   Gate,
   streamHandlers,
   Streams,
 } from "../support/feed-contract.js";
+import { feedContract } from "../support/feed-contract-suite.js";
 
 feedContract(
   "Feed.layer",

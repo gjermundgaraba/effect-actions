@@ -3,7 +3,8 @@ import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { Controls, feedContract, Streams } from "../../../../tests/support/feed-contract.js";
+import { Controls, Streams } from "../../../../tests/support/feed-contract.js";
+import { feedContract } from "../../../../tests/support/feed-contract-suite.js";
 import { upgradeToRpc } from "../support/socket.js";
 
 let objects = 0;
