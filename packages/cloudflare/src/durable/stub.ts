@@ -107,7 +107,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * **Gotchas**
  *
  * - A stub given is held, and many exceptions leave a stub broken, failing every later call through it with the same error: give a function, `() => env.ROOM.getByName(name)`, called as each call is sent, for a new stub each time.
- * - For typed transport errors and a retry of your own, which Cloudflare's guide allows for an error whose `.retryable` is true, call `RpcClient.make(group)` over `layerStubClient(() => stub)`: each `RpcClientError`'s `RpcClientDefect` holds the runtime's error as its `cause`.
+ * - For typed transport errors and a retry of your own, call `RpcClient.make(group)` over `layerStubClient(() => stub)`: each `RpcClientError`'s `RpcClientDefect` holds the runtime's error as its `cause`, whose `.retryable`, when true, says this call may be repeated, as Cloudflare's guide allows, and whose `.durableObjectReset`, when true, that the next call needs a new stub, which the function gives.
  * - Workers RPC limits a call's arguments and its answer to 32 MiB, serialized: past it, the call fails with the runtime's `limited to 32MiB` error.
  * - An object serving no `calls`, once built, or a class without the method, fails each call, with the object's or the runtime's message as the error's cause; an object whose build fails fails it with that failure first.
  * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.
@@ -161,7 +161,7 @@ export type Client<Group> = RpcClient.RpcClient<Unary<RpcGroup.Rpcs<Group>>>;
  * - `stubOf` reads `env` as each call is sent, from the `env` import of `cloudflare:workers` or the `env` `make`'s `services` function is given, never as the module evaluates; one that throws is a defect.
  * - Only names you accept should reach `getByName`: each name is another object.
  * - An rpc that streams has no method, as `Client` types it: the transport is unary, and over `layerStubClient` the object answers one with a defect at its first chunk.
- * - It dies on the stub's failure, hiding its error, Cloudflare's `.retryable` included: for typed transport errors and a retry of your own, which Cloudflare's guide allows for an error whose `.retryable` is true, call `RpcClient.make(group)` over `layerStubClient(() => stub)`, whose `RpcClientError` in every call's errors holds the runtime's error as its `RpcClientDefect`'s `cause`.
+ * - It dies on the stub's failure, hiding its error, Cloudflare's `.retryable` and `.durableObjectReset` included: for typed transport errors and a retry of your own, call `RpcClient.make(group)` over `layerStubClient(() => stub)`, whose `RpcClientError` in every call's errors holds the runtime's error as its `RpcClientDefect`'s `cause`, whose `.retryable`, when true, says this call may be repeated, as Cloudflare's guide allows, and whose `.durableObjectReset`, when true, that the next call needs a new stub, which the function `layerStubClient` is given makes as each call is sent.
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
