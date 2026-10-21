@@ -724,7 +724,7 @@ describe("Feed", () => {
   );
 
   it.effect(
-    "ends every subscriber of every rpc, live or hibernated, before a wipe of the object's storage, and a socket given a closed one's id after it receives only what it asked for",
+    "ends every subscriber of every rpc, live or hibernated, before a wipe of the object's storage, after which socket ids count from 1 again and a new socket is served",
     () =>
       Effect.gen(function* () {
         const stub = fresh();
