@@ -166,6 +166,26 @@ const released = (value: WeakRef<object>) =>
     Effect.repeat({ until: (done) => done, times: 20 }),
   );
 
+const endedAsRead = (feed: Feed.Feed["Service"]) =>
+  Effect.gen(function* () {
+    const Once = Rpc.make("once", { success: Schema.Int, stream: true });
+    const Ones = RpcGroup.make(Once);
+
+    const ones = Ones.toLayer(
+      Ones.of({
+        once: (_, request) => feed.subscribe(request, { initial: Effect.as(feed.end(), [1]) }),
+      }),
+    );
+
+    const collected = yield* Effect.scoped(
+      Effect.flatMap(Effect.provide(RpcTest.makeClient(Ones), ones), (rpc) =>
+        Stream.runCollect(rpc.once()),
+      ),
+    );
+
+    return { collected: Array.from(collected), definition: new WeakRef(Once.successSchema) };
+  });
+
 const tick = (rpc: Client, initial: ReadonlyArray<number>, key: string | null = null) =>
   follow(rpc.ticks({ key, initial, read: "at once" }), initial.length);
 
@@ -341,6 +361,15 @@ describe("Feed.layer", () => {
 
       expect(yield* released(yield* publishHeld(feed))).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
+  );
+
+  it.effect("keeps nothing of a subscriber end completed, its rpc's definition included", () =>
+    Effect.gen(function* () {
+      const { collected, definition } = yield* endedAsRead(yield* Feed.Feed);
+
+      expect(collected).toEqual([]);
+      expect(yield* released(definition)).toBe(true);
+    }).pipe(Effect.provide(Feed.layer)),
   );
 
   it.effect("keeps a value published to a live subscriber until it is read", () =>
