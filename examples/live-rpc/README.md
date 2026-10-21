@@ -40,37 +40,39 @@ src/
 ├── Rpc.ts             the RPC binding of every action, and `watch` in its `rpcs`
 ├── routes.ts          the rpcs, authenticated and with their middleware, not yet on a protocol
 ├── server.ts          entrypoint: the rpcs over a WebSocket at /rpc, its messages bounded, the feed
-├── browser.ts         client module: the connection and the chat, following a room too
+├── browser.ts         client module: the connection and the chat
+├── follow.ts          following a room across drops, each message told once
 ├── page.ts            the same chat as promises, for a page that is not one
 └── client.ts          entrypoint: that client, run from Node
 test/
 ├── chat/              in process, with Action.client
 ├── routes.test.ts     over RPC in memory, with Testing.layer, a room's stream included
 ├── browser.test.ts    the page's client against the same rpcs
+├── follow.test.ts     following against a scripted subscription, on the test clock
 └── server.test.ts     the socket itself: a listening port, connect(url), the bound on a message, a drop
 ```
 
 ## Where to look
 
-| To see                                                                 | Read                                            |
-| ---------------------------------------------------------------------- | ----------------------------------------------- |
-| An RPC binding naming its authentication descriptor                    | `src/Rpc.ts`                                    |
-| The rpcs on Effect's `RpcServer`, before a protocol is chosen          | `src/routes.ts`                                 |
-| Serving them over a WebSocket, speaking JSON                           | `src/server.ts`                                 |
-| A verifier that runs for every message, not once per connection        | `src/identity/verifier.ts`                      |
-| Native `RpcMiddleware` providing a per-request service, with a default | `src/chat/room.ts`                              |
-| Handlers reading that service, and the rule that reads it              | `src/chat/handlers.ts`, `src/chat/authorize.ts` |
-| A public rpc beside protected ones                                     | `src/chat/Chat.ts`                              |
-| A socket client sending its token and room on each message             | `src/browser.ts`                                |
-| Who owns the socket, and how a promise page keeps it open              | `src/browser.ts`, `src/page.ts`                 |
-| A declared error and the built-in refusals handled by tag              | `src/browser.ts`                                |
-| Running that client from Node, two callers on one socket               | `src/client.ts`                                 |
-| Testing handlers and authorization with no transport                   | `test/chat/chat.test.ts`                        |
-| Testing rpcs, authentication and middleware in memory                  | `test/routes.test.ts`                           |
-| The binding's native `RpcGroup` called by Effect's own client          | `test/routes.test.ts`                           |
-| Testing the client's handling of each error and refusal                | `test/browser.test.ts`                          |
-| Testing over a real WebSocket, and a message over `maxPayload`         | `test/server.test.ts`                           |
-| A native rpc that streams, published to with `Feed`, keyed by room     | `src/chat/Chat.ts`, `src/chat/handlers.ts`      |
-| A native group adding the middleware `layer`'s option gives actions    | `src/Rpc.ts`, `src/chat/room.ts`                |
-| A page following a room, again from its last message after a drop      | `src/browser.ts`, `test/server.test.ts`         |
-| Testing a stream in memory, over HTTP with NDJSON                      | `test/routes.test.ts`                           |
+| To see                                                                 | Read                                                          |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------- |
+| An RPC binding naming its authentication descriptor                    | `src/Rpc.ts`                                                  |
+| The rpcs on Effect's `RpcServer`, before a protocol is chosen          | `src/routes.ts`                                               |
+| Serving them over a WebSocket, speaking JSON                           | `src/server.ts`                                               |
+| A verifier that runs for every message, not once per connection        | `src/identity/verifier.ts`                                    |
+| Native `RpcMiddleware` providing a per-request service, with a default | `src/chat/room.ts`                                            |
+| Handlers reading that service, and the rule that reads it              | `src/chat/handlers.ts`, `src/chat/authorize.ts`               |
+| A public rpc beside protected ones                                     | `src/chat/Chat.ts`                                            |
+| A socket client sending its token and room on each message             | `src/browser.ts`                                              |
+| Who owns the socket, and how a promise page keeps it open              | `src/browser.ts`, `src/page.ts`                               |
+| A declared error and the built-in refusals handled by tag              | `src/browser.ts`                                              |
+| Running that client from Node, two callers on one socket               | `src/client.ts`                                               |
+| Testing handlers and authorization with no transport                   | `test/chat/chat.test.ts`                                      |
+| Testing rpcs, authentication and middleware in memory                  | `test/routes.test.ts`                                         |
+| The binding's native `RpcGroup` called by Effect's own client          | `test/routes.test.ts`                                         |
+| Testing the client's handling of each error and refusal                | `test/browser.test.ts`                                        |
+| Testing over a real WebSocket, and a message over `maxPayload`         | `test/server.test.ts`                                         |
+| A native rpc that streams, published to with `Feed`, keyed by room     | `src/chat/Chat.ts`, `src/chat/handlers.ts`                    |
+| A native group adding the middleware `layer`'s option gives actions    | `src/Rpc.ts`, `src/chat/room.ts`                              |
+| A page following a room, again from its last message after a drop      | `src/follow.ts`, `test/follow.test.ts`, `test/server.test.ts` |
+| Testing a stream in memory, over HTTP with NDJSON                      | `test/routes.test.ts`                                         |
