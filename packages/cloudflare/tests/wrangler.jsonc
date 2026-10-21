@@ -33,6 +33,7 @@
       { "name": "TWO_PATHS", "class_name": "TwoPaths" },
       { "name": "MOVED", "class_name": "Moved" },
       { "name": "VERSIONED", "class_name": "Versioned" },
+      { "name": "CONTRACTED", "class_name": "Contracted" },
     ],
   },
   "migrations": [
@@ -64,6 +65,7 @@
         "TwoPaths",
         "Moved",
         "Versioned",
+        "Contracted",
       ],
     },
   ],

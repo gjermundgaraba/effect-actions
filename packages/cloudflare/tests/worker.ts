@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Data, Deferred, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
+import { RpcServer } from "effect/rpc";
 import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as ActionDurableObject from "../src/durable/ActionDurableObject.js";
 import {
@@ -27,6 +28,13 @@ import { Announcer, feedCalls, feedRoutes, Gate, twoPathRoutes } from "./support
 import { Follow, movedRoutes, startupPublisher } from "./support/moved.js";
 import { nativeCalls } from "./support/native.js";
 import { versionedRoutes } from "./support/versioned.js";
+import {
+  controlHandlers,
+  Controls,
+  Gate as ContractGate,
+  streamHandlers,
+  Streams,
+} from "../../../tests/support/feed-contract.js";
 
 export class Plain extends DurableObject {
   readonly web = HttpRouter.toWebHandler(
@@ -254,3 +262,12 @@ export class Moved extends ActionDurableObject.make({
 }
 
 export class Versioned extends ActionDurableObject.make({ routes: versionedRoutes }) {}
+
+export class Contracted extends ActionDurableObject.make({
+  services: () => ContractGate.layer,
+  routes: RpcServer.layer(Streams).pipe(
+    Layer.provide(streamHandlers),
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+  ),
+  calls: RpcServer.layer(Controls).pipe(Layer.provide(controlHandlers)),
+}) {}
