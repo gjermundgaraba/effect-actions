@@ -91,7 +91,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     hibernating, and one waiting on memory alone is lost if it hibernates. A socket whose
     runtime dropped its attachment, as celld 0.6.2 does when it evicts an idle object, keeps
     serving with each message's own headers, and one whose attachment does not decode answers
-    each message with a defect, rather than failing the event.
+    each message with a defect, rather than failing the event. A handler's die under a plain
+    `RpcServer.layer` is Effect's fatal `Defect`, failing every call in flight on the socket, as
+    Effect designs it; `disableFatalDefects: true`, or `ActionRpc.layer`, fails that call alone.
   - `Sockets` is the object's dispatcher for its protocols' sockets, one per instance from
     `Sockets.layer`, which `layerWebSocket` registers with and requires, as it does `Feed`. Its `message`,
     `close(socket, code, reason)` and `error` hand a socket's event to its protocol and succeed
