@@ -949,6 +949,23 @@ describe("Feed", () => {
       }),
   );
 
+  it.effect("wipe drops a set alarm, as deleteAll does under the tests' compatibility date", () =>
+    Effect.gen(function* () {
+      const stub = env.NATIVE.getByName("alarmed");
+
+      const alarm = yield* Effect.promise(() =>
+        runInDurableObject(stub, async (instance, state) => {
+          await state.storage.setAlarm(Date.now() + 60_000);
+          await instance.run(ActionDurableObject.wipe);
+
+          return state.storage.getAlarm();
+        }),
+      );
+
+      expect(alarm).toBeNull();
+    }),
+  );
+
   it.effect("wipe runs its steps with the caller's context", () =>
     Effect.gen(function* () {
       const outcome = yield* Effect.promise(() =>

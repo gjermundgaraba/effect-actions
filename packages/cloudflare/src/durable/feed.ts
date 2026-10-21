@@ -441,7 +441,7 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
  * **Gotchas**
  *
  * - `storage.deleteAll()` alone cuts every subscriber off: its record is gone, so no `publish` or `end` reaches it, and its stream stays open, sent nothing, until its socket closes.
- * - The alarm is not dropped, as `deleteAll` leaves it: call `storage.deleteAlarm()` for it.
+ * - It drops the alarm too, as `deleteAll` does from `compatibility_date` `2026-02-24`, or under the `delete_all_deletes_alarm` flag: set it again after the wipe if the object needs one; before that date, or under `delete_all_preserves_alarm`, the alarm is kept, and `storage.deleteAlarm()` drops it.
  * - It ends the subscribers it finds whatever paths the routes serve, none yet included: a `wipe` as the services build answers the records the instance before left on their sockets.
  * - Its steps run with the caller's context, its services and references, and to their end: an interrupt of the caller waits for a wipe already under the gate to complete, never leaving it half done.
  * - A failure of either step, an `end` that dies or a `deleteAll` that rejects, fails `wipe` with that defect, and the object stays whole, though a callback that rejects inside `blockConcurrencyWhile` resets it: the steps' exit is returned through the gate, then raised.

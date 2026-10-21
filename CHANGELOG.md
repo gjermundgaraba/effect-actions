@@ -130,7 +130,8 @@ and the copied implementation's no longer asks `is effect-actions installed twic
       socket-id counter, so `ActionDurableObject.wipe`, an `Effect<void, never, State | Feed>`,
       wipes it: it ends every subscriber, then runs `storage.deleteAll()`, under the runtime's
       `blockConcurrencyWhile`; a step that fails fails `wipe` with its defect, the object left
-      whole. `deleteAll()` alone leaves every subscriber's stream open and
+      whole. It drops the alarm as well from `compatibility_date` `2026-02-24`, as
+      `deleteAll` does there. `deleteAll()` alone leaves every subscriber's stream open and
       sent nothing. `end()` completes every subscriber the instance runs, even one whose record
       was still being written, besides every record it finds.
     - Earlier previews' `ActionDurableObject.Feed` and its types are gone: yield the core's
