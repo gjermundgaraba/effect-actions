@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { expect, it } from "@effect/vitest";
 import manifest from "../package.json" with { type: "json" };
 
-const declarationSpecifier = /^(?:(?:import|export)\b[^;"'`]*?\bfrom\s*|import\s*)"([^"]+)"/gm;
+const declarationSpecifier =
+  /^(?:(?:import|export)\b(?!\s+type\b)[^;"'`]*?\bfrom\s*|import\s*)"([^"]+)"/gm;
 
 const sourceOf = new Map(
   Object.entries(manifest.exports).map(([subpath, source]) => [

@@ -14,6 +14,7 @@ import {
 } from "effect";
 import { type Headers, HttpClientRequest, type HttpRouter, HttpServerRequest } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
+import type { Socket } from "effect/socket";
 import {
   Rpc,
   RpcClient,
@@ -754,15 +755,12 @@ export const reconnectUntil = (...codes: ReadonlyArray<number>) =>
   // which Effect does not export: on an Effect upgrade, compare it there, as a change of
   // Effect's default leaves this one behind.
   Schedule.min([Schedule.exponential(500, 1.5), Schedule.spaced(5000)]).pipe(
-    // Why: typed by the one field it reads rather than as Effect's `SocketError`, so a browser
-    // client importing this module needs no `effect/socket`; a `SocketError` is one.
-    Schedule.setInputType<{ readonly reason: unknown }>(),
-    Schedule.while(({ input: { reason } }) => {
-      const closedWith =
-        Predicate.isTagged(reason, "SocketCloseError") && Predicate.hasProperty(reason, "code")
-          ? reason.code
-          : undefined;
-
-      return !codes.some((code) => code === closedWith);
-    }),
+    Schedule.setInputType<Socket.SocketError>(),
+    Schedule.while(
+      ({ input: { reason } }) =>
+        !(
+          Predicate.isTagged(reason, "SocketCloseError") &&
+          codes.some((code) => code === reason.code)
+        ),
+    ),
   );
