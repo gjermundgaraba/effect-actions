@@ -313,14 +313,13 @@ const defaultReason = (version: string) => {
     : "This server speaks another protocol: reload the page";
 };
 
-// Why: a refusal's code must reach the page whole, so `reconnectUntil(code)` can stop at it: the
-// codes a page may close with itself, 1000 and 3000 to 4999, as the WHATWG WebSocket standard's
-// `close()` (#dom-websocket-close) takes them. RFC 6455 §7.4.2 reserves 1000 to 2999 for the
-// protocol, whose assigned codes say something else, such as going away, and a browser treats an
-// unassigned one as a protocol error, the page seeing 1006. The rule is checked here rather than
-// on a socket pair made at build: an accepted end whose close goes unanswered keeps that build's
-// request in flight, and an eviction waits for in-flight requests to drain.
-const pageCloseCode = (code: number) =>
+// Why: the option's policy is the codes a page may close with itself, 1000 and 3000 to 4999, as the
+// WHATWG WebSocket standard's `close()` (#dom-websocket-close) takes them, 4000 and up being
+// private use. RFC 6455 §7.4.2 reserves 1000 to 2999 for the protocol, whose assigned codes say
+// something else, such as going away, so a refusal does not borrow one. The rule is checked here
+// rather than on a socket pair made at build: an accepted end whose close goes unanswered keeps
+// that build's request in flight, and an eviction waits for in-flight requests to drain.
+const acceptedCode = (code: number) =>
   Number.isInteger(code) && (code === 1000 || (code >= 3000 && code <= 4999));
 
 // Why: the runtime throws at `close` for a code or a reason it does not take, so a refusal judged
@@ -332,10 +331,10 @@ const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
 
     const { version, code, reason = defaultReason(version) } = protocol;
 
-    if (!pageCloseCode(code)) {
+    if (!acceptedCode(code)) {
       return yield* Effect.die(
         new Error(
-          `ActionDurableObject.layerWebSocket's protocol.code ${code} is not a close code a page is given whole: give 1000 or an integer from 3000 to 4999, from 4000 an application's own`,
+          `ActionDurableObject.layerWebSocket's protocol.code ${code} is not one it accepts, 1000 or an integer from 3000 to 4999: give one, from 4000 for an application's own`,
         ),
       );
     }
@@ -390,7 +389,7 @@ export interface LayerWebSocketOptions {
   readonly protocol?: {
     /** The version served, compared with the query parameter as a string. */
     readonly version: string;
-    /** The close code of a refusal, which a page's client stops at: 1000 or an integer from 3000 to 4999, from 4000 an application's own; another fails `layerWebSocket`'s build, as 1001 to 2999 are the protocol's own, its assigned codes saying something else, such as going away, and an unassigned one reaching a browser's page as 1006, never stopping its client. */
+    /** The close code of a refusal, which a page's client stops at: 1000 or an integer from 3000 to 4999, the codes a page's own `close()` takes, from 4000 for an application's own; another fails `layerWebSocket`'s build, as 1001 to 2999 are the protocol's own, its assigned codes saying something else, such as going away. */
     readonly code: number;
     /** The close reason of a refusal, at most 123 bytes UTF-8 encoded, as a close frame holds: a longer one fails `layerWebSocket`'s build. By default `This server speaks protocol <version>: reload the page`, or `This server speaks another protocol: reload the page` where the version would not fit, so any `version` builds. */
     readonly reason?: string;

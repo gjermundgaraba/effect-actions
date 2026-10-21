@@ -78,16 +78,16 @@ const built = (protocol: NonNullable<ActionDurableObject.LayerWebSocketOptions["
 
 describe("layerWebSocket's protocol", () => {
   it.effect(
-    "fails the build with a code a page is not given whole, naming the field and the codes it is",
+    "fails the build with a code other than 1000 or 3000 to 4999, naming the field and the codes it accepts",
     () =>
       Effect.gen(function* () {
         expect(yield* built({ version: "3", code: 2000 })).toBe(
-          "Error: ActionDurableObject.layerWebSocket's protocol.code 2000 is not a close code a page is given whole: give 1000 or an integer from 3000 to 4999, from 4000 an application's own",
+          "Error: ActionDurableObject.layerWebSocket's protocol.code 2000 is not one it accepts, 1000 or an integer from 3000 to 4999: give one, from 4000 for an application's own",
         );
 
         for (const code of [999, 1001, 1004, 1005, 1006, 1015, 2999, 5000, 4000.5]) {
           expect(yield* built({ version: "3", code })).toContain(
-            "is not a close code a page is given whole",
+            "is not one it accepts, 1000 or an integer from 3000 to 4999",
           );
         }
 
