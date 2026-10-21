@@ -9,6 +9,7 @@ import {
   allowedOrigin,
   expectedProtocol,
   givenReason,
+  longVersions,
   statusKey,
   VersionedRpcs,
 } from "../support/versioned.js";
@@ -76,40 +77,57 @@ const built = (protocol: NonNullable<ActionDurableObject.LayerWebSocketOptions["
   ).pipe(Effect.map((exit) => (Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : "built")));
 
 describe("layerWebSocket's protocol", () => {
-  it.effect("fails the build with a code no application owns, naming the field and the range", () =>
+  it.effect("fails the build with a code the runtime's close refuses, naming the field", () =>
     Effect.gen(function* () {
       expect(yield* built({ version: "3", code: 5000 })).toBe(
-        "Error: ActionDurableObject.layerWebSocket's protocol.code is 5000, no close code of an application's own: give an integer from 4000 to 4999",
+        "Error: ActionDurableObject.layerWebSocket's protocol.code 5000 is refused by a socket's close: give an integer from 4000 to 4999, an application's own",
       );
 
-      for (const code of [1000, 3999, 4000.5]) {
-        expect(yield* built({ version: "3", code })).toContain("give an integer from 4000 to 4999");
+      for (const code of [999, 1005, 1015]) {
+        expect(yield* built({ version: "3", code })).toContain("is refused by a socket's close");
       }
 
-      for (const code of [4000, 4999]) {
+      for (const code of [1000, 3000, 4000, 4999]) {
         expect(yield* built({ version: "3", code })).toBe("built");
       }
     }),
   );
 
   it.effect(
-    "fails the build with a reason past a close frame's 123 bytes, UTF-8 encoded, the default one growing with the version",
+    "fails the build with a reason given past a close frame's 123 bytes, UTF-8 encoded",
     () =>
       Effect.gen(function* () {
-        const failure = "a reason of 124 bytes, more than the 123 a close frame holds";
-        const defaultBytes = `This server speaks protocol : reload the page`.length;
-
         expect(yield* built({ version: "3", code: 4000, reason: "é".repeat(62) })).toContain(
-          failure,
+          "protocol.reason is 124 bytes, more than the 123 a close frame holds",
         );
         expect(yield* built({ version: "3", code: 4000, reason: `x${"é".repeat(61)}` })).toBe(
           "built",
         );
-        expect(yield* built({ version: "v".repeat(123 - defaultBytes + 1), code: 4000 })).toContain(
-          failure,
-        );
-        expect(yield* built({ version: "v".repeat(123 - defaultBytes), code: 4000 })).toBe("built");
       }),
+  );
+
+  it.effect(
+    "refuses a page of another version under any version, naming it in the default reason where it fits a close frame, UTF-8 encoded",
+    () =>
+      Effect.gen(function* () {
+        const reasons: Record<string, string | undefined> = {};
+
+        for (const name of Object.keys(longVersions)) {
+          const { status, socket } = yield* upgrade(fresh(), `/${name}?protocol=2`);
+          const client = yield* acceptedAsTheClientListens(socket);
+          const { reason } = yield* Effect.flip(client.protocol());
+
+          expect(status).toBe(101);
+          expect(reason).toMatchObject({ _tag: "SocketCloseError", code: 4000 });
+          reasons[name] = reason._tag === "SocketCloseError" ? reason.closeReason : undefined;
+        }
+
+        expect(reasons).toEqual({
+          long: "This server speaks another protocol: reload the page",
+          fits: `This server speaks protocol ${longVersions.fits}: reload the page`,
+          over: "This server speaks another protocol: reload the page",
+        });
+      }).pipe(Effect.scoped),
   );
 
   it.effect(

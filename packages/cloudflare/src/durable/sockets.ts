@@ -301,38 +301,55 @@ const makeProtocol = (
 
 const closeReasonBytes = 123;
 
+const bytesOf = (text: string) => new TextEncoder().encode(text).byteLength;
+
+// Why: a version is any string, a long fingerprint included, so the default reason names it only
+// when it fits the close frame: a reason naming a long version would be refused at `close`.
+const defaultReason = (version: string) => {
+  const named = `This server speaks protocol ${version}: reload the page`;
+
+  return bytesOf(named) <= closeReasonBytes
+    ? named
+    : "This server speaks another protocol: reload the page";
+};
+
+// Why: the runtime's `close` accepts an irregular set of codes, so a code is judged by the
+// runtime itself, on a socket of its own.
+const closeAccepts = (code: number) =>
+  Effect.try(() => {
+    const { 1: server } = new WebSocketPair();
+
+    server.accept();
+    server.close(code);
+  });
+
 // Why: the runtime throws at `close` for a code or a reason it does not take, so a refusal judged
 // only as a page of another version arrives, after a deploy, would fail that upgrade, which the
 // page sees as a drop and its client connects again after for good: the loop the refusal ends.
 const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
-  Effect.suspend(() => {
-    if (protocol === undefined) return Effect.succeed(undefined);
+  Effect.gen(function* () {
+    if (protocol === undefined) return undefined;
 
-    const {
-      version,
-      code,
-      reason = `This server speaks protocol ${version}: reload the page`,
-    } = protocol;
+    const { version, code, reason = defaultReason(version) } = protocol;
 
-    const bytes = new TextEncoder().encode(reason).byteLength;
-
-    if (!Number.isInteger(code) || code < 4000 || code > 4999) {
-      return Effect.die(
+    yield* Effect.catch(closeAccepts(code), (cause) =>
+      Effect.die(
         new Error(
-          `ActionDurableObject.layerWebSocket's protocol.code is ${code}, no close code of an application's own: give an integer from 4000 to 4999`,
+          `ActionDurableObject.layerWebSocket's protocol.code ${code} is refused by a socket's close: give an integer from 4000 to 4999, an application's own`,
+          { cause },
+        ),
+      ),
+    );
+
+    if (bytesOf(reason) > closeReasonBytes) {
+      return yield* Effect.die(
+        new Error(
+          `ActionDurableObject.layerWebSocket's protocol.reason is ${bytesOf(reason)} bytes, more than the ${closeReasonBytes} a close frame holds: give one of at most ${closeReasonBytes} bytes, UTF-8 encoded`,
         ),
       );
     }
 
-    if (bytes > closeReasonBytes) {
-      return Effect.die(
-        new Error(
-          `ActionDurableObject.layerWebSocket's protocol refuses with a reason of ${bytes} bytes, more than the ${closeReasonBytes} a close frame holds: give a protocol.reason of at most ${closeReasonBytes} bytes, UTF-8 encoded`,
-        ),
-      );
-    }
-
-    return Effect.succeed({ version, code, reason });
+    return { version, code, reason };
   });
 
 /**
@@ -374,9 +391,9 @@ export interface LayerWebSocketOptions {
   readonly protocol?: {
     /** The version served, compared with the query parameter as a string. */
     readonly version: string;
-    /** The close code of a refusal, an integer from 4000 to 4999, an application's own: another fails `layerWebSocket`'s build. */
+    /** The close code of a refusal, an integer from 4000 to 4999 for an application's own: one the runtime's `close` refuses fails `layerWebSocket`'s build. */
     readonly code: number;
-    /** The close reason of a refusal, at most 123 bytes UTF-8 encoded, as a close frame holds, by default `This server speaks protocol <version>: reload the page`, which grows with `version`: a longer one fails `layerWebSocket`'s build. */
+    /** The close reason of a refusal, at most 123 bytes UTF-8 encoded, as a close frame holds: a longer one fails `layerWebSocket`'s build. By default `This server speaks protocol <version>: reload the page`, or `This server speaks another protocol: reload the page` where the version would not fit, so any `version` builds. */
     readonly reason?: string;
   };
 }

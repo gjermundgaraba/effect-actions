@@ -91,8 +91,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     closed at once with that code and reason, which the page's client reads as `SocketCloseError`,
     since a browser cannot read a refused upgrade's status, and whose reconnection the core's
     `ActionRpc.reconnectUntil(code)` stops at that code: chat-rooms' `routes.ts` and `browser.ts`
-    show it. A `code` outside 4000 to 4999, or a reason over a close frame's 123 bytes, UTF-8
-    encoded, fails the build rather than each refusal. Router middleware provided to it runs for the
+    show it. A `code` the runtime's `close` refuses, or a `reason` given over a close frame's 123
+    bytes, UTF-8 encoded, fails the build rather than each refusal; the default reason names the
+    version only where it fits, so any version builds. Router middleware provided to it runs for the
     upgrade alone, and refuses one by any other judge, such as a foreign `Origin`, by returning
     `refuseUpgrade(code, reason)` itself. An upgrade is logged and traced as 101. Effect's web
     handler cannot upgrade a request, so `RpcServer.layerProtocolWebsocket` serves no socket on
