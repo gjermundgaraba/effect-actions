@@ -147,7 +147,6 @@ const completed = Schema.encodeSync(
  *
  * **Gotchas**
  *
- * - The stream `subscribe` returns carries none of the values, which go to the socket as they are published: an operator applied to it, such as `Stream.map`, sees none.
  * - A value published while `initial` is read may arrive before it and again in it, and with a schema that encodes asynchronously, one published between the read and the send arrives before it and not in it; after `initial`, values arrive in the order their publishes finished encoding, the order of the calls for a schema that encodes synchronously.
  * - `initial` is read with Effect's scheduler yields off, the fibers it forks included, so its values are sent in the step that reads them: a long synchronous read holds the object's other fibers until it is sent.
  * - A subscriber whose `initial` fails is sent a value published while it was read first, as one chunk its stream emits before it fails.

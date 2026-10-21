@@ -1,14 +1,4 @@
-import {
-  type Cause,
-  Context,
-  Deferred,
-  Effect,
-  Layer,
-  Option,
-  Queue,
-  type Schema,
-  Stream,
-} from "effect";
+import { type Cause, Context, Deferred, Effect, Layer, Option, Queue, Stream } from "effect";
 import type { Rpc, RpcMessage, RpcSchema } from "effect/rpc";
 
 /**
@@ -59,7 +49,7 @@ export interface EndOptions {
 }
 
 interface Entry {
-  readonly definition: Schema.Top;
+  readonly rpc: Rpc.Any;
   readonly key: string | undefined;
   readonly queue: Queue.Queue<unknown, Cause.Done>;
   readonly ended: Deferred.Deferred<void>;
@@ -76,7 +66,8 @@ interface Entry {
  *
  * **Gotchas**
  *
- * - The stream `subscribe` returns is the call's, not a pipeline of what is published: an operator applied to it, such as `Stream.map`, may see none of the values, so transform a value before publishing it, or give subscribers a `key`.
+ * - Treat the stream `subscribe` returns as a handle to the call, not a pipeline of what is published: an operator applied to it, such as `Stream.map`, sees the values on one implementation and none on another, so transform a value before publishing it.
+ * - An rpc is its tag: `publish` and `end` reach the subscribers of their rpc's tag, a `prefix`ed group's rpc is another rpc, and a feed serves one definition of each tag, so give two groups' rpcs tags of their own, or each group its own feed.
  * - Every value published once a subscriber subscribed reaches it, at least once: one published while `initial` is read may arrive before it and again in it, so give values an id the client drops repeats by.
  * - Values published one after another once `initial` was sent, each `publish` completing before the next begins, arrive in that order.
  * - A subscriber whose `initial` fails ends with its failure, and is sent nothing more.
@@ -112,12 +103,23 @@ export class Feed extends Context.Service<
   }
 >()("effect-actions/Feed") {}
 
-// Why: a group's tags are unique within it alone, so two groups served beside each other may
-// each hold a `watch`; the success schema `Rpc.make` created is kept whole by every copy a group
-// makes of its rpc, through `middleware`, `annotate` and `prefix`, and belongs to that rpc alone.
-const definitionOf = (rpc: Rpc.Any) =>
+const schemasOf = (rpc: Rpc.Any) => {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native rpc boundary: every rpc a group holds is a native `Rpc`, carrying its schemas.
-  (rpc as Rpc.AnyWithProps).successSchema;
+  const { payloadSchema, successSchema, errorSchema, defectSchema } = rpc as Rpc.AnyWithProps;
+
+  return [payloadSchema, successSchema, errorSchema, defectSchema];
+};
+
+// Why: a group's tags are unique within it alone, so two groups served beside one feed may each
+// define a `watch`, and a feed matching by tag would send one's publications to the other's
+// subscribers. Every copy a group makes of an rpc, through `middleware`, `annotate` or `prefix`,
+// keeps the definition's four schemas, which tell it from a second definition; two `Rpc.make`
+// calls sharing all four are one definition to the feed.
+const sameDefinition = (one: Rpc.Any, other: Rpc.Any) => {
+  const theirs = schemasOf(other);
+
+  return schemasOf(one).every((schema, index) => schema === theirs[index]);
+};
 
 /**
  * A feed kept in the memory of the process that builds it: each subscriber a queue the
@@ -128,10 +130,9 @@ const definitionOf = (rpc: Rpc.Any) =>
  *
  * - Each build is one feed: what publishes and the routes serving the stream rpc must share it, provided once around both, as beside a store; a feed provided to each separately is two, and a value published to one reaches no subscriber of the other.
  * - `initial` is sent first, as one chunk: a value published while it is read arrives after it, and again if the read saw it; values published while the client is slow to read arrive together, in one chunk; an `end` arriving after the read completed but before the server pulled the stream still sends `initial`, then ends it.
- * - The stream carries the values here, so an operator applied to it sees them, which a durable feed's never does.
  * - Each subscriber's queue is unbounded, so a publish never waits: a client that stops reading holds every value published to it in the server's memory until its stream ends.
  * - Subscribers live in the process: a restart drops their connections, and each page subscribes again from the last value it holds.
- * - An rpc is told apart by its definition, the success schema `Rpc.make` gave it, not its tag: a group's `middleware` or `prefix` keeps it, so publishing the definition reaches the group's subscribers, and two groups' rpcs of one tag are two audiences; two rpcs made with one hand-built `RpcSchema.Stream` value are one audience, so give each its own, or `stream: true`.
+ * - A second definition of a tag, such as another group's `watch`, dies at the `subscribe`, `publish` or `end` that brings it while a subscriber of the first is kept; a group's copy of an rpc, through its `middleware`, is the rpc itself.
  */
 export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
   const subscribers = new Set<Entry>();
@@ -139,9 +140,24 @@ export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
   const matching = (rpc: Rpc.Any | undefined, key: string | undefined) =>
     [...subscribers].filter(
       (entry) =>
-        (rpc === undefined || entry.definition === definitionOf(rpc)) &&
+        (rpc === undefined || entry.rpc._tag === rpc._tag) &&
         (key === undefined || entry.key === key),
     );
+
+  // Why: judged against the subscribers kept, so the feed holds no rpc beyond its subscribers'
+  // lives, and a second definition reaching no subscriber of the first reaches nobody.
+  const oneDefinition = (rpc: Rpc.Any) =>
+    Effect.suspend(() => {
+      const kept = [...subscribers].find((entry) => entry.rpc._tag === rpc._tag);
+
+      return kept === undefined || sameDefinition(kept.rpc, rpc)
+        ? Effect.void
+        : Effect.die(
+            new Error(
+              `Feed.layer serves one definition of each rpc tag, and a second definition of ${rpc._tag} reached it, as from two groups each defining one: give each rpc its own tag, or each group its own feed`,
+            ),
+          );
+    });
 
   return Feed.of({
     subscribe: <R extends Rpc.Any, E = never, RR = never>(
@@ -150,8 +166,10 @@ export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
     ) =>
       Stream.unwrap(
         Effect.gen(function* () {
+          yield* oneDefinition(request.rpc);
+
           const entry: Entry = {
-            definition: definitionOf(request.rpc),
+            rpc: request.rpc,
             key: options?.key,
             queue: yield* Queue.unbounded<unknown, Cause.Done>(),
             ended: yield* Deferred.make<void>(),
@@ -181,7 +199,7 @@ export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
               onSome: (values) =>
                 Stream.concat(
                   Stream.fromArray(values),
-                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased rpc definition: a subscriber's queue is offered only what a publish of its rpc's definition sends, its chunk.
+                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased rpc: a subscriber's queue is offered only what a publish of its rpc's one definition sends, its chunk.
                   Stream.fromQueue(entry.queue) as Stream.Stream<Rpc.SuccessChunk<R>>,
                 ),
             },
@@ -189,21 +207,27 @@ export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
         }),
       ),
     publish: (rpc, value, options) =>
-      Effect.suspend(() =>
-        Effect.forEach(matching(rpc, options?.key), ({ queue }) => Queue.offer(queue, value), {
-          discard: true,
-        }),
+      Effect.andThen(
+        oneDefinition(rpc),
+        Effect.suspend(() =>
+          Effect.forEach(matching(rpc, options?.key), ({ queue }) => Queue.offer(queue, value), {
+            discard: true,
+          }),
+        ),
       ),
     end: (rpc?: Rpc.Any, options?: EndOptions) =>
-      Effect.suspend(() =>
-        Effect.forEach(
-          matching(rpc, options?.key),
-          (entry) =>
-            Effect.sync(() => subscribers.delete(entry)).pipe(
-              Effect.andThen(Deferred.succeed(entry.ended, undefined)),
-              Effect.andThen(Queue.end(entry.queue)),
-            ),
-          { discard: true },
+      Effect.andThen(
+        rpc === undefined ? Effect.void : oneDefinition(rpc),
+        Effect.suspend(() =>
+          Effect.forEach(
+            matching(rpc, options?.key),
+            (entry) =>
+              Effect.sync(() => subscribers.delete(entry)).pipe(
+                Effect.andThen(Deferred.succeed(entry.ended, undefined)),
+                Effect.andThen(Queue.end(entry.queue)),
+              ),
+            { discard: true },
+          ),
         ),
       ),
   });

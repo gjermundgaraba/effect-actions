@@ -101,8 +101,6 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     `make` provide it, `Layer<Feed, never, State>`, to the services, the calls, the routes, the
     alarm and `run`, so any of them publishes, and domain code yields the core's `Feed`,
     importing nothing of this package. What it adds to the core's rules:
-    - The stream `subscribe` returns carries none of the values, which go to the socket as
-      published: an operator such as `Stream.map` sees none.
     - Only a call over `layerWebSocket` subscribes; one over the stub or HTTP dies at once. It
       serves the sockets of one `layerWebSocket` path: on an object serving two, `subscribe`,
       `publish` and `end` die at once, naming both, as they do before the routes register their
@@ -209,11 +207,14 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     `EndOptions` the rest. A handler's subscriber is typed by its rpc, so `initial` is checked
     as the rpc's chunk.
   - Every implementation keeps the rules on `Feed.Feed`, at-least-once delivery from the
-    moment a call subscribes among them.
+    moment a call subscribes among them. An rpc is its tag, and a feed serves one definition of
+    each: give two groups' rpcs tags of their own, or each group its own feed. Treat the stream
+    `subscribe` returns as a handle: an operator on it sees the values on one implementation
+    and none on another, so transform a value before publishing it.
   - `Feed.layer` keeps the subscribers in a process's memory, for a server holding its clients'
     connections, such as Node's, and for tests, which provide it to their routes: `Testing.layer`
-    provides none. It tells rpcs apart by definition, so two groups' rpcs of one tag are two.
-    The Cloudflare package's `ActionDurableObject.layerFeed` keeps them in a Durable Object's
+    provides none. A second definition of a tag, such as another group's `watch`, dies at the
+    `subscribe`, `publish` or `end` that brings it. The Cloudflare package's `ActionDurableObject.layerFeed` keeps them in a Durable Object's
     storage.
   - live-rpc's pages follow a room with `watch`, a stream rpc in the binding's `rpcs`, and
     subscribe again after a dropped socket from the last message they hold; `docs/Feed.md`

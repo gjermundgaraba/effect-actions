@@ -1,8 +1,21 @@
 import * as v8 from "node:v8";
 import * as vm from "node:vm";
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Effect, Fiber, Layer, Match, Queue, Ref, Schema, Stream } from "effect";
-import { Rpc, RpcGroup, RpcMiddleware, RpcTest } from "effect/rpc";
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Match,
+  Queue,
+  Ref,
+  Schema,
+  Stream,
+} from "effect";
+import { Rpc, RpcGroup, RpcMiddleware, RpcSchema, RpcTest } from "effect/rpc";
 import * as Feed from "../../src/feed/Feed.js";
 
 class NoInitial extends Schema.TaggedError<NoInitial>()("NoInitial", {}) {}
@@ -282,25 +295,81 @@ describe("Feed.layer", () => {
   );
 
   it.effect(
-    "tells apart two groups' rpcs of one tag, one wrapped by a group middleware, in what it publishes and ends",
+    "reaches a group's subscribers by the rpc it wraps with its middleware, in what it publishes and ends",
+    () =>
+      Effect.gen(function* () {
+        const feed = yield* Feed.Feed;
+        const wrapped = yield* Effect.provide(RpcTest.makeClient(Wrapped), wrappedServed);
+        const a = yield* follow(wrapped.watch(), 1);
+
+        yield* feed.publish(WrappedWatch, 1);
+        yield* feed.end(WrappedWatch);
+
+        expect([a.first, yield* a.rest]).toEqual([[0], [1]]);
+      }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
+  );
+
+  it.effect(
+    "refuses a second definition of a tag, another group's, at its publish, end and subscribe",
     () =>
       Effect.gen(function* () {
         const feed = yield* Feed.Feed;
         const wrapped = yield* Effect.provide(RpcTest.makeClient(Wrapped), wrappedServed);
         const plain = yield* Effect.provide(RpcTest.makeClient(Plain), plainServed);
-        const a = yield* follow(wrapped.watch(), 1);
-        const b = yield* follow(plain.watch(), 1);
 
-        yield* feed.publish(WrappedWatch, 1);
-        yield* feed.publish(PlainWatch, 2);
-        yield* feed.end(WrappedWatch);
-        yield* Fiber.join(a.fiber);
-        yield* feed.publish(PlainWatch, 3);
+        yield* follow(wrapped.watch(), 1);
+
+        const published = yield* Effect.exit(feed.publish(PlainWatch, 2));
+        const ended = yield* Effect.exit(feed.end(PlainWatch));
+        const subscribed = yield* Effect.exit(Stream.runDrain(plain.watch()));
+
         yield* feed.end();
 
-        expect(yield* a.rest).toEqual([1]);
-        expect(yield* b.rest).toEqual([2, 3]);
+        expect(Exit.isFailure(published) ? Cause.squash(published.cause) : undefined).toEqual(
+          new Error(
+            "Feed.layer serves one definition of each rpc tag, and a second definition of watch reached it, as from two groups each defining one: give each rpc its own tag, or each group its own feed",
+          ),
+        );
+        expect(Exit.isFailure(ended) ? Cause.pretty(ended.cause) : "").toContain(
+          "a second definition of watch",
+        );
+        expect(Exit.isFailure(subscribed) ? Cause.pretty(subscribed.cause) : "").toContain(
+          "a second definition of watch",
+        );
       }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
+  );
+
+  it.effect("keeps apart two rpcs of their own tags made from one hand-built stream schema", () =>
+    Effect.gen(function* () {
+      const feed = yield* Feed.Feed;
+      const shared = RpcSchema.Stream(Schema.String, Schema.Never);
+      const Private = Rpc.make("privateWatch", { success: shared });
+      const Public = Rpc.make("publicWatch", { success: shared });
+      const Both = RpcGroup.make(Private, Public);
+
+      const rpc = yield* Effect.provide(
+        RpcTest.makeClient(Both),
+        Both.toLayer({
+          privateWatch: (_, request) => feed.subscribe(request),
+          publicWatch: (_, request) => feed.subscribe(request, { initial: ["public ready"] }),
+        }),
+      );
+
+      const watching = yield* Queue.unbounded<string>();
+
+      const fiber = yield* Effect.forkScoped(
+        Stream.runForEach(rpc.publicWatch(), (value) => Queue.offer(watching, value)),
+      );
+
+      const ready = yield* Queue.take(watching);
+
+      yield* feed.publish(Private, "private secret");
+      yield* feed.publish(Public, "public update");
+      yield* feed.end();
+      yield* Fiber.join(fiber);
+
+      expect([ready, ...(yield* Queue.clear(watching))]).toEqual(["public ready", "public update"]);
+    }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
   );
 
   it.effect("sends nothing to a subscriber ended as its initial values are read", () =>
