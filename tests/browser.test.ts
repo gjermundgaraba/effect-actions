@@ -3,8 +3,10 @@ import { dirname, join } from "node:path";
 import { expect, it } from "@effect/vitest";
 import manifest from "../package.json" with { type: "json" };
 
-const declarationSpecifier =
+const runtimeSpecifier =
   /^(?:(?:import|export)\b(?!\s+type\b)[^;"'`]*?\bfrom\s*|import\s*)"([^"]+)"/gm;
+
+const typeOrRuntimeSpecifier = /^(?:(?:import|export)\b[^;"'`]*?\bfrom\s*|import\s*)"([^"]+)"/gm;
 
 const sourceOf = new Map(
   Object.entries(manifest.exports).map(([subpath, source]) => [
@@ -15,14 +17,17 @@ const sourceOf = new Map(
 
 const isWalked = (specifier: string) => specifier.startsWith(".") || sourceOf.has(specifier);
 
-const modulesOf = (entry: string): ReadonlyMap<string, ReadonlyArray<string>> => {
+const modulesOf = (
+  entry: string,
+  declaration = runtimeSpecifier,
+): ReadonlyMap<string, ReadonlyArray<string>> => {
   const seen = new Map<string, ReadonlyArray<string>>();
   const pending = [entry];
 
   for (let file = pending.pop(); file !== undefined; file = pending.pop()) {
     if (seen.has(file)) continue;
 
-    const specifiers = [...readFileSync(file, "utf8").matchAll(declarationSpecifier)].flatMap(
+    const specifiers = [...readFileSync(file, "utf8").matchAll(declaration)].flatMap(
       ([, specifier]) => (specifier === undefined ? [] : [specifier]),
     );
 
@@ -102,12 +107,13 @@ it.each(["examples/live-rpc/src/browser.ts", "examples/kitchen-sink/src/browser.
   },
 );
 
-it("Action imports no transport, the in-process client included: no HTTP, RPC, MCP, AI toolkit or CLI module", () => {
-  const transports = [...modulesOf(manifest.exports["./Action"].slice(2))].flatMap(
-    ([file, specifiers]) =>
-      specifiers
-        .filter((specifier) => /^effect\/(?:http|http-api|rpc|ai|cli)(?:\/|$)/.test(specifier))
-        .map((specifier) => `${file}: ${specifier}`),
+it("Action imports no transport, the in-process client included, not even its types: no HTTP, RPC, MCP, AI toolkit or CLI module", () => {
+  const transports = [
+    ...modulesOf(manifest.exports["./Action"].slice(2), typeOrRuntimeSpecifier),
+  ].flatMap(([file, specifiers]) =>
+    specifiers
+      .filter((specifier) => /^effect\/(?:http|http-api|rpc|ai|cli)(?:\/|$)/.test(specifier))
+      .map((specifier) => `${file}: ${specifier}`),
   );
 
   expect(transports).toEqual([]);
