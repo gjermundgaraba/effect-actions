@@ -1,9 +1,12 @@
 # effect-actions-cloudflare
 
-`@gjermundgaraba/effect-actions-cloudflare` serves
-[effect-actions](https://github.com/gjermundgaraba/effect-actions) from Cloudflare Durable
-Objects, and calls them from a Worker. It is released with `@gjermundgaraba/effect-actions`, at
-the same version, and requires it.
+`@gjermundgaraba/effect-actions-cloudflare` serves Effect RPC from Cloudflare Durable Objects,
+over WebSockets the runtime holds while an object hibernates and over an object's stub, and
+calls it from a Worker: any plain `RpcGroup`, with no action at all, served by Effect's own
+`RpcServer`, and pushed to pages with the core's `Feed`, kept across hibernation.
+[effect-actions](https://github.com/gjermundgaraba/effect-actions) bindings are the option: the
+same routes `ActionRpc.layer` and `ActionHttp.layer` serve elsewhere, in an object. It is
+released with `@gjermundgaraba/effect-actions`, at the same version, and requires it.
 
 ```sh
 pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflare effect@~4.0.4

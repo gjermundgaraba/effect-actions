@@ -71,7 +71,10 @@ export const layerRooms = Layer.effect(Rooms)(
 Why no stub is held, and when one breaks, are on `ActionDurableObject.client`; for Effect's own
 typing, with `RpcClientError` in every call's errors, `RpcClient.make(group)` over
 `layerStubClient(stub)`, whose stub it holds. From another object, make the client in a startup
-service.
+service. A Worker's entrypoint that is no Effect program, such as a `WorkerEntrypoint` method or
+a queue consumer, runs its calls through one `ManagedRuntime` over the client's Layer, built once
+per isolate, as the lobby's handler is: `RpcClient.make` requires a `Scope` natively, so no
+client without one is offered.
 
 ## Name the object in its errors
 

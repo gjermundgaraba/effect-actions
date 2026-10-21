@@ -1,10 +1,12 @@
 # effect-actions-cloudflare
 
-`@gjermundgaraba/effect-actions-cloudflare` serves effect-actions from Cloudflare Durable
-Objects: the routes `ActionHttp.layer` and `ActionRpc.layer` serve elsewhere, in an object,
-with Effect RPC over WebSockets the runtime holds while the object hibernates. A Worker, or
-another object, calls an object's rpcs over its stub with Cloudflare's own RPC, or its routes
-with the core's own clients.
+`@gjermundgaraba/effect-actions-cloudflare` serves Effect RPC from Cloudflare Durable Objects,
+over WebSockets the runtime holds while the object hibernates: any plain `RpcGroup`, on
+Effect's own `RpcServer`, with no action at all, its streams pushed to pages with the core's
+`Feed`, which an object keeps across hibernation. Actions are the option: the routes
+`ActionHttp.layer` and `ActionRpc.layer` serve elsewhere, in an object. A Worker, or another
+object, calls an object's rpcs over its stub with Cloudflare's own RPC, or its routes with the
+core's own clients.
 
 These pages cover what this package adds. Everything else, contracts, implementations,
 authentication and each surface, is in the core package's docs, at
@@ -39,6 +41,6 @@ declarations name the Workers runtime's types, from `wrangler types` or
 | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | [ActionDurableObject.md](ActionDurableObject.md)                     | serve actions from an object, over hibernating WebSockets and JSON; run its alarm; test it; deploy it      |
 | [ActionDurableObject-stub.md](ActionDurableObject-stub.md)           | serve an object's own API over its stub, call it from a Worker, name the object in errors, call its routes |
-| [ActionDurableObject-feed.md](ActionDurableObject-feed.md)           | push to the pages connected to an object, after it hibernated too, with an rpc that streams                |
+| [ActionDurableObject-feed.md](ActionDurableObject-feed.md)           | push to the pages connected to an object, after it hibernated too, with the core's `Feed`                  |
 | [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a class that cannot extend `make`'s, delegating to `handlers` or composing the primitives  |
 | [ActionDurableObject-failures.md](ActionDurableObject-failures.md)   | find what workerd's, the compiler's or Effect's message means, and the fix                                 |
