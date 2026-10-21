@@ -299,7 +299,7 @@ const makeProtocol = (
  * **Gotchas**
  *
  * - A 403, or any other status, reaches a browser's WebSocket as a bare 1006, as a network drop, and Effect's client connects again, every few seconds for good.
- * - Effect's client connects again after this close as well, each upgrade waking the object, unless `RpcClient.layerProtocolSocket`'s `retryPolicy` stops at `code`.
+ * - Effect's client connects again after this close as well, every five seconds for good, each upgrade waking the object, unless its `retryPolicy` is the core's `ActionRpc.reconnectUntil(code)`, the client half of this refusal.
  * - Its socket is accepted without the hibernation API and the library's route never runs, so the object keeps nothing of it.
  */
 export const refuseUpgrade = (
@@ -337,7 +337,7 @@ export interface LayerWebSocketOptions {
  * - A client's close frame is answered with its own code and reason, as the closing handshake asks, whatever the `compatibility_date`: where the runtime already replied, under `web_socket_auto_reply_to_close`, the second reply is ignored; a socket the class accepted itself is the class's to answer.
  * - An upgrade whose headers, cookies included, exceed the runtime's 16 KiB attachment is answered 431; a request to `path` that is no upgrade is answered 426.
  * - workerd keeps a socket's headers across hibernation; celld 0.6.2 drops them when it evicts an idle object, so a message relying on the upgrade's token is refused as unauthenticated: send a token on each message.
- * - The upgrade's URL and query are not kept, as Effect's own socket protocol keeps neither: a message has no URL, so an API key in the query never authenticates; router middleware reads the upgrade's query, and refuses one, such as a page of another version, with `refuseUpgrade`.
+ * - The upgrade's URL and query are not kept, as Effect's own socket protocol keeps neither: a message has no URL, so an API key in the query never authenticates; router middleware reads the upgrade's query, and refuses one, such as a page of another version, with `refuseUpgrade`, which a page's client stops at given the core's `ActionRpc.reconnectUntil`.
  * - A browser WebSocket sets no header on its upgrade, so a page sends its token on each message, with `RpcClient.withHeaders`; under a cookie scheme the browser sends the cookie on any page's upgrade, which is never preflighted, so refuse a foreign `Origin` with router middleware, which runs for the upgrade, returning `refuseUpgrade`: a 403 reaches the page as a bare 1006, and its client connects again for good.
  * - The verifier runs for every message, so a token that expires refuses the next call: a client renews it on its messages, or connects again.
  * - Router middleware around the routes runs for the upgrade request alone, never for a socket's messages: list an `RpcMiddleware` in `ActionRpc.layer`'s `middleware` for a per-message service.

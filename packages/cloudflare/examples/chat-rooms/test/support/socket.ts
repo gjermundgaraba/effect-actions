@@ -2,8 +2,8 @@ import { exports } from "cloudflare:workers";
 import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
-import { reconnect } from "../../src/browser.js";
-import { protocolVersion } from "../../src/Rpc.js";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { protocolVersion, unsupportedProtocol } from "../../src/Rpc.js";
 
 // A page's socket to a room, upgraded through the Worker as a browser's would be, naming the
 // version of the rpcs as `connection(url)` does. A test has no network to open one by its URL,
@@ -38,7 +38,9 @@ export const roomSocket = (
     });
 
     const protocol = yield* Layer.build(
-      RpcClient.layerProtocolSocket({ retryPolicy: reconnect }).pipe(
+      RpcClient.layerProtocolSocket({
+        retryPolicy: ActionRpc.reconnectUntil(unsupportedProtocol),
+      }).pipe(
         Layer.provide(Layer.effect(Socket.Socket)(Socket.fromWebSocket(accepted))),
         Layer.provide(RpcSerialization.layerJson),
       ),

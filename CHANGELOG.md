@@ -43,6 +43,12 @@ and the copied implementation's no longer asks `is effect-actions installed twic
 
 ### Additions
 
+- **`ActionRpc.reconnectUntil(...codes)` is a socket client's `retryPolicy` that stops at a
+  close code**: Effect's own default for `RpcClient.layerProtocolSocket`,
+  `min(exponential(500, 1.5), spaced(5000))`, which Effect does not export, until the server
+  closes the socket with one of `codes`. It is the client half of the Cloudflare package's
+  `ActionDurableObject.refuseUpgrade`: without it, a refused page connects again every five
+  seconds for good, each upgrade waking the object.
 - **An RPC binding serves native rpcs beside its actions, such as one that streams.**
   `ActionRpc.make(actions, { rpcs: RpcGroup.make(Watch) })` adds a native `RpcGroup`, each rpc
   with its own schemas; the binding's `group` is both, and its `rpcs` the native ones as served.
@@ -76,8 +82,8 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     the upgrade alone, and refuses one, such as a page naming another version in its query, by
     returning `refuseUpgrade(code, reason)`: 101 and a socket closed at once with that code and
     reason, which the page's client reads as `SocketCloseError`, since a browser cannot read a
-    refused upgrade's status, and whose reconnection a `retryPolicy` stops at that code:
-    chat-rooms' `platform/protocol-version.ts` and `browser.ts` show it. An upgrade is logged and
+    refused upgrade's status, and whose reconnection the core's `ActionRpc.reconnectUntil(code)`
+    stops at that code: chat-rooms' `platform/protocol-version.ts` and `browser.ts` show it. An upgrade is logged and
     traced as 101. Effect's web handler cannot upgrade a
     request, so `RpcServer.layerProtocolWebsocket` serves no socket on Workers. The runtime
     answers a client's pings without waking the object. A message's event ends once the message

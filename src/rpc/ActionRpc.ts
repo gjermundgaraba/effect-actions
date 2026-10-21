@@ -6,6 +6,7 @@ import {
   Layer,
   Predicate,
   Result,
+  Schedule,
   Schema,
   type Scope,
   type Types,
@@ -734,3 +735,31 @@ export function client(
     ]);
   });
 }
+
+/**
+ * A socket client's `retryPolicy`, for `RpcClient.layerProtocolSocket`, that stops connecting
+ * again once the server closes the socket with one of `codes`: until then it is Effect's own
+ * default, `Schedule.min([Schedule.exponential(500, 1.5), Schedule.spaced(5000)])`, which Effect
+ * does not export. The client half of the Cloudflare package's
+ * `ActionDurableObject.refuseUpgrade`: a page refused with its code stops, its calls and streams
+ * failing with that `SocketCloseError`.
+ *
+ * **Gotchas**
+ *
+ * - A client without it connects again after a refusal as after any close, every five seconds for good, and each upgrade wakes a Durable Object that refuses it again.
+ * - Any other socket error, a drop included, is retried as Effect's default retries it.
+ */
+export const reconnectUntil = (...codes: ReadonlyArray<number>) =>
+  Schedule.min([Schedule.exponential(500, 1.5), Schedule.spaced(5000)]).pipe(
+    // Why: typed by the one field it reads rather than as Effect's `SocketError`, so a browser
+    // client importing this module needs no `effect/socket`; a `SocketError` is one.
+    Schedule.setInputType<{ readonly reason: unknown }>(),
+    Schedule.while(({ input: { reason } }) => {
+      const closedWith =
+        Predicate.isTagged(reason, "SocketCloseError") && Predicate.hasProperty(reason, "code")
+          ? reason.code
+          : undefined;
+
+      return !codes.some((code) => code === closedWith);
+    }),
+  );

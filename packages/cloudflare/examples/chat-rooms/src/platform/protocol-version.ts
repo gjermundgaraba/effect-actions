@@ -7,7 +7,7 @@ import { protocolVersion, unsupportedProtocol } from "../Rpc.js";
 // version of the rpcs, `?protocol=<n>`, as browser.ts sends it. It answers with `refuseUpgrade`,
 // not a 403, which a browser reports as a bare 1006 its page connects again after: the page's
 // Effect client fails its calls and streams with this code and reason, as `SocketCloseError`, and
-// stops connecting again at it, browser.ts's `reconnect`, asking its user to reload. A request
+// stops connecting again at it, `ActionRpc.reconnectUntil` in browser.ts, asking its user to reload. A request
 // that is no upgrade passes on, and the route answers it 426.
 export const refuseOtherVersions = HttpRouter.middleware((httpEffect) =>
   Effect.gen(function* () {

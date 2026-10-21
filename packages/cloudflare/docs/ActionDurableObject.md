@@ -144,7 +144,9 @@ answers itself are on `ActionDurableObject.layerWebSocket`. Router middleware pr
 runs for the upgrade alone, and refuses a page of another version with
 `ActionDurableObject.refuseUpgrade`, a close code the page's client reads, as a browser cannot
 read a refused upgrade's status
-([chat-rooms/src/platform/protocol-version.ts](../examples/chat-rooms/src/platform/protocol-version.ts)). A page's client speaks JSON over
+([chat-rooms/src/platform/protocol-version.ts](../examples/chat-rooms/src/platform/protocol-version.ts));
+the page's client stops connecting at that code given the core's `ActionRpc.reconnectUntil` as
+its `retryPolicy`. A page's client speaks JSON over
 `RpcClient.layerProtocolSocket` and `Socket.layerWebSocket(url)`, its token on each message
 ([chat-rooms/src/browser.ts](../examples/chat-rooms/src/browser.ts)), and the Worker forwards a
 page's upgrade to the room's object by forwarding its `Request`, as `worker.ts` does above. The
