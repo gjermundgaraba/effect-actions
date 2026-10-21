@@ -142,6 +142,14 @@ export default defineConfig({
       },
       {
         files: [
+          "vite.config.ts",
+          "packages/*/vite.config.ts",
+          "tools/oxlint/tests/probe-*/*/vite.config.ts",
+        ],
+        rules: { "no-comments/no-prose-comments": ["error", { allowWhy: true }] },
+      },
+      {
+        files: [
           "tests/support/**",
           "packages/*/tests/support/**",
           "tools/oxlint/tests/probe-*/*/tests/support/**",

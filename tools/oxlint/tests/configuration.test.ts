@@ -194,6 +194,14 @@ const cases = [
       "tests/support/reasoned.ts: no-comments(no-prose-comments)",
     ],
   },
+  {
+    name: "allows a Why: comment in a Vite config, and no other comment there",
+    files: {
+      "vite.config.ts":
+        "// Why: A reason.\nexport const reasoned = 1;\n\n// A note.\nexport const noted = 1;\n",
+    },
+    findings: ["vite.config.ts: no-comments(no-prose-comments)"],
+  },
 ] as const;
 
 let reported: ReadonlyArray<{ readonly directory: string; readonly finding: string }> = [];
