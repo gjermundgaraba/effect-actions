@@ -1,9 +1,9 @@
-import { Effect, type Exit, Layer, Stream } from "effect";
+import { Effect, type Exit, Layer, Predicate, Schedule, Stream } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import type { Message } from "./chat/Chat.js";
-import { protocolVersion, RoomRpc } from "./Rpc.js";
+import { protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
 
 // Client module: what a web page imports. It holds the binding and nothing of the server.
 
@@ -17,16 +17,33 @@ export interface Following<E> {
   readonly closed: (exit: Exit.Exit<void, E>) => Effect.Effect<void>;
 }
 
+// When the client connects again after its socket closes: Effect's own default, a backoff of at
+// most five seconds, for good, except after a room refused the page's version, which it would
+// refuse at every attempt, each one waking its object.
+export const reconnect = Schedule.min([
+  Schedule.exponential("500 millis", 1.5),
+  Schedule.spaced("5 seconds"),
+]).pipe(
+  Schedule.setInputType<Socket.SocketError>(),
+  Schedule.while(
+    ({ input }) =>
+      !(
+        Predicate.isTagged(input.reason, "SocketCloseError") &&
+        input.reason.code === unsupportedProtocol
+      ),
+  ),
+);
+
 // Effect's own client protocol, one WebSocket to a room's object, speaking JSON: the socket's
 // URL is `wss://<host>/rooms/<room>/rpc`, given the version of the rpcs the page was built
 // with. A room serving another closes the socket at once with `unsupportedProtocol`, which
-// fails every call and stream with a `SocketCloseError` of that code: show "reload", since
-// reconnecting is refused again. The layer owns the socket, so provide it once, around the
-// page's whole program; a page provides `Socket.layerWebSocketConstructorGlobal`, the
-// browser's own WebSocket. The client pings every five seconds and the object's runtime
-// answers, so a page left open does not wake the object.
+// fails every call and stream with a `SocketCloseError` of that code, and stops the client:
+// show "reload". The layer owns the socket, so provide it once, around the page's whole
+// program; a page provides `Socket.layerWebSocketConstructorGlobal`, the browser's own
+// WebSocket. The client pings every five seconds and the object's runtime answers, so a page
+// left open does not wake the object.
 export const connection = (url: string) =>
-  RpcClient.layerProtocolSocket().pipe(
+  RpcClient.layerProtocolSocket({ retryPolicy: reconnect }).pipe(
     Layer.provide(Socket.layerWebSocket(`${url}?protocol=${protocolVersion}`)),
     Layer.provide(RpcSerialization.layerJson),
   );

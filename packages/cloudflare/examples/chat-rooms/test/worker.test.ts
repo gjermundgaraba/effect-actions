@@ -3,6 +3,7 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Option, Queue, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
+import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -118,18 +119,21 @@ describe("the Worker and its rooms", () => {
   );
 
   it.effect(
-    "refuses a page built for another version of the rpcs, closing its socket with the code it reads",
+    "refuses a page built for another version of the rpcs, closing its socket with the code it reads, which stops its client connecting again",
     () =>
       Effect.gen(function* () {
-        const { protocol } = yield* roomSocket("general", {}, "0");
+        const { protocol, connects } = yield* roomSocket("general", {}, "0");
         const page = yield* following(yield* Effect.provideContext(openRoom("ada"), protocol), 0);
         const closed = yield* page.closed;
+
+        yield* TestClock.adjust("1 minute");
 
         expect(Exit.findErrorOption(closed).pipe(Option.getOrUndefined)).toMatchObject({
           _tag: "RpcClientError",
           reason: { _tag: "SocketCloseError", code: unsupportedProtocol },
         });
         expect(yield* page.opened).toBe(false);
+        expect(connects()).toBe(1);
       }).pipe(Effect.scoped),
   );
 

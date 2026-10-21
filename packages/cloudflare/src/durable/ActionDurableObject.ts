@@ -94,7 +94,7 @@ export interface Options<
   /**
    * What `fetch` serves: routes, as `HttpRouter.toWebHandler` serves them, such as
    * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built after the services,
-   * again after every eviction, and never finalized. They may require `State`, `Feed`, `Sockets` and
+   * again after every eviction, and never finalized. They may require `State`, the core's `Feed`, `Sockets` and
    * the services; a request-time requirement must be provided by their middleware or
    * authentication, or be one of the services or a service they provide themselves. Without
    * them, `fetch` answers 404, and there are no socket handlers, as no protocol accepts a socket.
@@ -109,7 +109,7 @@ export interface Options<
    * What the object serves over its stub, on `effectActionsRpc`: an rpc server, such as
    * `RpcServer.layer(group)` with its handlers, or `ActionRpc.layer`, given `layerStub` as its
    * protocol. Built after the services, beside the routes, again after every eviction, and never
-   * finalized. It may require the protocol, `State`, `Feed` and the services; every call's own
+   * finalized. It may require the protocol, `State`, the core's `Feed` and the services; every call's own
    * requirement must be provided by its middleware or be one of those. Without it, a call over
    * the stub rejects once the object is built, naming the option.
    *
@@ -121,7 +121,7 @@ export interface Options<
   readonly calls?: Layer.Layer<CA, CE, CR> | undefined;
   /**
    * What the object's `alarm` runs, scheduled with `State`'s `storage.setAlarm`, given the
-   * runtime's `retryCount` and `isRetry`. It may require the services, `State`, `Feed` and a `Scope`,
+   * runtime's `retryCount` and `isRetry`. It may require the services, `State`, the core's `Feed` and a `Scope`,
    * closed when it ends. It runs through `run`, once the services and routes are built, given
    * the `AlarmInvocationInfo` or `undefined` when the object's `alarm` is called with none.
    *
@@ -181,7 +181,7 @@ export interface Handlers<S = never> extends SocketHandlers {
   /** Runs the `alarm` option through `run`, or nothing when there is none. */
   alarm(...args: Parameters<HandlerOf<"alarm">>): Promise<void>;
   /**
-   * Runs `effect` in the object, with the services the instance built, `State`, `Feed` and a `Scope`,
+   * Runs `effect` in the object, with the services the instance built, `State`, the core's `Feed` and a `Scope`,
    * closed when it ends, once the services and routes are built: what the alarm runs through,
    * and what the object's own methods run their Effects with, such as a method a Worker calls
    * over the object's stub. A Layer the effect provides itself, or an `Action.client` it
