@@ -2,7 +2,7 @@ import { globSync } from "node:fs";
 import { basename } from "node:path";
 import type { PackUserConfig } from "vite-plus/pack";
 
-export const pack = (): PackUserConfig => {
+export const pack = (tsconfig = "tsconfig.json"): PackUserConfig => {
   const entry = Object.fromEntries(
     globSync("src/*/*.ts")
       .map((path): [string, string] => [basename(path, ".ts"), path])
@@ -28,6 +28,7 @@ export const pack = (): PackUserConfig => {
     deps: { resolveDepSubpath: true },
     dts: {
       generator: "tsgo",
+      tsconfig,
     },
     exports: { devExports: true, customExports: loneEntryAsItsSubpath },
   };

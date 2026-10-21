@@ -108,6 +108,20 @@ const refuseUnshipped = (source: string, installed: string) => {
   }
 };
 
+const strayDeclarations = execFileSync(
+  "git",
+  ["ls-files", "--others", "--exclude-standard", "*.d.ts"],
+  { cwd: root, encoding: "utf8" },
+)
+  .split("\n")
+  .filter((line) => line !== "");
+
+if (strayDeclarations.length > 0) {
+  throw new Error(
+    `The build wrote ${strayDeclarations.join(", ")} beside the sources: build a package's declarations from a tsconfig reaching its sources alone`,
+  );
+}
+
 const consumer = mkdtempSync(join(tmpdir(), "effect-actions-consumer-"));
 
 const run = (command: string, args: ReadonlyArray<string>, cwd = consumer) =>
