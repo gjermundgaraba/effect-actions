@@ -1,4 +1,14 @@
-import { type Cause, Context, Deferred, Effect, Layer, Option, Queue, Stream } from "effect";
+import {
+  type Cause,
+  Context,
+  Deferred,
+  Effect,
+  Layer,
+  Option,
+  Queue,
+  type Schema,
+  Stream,
+} from "effect";
 import type { Rpc, RpcMessage, RpcSchema } from "effect/rpc";
 
 /**
@@ -49,7 +59,7 @@ export interface EndOptions {
 }
 
 interface Entry {
-  readonly tag: string;
+  readonly definition: Schema.Top;
   readonly key: string | undefined;
   readonly queue: Queue.Queue<unknown, Cause.Done>;
   readonly ended: Deferred.Deferred<void>;
@@ -114,14 +124,23 @@ export class Feed extends Context.Service<
  * - The stream carries the values here, so an operator applied to it sees them, which a durable feed's never does.
  * - Each subscriber's queue is unbounded, so a publish never waits: a client that stops reading holds every value published to it in the server's memory until its stream ends.
  * - Subscribers live in the process: a restart drops their connections, and each page subscribes again from the last value it holds.
+ * - An rpc is told apart by its definition, the success schema `Rpc.make` gave it, not its tag: a group's `middleware` or `prefix` keeps it, so publishing the definition reaches the group's subscribers, and two groups' rpcs of one tag are two audiences.
  */
+// Why: a group's tags are unique within it alone, so two groups served beside each other may
+// each hold a `watch`; the success schema `Rpc.make` created is kept whole by every copy a group
+// makes of its rpc, through `middleware`, `annotate` and `prefix`, and belongs to that rpc alone.
+const definitionOf = (rpc: Rpc.Any) =>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native rpc boundary: every rpc a group holds is a native `Rpc`, carrying its schemas.
+  (rpc as Rpc.AnyWithProps).successSchema;
+
 export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
   const subscribers = new Set<Entry>();
 
   const matching = (rpc: Rpc.Any | undefined, key: string | undefined) =>
     [...subscribers].filter(
       (entry) =>
-        (rpc === undefined || entry.tag === rpc._tag) && (key === undefined || entry.key === key),
+        (rpc === undefined || entry.definition === definitionOf(rpc)) &&
+        (key === undefined || entry.key === key),
     );
 
   return Feed.of({
@@ -132,7 +151,7 @@ export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
       Stream.unwrap(
         Effect.gen(function* () {
           const entry: Entry = {
-            tag: request.rpc._tag,
+            definition: definitionOf(request.rpc),
             key: options?.key,
             queue: yield* Queue.unbounded<unknown, Cause.Done>(),
             ended: yield* Deferred.make<void>(),
@@ -156,7 +175,7 @@ export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
             onSome: (values) =>
               Stream.concat(
                 Stream.fromArray(values),
-                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased rpc tag: a subscriber's queue is offered only what a publish of an rpc with its tag sends, its chunk.
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased rpc definition: a subscriber's queue is offered only what a publish of its rpc's definition sends, its chunk.
                 Stream.fromQueue(entry.queue) as Stream.Stream<Rpc.SuccessChunk<R>>,
               ),
           });

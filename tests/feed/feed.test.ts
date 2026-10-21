@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, Fiber, Layer, Match, Queue, Ref, Schema, Stream } from "effect";
-import { Rpc, RpcGroup, RpcTest } from "effect/rpc";
+import { Rpc, RpcGroup, RpcMiddleware, RpcTest } from "effect/rpc";
 import * as Feed from "../../src/feed/Feed.js";
 
 class NoInitial extends Schema.TaggedError<NoInitial>()("NoInitial", {}) {}
@@ -91,6 +91,31 @@ const follow = <E>(stream: Stream.Stream<number, E>, initial: number) =>
 
     return { first, rest, fiber };
   });
+
+class Passing extends RpcMiddleware.Service<Passing>()("tests/feed/Passing") {}
+
+const WrappedWatch = Rpc.make("watch", { success: Schema.Int, stream: true });
+
+const PlainWatch = Rpc.make("watch", { success: Schema.Int, stream: true });
+
+const Wrapped = RpcGroup.make(WrappedWatch).middleware(Passing);
+
+const Plain = RpcGroup.make(PlainWatch);
+
+const wrappedServed = Layer.merge(
+  Wrapped.toLayer(
+    Effect.map(Feed.Feed, (feed) =>
+      Wrapped.of({ watch: (_, request) => feed.subscribe(request, { initial: [0] }) }),
+    ),
+  ),
+  Layer.succeed(Passing)((effect) => effect),
+);
+
+const plainServed = Plain.toLayer(
+  Effect.map(Feed.Feed, (feed) =>
+    Plain.of({ watch: (_, request) => feed.subscribe(request, { initial: [0] }) }),
+  ),
+);
 
 const tick = (rpc: Client, initial: ReadonlyArray<number>, key: string | null = null) =>
   follow(rpc.ticks({ key, initial, read: "at once" }), initial.length);
@@ -185,6 +210,28 @@ describe("Feed.layer", () => {
         expect(Array.from(yield* Fiber.join(collected))).toEqual([]);
         expect(yield* Ref.get(finalized)).toBe(1);
       }).pipe(Effect.scoped, Effect.provide(served)),
+  );
+
+  it.effect(
+    "tells apart two groups' rpcs of one tag, one wrapped by a group middleware, in what it publishes and ends",
+    () =>
+      Effect.gen(function* () {
+        const feed = yield* Feed.Feed;
+        const wrapped = yield* Effect.provide(RpcTest.makeClient(Wrapped), wrappedServed);
+        const plain = yield* Effect.provide(RpcTest.makeClient(Plain), plainServed);
+        const a = yield* follow(wrapped.watch(), 1);
+        const b = yield* follow(plain.watch(), 1);
+
+        yield* feed.publish(WrappedWatch, 1);
+        yield* feed.publish(PlainWatch, 2);
+        yield* feed.end(WrappedWatch);
+        yield* Fiber.join(a.fiber);
+        yield* feed.publish(PlainWatch, 3);
+        yield* feed.end();
+
+        expect(yield* a.rest).toEqual([1]);
+        expect(yield* b.rest).toEqual([2, 3]);
+      }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
   );
 
   it.effect("fails a subscriber whose initial values fail, and sends it nothing more", () =>
