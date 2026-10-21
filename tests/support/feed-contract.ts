@@ -157,7 +157,7 @@ const leftToEachLayer = [
   "how values are chunked, as memory sends `initial` as one chunk and the durable feed may send it in several: values are read, never chunks",
   "where a value published while `initial` is read arrives, before it, in it or both: that rule is a set",
   "how long a second definition is refused, memory for the layer's life and the durable feed while a subscriber of the first is live in its instance: it is asserted with one live",
-  "an operator on `subscribe`'s stream, which no durable handler fiber runs after hibernation",
+  "an operator on `subscribe`'s stream, which sees no value on the durable feed even live, its values going to the socket",
 ];
 
 export const feedContract = (name: string, serve: Effect.Effect<FeedServer, never, Scope.Scope>) =>
