@@ -182,6 +182,18 @@ const cases = [
       "src/http/typed.ts: typescript(consistent-type-imports)",
     ],
   },
+  {
+    name: "allows JSDoc on a shared test helper in tests/support, and no Why: comment or comment in a test",
+    files: {
+      "tests/support/documented.ts": "/** A helper. */\nexport const documented = 1;\n",
+      "tests/support/reasoned.ts": "// Why: A reason.\nexport const reasoned = 1;\n",
+      "tests/documented.test.ts": "/** A helper. */\nexport const documented = 1;\n",
+    },
+    findings: [
+      "tests/documented.test.ts: no-comments(no-prose-comments)",
+      "tests/support/reasoned.ts: no-comments(no-prose-comments)",
+    ],
+  },
 ] as const;
 
 let reported: ReadonlyArray<{ readonly directory: string; readonly finding: string }> = [];

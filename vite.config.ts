@@ -141,6 +141,14 @@ export default defineConfig({
         },
       },
       {
+        files: [
+          "tests/support/**",
+          "packages/*/tests/support/**",
+          "tools/oxlint/tests/probe-*/*/tests/support/**",
+        ],
+        rules: { "no-comments/no-prose-comments": ["error", { allowJsDoc: true }] },
+      },
+      {
         files: sourceOrLintProbe("**"),
         rules: {
           "no-restricted-imports": [

@@ -35,19 +35,18 @@ const at = (key: string | null, initial: ReadonlyArray<number>) => ({
 const refusal =
   "serves one definition of each rpc tag, and a second definition of ticks reached it";
 
-const leftToEachLayer = [
-  "how values are chunked, as memory sends `initial` as one chunk and the durable feed may send it in several: values are read, never chunks",
-  "where a value published while `initial` is read arrives, before it, in it or both: that rule is a set",
-  "how long a second definition is refused, memory for the layer's life and the durable feed while a subscriber of the first is live in its instance: it is asserted with one live",
-  "an operator on `subscribe`'s stream, which sees no value on the durable feed even live, its values going to the socket",
-];
-
+/**
+ * The `Feed` contract both implementations keep, as one suite run against each: `serve` gives a
+ * client of the stream rpcs and one of the controls, over one built feed.
+ *
+ * Left to each layer's own tests, as the two differ:
+ * - how values are chunked: both send `initial` as one chunk, but the memory feed may batch queued publications into one, where the durable feed sends each publish on its own, so values are read, never chunks;
+ * - where a value published while `initial` is read arrives, before it, in it or both: that rule is a set;
+ * - how long a second definition is refused, the memory feed for the layer's life and the durable feed while a subscriber of the first is live in its instance: it is asserted with one live;
+ * - an operator on `subscribe`'s stream, which sees no value on the durable feed even live, its values going to the socket.
+ */
 export const feedContract = (name: string, serve: Effect.Effect<FeedServer, never, Scope.Scope>) =>
   describe(`${name} keeps the Feed contract`, () => {
-    for (const difference of leftToEachLayer) {
-      it.skip(`leaves to each layer's own tests ${difference}`);
-    }
-
     it.effect("sends a subscriber its initial values, then each value of its rpc, in order", () =>
       Effect.gen(function* () {
         const { streams, controls } = yield* serve;
