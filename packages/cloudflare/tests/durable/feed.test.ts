@@ -417,7 +417,7 @@ describe("Feed", () => {
   );
 
   it.effect(
-    "refuses a subscribe, a publish and an end on an object serving two socket paths, naming both, though one alone has subscribers, sending nothing",
+    "refuses a subscribe and a publish on an object serving two socket paths, naming both, though one alone has records, and ends nothing there, sending nothing",
     () =>
       Effect.gen(function* () {
         const stub = env.TWO_PATHS.getByName(`two-paths-${objects++}`);
@@ -453,13 +453,12 @@ describe("Feed", () => {
           }),
         );
 
-        const published = yield* Effect.exit(calls.publish({ value: 1, key: null }));
         const ended = yield* Effect.exit(calls.end({ key: null }));
+        const published = yield* Effect.exit(calls.publish({ value: 1, key: null }));
         const refusal = "serves /rpc and /other";
 
-        for (const exit of [published, ended]) {
-          expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(refusal);
-        }
+        expect(Exit.isFailure(published) && Cause.pretty(published.cause)).toContain(refusal);
+        expect(ended).toEqual(Exit.void);
 
         yield* Effect.promise(() => vi.waitUntil(() => received.length > 0, { timeout: 5_000 }));
 
@@ -846,6 +845,68 @@ describe("Feed", () => {
 
         expect(outcome.left).toBe(0);
         expect(outcome.published).toContain("none is registered yet");
+      }),
+  );
+
+  it.effect(
+    "wipe drops the storage of an object serving two socket paths, ending nothing, and leaves the object whole",
+    () =>
+      Effect.gen(function* () {
+        const stub = env.TWO_PATHS.getByName(`two-paths-${objects++}`);
+
+        const outcome = yield* Effect.promise(() =>
+          runInDurableObject(stub, async (instance, state) => {
+            await state.storage.put("tests/application", 1);
+
+            const wiped = await instance.run(Effect.exit(ActionDurableObject.wipe));
+
+            return { wiped, left: (await state.storage.list()).size };
+          }),
+        );
+
+        const after = yield* Effect.promise(() =>
+          runInDurableObject(stub, (instance) => instance.run(Effect.succeed("served"))),
+        );
+
+        expect(outcome).toEqual({ wiped: Exit.void, left: 0 });
+        expect(after).toBe("served");
+      }),
+  );
+
+  it.effect(
+    "wipe fails with the defect of an end that dies, leaving the object whole and its storage kept",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+
+        const outcome = yield* Effect.promise(() =>
+          runInDurableObject(stub, async (instance, state) => {
+            await state.storage.put("tests/application", 1);
+
+            const wiped = await instance.run(
+              Effect.flatMap(Feed.Feed, (feed) =>
+                Effect.exit(
+                  Effect.provideService(ActionDurableObject.wipe, Feed.Feed, {
+                    ...feed,
+                    end: () => Effect.die(new Error("The end died.")),
+                  }),
+                ),
+              ),
+            );
+
+            return {
+              wiped: Exit.isFailure(wiped) ? Cause.squash(wiped.cause) : undefined,
+              kept: await state.storage.get("tests/application"),
+            };
+          }),
+        );
+
+        const after = yield* Effect.promise(() =>
+          runInDurableObject(stub, (instance) => instance.run(Effect.succeed("served"))),
+        );
+
+        expect(outcome).toEqual({ wiped: new Error("The end died."), kept: 1 });
+        expect(after).toBe("served");
       }),
   );
 
