@@ -80,7 +80,7 @@ interface Entry {
  * - Every value published once a subscriber subscribed reaches it, at least once: one published while `initial` is read may arrive before it and again in it, so give values an id the client drops repeats by.
  * - Values published one after another once `initial` was sent, each `publish` completing before the next begins, arrive in that order.
  * - A subscriber whose `initial` fails ends with its failure, and is sent nothing more.
- * - `end` completes a live subscriber's stream through Effect's server, which runs its finalizers and answers its client, and the implementation answers a subscriber it no longer runs itself; one ended while its `initial` is read is interrupted and sent nothing.
+ * - `end` completes a live subscriber's stream through Effect's server, which runs its finalizers and answers its client, and the implementation answers a subscriber it no longer runs itself; an `end` that reaches a subscriber before its `initial` read completes sends it nothing.
  * - A subscriber has one `key`, or none: a `publish` or `end` naming a key reaches its subscribers alone, and one naming none every subscriber of the rpc; `end()` ends every subscriber of every rpc.
  * - Access is checked once, as the call subscribes: a subscriber is published to until its client interrupts it or `end` reaches it, whatever becomes of its credential or membership, so give each member's subscriptions a `key` of their own and `end(rpc, { key })` them.
  * - A client's stream fails when its connection drops, and may end with a defect, such as a chunk it cannot decode: a page observing only failures misses that end, so it reads the stream's `Exit` and subscribes again from the last value it holds, which `initial` sends on.
@@ -127,7 +127,7 @@ const definitionOf = (rpc: Rpc.Any) =>
  * **Gotchas**
  *
  * - Each build is one feed: what publishes and the routes serving the stream rpc must share it, provided once around both, as beside a store; a feed provided to each separately is two, and a value published to one reaches no subscriber of the other.
- * - `initial` is sent first, as one chunk: a value published while it is read arrives after it, and again if the read saw it; values published while the client is slow to read arrive together, in one chunk.
+ * - `initial` is sent first, as one chunk: a value published while it is read arrives after it, and again if the read saw it; values published while the client is slow to read arrive together, in one chunk; an `end` arriving after the read completed but before the server pulled the stream still sends `initial`, then ends it.
  * - The stream carries the values here, so an operator applied to it sees them, which a durable feed's never does.
  * - Each subscriber's queue is unbounded, so a publish never waits: a client that stops reading holds every value published to it in the server's memory until its stream ends.
  * - Subscribers live in the process: a restart drops their connections, and each page subscribes again from the last value it holds.
