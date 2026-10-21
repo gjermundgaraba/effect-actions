@@ -12,10 +12,11 @@ import {
   Match,
   Queue,
   Ref,
+  References,
   Schema,
   Stream,
 } from "effect";
-import { Rpc, RpcGroup, RpcMiddleware, RpcSchema, RpcTest } from "effect/rpc";
+import { Rpc, RpcGroup, RpcMessage, RpcMiddleware, RpcSchema, RpcTest } from "effect/rpc";
 import * as Feed from "../../src/feed/Feed.js";
 
 class NoInitial extends Schema.TaggedError<NoInitial>()("NoInitial", {}) {}
@@ -196,7 +197,7 @@ const endedAsRead = (feed: Feed.Feed["Service"]) =>
       ),
     );
 
-    return { collected: Array.from(collected), definition: new WeakRef(Once.successSchema) };
+    return Array.from(collected);
   });
 
 const tick = (rpc: Client, initial: ReadonlyArray<number>, key: string | null = null) =>
@@ -339,6 +340,78 @@ describe("Feed.layer", () => {
       }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
   );
 
+  it.effect("refuses a second definition of a tag after every subscriber of the first ended", () =>
+    Effect.gen(function* () {
+      const feed = yield* Feed.Feed;
+      const wrapped = yield* Effect.provide(RpcTest.makeClient(Wrapped), wrappedServed);
+      const plain = yield* Effect.provide(RpcTest.makeClient(Plain), plainServed);
+      const { rest } = yield* follow(wrapped.watch(), 1);
+
+      yield* feed.end();
+      yield* rest;
+
+      const subscribed = yield* Effect.exit(Stream.runDrain(plain.watch()));
+      const published = yield* Effect.exit(feed.publish(PlainWatch, 2));
+
+      expect(Exit.isFailure(subscribed) ? Cause.pretty(subscribed.cause) : "").toContain(
+        "a second definition of watch",
+      );
+      expect(Exit.isFailure(published) ? Cause.pretty(published.cause) : "").toContain(
+        "a second definition of watch",
+      );
+    }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
+  );
+
+  it.effect(
+    "admits one of two definitions of a tag subscribing at once, each yielding inside its subscribe, and publishes to it alone",
+    () =>
+      Effect.gen(function* () {
+        const feed = yield* Feed.Feed;
+        const outcomes = yield* Queue.unbounded<typeof WrappedWatch | "refused">();
+        const received = yield* Queue.unbounded<number>();
+        const reading = yield* Deferred.make<void>();
+
+        const fibers = yield* Effect.forEach(
+          [WrappedWatch, PlainWatch],
+          (rpc, index) =>
+            feed
+              .subscribe(
+                { rpc, requestId: RpcMessage.RequestId(index) },
+                {
+                  initial: Queue.offer(outcomes, rpc).pipe(
+                    Effect.andThen(Deferred.await(reading)),
+                    Effect.as([0]),
+                  ),
+                },
+              )
+              .pipe(
+                Stream.runForEach((value) => Queue.offer(received, value)),
+                Effect.catchCause(() => Queue.offer(outcomes, "refused")),
+                Effect.forkScoped,
+              ),
+          { concurrency: "unbounded" },
+        );
+
+        const [first, second] = yield* Queue.takeN(outcomes, 2);
+        const admitted = first === "refused" ? second : first;
+
+        yield* Deferred.succeed(reading, undefined);
+        yield* Queue.take(received);
+
+        if (admitted !== undefined && admitted !== "refused") yield* feed.publish(admitted, 1);
+
+        yield* feed.end();
+        yield* Effect.forEach(fibers, Fiber.join, { discard: true });
+
+        expect([first, second].filter((outcome) => outcome === "refused")).toHaveLength(1);
+        expect(yield* Queue.clear(received)).toEqual([1]);
+      }).pipe(
+        Effect.provideService(References.MaxOpsBeforeYield, 20),
+        Effect.scoped,
+        Effect.provide(Feed.layer),
+      ),
+  );
+
   it.effect("keeps apart two rpcs of their own tags made from one hand-built stream schema", () =>
     Effect.gen(function* () {
       const feed = yield* Feed.Feed;
@@ -432,12 +505,9 @@ describe("Feed.layer", () => {
     }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
   );
 
-  it.effect("keeps nothing of a subscriber end completed, its rpc's definition included", () =>
+  it.effect("sends nothing to a subscriber end reached as its initial values were read", () =>
     Effect.gen(function* () {
-      const { collected, definition } = yield* endedAsRead(yield* Feed.Feed);
-
-      expect(collected).toEqual([]);
-      expect(yield* released(definition)).toBe(true);
+      expect(yield* endedAsRead(yield* Feed.Feed)).toEqual([]);
     }).pipe(Effect.provide(Feed.layer)),
   );
 

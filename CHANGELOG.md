@@ -225,7 +225,8 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   - `Feed.layer` keeps the subscribers in a process's memory, for a server holding its clients'
     connections, such as Node's, and for tests, which provide it to their routes: `Testing.layer`
     provides none. A second definition of a tag, such as another group's `watch`, dies at the
-    `subscribe`, `publish` or `end` that brings it. The Cloudflare package's `ActionDurableObject.layerFeed` keeps them in a Durable Object's
+    `subscribe`, `publish` or `end` that brings it, even after every subscriber of the first
+    ended, as the feed keeps the first definition of each tag it meets for its life. The Cloudflare package's `ActionDurableObject.layerFeed` keeps them in a Durable Object's
     storage.
   - live-rpc's pages follow a room with `watch`, a stream rpc in the binding's `rpcs`, and
     subscribe again after a dropped socket from the last message they hold; `docs/Feed.md`

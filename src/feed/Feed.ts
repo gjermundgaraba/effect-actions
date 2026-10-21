@@ -132,7 +132,7 @@ const sameDefinition = (one: Rpc.Any, other: Rpc.Any) => {
  * - `initial` is sent first, as one chunk: a value published while it is read arrives after it, and again if the read saw it; values published while the client is slow to read arrive together, in one chunk; an `end` arriving after the read completed but before the server pulled the stream still sends `initial`, then ends it.
  * - Each subscriber's queue is unbounded, so a publish never waits: a client that stops reading holds every value published to it in the server's memory until its stream ends.
  * - Subscribers live in the process: a restart drops their connections, and each page subscribes again from the last value it holds.
- * - A second definition of a tag, such as another group's `watch`, dies at the `subscribe`, `publish` or `end` that brings it while a subscriber of the first is kept; a group's copy of an rpc, through its `middleware`, is the rpc itself.
+ * - A second definition of a tag, such as another group's `watch`, dies at the `subscribe`, `publish` or `end` that brings it, the feed keeping the first definition of each tag it meets for its life; a group's copy of an rpc, through its `middleware`, is the rpc itself.
  * - Two rpcs of one tag made from one hand-built stream schema, with no payload or error of their own, are one definition to the feed, and one audience: give each its own schema, or `stream: true`.
  */
 export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
@@ -145,13 +145,20 @@ export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
         (key === undefined || entry.key === key),
     );
 
-  // Why: judged against the subscribers kept, so the feed holds no rpc beyond its subscribers'
-  // lives, and a second definition reaching no subscriber of the first reaches nobody.
+  const definitions = new Map<string, Rpc.Any>();
+
+  // Why: the first definition of each tag is kept for the feed's life, not judged against the
+  // subscribers kept, so a second dies on its first use whether or not a subscriber of the
+  // first is live; definitions are module constants, so this holds one rpc per tag. It is
+  // claimed in the step that checks it, as a yield between would let two subscribes at once
+  // both pass.
   const oneDefinition = (rpc: Rpc.Any) =>
     Effect.suspend(() => {
-      const kept = [...subscribers].find((entry) => entry.rpc._tag === rpc._tag);
+      const first = definitions.get(rpc._tag);
 
-      return kept === undefined || sameDefinition(kept.rpc, rpc)
+      if (first === undefined) definitions.set(rpc._tag, rpc);
+
+      return first === undefined || sameDefinition(first, rpc)
         ? Effect.void
         : Effect.die(
             new Error(
