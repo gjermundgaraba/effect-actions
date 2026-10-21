@@ -315,7 +315,8 @@ const defaultReason = (version: string) => {
 
 // Why: the codes a close frame may carry, which the runtime's `close` accepts: 1004 is reserved,
 // and 1005, 1006 and 1015 stand for a close that sent none. Asking the runtime itself, with a
-// socket pair made at build, stalled a page's socket across an eviction on workerd.
+// socket pair made at build, kept that build's request in flight, an accepted end's close never
+// answered, and an eviction waits for in-flight requests to drain.
 const reservedCloseCodes = new Set([1004, 1005, 1006, 1015]);
 
 const closeAccepts = (code: number) =>
@@ -360,7 +361,7 @@ const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
  *
  * - A 403, or any other status, reaches a browser's WebSocket as a bare 1006, as a network drop, and Effect's client connects again, every few seconds for good.
  * - Effect's client connects again after this close as well, every five seconds for good, each upgrade waking the object, unless its `retryPolicy` is the core's `ActionRpc.reconnectUntil(code)`, the client half of this refusal.
- * - Its socket is accepted without the hibernation API and the library's route never runs, so the object keeps nothing of it.
+ * - Its socket is accepted without the hibernation API and the library's route never runs, so the object keeps nothing of it; that accepted end ties up its request until the close handshake completes, so the object stays awake until the page answers the close.
  */
 export const refuseUpgrade = (
   code: number,
