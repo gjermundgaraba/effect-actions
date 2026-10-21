@@ -750,6 +750,9 @@ export function client(
  * - Any other socket error, a drop included, is retried as Effect's default retries it.
  */
 export const reconnectUntil = (...codes: ReadonlyArray<number>) =>
+  // Why: a copy of `defaultRetryPolicy` in effect 4.0.5's `src/rpc/RpcClient.ts`, lines 1239-1242,
+  // which Effect does not export: on an Effect upgrade, compare it there, as a change of
+  // Effect's default leaves this one behind.
   Schedule.min([Schedule.exponential(500, 1.5), Schedule.spaced(5000)]).pipe(
     // Why: typed by the one field it reads rather than as Effect's `SocketError`, so a browser
     // client importing this module needs no `effect/socket`; a `SocketError` is one.
