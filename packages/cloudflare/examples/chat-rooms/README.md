@@ -72,7 +72,6 @@ src/
 │   └── handlers.ts    Action.implement: every room asked at once
 ├── platform/
 │   ├── sql-store.ts   MessageStore over the object's SQLite database, and its alarm
-│   ├── object-name.ts Room from the object's name
 │   ├── protocol-version.ts the socket's route refusing a page of another version
 │   └── room-stubs.ts  Rooms over each room's stub, with ActionDurableObject.client
 ├── Api.ts             the JSON bindings: a room's and the lobby's
@@ -95,7 +94,7 @@ test/
   authorizer yields `Room` once, when it is built, as a builder yields a store. `CurrentMember`
   comes from authentication, per message.
 - **The entrypoint chooses everything.** `worker.ts` gives the object the SQLite store and the
-  room as its services, which an instance builds once for the routes, the calls and the alarm,
+  room, its name, as its services, which an instance builds once for the routes, the calls and the alarm,
   and gives the lobby the stubs.
 - **The Worker forwards, the object answers.** Forwarding a request forwards its upgrade, so
   the Worker passes a page's socket request to the room's object unchanged but its path.
@@ -108,7 +107,7 @@ test/
 | Rpcs on hibernating WebSockets beside JSON routes, in one object          | `src/routes.ts`                                                    |
 | An authorizer that yields the instance's room once, when it is built      | `src/chat/authorize.ts`, `src/chat/handlers.ts`                    |
 | A store over the object's SQLite database, setting its alarm              | `src/platform/sql-store.ts`                                        |
-| A startup service read from the object's state                            | `src/platform/object-name.ts`                                      |
+| A startup service read from the object's state, its name                  | `src/worker.ts`                                                    |
 | A Worker calling an object's own API over its stub, with Cloudflare's RPC | `src/chat/Calls.ts`, `src/routes.ts`, `src/platform/room-stubs.ts` |
 | Routing requests and upgrades from the Worker to an object                | `src/worker.ts`                                                    |
 | A page's socket client, its token on each message                         | `src/browser.ts`                                                   |

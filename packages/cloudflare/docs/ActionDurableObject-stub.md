@@ -75,23 +75,10 @@ service.
 
 ## Name the object in its errors
 
-An object reached by `getByName` knows its name, `State`'s `id.name`. Make it a startup
-service, dying without one, and build each error from it in the handler, with nothing more
-from the caller:
-
-```ts example=chat-rooms/src/platform/object-name.ts
-import { Effect, Layer } from "effect";
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
-import { Room } from "../chat/room.js";
-
-// The room an instance holds is the name the Worker reached its object by, `getByName(room)`.
-// An object reached by an id has none, which is a bug in the Worker.
-export const layerRoom = Layer.effect(Room)(
-  Effect.flatMap(Effect.service(ActionDurableObject.State), ({ id }) =>
-    Effect.fromNullishOr(id.name).pipe(Effect.orDie),
-  ),
-);
-```
+An object reached by `getByName` knows its name, `ActionDurableObject.name`. Make it a startup
+service, `Layer.effect(Room)(ActionDurableObject.name)`, as chat-rooms'
+[worker.ts](../examples/chat-rooms/src/worker.ts) does, and build each error from it in the
+handler, with nothing more from the caller.
 
 An object reached by `get(idFromString(id))` has no name: its caller sends the key in the
 payload, for the error to name.

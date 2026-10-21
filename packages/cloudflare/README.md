@@ -16,7 +16,7 @@ Serve actions from an object, over WebSockets the runtime holds while it hiberna
 
 ```ts
 class ChatRoom extends ActionDurableObject.make({
-  services: Layer.mergeAll(layerSql, layerRoom),
+  services: () => Layer.mergeAll(layerSql, Layer.effect(Room)(ActionDurableObject.name)),
   routes: ActionRpc.layer(RoomRpc, room).pipe(
     Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
     Layer.provide(authenticate),

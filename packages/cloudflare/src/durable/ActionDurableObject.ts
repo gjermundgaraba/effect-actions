@@ -20,7 +20,7 @@ export { Calls, layerStub, type StubRequest } from "./calls.js";
 
 export { layerWebSocket, Sockets, type LayerWebSocketOptions } from "./sockets.js";
 
-export { State } from "./state.js";
+export { name, State } from "./state.js";
 
 export { layerFeed } from "./feed.js";
 

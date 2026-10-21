@@ -2,8 +2,8 @@ import { Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { RoomName } from "./chat/Chat.js";
+import { Room } from "./chat/room.js";
 import { MessageStore } from "./chat/store.js";
-import { layerRoom } from "./platform/object-name.js";
 import { layerRooms } from "./platform/room-stubs.js";
 import { layerSql } from "./platform/sql-store.js";
 import { lobbyRoutes, roomCalls, roomRoutes } from "./routes.js";
@@ -13,10 +13,12 @@ import { lobbyRoutes, roomCalls, roomRoutes } from "./routes.js";
 
 // A room's Durable Object, bound as CHAT_ROOM in wrangler.jsonc under this export's name. Each
 // instance builds its services, the store and the room, then its calls and routes, on its
-// first event, again after every eviction. The alarm expires old messages; `post` sets it. It
-// reads the store the instance built for the calls and routes.
+// first event, again after every eviction. The room is the name the Worker reached the object
+// by, `getByName(room)` below: `ActionDurableObject.name` dies for an object reached by an id,
+// which would be a bug in the Worker. The alarm expires old messages; `post` sets it. It reads
+// the store the instance built for the calls and routes.
 export class ChatRoom extends ActionDurableObject.make({
-  services: () => Layer.mergeAll(layerSql, layerRoom),
+  services: () => Layer.mergeAll(layerSql, Layer.effect(Room)(ActionDurableObject.name)),
   routes: roomRoutes,
   calls: roomCalls,
   alarm: () => MessageStore.use((store) => store.expire),

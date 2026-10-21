@@ -64,7 +64,10 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   version. Its module `ActionDurableObject` offers primitives any Durable Object class composes,
   and a class built from them:
   - `State` is the object's `DurableObjectState`, a startup service of its services, calls,
-    routes and alarm.
+    routes and alarm. `name`, an `Effect<string, never, State>`, is the name the Worker reached
+    the object by, `getByName(name)`, which a startup service such as a room is built from,
+    `Layer.effect(Room)(name)`; an object reached by an id carrying none, from `idFromString`
+    or `newUniqueId`, dies naming `getByName`.
   - `layerWebSocket({ path })` is the protocol `ActionRpc.layer` serves on: WebSockets the
     runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
     Effect's own socket protocol does, and each message is authenticated with them under its
