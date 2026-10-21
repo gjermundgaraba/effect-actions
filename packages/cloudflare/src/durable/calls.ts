@@ -261,6 +261,7 @@ const makeProtocol = (registry: Registry) =>
  * - A value the clone refuses, such as a class instance in a `Schema.Unknown`, or a defect that is a class instance other than an `Error`, fails the whole call with workerd's `DataCloneError`, whatever its exit.
  * - Unary: a call answers once every request it carries has its exit, so an rpc that streams is answered with a defect at its first chunk, naming it: stream over `layerWebSocket`.
  * - A defect Effect's server sends as fatal to the whole client, such as a handler's die, is answered as the exit of each request of the call still without one, a die: the call fails with that defect alone, and the client's next call is answered.
+ * - In a raw `effectActionsRpc` call batching several requests, a handler's die before another request's answer gives that request two exits, the defect first, which Effect's client takes, then its own; `layerStubClient` sends one request per call and never meets it.
  * - Nothing authenticates a call: a stub is reachable only through a binding, so the caller is the Worker or another object of the deployment, and one acting for a principal forwards it in a header, with `RpcClient.withHeaders`, read by an `RpcMiddleware` or an `ActionRpc` binding's authentication, or in the payload.
  * - Each object serves one: a second registering with one `Calls` fails the build, so serve several groups as one, `group.merge(other)`.
  *
