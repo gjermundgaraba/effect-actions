@@ -5,16 +5,26 @@ import { HttpRouter } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { allowedOrigin, expectedProtocol, statusKey, VersionedRpcs } from "../support/versioned.js";
+import {
+  allowedOrigin,
+  expectedProtocol,
+  givenReason,
+  statusKey,
+  VersionedRpcs,
+} from "../support/versioned.js";
 
 let objects = 0;
 
 const fresh = () => env.VERSIONED.getByName(`versioned-${objects++}`);
 
-const upgrade = (stub: DurableObjectStub, query: string, origin = allowedOrigin) =>
+const upgrade = (
+  stub: DurableObjectStub,
+  target: string,
+  headers: Record<string, string> = { origin: allowedOrigin },
+) =>
   Effect.promise(async () => {
-    const response = await stub.fetch(`https://object/rpc${query}`, {
-      headers: { upgrade: "websocket", origin },
+    const response = await stub.fetch(`https://object${target}`, {
+      headers: { upgrade: "websocket", ...headers },
     });
 
     const socket = response.webSocket;
@@ -107,7 +117,7 @@ describe("layerWebSocket's protocol", () => {
     () =>
       Effect.gen(function* () {
         for (const query of ["?protocol=2", "", "?version=3"]) {
-          const { status, logged, socket } = yield* upgrade(fresh(), query);
+          const { status, logged, socket } = yield* upgrade(fresh(), `/rpc${query}`);
           const client = yield* acceptedAsTheClientListens(socket);
           const refused = yield* Effect.flip(client.protocol());
 
@@ -123,12 +133,49 @@ describe("layerWebSocket's protocol", () => {
 
   it.effect("serves an upgrade naming its version, 101 to Effect's server as to the page", () =>
     Effect.gen(function* () {
-      const { status, logged, socket } = yield* upgrade(fresh(), `?protocol=${expectedProtocol}`);
+      const { status, logged, socket } = yield* upgrade(
+        fresh(),
+        `/rpc?protocol=${expectedProtocol}`,
+      );
+
       const client = yield* acceptedAsTheClientListens(socket);
 
       expect([status, logged]).toEqual([101, 101]);
       expect(yield* client.protocol()).toBe(expectedProtocol);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses with the reason given, which reaches the page's client", () =>
+    Effect.gen(function* () {
+      const { socket } = yield* upgrade(fresh(), "/reasoned?protocol=2");
+      const client = yield* acceptedAsTheClientListens(socket);
+      const refused = yield* Effect.flip(client.protocol());
+
+      expect(refused.reason).toMatchObject({
+        _tag: "SocketCloseError",
+        code: 4001,
+        closeReason: givenReason,
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "refuses a page of another version before judging its headers, and answers 431 to one of its version whose headers exceed a socket's attachment",
+    () =>
+      Effect.gen(function* () {
+        const oversized = { origin: allowedOrigin, authorization: `Bearer ${"x".repeat(20_000)}` };
+        const { socket } = yield* upgrade(fresh(), "/rpc?protocol=2", oversized);
+        const client = yield* acceptedAsTheClientListens(socket);
+
+        const served = yield* Effect.promise(() =>
+          fresh().fetch(`https://object/rpc?protocol=${expectedProtocol}`, {
+            headers: { upgrade: "websocket", ...oversized },
+          }),
+        );
+
+        expect((yield* Effect.flip(client.protocol())).reason).toMatchObject({ code: 4000 });
+        expect(served.status).toBe(431);
+      }).pipe(Effect.scoped),
   );
 });
 
@@ -139,8 +186,8 @@ describe("router middleware around layerWebSocket's route", () => {
       Effect.gen(function* () {
         const { status, logged, socket } = yield* upgrade(
           fresh(),
-          `?protocol=${expectedProtocol}`,
-          "https://elsewhere.example",
+          `/rpc?protocol=${expectedProtocol}`,
+          { origin: "https://elsewhere.example" },
         );
 
         const client = yield* acceptedAsTheClientListens(socket);

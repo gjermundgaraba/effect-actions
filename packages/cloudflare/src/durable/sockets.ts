@@ -270,7 +270,7 @@ const makeProtocol = (
         }
 
         if (refusal !== undefined) {
-          const { [refusal.parameter]: named } = yield* HttpServerRequest.ParsedSearchParams;
+          const { protocol: named } = yield* HttpServerRequest.ParsedSearchParams;
 
           if (named !== refusal.version) {
             return yield* refuseUpgrade(refusal.code, refusal.reason);
@@ -311,7 +311,6 @@ const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
     const {
       version,
       code,
-      parameter = "protocol",
       reason = `This server speaks protocol ${version}: reload the page`,
     } = protocol;
 
@@ -333,7 +332,7 @@ const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
       );
     }
 
-    return Effect.succeed({ version, parameter, code, reason });
+    return Effect.succeed({ version, code, reason });
   });
 
 /**
@@ -379,8 +378,6 @@ export interface LayerWebSocketOptions {
     readonly code: number;
     /** The close reason of a refusal, at most 123 bytes UTF-8 encoded, as a close frame holds, by default `This server speaks protocol <version>: reload the page`, which grows with `version`: a longer one fails `layerWebSocket`'s build. */
     readonly reason?: string;
-    /** The query parameter naming the version; `protocol` by default. */
-    readonly parameter?: string;
   };
 }
 

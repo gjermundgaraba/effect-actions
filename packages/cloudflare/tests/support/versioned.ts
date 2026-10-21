@@ -36,14 +36,18 @@ const recordStatus = HttpRouter.middleware(
   ),
 );
 
-export const versionedRoutes = RpcServer.layer(VersionedRpcs).pipe(
-  Layer.provide(VersionedRpcs.toLayer({ protocol: () => Effect.succeed(expectedProtocol) })),
-  Layer.provide(
-    ActionDurableObject.layerWebSocket({
-      path: "/rpc",
-      protocol: { version: expectedProtocol, code: 4000 },
-    }),
-  ),
-  Layer.provide(refuseForeignOrigins.layer),
-  Layer.provide(recordStatus.layer),
-);
+export const givenReason = "Reload: protocol 3 is served here";
+
+const versioned = (options: ActionDurableObject.LayerWebSocketOptions) =>
+  RpcServer.layer(VersionedRpcs).pipe(
+    Layer.provide(VersionedRpcs.toLayer({ protocol: () => Effect.succeed(expectedProtocol) })),
+    Layer.provide(ActionDurableObject.layerWebSocket(options)),
+  );
+
+export const versionedRoutes = Layer.merge(
+  versioned({ path: "/rpc", protocol: { version: expectedProtocol, code: 4000 } }),
+  versioned({
+    path: "/reasoned",
+    protocol: { version: expectedProtocol, code: 4001, reason: givenReason },
+  }),
+).pipe(Layer.provide(refuseForeignOrigins.layer), Layer.provide(recordStatus.layer));

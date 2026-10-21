@@ -81,28 +81,27 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     the object by, `getByName(name)`, which a startup service such as a room is built from,
     `Layer.effect(Room)(name)`; an object reached by an id carrying none, from `idFromString`
     or `newUniqueId`, dies naming `getByName`.
-  - `layerWebSocket({ path, protocol? })` is the protocol `ActionRpc.layer` serves on: WebSockets the
-    runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
-    Effect's own socket protocol does, and each message is authenticated with them under its
-    own headers; an upgrade whose headers exceed a socket's 16 KiB attachment answers 431. Each
-    protocol of one object needs a `path` of its own. `protocol: { version, code, reason?,
-    parameter? }` refuses an upgrade whose `?protocol=` (or `parameter`) is absent or names
-    another version with `refuseUpgrade(code, reason)`, the reason by default naming the version
-    and asking for a reload; a `code` outside 4000 to 4999, or a reason over a close frame's 123
-    bytes, fails the build, where it would fail each refusal: 101 and a socket closed at once with that code and reason, which the
-    page's client reads as `SocketCloseError`, since a browser cannot read a refused upgrade's
-    status, and whose reconnection the core's `ActionRpc.reconnectUntil(code)` stops at that code:
-    chat-rooms' `routes.ts` and `browser.ts` show it. Router middleware provided to it runs for
-    the upgrade alone, and refuses one by any other judge, such as a foreign `Origin`, by
-    returning `refuseUpgrade(code, reason)` itself. An upgrade is logged and
-    traced as 101. Effect's web handler cannot upgrade a
-    request, so `RpcServer.layerProtocolWebsocket` serves no socket on Workers. The runtime
-    answers a client's pings without waking the object. A message's event ends once the message
-    is handed to the server: a call doing I/O or waiting on a timer keeps the object from
-    hibernating, and one waiting on memory alone is lost if it hibernates. A socket whose
-    runtime dropped its attachment, as celld 0.6.2 does when it evicts an idle object, keeps
-    serving with each message's own headers, and one whose attachment does not decode answers
-    each message with a defect, rather than failing the event. A handler's die under a plain
+  - `layerWebSocket({ path, protocol? })` is the protocol `ActionRpc.layer` serves on: WebSockets
+    the runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
+    Effect's own socket protocol does, and each message is authenticated with them under its own
+    headers; an upgrade whose headers exceed a socket's 16 KiB attachment answers 431. Each protocol
+    of one object needs a `path` of its own. `protocol: { version, code, reason? }` refuses an
+    upgrade whose `?protocol=` is absent or names another version with `refuseUpgrade(code,
+    reason)`, the reason by default naming the version and asking for a reload: 101 and a socket
+    closed at once with that code and reason, which the page's client reads as `SocketCloseError`,
+    since a browser cannot read a refused upgrade's status, and whose reconnection the core's
+    `ActionRpc.reconnectUntil(code)` stops at that code: chat-rooms' `routes.ts` and `browser.ts`
+    show it. A `code` outside 4000 to 4999, or a reason over a close frame's 123 bytes, UTF-8
+    encoded, fails the build rather than each refusal. Router middleware provided to it runs for the
+    upgrade alone, and refuses one by any other judge, such as a foreign `Origin`, by returning
+    `refuseUpgrade(code, reason)` itself. An upgrade is logged and traced as 101. Effect's web
+    handler cannot upgrade a request, so `RpcServer.layerProtocolWebsocket` serves no socket on
+    Workers. The runtime answers a client's pings without waking the object. A message's event ends
+    once the message is handed to the server: a call doing I/O or waiting on a timer keeps the
+    object from hibernating, and one waiting on memory alone is lost if it hibernates. A socket
+    whose runtime dropped its attachment, as celld 0.6.2 does when it evicts an idle object, keeps
+    serving with each message's own headers, and one whose attachment does not decode answers each
+    message with a defect, rather than failing the event. A handler's die under a plain
     `RpcServer.layer` is Effect's fatal `Defect`, failing every call in flight on the socket, as
     Effect designs it; `disableFatalDefects: true`, or `ActionRpc.layer`, fails that call alone.
   - `Sockets` is the object's dispatcher for its protocols' sockets, one per instance from
