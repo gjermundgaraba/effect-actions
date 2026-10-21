@@ -85,8 +85,9 @@ loads needs nothing more, which is why the lobby is the safe example, and one ca
 inside a request fails the same way. `ManagedRuntime.make(layer)` builds nothing until its
 first run, so one made at module scope is still built inside the first request: run it once as
 the module loads, `runtime.runFork(Effect.void)`, which one probe under `vitest-pool-workers`
-found enough, or prefer a program per call. A Durable Object's build on its first event does not:
-workerd keeps an object's I/O context across its events, so the timer fires in a later one.
+found enough, or prefer a program per call. A Durable Object's build on its first event did not
+strand its fibers in the tests (a first event with no I/O, then a call); Cloudflare's model of an
+object's I/O context, kept across its events, would explain it, unverified here.
 
 A Worker's entrypoint that is no Effect program, such as a `WorkerEntrypoint` method or a queue
 consumer, runs each call as its own program. chat-rooms' `RoomsEntrypoint`, which `worker.ts`
