@@ -1076,6 +1076,57 @@ describe("Feed", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "refuses another group's rpc of a served tag whose publish was encoding as the first subscriber arrived, sending it nothing of it",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const socket = yield* upgradeToRpc(stub);
+        const received: Array<string> = [];
+
+        socket.addEventListener("message", ({ data }) => {
+          if (Predicate.isString(data)) received.push(data);
+        });
+
+        const publishing = yield* Effect.forkScoped(
+          Effect.exit(calls.publishForeignHeld({ value: "foreign" })),
+        );
+
+        yield* Effect.promise(() =>
+          runInDurableObject(stub, (instance) =>
+            instance.run(Effect.flatMap(Gate, ({ encoding }) => Deferred.await(encoding))),
+          ),
+        );
+
+        socket.send(
+          JSON.stringify({
+            _tag: "Request",
+            id: "watch",
+            tag: "ticks",
+            payload: { key: null, initial: [10] },
+            headers: [],
+          }),
+        );
+
+        yield* Effect.promise(() => vi.waitUntil(() => received.length === 1));
+        yield* calls.endWhenEncoding();
+
+        const published = yield* Fiber.join(publishing);
+
+        yield* calls.publish({ value: 12, key: null });
+        yield* Effect.promise(() =>
+          vi.waitUntil(() => received.some((data) => data.includes("[12]"))),
+        );
+
+        expect(Exit.isFailure(published) ? Cause.pretty(published.cause) : "").toContain(
+          "a second definition of ticks",
+        );
+        expect(received).toHaveLength(2);
+        expect(received.join()).not.toContain("foreign");
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("drops the records of a socket the runtime reported closed", () =>
     Effect.gen(function* () {
       const stub = fresh();

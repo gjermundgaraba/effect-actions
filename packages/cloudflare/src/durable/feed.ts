@@ -367,15 +367,19 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
           }),
         ),
       publish: (rpc, value, options) =>
-        Effect.flatMap(Effect.andThen(oneDefinition(rpc), encoderOf(rpc)([value])), (values) =>
+        Effect.flatMap(encoderOf(rpc)([value]), (values) =>
           lock.withPermits(1)(
             Effect.gen(function* () {
               const path = yield* served;
+              const listed = yield* subscribersOf(rpc, options?.key);
 
-              for (const { storageKey, socket, requestId } of yield* subscribersOf(
-                rpc,
-                options?.key,
-              )) {
+              // Why: judged once the audience is listed, not before encoding, which may suspend
+              // while a subscriber of the served definition arrives: every listed record's
+              // latch existed when it was listed, as a subscribe keeps its latch before its
+              // record.
+              yield* oneDefinition(rpc);
+
+              for (const { storageKey, socket, requestId } of listed) {
                 if (!(yield* sendFrame(state, socket, chunkOf(requestId, values), path))) {
                   yield* drop(storageKey);
                 }
@@ -386,16 +390,16 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
       end: (rpc?: Rpc.Any, options?: EndOptions) =>
         lock.withPermits(1)(
           Effect.gen(function* () {
-            if (rpc !== undefined) yield* oneDefinition(rpc);
-
             // Why: no path is read, as no registered path is not no subscriber: while the services
             // build, before the routes register theirs, storage holds the records of the instance
             // before, and a `wipe` then must answer them. A record's exit is its socket's own,
             // whatever path accepted it, so it is sent there.
-            for (const { storageKey, socket, requestId } of yield* subscribersOf(
-              rpc,
-              options?.key,
-            )) {
+            const listed = yield* subscribersOf(rpc, options?.key);
+
+            // Why: judged once the audience is listed, as `publish` judges it.
+            if (rpc !== undefined) yield* oneDefinition(rpc);
+
+            for (const { storageKey, socket, requestId } of listed) {
               const live = latches.get(storageKey)?.ended;
 
               yield* live === undefined

@@ -92,6 +92,25 @@ export const OtherTicks = Rpc.make("ticks", {
 
 const OtherRpcs = RpcGroup.make(OtherTicks);
 
+export const ForeignHeldTicks = Rpc.make("ticks", {
+  success: Schema.String.pipe(
+    Schema.decodeTo(
+      Schema.String,
+      SchemaTransformation.transformEffect({
+        decode: Effect.succeed,
+        encode: (value) =>
+          Effect.flatMap(Effect.service(Gate), ({ encoding, encoded }) =>
+            Deferred.succeed(encoding, undefined).pipe(
+              Effect.andThen(Deferred.await(encoded)),
+              Effect.as(value),
+            ),
+          ),
+      }),
+    ),
+  ),
+  stream: true,
+});
+
 export const FeedCalls = RpcGroup.make(
   Rpc.make("publish", { payload: { value: Schema.Int, key: Schema.NullOr(Schema.String) } }),
   Rpc.make("announce", { payload: { value: Schema.Int } }),
@@ -102,6 +121,7 @@ export const FeedCalls = RpcGroup.make(
   Rpc.make("release"),
   Rpc.make("finalized", { success: Schema.Int }),
   Rpc.make("publishSlowly", { payload: { value: Schema.Int } }),
+  Rpc.make("publishForeignHeld", { payload: { value: Schema.String } }),
   Rpc.make("wipe"),
 );
 
@@ -226,6 +246,7 @@ export const feedCalls = RpcServer.layer(FeedCalls.merge(FeedRpcs)).pipe(
           release: () => Effect.asVoid(Deferred.succeed(released, undefined)),
           finalized: () => Ref.get(finalized),
           publishSlowly: ({ value }) => feed.publish(SlowTicks, value),
+          publishForeignHeld: ({ value }) => feed.publish(ForeignHeldTicks, value),
           wipe: () => ActionDurableObject.wipe,
         });
       }),
