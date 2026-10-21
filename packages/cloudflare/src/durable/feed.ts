@@ -404,7 +404,9 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
  * - An object serving no `layerWebSocket` path, such as one without routes, or two, where every `subscribe` dies, has no subscriber, and `wipe` runs `deleteAll` alone there.
  * - Its steps run with the caller's context, its services and references, and to their end: an interrupt of the caller waits for a wipe already under the gate to complete, never leaving it half done.
  * - A failure of either step, an `end` that dies or a `deleteAll` that rejects, fails `wipe` with that defect, and the object stays whole, though a callback that rejects inside `blockConcurrencyWhile` resets it: the steps' exit is returned through the gate, then raised.
- * - It runs under the runtime's `blockConcurrencyWhile`, so no message, call or fetch reaches the object until the wipe completes; a subscribe already running in the instance is ended too, even one whose record was still being written, and one that has not yet reached the feed subscribes after the wipe, reading what is left.
+ * - The runtime resets an object whose `blockConcurrencyWhile` runs past 30 seconds, failing every call in flight, as a `deleteAll` over a large database may: wipe such storage in parts of your own first.
+ * - It runs under the runtime's `blockConcurrencyWhile`, so no message, call or fetch reaches the object until the wipe completes.
+ * - The gate holds new events, not fibers already running in the instance: a subscribe resuming inside the wipe is ended if its latch exists by then, even one whose record was still being written, and otherwise subscribes after the wipe, so its `initial` must read something the wipe removes for that page to be refused.
  */
 export const wipe: Effect.Effect<void, never, State | Feed> = Effect.gen(function* () {
   const state = yield* State;
