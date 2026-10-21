@@ -1,8 +1,9 @@
 # live-rpc
 
 A chat served as Effect RPC over a WebSocket: one connection per page, many calls on it.
-Members post, read and delete messages in the rooms they belong to; anyone may list the rooms.
-Each message on the socket carries its own token and names its room.
+Members post, read and delete messages in the rooms they belong to, and follow a room, each
+message posted reaching their page as it is; anyone may list the rooms. Each message on the
+socket carries its own token and names its room.
 To serve these same actions as JSON too, see
 [ActionRpc.md](../../docs/ActionRpc.md#serve-the-rpcs).
 
@@ -27,26 +28,26 @@ page that is an Effect program; `page.ts` wraps it as `connect(url)` for one tha
 ```text
 src/
 ├── chat/
-│   ├── Chat.ts        contract: schemas, errors, actions, the room header and its default
+│   ├── Chat.ts        contract: schemas, errors, actions, `watch`, the room header and its default
 │   ├── store.ts       MessageStore, the service the handlers call, and its Layer
 │   ├── room.ts        CurrentRoom, and the RPC middleware providing it per message
 │   ├── authorize.ts   the one authorization rule: a member of the room
-│   └── handlers.ts    Action.implement: contract to store
+│   └── handlers.ts    Action.implement: contract to store and feed, and `watch`'s handler
 ├── identity/
 │   ├── Identity.ts    contract: CurrentMember and the Login descriptor
 │   ├── members.ts     the demo members
 │   └── verifier.ts    Authentication.layer: tokens to members, server only
-├── Rpc.ts             the RPC binding of every action
+├── Rpc.ts             the RPC binding of every action, and `watch` in its `rpcs`
 ├── routes.ts          the rpcs, authenticated and with their middleware, not yet on a protocol
-├── server.ts          entrypoint: the rpcs over a WebSocket at /rpc, its messages bounded
-├── browser.ts         client module: the connection and the chat, as one Effect program
+├── server.ts          entrypoint: the rpcs over a WebSocket at /rpc, its messages bounded, the feed
+├── browser.ts         client module: the connection and the chat, following a room too
 ├── page.ts            the same chat as promises, for a page that is not one
 └── client.ts          entrypoint: that client, run from Node
 test/
 ├── chat/              in process, with Action.client
-├── routes.test.ts     over RPC in memory, with Testing.layer
+├── routes.test.ts     over RPC in memory, with Testing.layer, a room's stream included
 ├── browser.test.ts    the page's client against the same rpcs
-└── server.test.ts     the socket itself: a listening port, connect(url), the bound on a message
+└── server.test.ts     the socket itself: a listening port, connect(url), the bound on a message, a drop
 ```
 
 ## Where to look
@@ -69,3 +70,7 @@ test/
 | The binding's native `RpcGroup` called by Effect's own client          | `test/routes.test.ts`                           |
 | Testing the client's handling of each error and refusal                | `test/browser.test.ts`                          |
 | Testing over a real WebSocket, and a message over `maxPayload`         | `test/server.test.ts`                           |
+| A native rpc that streams, published to with `Feed`, keyed by room     | `src/chat/Chat.ts`, `src/chat/handlers.ts`      |
+| A native group adding the middleware `layer`'s option gives actions    | `src/Rpc.ts`, `src/chat/room.ts`                |
+| A page following a room, again from its last message after a drop      | `src/browser.ts`, `test/server.test.ts`         |
+| Testing a stream in memory, over HTTP with NDJSON                      | `test/routes.test.ts`                           |

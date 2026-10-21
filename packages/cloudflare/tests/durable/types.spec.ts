@@ -1,16 +1,11 @@
 import type { DurableObject } from "cloudflare:workers";
-import { Context, Effect, Layer, Schema, SchemaTransformation, type Scope, Stream } from "effect";
+import { Context, Effect, Layer, type Scope } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
-import {
-  Rpc as NativeRpc,
-  RpcClient,
-  type RpcClientError,
-  type RpcMessage,
-  RpcServer,
-} from "effect/rpc";
+import { RpcClient, type RpcClientError, type RpcMessage, RpcServer } from "effect/rpc";
 import { expectTypeOf } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import {
   Builds,
@@ -56,10 +51,7 @@ expectTypeOf(ActionDurableObject.layerWebSocket({ path: "/rpc" })).toEqualTypeOf
   Layer.Layer<
     RpcServer.Protocol,
     never,
-    | ActionDurableObject.Sockets
-    | ActionDurableObject.Feed
-    | ActionDurableObject.State
-    | HttpRouter.HttpRouter
+    ActionDurableObject.Sockets | Feed.Feed | ActionDurableObject.State | HttpRouter.HttpRouter
   >
 >();
 
@@ -73,6 +65,16 @@ void Effect.runPromise(
     ),
   ).pipe(Effect.scoped),
 );
+
+expectTypeOf(ActionDurableObject.layerFeed).toEqualTypeOf<
+  Layer.Layer<Feed.Feed, never, ActionDurableObject.State>
+>();
+
+// @ts-expect-error -- The feed's one home is the core's Feed module.
+void ActionDurableObject.Feed;
+
+// @ts-expect-error -- The feed's types' one home is the core's Feed module.
+export type NoChunkServices = ActionDurableObject.ChunkServices<typeof Ticks>;
 
 expectTypeOf(ActionDurableObject.Sockets.layer).toEqualTypeOf<
   Layer.Layer<ActionDurableObject.Sockets, never, ActionDurableObject.State>
@@ -394,30 +396,3 @@ ActionDurableObject.make({
   services: () =>
     Announcer.layer.pipe(Layer.provideMerge(Layer.effectDiscard(Effect.service(Greeting)))),
 });
-
-class Offset extends Context.Service<Offset, number>()("types/Offset") {}
-
-const Offsetted = NativeRpc.make("offsetted", {
-  success: Schema.Int.pipe(
-    Schema.decodeTo(
-      Schema.Int,
-      SchemaTransformation.transformEffect({
-        decode: Effect.succeed,
-        encode: (value) => Effect.map(Effect.service(Offset), (offset) => value + offset),
-      }),
-    ),
-  ),
-  stream: true,
-});
-
-declare const feed: ActionDurableObject.Feed["Service"];
-
-declare const subscriber: ActionDurableObject.Subscriber<typeof Offsetted>;
-
-expectTypeOf(feed.publish(Offsetted, 1)).toEqualTypeOf<Effect.Effect<void, never, Offset>>();
-
-expectTypeOf(feed.subscribe(subscriber)).toEqualTypeOf<Stream.Stream<number, never, Offset>>();
-
-expectTypeOf<ActionDurableObject.ChunkServices<typeof Offsetted>>().toEqualTypeOf<Offset>();
-
-expectTypeOf<ActionDurableObject.ChunkServices<typeof Ticks>>().toEqualTypeOf<never>();

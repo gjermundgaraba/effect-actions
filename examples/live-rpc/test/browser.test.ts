@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Deferred, Effect, Exit, Layer, Option } from "effect";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { openChat } from "../src/browser.js";
 import { chatOver } from "../src/page.js";
@@ -21,7 +22,7 @@ const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
       ),
     ),
   ),
-  Layer.provide(MessageStore.layerMemory),
+  Layer.provide([MessageStore.layerMemory, Feed.layer]),
 );
 
 describe("the page's client", () => {
@@ -74,6 +75,27 @@ describe("the page's client", () => {
         access: "signed-out",
         messages: [],
       });
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("ends following a room the member has not joined with the refusal, never opened", () =>
+    Effect.gen(function* () {
+      const chat = yield* openChat;
+      const opened = yield* Deferred.make<void>();
+      const closed = yield* Deferred.make<Exit.Exit<void, unknown>>();
+
+      yield* chat.room("ops", "grace").follow(0, {
+        opened: Deferred.succeed(opened, undefined),
+        message: () => Effect.void,
+        closed: (exit) => Deferred.succeed(closed, exit),
+      });
+
+      const exit = yield* Deferred.await(closed);
+
+      expect(Exit.findErrorOption(exit).pipe(Option.getOrUndefined)).toBeInstanceOf(
+        Action.Forbidden,
+      );
+      expect(yield* Deferred.isDone(opened)).toBe(false);
     }).pipe(Effect.provide(served)),
   );
 

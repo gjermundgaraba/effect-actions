@@ -16,6 +16,7 @@ import {
 } from "effect";
 import { RpcClient, RpcGroup, type RpcMessage, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { recordKey } from "../../src/durable/feed.js";
 import { socketIdOf } from "../../src/durable/frames.js";
@@ -669,7 +670,7 @@ describe("Feed", () => {
 
             await instance.run(
               Effect.gen(function* () {
-                const feed = yield* ActionDurableObject.Feed;
+                const feed = yield* Feed.Feed;
                 const { released } = yield* Gate;
 
                 yield* feed.end(Ticks, { key: "kept" });

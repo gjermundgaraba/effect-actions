@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Config, Effect, Layer } from "effect";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { MessageStore } from "./chat/store.js";
@@ -36,8 +37,9 @@ const server = Layer.unwrap(
         }),
       ),
       // DEMO ONLY: messages live in this process's memory; a deployment provides a store that
-      // lasts.
-      Layer.provide(MessageStore.layerMemory),
+      // lasts. The feed holds the pages following a room, which this process's sockets serve,
+      // so it lives here too, one for the whole server.
+      Layer.provide([MessageStore.layerMemory, Feed.layer]),
     );
   }),
 );

@@ -1,6 +1,6 @@
 import { Layer } from "effect";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { messages, rooms } from "./chat/handlers.js";
+import { messages, rooms, watch } from "./chat/handlers.js";
 import { ResolveRoom, resolveRoom } from "./chat/room.js";
 import { authenticate } from "./identity/verifier.js";
 import { Rpc } from "./Rpc.js";
@@ -13,9 +13,13 @@ import { Rpc } from "./Rpc.js";
 // room: `Layer.succeed(CurrentRoom, "lobby")` provided here would leave the layer still
 // requiring it, in its type.
 //
-// It still requires three things, each chosen by whoever serves it. The protocol and its
+// `watch`'s handler is the host's, as an Effect rpc's is: it is provided here.
+//
+// It still requires four things, each chosen by whoever serves it. The protocol and its
 // serialization: server.ts gives it a WebSocket, and a test Effect's HTTP protocol, which
-// answers in memory. And `MessageStore`.
+// answers in memory. `MessageStore`, and `Feed`, which `postMessage` publishes to and `watch`
+// subscribes to: one, provided around both.
 export const rpc = ActionRpc.layer(Rpc, [rooms, messages], { middleware: [ResolveRoom] }).pipe(
+  Layer.provide(watch),
   Layer.provide([resolveRoom, authenticate]),
 );

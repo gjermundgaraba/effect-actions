@@ -1,15 +1,18 @@
-# ActionDurableObject's feed: push to a page
+# ActionDurableObject's feed: push to a page across hibernation
 
 An object pushes what changes to the pages connected to it over their sockets, after it
-hibernated too: a page calls an rpc that streams, its handler makes the call a **subscriber**
-with `Feed`, and any part of the object publishes to it. A subscriber is kept in the object's
-storage, keyed by its socket, so a value published by a new instance, after an eviction,
-reaches the page that subscribed on the one before, as long as its socket stays open. The feed
-is a push channel addressed by the call's request id, not a stream pipeline: a value published
-goes to the socket as Effect's server would send it. An action answers once, so the stream is a
-native rpc in the binding's `rpcs`, beside its actions (the core's `docs/ActionRpc.md`).
+hibernated too. The core's `Feed`, from `@gjermundgaraba/effect-actions/Feed`, is the service:
+a page calls an rpc that streams, its handler makes the call a **subscriber**, and any part of
+the object publishes to it; the core's `docs/Feed.md` teaches it. An object's is
+`ActionDurableObject.layerFeed`, which `make` and `handlers` provide: a subscriber is kept in the
+object's storage, keyed by its socket, so a value published by a new instance, after an
+eviction, reaches the page that subscribed on the one before, as long as its socket stays open.
+It is a push channel addressed by the call's request id, not a stream pipeline: a value
+published goes to the socket as Effect's server would send it. Domain code yields the core's
+`Feed` and imports nothing of this package, whichever feed the entrypoint provides.
 
-`Feed`'s rules and traps are on `ActionDurableObject.Feed`. This page uses the chat-rooms
+The rules every feed keeps are on the core's `Feed`, and what an object's adds, its storage, its
+one socket path and wiping it, on `ActionDurableObject.layerFeed`. This page uses the chat-rooms
 example, whose pages follow a room's messages.
 
 ## Declare an rpc that streams
@@ -44,12 +47,12 @@ export const unsupportedProtocol = 4000;
 
 The handler returns `feed.subscribe(request)`, given its second argument, with what the page
 missed as `initial`; the action posting a message publishes it to the rpc. `Feed` is a startup
-service, so both yield it as they yield a store:
+service, so both yield the core's as they yield a store:
 
 ```ts example=chat-rooms/src/chat/handlers.ts
 import { Effect, Stream } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import { CurrentMember } from "../identity/Identity.js";
 import { RoomRpc } from "../Rpc.js";
 import { authorize } from "./authorize.js";
@@ -74,7 +77,7 @@ export const messages = Action.implement(
   Messages,
   Effect.gen(function* () {
     const store = yield* MessageStore;
-    const feed = yield* ActionDurableObject.Feed;
+    const feed = yield* Feed.Feed;
 
     return {
       // Posted over the socket or the JSON routes, a message goes to every page following the
@@ -102,7 +105,7 @@ export const messages = Action.implement(
 export const watch = RoomRpc.rpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* MessageStore;
-    const feed = yield* ActionDurableObject.Feed;
+    const feed = yield* Feed.Feed;
     const allowed = yield* authorize;
 
     return {
@@ -133,8 +136,8 @@ identity, and `ActionRpc.layer` requires them: `routes.ts` provides them to it
 - **One feed of many.** Give a subscriber a `key`, such as a topic or a document, and
   `publish(rpc, value, { key })` reaches only those given it.
 - **End the streams.** `end(rpc, { key })` completes each subscriber's stream, its finalizers
-  run, as when what it followed is gone; `end()` completes every subscriber's, as before a
-  wipe of the object's storage, `storage.deleteAll()`.
+  run, as when what it followed is gone; `end()` completes every subscriber's, which makes a
+  wipe of the object's storage, `storage.deleteAll()`, safe after it.
 
 ## Follow from a page
 
@@ -219,7 +222,8 @@ export const openRoom = (token: string) =>
 ```
 
 - **Opened at the first value.** Effect's client tells a page nothing when its subscription is
-  kept, so a stream with nothing `initial` opens at its first published value.
+  kept, so a stream with nothing `initial` opens at its first published value: an rpc whose page
+  must know at once streams a first value, as the core's `docs/Feed.md` says.
 - **Testing it.** `evictDurableObject(stub)` between a page subscribing and a post shows the
   value reach it from a new instance
   ([chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)).

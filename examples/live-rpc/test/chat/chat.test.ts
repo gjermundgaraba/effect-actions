@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, flow } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import { NotAuthor } from "../../src/chat/Chat.js";
 import { messages } from "../../src/chat/handlers.js";
 import { CurrentRoom } from "../../src/chat/room.js";
@@ -33,7 +34,7 @@ describe("messages, in process", () => {
       expect(yield* client.readMessages({ after: 0 }).pipe(as("ada", "ops"))).toEqual({
         messages: [{ id: 1, author: "ada", text: "Disk is full." }],
       });
-    }).pipe(Effect.provide(MessageStore.layerMemory)),
+    }).pipe(Effect.provide([MessageStore.layerMemory, Feed.layer])),
   );
 
   it.effect("lets only its author delete a message", () =>
@@ -50,7 +51,7 @@ describe("messages, in process", () => {
       expect(yield* client.readMessages({ after: 0 }).pipe(as("grace", "lobby"))).toEqual({
         messages: [],
       });
-    }).pipe(Effect.provide(MessageStore.layerMemory)),
+    }).pipe(Effect.provide([MessageStore.layerMemory, Feed.layer])),
   );
 
   it.effect("refuses a member a room they have not joined, before the handler runs", () =>
@@ -64,6 +65,6 @@ describe("messages, in process", () => {
       expect(yield* client.readMessages({ after: 0 }).pipe(as("ada", "ops"))).toEqual({
         messages: [],
       });
-    }).pipe(Effect.provide(MessageStore.layerMemory)),
+    }).pipe(Effect.provide([MessageStore.layerMemory, Feed.layer])),
   );
 });

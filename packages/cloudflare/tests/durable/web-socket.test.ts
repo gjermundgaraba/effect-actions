@@ -4,6 +4,7 @@ import { HttpRouter } from "effect/http";
 import { RpcClient } from "effect/rpc";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { noteHeader, Overdrawn } from "../support/app.js";
 import type { Room } from "../worker.js";
@@ -288,7 +289,7 @@ describe("layerWebSocket", () => {
                     close: () => Effect.succeed(false),
                     error: () => Effect.succeed(false),
                   }),
-                  ActionDurableObject.Feed.layer.pipe(
+                  ActionDurableObject.layerFeed.pipe(
                     Layer.provide(Layer.succeed(ActionDurableObject.State, state)),
                   ),
                   HttpRouter.layer,
@@ -303,6 +304,29 @@ describe("layerWebSocket", () => {
         "registers only with a Sockets that Sockets.layer built",
       );
     }),
+  );
+
+  it.effect(
+    "refuses to serve its sockets with a Feed that layerFeed did not build, such as the core's in memory",
+    () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.promise(() =>
+          runInDurableObject(env.PLAIN.getByName("foreign-feed"), (_, state) =>
+            Effect.runPromiseExit(
+              Layer.build(
+                ActionDurableObject.layerWebSocket({ path: "/rpc" }).pipe(
+                  Layer.provide([ActionDurableObject.Sockets.layer, Feed.layer, HttpRouter.layer]),
+                  Layer.provide(Layer.succeed(ActionDurableObject.State, state)),
+                ),
+              ).pipe(Effect.scoped),
+            ),
+          ),
+        );
+
+        expect(String(Exit.isFailure(exit) && Cause.squash(exit.cause))).toContain(
+          "registers only with a Feed that layerFeed built: provide layerFeed",
+        );
+      }),
   );
 
   it.effect("refuses to build two protocols at one path under different prefixes", () =>

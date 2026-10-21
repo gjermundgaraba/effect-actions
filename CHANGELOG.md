@@ -90,29 +90,27 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     without the runtime's `web_socket_auto_reply_to_close`. It gives each
     socket an id unique across the object's protocols, kept in storage so no later socket has an
     earlier one's.
-  - `Feed` pushes values to the pages following a stream rpc over `layerWebSocket`, after the
-    object hibernated or was evicted too, as long as their sockets stay open. `Feed.layer`
-    makes one per instance, which `handlers` and `make` provide to the services, the calls, the
-    routes, the alarm and `run`, so any of them publishes. A stream rpc's handler returns
-    `feed.subscribe(request, { initial, key })`; `publish(rpc, value, { key })` sends the value
-    to each subscriber of the rpc, or of the key, and `end(rpc, { key })` completes their
-    streams, finalizers included, and `end()` every subscriber's. `ChunkServices<R>` names what `publish` and `subscribe` of
-    `R` owe, the services its values need to encode. What to know:
-    - The stream `subscribe` returns is a handle on the call, not its values: an operator such
-      as `Stream.map` sees none, so transform a value before publishing it.
-    - Only a call over `layerWebSocket` subscribes; one over the stub or HTTP dies at once. A
-      feed serves the sockets of one `layerWebSocket` path: on an object serving two,
-      `subscribe`, `publish` and `end` die at once, naming both, as they do before the routes
-      register their path, such as from a service as it is built. A socket another path
-      accepted, still open after an eviction from an instance serving that path, is sent
-      nothing.
-    - A subscriber gets every value published once it subscribed, at least once: one published
-      while `initial` is read may arrive before it and again in it, and with a schema that
-      encodes asynchronously, one published between the read and the send arrives before it.
-      After `initial`, values arrive in the order their publishes finished encoding.
-    - An `end` while `initial` is read or encoded interrupts it and sends nothing.
-    - Access is checked once, as the call subscribes: a subscriber is published to until its
-      socket closes or `end` reaches it, so end a member's subscriptions by a key of their own.
+  - `layerFeed` is an object's `Feed`, the core's service, kept in the object's storage: a
+    value published reaches the pages following a stream rpc over `layerWebSocket` after the
+    object hibernated or was evicted too, as long as their sockets stay open. `handlers` and
+    `make` provide it, `Layer<Feed, never, State>`, to the services, the calls, the routes, the
+    alarm and `run`, so any of them publishes, and domain code yields the core's `Feed`,
+    importing nothing of this package. What it adds to the core's rules:
+    - The stream `subscribe` returns carries none of the values, which go to the socket as
+      published: an operator such as `Stream.map` sees none, so transform a value before
+      publishing it.
+    - Only a call over `layerWebSocket` subscribes; one over the stub or HTTP dies at once. It
+      serves the sockets of one `layerWebSocket` path: on an object serving two, `subscribe`,
+      `publish` and `end` die at once, naming both, as they do before the routes register their
+      path, such as from a service as it is built. A socket another path accepted, still open
+      after an eviction from an instance serving that path, is sent nothing. `layerWebSocket`
+      given a `Feed` that `layerFeed` did not build, such as the core's `Feed.layer`, dies
+      naming `layerFeed`.
+    - A value published while `initial` is read may arrive before it and again in it, and with
+      a schema that encodes asynchronously, one published between the read and the send
+      arrives before it. After `initial`, values arrive in the order their publishes finished
+      encoding. An `end` while `initial` is read or encoded interrupts it and sends nothing, and
+      a subscriber whose call hibernation dropped gets its exit from `end` itself.
     - The feed waits for no acknowledgement. A page whose socket drops subscribes again from the
       last value it holds, which `initial` sends on.
     - Subscribers are kept in the object's storage beside the application's data, with the
@@ -153,7 +151,7 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     handlers, `fetch`, `webSocketMessage`, `webSocketClose`, `webSocketError`,
     `effectActionsRpc`, `alarm` and `run`, each taking the runtime's arguments, for a class
     of your own to delegate to. The first event builds the object once: `services`, its
-    startup services, which may require `State` and `Feed`, then `calls`, given `Calls` and `layerStub()`, and
+    startup services, which may require `State` and the core's `Feed`, then `calls`, given `Calls` and `layerStub()`, and
     `routes`, given `Sockets`; every event awaits that build, which makes the routes' web handler too,
     so a defect making it, such as global middleware throwing, fails it, and a failed build is
     dropped with all it built, so the next event builds again. `fetch` serves the routes, or answers 404
@@ -189,6 +187,26 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     the room's binding, which `Feed` pushes to, and a Worker routing pages' sockets to the rooms
     and asking each for its latest message over its stub, through the room's own `RpcGroup`.
     The core's `docs/README.md` routes to it.
+
+- **`Feed` pushes values to the clients following a stream rpc**, in the new module
+  `@gjermundgaraba/effect-actions/Feed`. A stream rpc's handler returns
+  `feed.subscribe(request, { initial, key })`, making its call a subscriber, any handler, store
+  or job yields `Feed.Feed` and calls `publish(rpc, value, { key })`, which sends the value to
+  each subscriber of the rpc, or of the key, and `end(rpc, { key })` completes their streams
+  through Effect's server, finalizers included, `end()` every subscriber's. `ChunkServices<R>`
+  names what `publish` and `subscribe` of `R` owe, the services its values need to encode, and
+  `Subscriber<R>`, `SubscribeOptions`, `PublishOptions` and `EndOptions` the rest; a handler's
+  subscriber is typed by its rpc, so `initial` is checked as the rpc's chunk. Every
+  implementation keeps the rules on `Feed.Feed`: the subscriber is kept before `initial` is
+  read, so every value published once it subscribed reaches it, at least once; values
+  published one after another arrive in that order; an `end` while `initial` is read sends
+  nothing; access is checked once, as the call subscribes. `Feed.layer` keeps the subscribers
+  in a process's memory, a queue each, for a server holding its clients' connections, such as
+  Node's, and for tests, which provide it to their routes as any service: `Testing.layer`
+  provides none. The Cloudflare package's `ActionDurableObject.layerFeed` keeps them in a
+  Durable Object's storage. live-rpc's pages follow a room with `watch`, a stream rpc in the
+  binding's `rpcs`, subscribing again after a dropped socket from the last message they hold,
+  and `docs/Feed.md` teaches it.
 
 ### Other changes
 

@@ -1,26 +1,31 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Queue, Stream } from "effect";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { roomHeader } from "../src/chat/Chat.js";
+import { type Message, roomHeader } from "../src/chat/Chat.js";
 import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
 import { Rpc } from "../src/Rpc.js";
 
 // What the wire adds: the real rpcs, behind their real authentication and middleware,
 // answering in memory. The test gives them Effect's HTTP protocol, not the server's WebSocket,
-// because `Testing.layer` answers HTTP requests; no port is opened.
+// because `Testing.layer` answers HTTP requests; no port is opened. NDJSON, not the page's
+// JSON, so `watch` streams: over HTTP, JSON answers once every request has its exit, and a
+// subscription has none until it ends.
 const server = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(RpcSerialization.layerNdjson),
 );
 
+// The store and the feed, provided once around the routes: `postMessage` publishes to the feed
+// `watch` subscribes to.
 const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(RpcSerialization.layerNdjson),
   Layer.provide(Testing.layer(server)),
-  Layer.provide(MessageStore.layerMemory),
+  Layer.provide([MessageStore.layerMemory, Feed.layer]),
 );
 
 // Each call carries its caller's token, so one client serves every caller of a test.
@@ -82,6 +87,49 @@ describe("the chat, over RPC", () => {
       const client = yield* ActionRpc.client(Rpc);
       const read = client.readMessages({ after: 0 }).pipe(as("grace"), inRoom("ops"));
       const refused = yield* Effect.flip(read);
+
+      expect(refused).toBeInstanceOf(Action.Forbidden);
+      expect(refused.message).toBe("Not a member of ops.");
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect(
+    "streams a room's messages after the last one a page holds, then each one posted in that room alone",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* ActionRpc.client(Rpc);
+        const first = yield* client.postMessage({ text: "Before." }).pipe(as("ada"));
+        const received = yield* Queue.unbounded<Message>();
+
+        yield* Effect.forkScoped(
+          Stream.runForEach(
+            client.watch({ after: 0 }, { headers: { authorization: "Bearer grace" } }),
+            (message) => Queue.offer(received, message),
+          ),
+        );
+
+        expect(yield* Queue.take(received)).toEqual(first);
+
+        yield* client.postMessage({ text: "Elsewhere." }).pipe(as("ada"), inRoom("ops"));
+
+        const next = yield* client.postMessage({ text: "After." }).pipe(as("ada"));
+
+        expect(yield* Queue.take(received)).toEqual(next);
+      }).pipe(Effect.scoped, Effect.provide(served)),
+  );
+
+  it.effect("refuses to stream a room to a member who has not joined it, naming it", () =>
+    Effect.gen(function* () {
+      const client = yield* ActionRpc.client(Rpc);
+
+      const refused = yield* Effect.flip(
+        Stream.runDrain(
+          client.watch(
+            { after: 0 },
+            { headers: { authorization: "Bearer grace", [roomHeader]: "ops" } },
+          ),
+        ),
+      );
 
       expect(refused).toBeInstanceOf(Action.Forbidden);
       expect(refused.message).toBe("Not a member of ops.");

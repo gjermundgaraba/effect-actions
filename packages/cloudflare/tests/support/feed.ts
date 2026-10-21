@@ -10,6 +10,7 @@ import {
   Stream,
 } from "effect";
 import { Rpc, RpcGroup, RpcSerialization, RpcServer } from "effect/rpc";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 
 export class NoInitial extends Schema.TaggedError<NoInitial>()("NoInitial", {}) {}
@@ -109,7 +110,7 @@ export class Announcer extends Context.Service<
   { readonly announce: (value: number) => Effect.Effect<void> }
 >()("tests/Announcer") {
   static readonly layer = Layer.effect(Announcer)(
-    Effect.map(Effect.service(ActionDurableObject.Feed), (feed) =>
+    Effect.map(Effect.service(Feed.Feed), (feed) =>
       Announcer.of({ announce: (value) => feed.publish(Ticks, value) }),
     ),
   );
@@ -119,7 +120,7 @@ const keyOf = (key: string | null) => key ?? undefined;
 
 const tickHandlers = FeedRpcs.toLayer(
   Effect.gen(function* () {
-    const feed = yield* ActionDurableObject.Feed;
+    const feed = yield* Feed.Feed;
     const gate = yield* Gate;
     const { read, released, finalized } = gate;
 
@@ -170,7 +171,7 @@ const tickHandlers = FeedRpcs.toLayer(
 );
 
 const otherHandlers = OtherRpcs.toLayer(
-  Effect.map(Effect.service(ActionDurableObject.Feed), (feed) =>
+  Effect.map(Effect.service(Feed.Feed), (feed) =>
     OtherRpcs.of({ ticks: ({ initial }, request) => feed.subscribe(request, { initial }) }),
   ),
 );
@@ -200,7 +201,7 @@ export const feedCalls = RpcServer.layer(FeedCalls.merge(FeedRpcs)).pipe(
   Layer.provide(
     FeedCalls.toLayer(
       Effect.gen(function* () {
-        const feed = yield* ActionDurableObject.Feed;
+        const feed = yield* Feed.Feed;
         const state = yield* ActionDurableObject.State;
         const announcer = yield* Announcer;
         const { read, released, finalized, encoding, encoded } = yield* Gate;

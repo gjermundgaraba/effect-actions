@@ -10,10 +10,11 @@ import {
   type HttpServerRequest,
 } from "effect/http";
 import type { RpcMessage, RpcServer } from "effect/rpc";
+import type { Feed } from "@gjermundgaraba/effect-actions/Feed";
 import { Calls, layerStub, type StubRequest } from "./calls.js";
+import { layerFeed } from "./feed.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
-import { Feed } from "./feed.js";
 
 export { Calls, layerStub, type StubRequest } from "./calls.js";
 
@@ -21,14 +22,7 @@ export { layerWebSocket, Sockets, type LayerWebSocketOptions } from "./sockets.j
 
 export { State } from "./state.js";
 
-export {
-  Feed,
-  type ChunkServices,
-  type EndOptions,
-  type PublishOptions,
-  type SubscribeOptions,
-  type Subscriber,
-} from "./feed.js";
+export { layerFeed } from "./feed.js";
 
 export { client, layerStubClient, type Client, type Stub } from "./stub.js";
 
@@ -87,8 +81,9 @@ export interface Options<
    * instance, before the routes, again after every eviction, and never finalized. The routes,
    * every request, the alarm and `run` share that one build, and an implementation the services
    * build, such as an in-process `Action.client`'s, is the one the routes serve. They may
-   * require `State` and `Feed` alone, so a store over the object's storage, what the object is,
-   * such as its name, or an adapter publishing over its feed, is a Layer requiring them.
+   * require `State` and the core's `Feed` alone, which `layerFeed` provides, so a store over the
+   * object's storage, what the object is, such as its name, or a service publishing over its
+   * feed, is a Layer requiring them.
    *
    * **Gotchas**
    *
@@ -233,7 +228,7 @@ const handlersOf = <S>(
       // given; their scope is closed only when the build fails, so nothing is finalized while
       // the instance lives, and a failed build leaves no fiber of its own running.
       const context = yield* Layer.buildWithMemoMap(
-        services.pipe(Layer.provideMerge(Feed.layer), Layer.provideMerge(state)),
+        services.pipe(Layer.provideMerge(layerFeed), Layer.provideMerge(state)),
         memoMap,
         scope,
       );
@@ -392,7 +387,7 @@ type InstanceOf<S, Env, RT> = [RT] extends [Layer.Any]
  * The object's lifecycle, for a Durable Object class that cannot extend the one `make` returns:
  * given its `ctx`, the handlers that build `services`, then `calls`, with `Calls` and
  * `layerStub`, and `routes`, with `Sockets`, once per instance, on the first event, with `State`
- * and `Feed` provided, and share that one build across every event, which awaits it. `fetch` serves the
+ * and the core's `Feed`, `layerFeed`, provided, and share that one build across every event, which awaits it. `fetch` serves the
  * routes, the socket handlers dispatch through `Sockets`, `effectActionsRpc` through `Calls`,
  * `alarm` runs `alarm` and `run` runs an Effect in the object. Delegate the handlers the class
  * serves this way, as methods: `effectActionsRpc(request: StubRequest)` returning the

@@ -1,5 +1,6 @@
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
 import { Rpc, RpcGroup, RpcServer } from "effect/rpc";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 
 export const Follow = Rpc.make("follow", { payload: {}, success: Schema.Int, stream: true });
@@ -7,7 +8,7 @@ export const Follow = Rpc.make("follow", { payload: {}, success: Schema.Int, str
 const FollowRpcs = RpcGroup.make(Follow);
 
 const followHandlers = FollowRpcs.toLayer(
-  Effect.map(ActionDurableObject.Feed, (feed) =>
+  Effect.map(Feed.Feed, (feed) =>
     FollowRpcs.of({ follow: (_, request) => feed.subscribe(request, { initial: [10] }) }),
   ),
 );
@@ -37,7 +38,7 @@ export const movedRoutes = Layer.unwrap(
 export const startupPublisher = Layer.effectDiscard(
   Effect.gen(function* () {
     const state = yield* ActionDurableObject.State;
-    const feed = yield* ActionDurableObject.Feed;
+    const feed = yield* Feed.Feed;
     const exit = yield* Effect.exit(feed.publish(Follow, 88));
 
     yield* Effect.promise(() =>

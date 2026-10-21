@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Data, Deferred, Effect, Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as ActionDurableObject from "../src/durable/ActionDurableObject.js";
 import {
   alarm,
@@ -135,7 +136,7 @@ export class Manual extends DurableObject {
   readonly #services = Layer.mergeAll(
     startup,
     ActionDurableObject.Sockets.layer,
-    ActionDurableObject.Feed.layer,
+    ActionDurableObject.layerFeed,
     pluginCalls.pipe(
       Layer.provide(ActionDurableObject.layerStub()),
       Layer.provideMerge(ActionDurableObject.Calls.layer),
@@ -244,13 +245,11 @@ export class Moved extends ActionDurableObject.make({
   routes: movedRoutes,
 }) {
   publish(value: number) {
-    return this.run(
-      Effect.flatMap(ActionDurableObject.Feed, (feed) => feed.publish(Follow, value)),
-    );
+    return this.run(Effect.flatMap(Feed.Feed, (feed) => feed.publish(Follow, value)));
   }
 
   end() {
-    return this.run(Effect.flatMap(ActionDurableObject.Feed, (feed) => feed.end(Follow)));
+    return this.run(Effect.flatMap(Feed.Feed, (feed) => feed.end(Follow)));
   }
 }
 

@@ -1,6 +1,6 @@
 import { Effect, Stream } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import { CurrentMember } from "../identity/Identity.js";
 import { RoomRpc } from "../Rpc.js";
 import { authorize } from "./authorize.js";
@@ -25,7 +25,7 @@ export const messages = Action.implement(
   Messages,
   Effect.gen(function* () {
     const store = yield* MessageStore;
-    const feed = yield* ActionDurableObject.Feed;
+    const feed = yield* Feed.Feed;
 
     return {
       // Posted over the socket or the JSON routes, a message goes to every page following the
@@ -53,7 +53,7 @@ export const messages = Action.implement(
 export const watch = RoomRpc.rpcs.toLayer(
   Effect.gen(function* () {
     const store = yield* MessageStore;
-    const feed = yield* ActionDurableObject.Feed;
+    const feed = yield* Feed.Feed;
     const allowed = yield* authorize;
 
     return {

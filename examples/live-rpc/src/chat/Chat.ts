@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { Rpc } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { CurrentMember } from "../identity/Identity.js";
 
@@ -54,8 +55,7 @@ export const ListRooms = Action.make("listRooms", {
 
 const signedIn = { caller: CurrentMember } as const;
 
-// Actions are unary. A page keeps up by calling this again on its open socket, passing the last
-// id it has seen; a native rpc in the binding's `rpcs` could stream them instead.
+// Actions are unary: this reads once, where `watch` below keeps a page up to date.
 export const ReadMessages = Action.make("readMessages", {
   ...signedIn,
   description: "Read the room's messages after the given id; 0 reads them all.",
@@ -81,3 +81,14 @@ export const DeleteMessage = Action.make("deleteMessage", {
 });
 
 export const Messages = [ReadMessages, PostMessage, DeleteMessage] as const;
+
+// A page follows a room on its open socket: `watch` sends the messages after the last one it
+// holds, then each one posted in the room. A native rpc that streams, in the binding's `rpcs`
+// beside the actions: authenticated as they are, about the room its header names, and refused
+// for a member outside it.
+export const Watch = Rpc.make("watch", {
+  payload: { after: Schema.Int },
+  success: Message,
+  error: Action.Forbidden,
+  stream: true,
+});

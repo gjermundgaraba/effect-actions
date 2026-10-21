@@ -16,7 +16,7 @@ interface Registry {
   readonly running: Deferred.Deferred<void>;
 }
 
-const registries = makeRegistries<Calls["Service"], Registry>("layerStub", "Calls");
+const registries = makeRegistries<Calls["Service"], Registry>("layerStub", "Calls", "Calls.layer");
 
 /**
  * The object's dispatcher for the calls a caller makes over its stub: `call` hands one call's

@@ -1,7 +1,8 @@
 import { Context, Effect, Layer, Option, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
-import { CurrentSocket, Feed, forget, servePath } from "./feed.js";
+import { Feed } from "@gjermundgaraba/effect-actions/Feed";
+import { CurrentSocket, forget, servePath } from "./feed.js";
 import { groupTag, sendFrame, socketIdOf, socketTag } from "./frames.js";
 import { makeRegistries } from "./registry.js";
 import { State } from "./state.js";
@@ -19,7 +20,11 @@ interface Registry {
 
 const nextSocketKey = "effect-actions/socket/next";
 
-const registries = makeRegistries<Sockets["Service"], Registry>("layerWebSocket", "Sockets");
+const registries = makeRegistries<Sockets["Service"], Registry>(
+  "layerWebSocket",
+  "Sockets",
+  "Sockets.layer",
+);
 
 /**
  * The object's dispatcher for the sockets the protocols of its routes accept, such as

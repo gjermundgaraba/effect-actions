@@ -1,9 +1,13 @@
 import { createServer } from "node:http";
 import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Deferred, Effect, Layer, Queue, Ref } from "effect";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import { HttpRouter, HttpServer } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
+import { Socket } from "effect/socket";
+import { connection, openChat } from "../src/browser.js";
+import type { Message } from "../src/chat/Chat.js";
 import { connect } from "../src/page.js";
 import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
@@ -25,7 +29,7 @@ const listening = HttpRouter.serve(socket, { disableLogger: true, disableListenL
   Layer.provideMerge(
     NodeHttpServer.layer(createServer, { host: "127.0.0.1", port: 0, websocket: { maxPayload } }),
   ),
-  Layer.provide(MessageStore.layerMemory),
+  Layer.provide([MessageStore.layerMemory, Feed.layer]),
 );
 
 // The page's client, on Node's global `WebSocket`. Each test closes it with `Effect.scoped`,
@@ -70,6 +74,58 @@ describe("the chat, over a WebSocket", () => {
       yield* Effect.promise(() =>
         expect(ada.post("x".repeat(400))).rejects.toMatchObject({ reason: { code: 1009 } }),
       );
+    }).pipe(Effect.scoped, Effect.provide(listening)),
+  );
+
+  // Effect's socket client connects again by itself after its socket drops, failing the streams
+  // it ran: `follow` subscribes again, from the last message the page holds. Real time, as the
+  // client's reconnection and the page's backoff wait on it.
+  it.live("follows a room across a dropped socket, from the last message the page holds", () =>
+    Effect.gen(function* () {
+      const server = yield* HttpServer.HttpServer;
+      const url = `${HttpServer.formatAddress(server.address).replace("http", "ws")}/rpc`;
+      const sockets: Array<WebSocket> = [];
+
+      const constructor = Layer.succeed(Socket.WebSocketConstructor)((address) => {
+        const socket = new globalThis.WebSocket(address);
+
+        sockets.push(socket);
+
+        return socket;
+      });
+
+      const page = yield* Layer.build(connection(url).pipe(Layer.provide(constructor)));
+      const follower = yield* Effect.provideContext(openChat, page);
+      const ada = follower.room("lobby", "ada");
+      const before = yield* ada.post("Before the drop.");
+      const received = yield* Queue.unbounded<Message>();
+      const opened = yield* Ref.make(0);
+      const resubscribed = yield* Deferred.make<void>();
+
+      yield* Effect.forkScoped(
+        ada.follow(0, {
+          opened: Ref.updateAndGet(opened, (count) => count + 1).pipe(
+            Effect.flatMap((count) =>
+              count === 2 ? Deferred.succeed(resubscribed, undefined) : Effect.void,
+            ),
+          ),
+          message: (message) => Queue.offer(received, message),
+          closed: () => Effect.void,
+        }),
+      );
+
+      expect(yield* Queue.take(received)).toEqual(before);
+
+      for (const socket of sockets) socket.close();
+
+      const writer = yield* chat;
+      const after = yield* Effect.promise(() => writer.room("lobby", "grace").post("After it."));
+
+      expect(yield* Queue.take(received)).toEqual(after);
+
+      yield* Deferred.await(resubscribed);
+
+      expect(sockets.length).toBeGreaterThan(1);
     }).pipe(Effect.scoped, Effect.provide(listening)),
   );
 });
