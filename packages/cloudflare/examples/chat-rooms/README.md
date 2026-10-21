@@ -72,7 +72,6 @@ src/
 │   └── handlers.ts    Action.implement: every room asked at once
 ├── platform/
 │   ├── sql-store.ts   MessageStore over the object's SQLite database, and its alarm
-│   ├── protocol-version.ts the socket's route refusing a page of another version
 │   └── room-stubs.ts  Rooms over each room's stub, with ActionDurableObject.client
 ├── Api.ts             the JSON bindings: a room's and the lobby's
 ├── Rpc.ts             the room's RPC binding: its actions and its feed
@@ -111,7 +110,7 @@ test/
 | A Worker calling an object's own API over its stub, with Cloudflare's RPC | `src/chat/Calls.ts`, `src/routes.ts`, `src/platform/room-stubs.ts` |
 | Routing requests and upgrades from the Worker to an object                | `src/worker.ts`                                                    |
 | A page's socket client, its token on each message                         | `src/browser.ts`                                                   |
-| Refusing a page of another version with a close code it reads             | `src/platform/protocol-version.ts`, `src/browser.ts`               |
+| Refusing a page of another version with a close code it reads             | `src/routes.ts`, `src/browser.ts`                                  |
 | Pushing each message to the pages following a room, across hibernation    | `src/chat/handlers.ts`, `src/browser.ts`                           |
 | Testing on the Workers runtime: an eviction, the alarm, the database      | `test/worker.test.ts`, `test/platform/`                            |
 | A socket that keeps the token of its upgrade request                      | `test/worker.test.ts`                                              |

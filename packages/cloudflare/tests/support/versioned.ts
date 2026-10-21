@@ -9,19 +9,20 @@ export const statusKey = "tests/versioned/status";
 
 export const VersionedRpcs = RpcGroup.make(Rpc.make("protocol", { success: Schema.String }));
 
-const refuseOtherProtocols = HttpRouter.middleware((httpEffect) =>
+export const allowedOrigin = "https://pages.example";
+
+const refuseForeignOrigins = HttpRouter.middleware((httpEffect) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
-    const { protocol } = yield* HttpServerRequest.ParsedSearchParams;
 
     if (
       request.headers["upgrade"]?.toLowerCase() !== "websocket" ||
-      protocol === expectedProtocol
+      request.headers["origin"] === allowedOrigin
     ) {
       return yield* httpEffect;
     }
 
-    return yield* ActionDurableObject.refuseUpgrade(4000, "unsupported protocol");
+    return yield* ActionDurableObject.refuseUpgrade(4003, "foreign origin");
   }),
 );
 
@@ -37,7 +38,12 @@ const recordStatus = HttpRouter.middleware(
 
 export const versionedRoutes = RpcServer.layer(VersionedRpcs).pipe(
   Layer.provide(VersionedRpcs.toLayer({ protocol: () => Effect.succeed(expectedProtocol) })),
-  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
-  Layer.provide(refuseOtherProtocols.layer),
+  Layer.provide(
+    ActionDurableObject.layerWebSocket({
+      path: "/rpc",
+      protocol: { version: expectedProtocol, code: 4000 },
+    }),
+  ),
+  Layer.provide(refuseForeignOrigins.layer),
   Layer.provide(recordStatus.layer),
 );

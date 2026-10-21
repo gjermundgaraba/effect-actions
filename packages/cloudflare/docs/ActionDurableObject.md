@@ -110,22 +110,26 @@ import { RoomCalls } from "./chat/Calls.js";
 import { calls, messages, preview, watch } from "./chat/handlers.js";
 import { authenticate } from "./identity/verifier.js";
 import { lobby } from "./lobby/handlers.js";
-import { refuseOtherVersions } from "./platform/protocol-version.js";
-import { RoomRpc } from "./Rpc.js";
+import { protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
 
 const room = [preview, messages];
 
 // What a room's object serves. Its rpcs on WebSockets the runtime holds while the object
 // hibernates: a socket keeps the token its upgrade request carried, and each message is
-// authenticated with it, or with the message's own. The socket's route refuses a page of
-// another version, its middleware running for the upgrade alone. `watch`'s handler is the
-// host's, as an Effect rpc's is. Its JSON routes at `/api/<action>`. It requires `MessageStore`
+// authenticated with it, or with the message's own. The socket's route refuses a page naming
+// another version in its URL, `?protocol=<n>` as browser.ts sends it, with a close code the page's
+// client reads as `SocketCloseError` and stops connecting again at, not a 403, which a browser
+// reports as a bare 1006 its page connects again after. `watch`'s handler is the host's, as an
+// Effect rpc's is. Its JSON routes at `/api/<action>`. It requires `MessageStore`
 // and `Room` at startup: worker.ts chooses them.
 export const roomRoutes = Layer.mergeAll(
   ActionRpc.layer(RoomRpc, room).pipe(
     Layer.provide(watch),
     Layer.provide(
-      ActionDurableObject.layerWebSocket({ path: "/rpc" }).pipe(Layer.provide(refuseOtherVersions)),
+      ActionDurableObject.layerWebSocket({
+        path: "/rpc",
+        protocol: { version: protocolVersion, code: unsupportedProtocol },
+      }),
     ),
   ),
   ActionHttp.layer(RoomHttp, room),
@@ -140,13 +144,12 @@ export const lobbyRoutes = ActionHttp.layer(LobbyHttp, lobby);
 ```
 
 What a socket keeps across hibernation, how each message authenticates, and what the runtime
-answers itself are on `ActionDurableObject.layerWebSocket`. Router middleware provided to it
-runs for the upgrade alone, and refuses a page of another version with
-`ActionDurableObject.refuseUpgrade`, a close code the page's client reads, as a browser cannot
-read a refused upgrade's status
-([chat-rooms/src/platform/protocol-version.ts](../examples/chat-rooms/src/platform/protocol-version.ts));
-the page's client stops connecting at that code given the core's `ActionRpc.reconnectUntil` as
-its `retryPolicy`. A page's client speaks JSON over
+answers itself are on `ActionDurableObject.layerWebSocket`. Its `protocol` option refuses a
+page naming another version of the rpcs in its URL with a close code the page's client reads, as
+a browser cannot read a refused upgrade's status; the page's client stops connecting at that code
+given the core's `ActionRpc.reconnectUntil` as its `retryPolicy`. Router middleware provided to
+it runs for the upgrade alone, and refuses one by any other judge, such as a foreign `Origin`,
+with `ActionDurableObject.refuseUpgrade`. A page's client speaks JSON over
 `RpcClient.layerProtocolSocket` and `Socket.layerWebSocket(url)`, its token on each message
 ([chat-rooms/src/browser.ts](../examples/chat-rooms/src/browser.ts)), and the Worker forwards a
 page's upgrade to the room's object by forwarding its `Request`, as `worker.ts` does above. The
