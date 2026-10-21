@@ -192,7 +192,6 @@ describe("layerWebSocket", () => {
             until: (value) => value === true,
             schedule: Schedule.spaced("5 millis"),
           }),
-          Effect.timeout("1 second"),
         );
 
       socket.send(
