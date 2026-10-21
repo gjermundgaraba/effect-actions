@@ -15,17 +15,27 @@ pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflar
 Its declarations name the Workers runtime's types, such as `Fetcher`: generate them with
 `wrangler types`, or install `@cloudflare/workers-types`, as a Worker project does.
 
-Serve actions from an object, over WebSockets the runtime holds while it hibernates:
+Serve an Effect `RpcGroup` from an object, over WebSockets the runtime holds while it
+hibernates:
 
 ```ts
 class ChatRoom extends ActionDurableObject.make({
   services: () => Layer.mergeAll(layerSql, Layer.effect(Room)(ActionDurableObject.name)),
-  routes: ActionRpc.layer(RoomRpc, room).pipe(
+  routes: RpcServer.layer(RoomRpcs).pipe(
+    Layer.provide(handlers),
     Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
-    Layer.provide(authenticate),
   ),
   calls: RpcServer.layer(RoomCalls).pipe(Layer.provide(calls)),
 }) {}
+```
+
+Or serve actions there, authenticated, as `ActionRpc.layer` serves them elsewhere:
+
+```ts
+routes: ActionRpc.layer(RoomRpc, room).pipe(
+  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+  Layer.provide(authenticate),
+),
 ```
 
 Call an object's own API, an Effect `RpcGroup` it serves as its `calls`, from a Worker or

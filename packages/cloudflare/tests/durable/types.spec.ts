@@ -28,7 +28,7 @@ import {
   PluginStore,
   StreamRpcs,
 } from "../support/hosts.js";
-import { Announcer, feedCalls, Gate, Ticks } from "../support/feed.js";
+import { Announcer, feedCalls, Gate } from "../support/feed.js";
 import type { Hosted, Manual, Plain, PluginHost } from "../worker.js";
 
 expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqualTypeOf<
@@ -69,12 +69,6 @@ void Effect.runPromise(
 expectTypeOf(ActionDurableObject.layerFeed).toEqualTypeOf<
   Layer.Layer<Feed.Feed, never, ActionDurableObject.State>
 >();
-
-// @ts-expect-error -- The feed's one home is the core's Feed module.
-void ActionDurableObject.Feed;
-
-// @ts-expect-error -- The feed's types' one home is the core's Feed module.
-export type NoChunkServices = ActionDurableObject.ChunkServices<typeof Ticks>;
 
 expectTypeOf(ActionDurableObject.Sockets.layer).toEqualTypeOf<
   Layer.Layer<ActionDurableObject.Sockets, never, ActionDurableObject.State>

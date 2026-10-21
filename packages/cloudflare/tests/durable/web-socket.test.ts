@@ -324,7 +324,7 @@ describe("layerWebSocket", () => {
         );
 
         expect(String(Exit.isFailure(exit) && Cause.squash(exit.cause))).toContain(
-          "registers only with a Feed that layerFeed built: provide layerFeed",
+          "registers only with a Feed that layerFeed built: provide ActionDurableObject.layerFeed",
         );
       }),
   );

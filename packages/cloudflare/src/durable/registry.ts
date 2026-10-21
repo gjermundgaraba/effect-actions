@@ -1,9 +1,9 @@
 import { Effect } from "effect";
 
 /**
- * The registry of a dispatcher, such as `Calls` or `Sockets`, which the one protocol it serves
- * registers with: `register` keeps a registry for a dispatcher `layer` made, and `of` finds it,
- * or dies naming `layer`.
+ * The registry of a dispatcher, `Calls`, `Sockets` or the object's `Feed`, which the one protocol
+ * it serves registers with: `register` keeps a registry for a dispatcher `layer` made, and `of`
+ * finds it, or dies naming `layer`.
  */
 export const makeRegistries = <Dispatcher extends object, Registry>(
   protocol: string,
@@ -23,7 +23,7 @@ export const makeRegistries = <Dispatcher extends object, Registry>(
         return registry === undefined
           ? Effect.die(
               new Error(
-                `ActionDurableObject.${protocol} registers only with a ${dispatcher} that ${layer} built: provide ${layer}`,
+                `ActionDurableObject.${protocol} registers only with a ${dispatcher} that ${layer} built: provide ActionDurableObject.${layer}`,
               ),
             )
           : Effect.succeed(registry);

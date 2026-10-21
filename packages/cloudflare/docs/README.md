@@ -37,10 +37,10 @@ declarations name the Workers runtime's types, from `wrangler types` or
 
 ## Pages
 
-| Read                                                                 | When you need to                                                                                           |
-| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| [ActionDurableObject.md](ActionDurableObject.md)                     | serve actions from an object, over hibernating WebSockets and JSON; run its alarm; test it; deploy it      |
-| [ActionDurableObject-stub.md](ActionDurableObject-stub.md)           | serve an object's own API over its stub, call it from a Worker, name the object in errors, call its routes |
-| [ActionDurableObject-feed.md](ActionDurableObject-feed.md)           | push to the pages connected to an object, after it hibernated too, with the core's `Feed`                  |
-| [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a class that cannot extend `make`'s, delegating to `handlers` or composing the primitives  |
-| [ActionDurableObject-failures.md](ActionDurableObject-failures.md)   | find what workerd's, the compiler's or Effect's message means, and the fix                                 |
+| Read                                                                 | When you need to                                                                                                         |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| [ActionDurableObject.md](ActionDurableObject.md)                     | serve an `RpcGroup`, or actions, from an object, over hibernating WebSockets and JSON; run its alarm; test it; deploy it |
+| [ActionDurableObject-stub.md](ActionDurableObject-stub.md)           | serve an object's own API over its stub, call it from a Worker, name the object in errors, call its routes               |
+| [ActionDurableObject-feed.md](ActionDurableObject-feed.md)           | push to the pages connected to an object, after it hibernated too, with the core's `Feed`                                |
+| [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a class that cannot extend `make`'s, delegating to `handlers` or composing the primitives                |
+| [ActionDurableObject-failures.md](ActionDurableObject-failures.md)   | find what workerd's, the compiler's or Effect's message means, and the fix                                               |
