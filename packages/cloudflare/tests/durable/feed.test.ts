@@ -22,7 +22,7 @@ import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { recordKey } from "../../src/durable/feed.js";
 import { socketIdOf } from "../../src/durable/frames.js";
 import { FeedCalls, FeedRpcs, Gate, NoInitial, OtherTicks, Ticks } from "../support/feed.js";
-import { pathKey, startupKey } from "../support/moved.js";
+import { pathKey, startupKey, wipeKey } from "../support/moved.js";
 import { upgradeTo, upgradeToRpc } from "../support/socket.js";
 
 let objects = 0;
@@ -422,7 +422,7 @@ describe("Feed", () => {
   );
 
   it.effect(
-    "refuses a subscribe and a publish on an object serving two socket paths, naming both, though one alone has records, and ends nothing there, sending nothing",
+    "refuses a subscribe and a publish on an object serving two socket paths, naming both, though one alone has records, and ends the record there, sending its socket the exit",
     () =>
       Effect.gen(function* () {
         const stub = env.TWO_PATHS.getByName(`two-paths-${objects++}`);
@@ -465,9 +465,14 @@ describe("Feed", () => {
         expect(Exit.isFailure(published) && Cause.pretty(published.cause)).toContain(refusal);
         expect(ended).toEqual(Exit.void);
 
-        yield* Effect.promise(() => vi.waitUntil(() => received.length > 0, { timeout: 5_000 }));
+        yield* Effect.promise(() => vi.waitUntil(() => received.length > 1, { timeout: 5_000 }));
 
-        expect(received).toEqual([expect.stringContaining(refusal)]);
+        expect(received).toHaveLength(2);
+        expect(received.filter((data) => data.includes(refusal))).toHaveLength(1);
+        expect(received.flatMap((data) => Option.toArray(frameOf(data)))).toContainEqual({
+          _tag: "Exit",
+          requestId: 1,
+        });
       }).pipe(Effect.scoped),
   );
 
@@ -518,7 +523,7 @@ describe("Feed", () => {
   );
 
   it.effect(
-    "ends only the subscribers of the path the rebuilt object serves, sending a socket accepted on another no exit, and drops both records",
+    "ends every subscriber the rebuilt object finds, sending a socket accepted on a path it no longer serves its exit too, and drops both records",
     () =>
       Effect.gen(function* () {
         const stub = env.MOVED.getByName(`moved-${objects++}`);
@@ -553,8 +558,8 @@ describe("Feed", () => {
         );
 
         expect(yield* current.next).toEqual({ _tag: "Exit", requestId: "current" });
+        expect(yield* old.next).toEqual({ _tag: "Exit", requestId: "old" });
         expect(records).toBe(0);
-        expect(yield* old.pending).toBe(0);
       }).pipe(Effect.scoped),
   );
 
@@ -578,6 +583,35 @@ describe("Feed", () => {
 
         expect(yield* socket.next).toEqual({ _tag: "Chunk", requestId: 1, values: [99] });
         expect(String(startup)).toContain("none is registered yet");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "wipe as the services build, before the routes register their path, ends the subscribers the instance before left",
+    () =>
+      Effect.gen(function* () {
+        const stub = env.MOVED.getByName(`moved-${objects++}`);
+        const socket = yield* opened(stub, "/a");
+
+        yield* socket.send({ _tag: "Request", id: 1, tag: "follow", payload: {}, headers: [] });
+
+        expect(yield* socket.next).toEqual({ _tag: "Chunk", requestId: 1, values: [10] });
+
+        yield* Effect.promise(() =>
+          runInDurableObject(stub, (_, state) => state.storage.put(wipeKey, true)),
+        );
+        yield* Effect.promise(() => evictDurableObject(stub));
+        yield* Effect.promise(() => stub.publish(99));
+
+        const records = yield* Effect.promise(() =>
+          runInDurableObject(
+            stub,
+            async (_, state) => (await state.storage.list({ prefix: "effect-actions/feed/" })).size,
+          ),
+        );
+
+        expect(yield* socket.next).toEqual({ _tag: "Exit", requestId: 1 });
+        expect(records).toBe(0);
       }).pipe(Effect.scoped),
   );
 

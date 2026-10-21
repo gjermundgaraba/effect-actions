@@ -17,6 +17,8 @@ export const pathKey = "tests/moved/path";
 
 export const startupKey = "tests/moved/startup";
 
+export const wipeKey = "tests/moved/wipe";
+
 const storedPath = Schema.decodeUnknownOption(Schema.Literals(["/a", "/b"]));
 
 export const movedRoutes = Layer.unwrap(
@@ -39,6 +41,11 @@ export const startupPublisher = Layer.effectDiscard(
   Effect.gen(function* () {
     const state = yield* ActionDurableObject.State;
     const feed = yield* Feed.Feed;
+
+    if ((yield* Effect.promise(() => state.storage.get(wipeKey))) !== undefined) {
+      yield* ActionDurableObject.wipe;
+    }
+
     const exit = yield* Effect.exit(feed.publish(Follow, 88));
 
     yield* Effect.promise(() =>

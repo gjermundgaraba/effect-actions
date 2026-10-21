@@ -168,10 +168,10 @@ const completed = Schema.encodeSync(
  * - A subscriber whose `initial` fails is sent a value published while it was read first, as one chunk its stream emits before it fails.
  * - `end` answers a subscriber whose call hibernation dropped itself, with its exit; one ended while its `initial` is encoded is sent nothing, as one ended while it is read.
  * - Only a call over `layerWebSocket` subscribes: one over the stub or another protocol dies at once, `subscribes a call over layerWebSocket alone`.
- * - It serves the sockets of one `layerWebSocket` path, since a record names its rpc by tag alone and a group holds one rpc per tag, a later one replacing an earlier: an object whose routes serve two dies at each `subscribe` and `publish`, naming them, so serve every rpc that streams on one path; an `end` there ends nothing, as no subscriber can exist.
+ * - It serves the sockets of one `layerWebSocket` path, since a record names its rpc by tag alone and a group holds one rpc per tag, a later one replacing an earlier: an object whose routes serve two dies at each `subscribe` and `publish`, naming them, so serve every rpc that streams on one path; an `end` there still answers the records it finds, left from before.
  * - A second definition of a served tag, such as another group's rpc published from a service two objects share, dies at the `subscribe`, `publish` or `end` that brings it while this instance runs a subscriber of the first, as the core's `Feed.layer` refuses it; a subscriber whose call hibernation dropped keeps no definition to judge against, so until its page subscribes again another group's rpc of its tag reaches it, encoded by that rpc's schemas.
- * - It serves no path until the routes register theirs, after the services are built: a `subscribe` or `publish` before, such as a service's as it is built, dies, `none is registered yet`, so publish from a handler, the alarm or `run`; an `end` before ends nothing, as there is no subscriber to end.
- * - A socket another path accepted, still open from an instance that served that path before an eviction, is sent nothing, and its records are dropped as a closed socket's.
+ * - It serves no path until the routes register theirs, after the services are built: a `subscribe` or `publish` before, such as a service's as it is built, dies, `none is registered yet`, so publish from a handler, the alarm or `run`; an `end` before, such as a `wipe` as the services build, answers the records the instance before left on their sockets.
+ * - A socket another path accepted, still open from an instance that served that path before an eviction, is sent no published value, and its records are dropped as a closed socket's; an `end` finding them sends it their exits.
  * - The feed waits for no acknowledgement: a page that stops acknowledging still receives every value, and each chunk Effect's client acknowledges wakes a hibernating object, whose server ignores the ack.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone or refusing the send; a socket closing while the object is evicted leaves its records until then.
  * - Its records live in the object's storage, beside the application's data: wipe that storage with `wipe`, never `storage.deleteAll()` alone, which cuts every subscriber off.
@@ -219,7 +219,7 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
     // Why: a record names its rpc by tag alone, the one identity of an rpc that survives
     // hibernation, and a tag is one rpc only on one path, whose group holds one rpc per tag:
     // so the feed serves the one path its routes registered, refusing before then, as the
-    // services build, and sends only to the sockets that path accepted, though a socket an
+    // services build, and publishes only to the sockets that path accepted, though a socket an
     // instance serving another path accepted stays open across an eviction.
     const paths = new Set<string>();
 
@@ -386,14 +386,12 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
       end: (rpc?: Rpc.Any, options?: EndOptions) =>
         lock.withPermits(1)(
           Effect.gen(function* () {
-            // Why: an object serving no `layerWebSocket` path, or two, where every `subscribe`
-            // dies, has no subscriber to end, and wipes its storage with `wipe` too.
-            if (paths.size !== 1) return;
-
             if (rpc !== undefined) yield* oneDefinition(rpc);
 
-            const path = yield* served;
-
+            // Why: no path is read, as no registered path is not no subscriber: while the services
+            // build, before the routes register theirs, storage holds the records of the instance
+            // before, and a `wipe` then must answer them. A record's exit is its socket's own,
+            // whatever path accepted it, so it is sent there.
             for (const { storageKey, socket, requestId } of yield* subscribersOf(
               rpc,
               options?.key,
@@ -406,7 +404,6 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
                     socket,
                     // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect's wire frame, which `RpcMessage` types and makes no constructor for: its type checks every field.
                     { _tag: "Exit", requestId, exit: completed },
-                    path,
                   )
                 : Deferred.succeed(live, undefined);
 
@@ -445,7 +442,7 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
  *
  * - `storage.deleteAll()` alone cuts every subscriber off: its record is gone, so no `publish` or `end` reaches it, and its stream stays open, sent nothing, until its socket closes.
  * - The alarm is not dropped, as `deleteAll` leaves it: call `storage.deleteAlarm()` for it.
- * - An object serving no `layerWebSocket` path, such as one without routes, or two, where every `subscribe` dies, has no subscriber, and `wipe` runs `deleteAll` alone there.
+ * - It ends the subscribers it finds whatever paths the routes serve, none yet included: a `wipe` as the services build answers the records the instance before left on their sockets.
  * - Its steps run with the caller's context, its services and references, and to their end: an interrupt of the caller waits for a wipe already under the gate to complete, never leaving it half done.
  * - A failure of either step, an `end` that dies or a `deleteAll` that rejects, fails `wipe` with that defect, and the object stays whole, though a callback that rejects inside `blockConcurrencyWhile` resets it: the steps' exit is returned through the gate, then raised.
  * - The runtime resets an object whose `blockConcurrencyWhile` runs past 30 seconds, failing every call in flight, as a `deleteAll` over a large database may: wipe such storage in parts of your own first.

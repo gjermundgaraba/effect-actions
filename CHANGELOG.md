@@ -113,9 +113,10 @@ and the copied implementation's no longer asks `is effect-actions installed twic
       service as it is built, `subscribe` and `publish` die. A second definition of a served
       tag, such as another group's rpc, dies at the `subscribe`, `publish` or `end` that brings
       it while the instance runs a subscriber of the first; a subscriber hibernation dropped
-      keeps no definition to judge against. `end`, and so `wipe`, ends nothing
-      on an object serving no path or two, where no subscriber can exist. A socket another path accepted, still open
-      after an eviction from an instance serving that path, is sent nothing. `layerWebSocket`
+      keeps no definition to judge against. `end`, and so `wipe`, reads no path: it answers every
+      record it finds on its socket, before the routes register theirs too, as a `wipe` while
+      the services build. A socket another path accepted, still open after an eviction from an
+      instance serving that path, is sent no published value, only an `end`'s exit. `layerWebSocket`
       given a `Feed` that `layerFeed` did not build, such as the core's `Feed.layer`, dies
       naming `layerFeed`.
     - A value published while `initial` is read may arrive before it and again in it, and with
