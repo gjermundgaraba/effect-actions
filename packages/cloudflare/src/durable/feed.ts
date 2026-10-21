@@ -159,6 +159,7 @@ const completed = Schema.encodeSync(
  * - The feed waits for no acknowledgement: a page that stops acknowledging still receives every value, and each chunk Effect's client acknowledges wakes a hibernating object, whose server ignores the ack.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone or refusing the send; a socket closing while the object is evicted leaves its records until then.
  * - Its records live in the object's storage, beside the application's data: wipe that storage with `wipe`, never `storage.deleteAll()` alone, which cuts every subscriber off.
+ * - `end()` completes every subscriber this instance runs, even one whose record was still being written as it listed storage, besides every record it finds.
  * - `publish` reads every subscriber's record from storage, one per open stream of every rpc, and one `publish` or `end` sends at a time, after the publish encoded its value.
  * - A value that does not encode as the rpc's chunk is a defect.
  *
@@ -314,7 +315,12 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
                   sendInitial(request, path, socket, key, ended, values),
                 ),
                 Effect.as(Deferred.await(ended), Stream.empty),
-              ).pipe(Effect.provideService(References.PreventSchedulerYield, true)),
+              ).pipe(
+                Effect.provideService(References.PreventSchedulerYield, true),
+                // Why: `end()` completes a latch whose record it did not find, one still being
+                // written as it listed storage, and that record would outlive the call.
+                Effect.tap(() => Effect.when(drop(key), Deferred.isDone(ended))),
+              ),
               () => drop(key),
             );
           }),
@@ -359,6 +365,19 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
 
               yield* drop(storageKey);
             }
+
+            // Why: a subscribe whose record was still being written as storage was listed is
+            // missed by the records, and would wait on its latch for good: `end()` completes
+            // every latch this instance holds, as `wipe` relies on.
+            if (rpc === undefined && options?.key === undefined) {
+              yield* Effect.forEach(
+                latches.values(),
+                (latch) => Deferred.succeed(latch, undefined),
+                {
+                  discard: true,
+                },
+              );
+            }
           }),
         ),
     });
@@ -379,7 +398,7 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
  *
  * - `storage.deleteAll()` alone cuts every subscriber off: its record is gone, so no `publish` or `end` reaches it, and its stream stays open, sent nothing, until its socket closes.
  * - The alarm is not dropped, as `deleteAll` leaves it: call `storage.deleteAlarm()` for it.
- * - It runs under the runtime's `blockConcurrencyWhile`, so no message, call or fetch reaches the object until the wipe completes; a subscribe that has not yet reached the feed subscribes after the wipe, reading what is left.
+ * - It runs under the runtime's `blockConcurrencyWhile`, so no message, call or fetch reaches the object until the wipe completes; a subscribe already running in the instance is ended too, even one whose record was still being written, and one that has not yet reached the feed subscribes after the wipe, reading what is left.
  */
 export const wipe: Effect.Effect<void, never, State | Feed> = Effect.gen(function* () {
   const state = yield* State;

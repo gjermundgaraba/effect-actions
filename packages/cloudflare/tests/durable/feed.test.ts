@@ -785,6 +785,43 @@ describe("Feed", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "wipe ends a subscriber whose record it does not find, as one still being written, live or reading its initial values",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const connection = yield* connect(stub);
+        const live = yield* subscribe(connection, [10]);
+        const reading = yield* gated(connection, "during", [20]);
+
+        const records = Effect.promise(() =>
+          runInDurableObject(stub, async (_, state) => [
+            ...(await state.storage.list({ prefix: "effect-actions/feed/" })).keys(),
+          ]),
+        );
+
+        yield* Effect.promise(() =>
+          vi.waitUntil(async () => (await Effect.runPromise(records)).length === 2),
+        );
+
+        const unlisted = yield* records;
+
+        yield* Effect.promise(() =>
+          runInDurableObject(stub, (_, state) => state.storage.delete(unlisted)),
+        );
+
+        yield* calls.wipe();
+
+        const ended = yield* Effect.all([Fiber.join(live.fiber), Fiber.join(reading.fiber)]).pipe(
+          Effect.timeoutOption("5 seconds"),
+        );
+
+        expect(Option.isSome(ended)).toBe(true);
+        expect(yield* records).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("drops the records of a socket the runtime reported closed", () =>
     Effect.gen(function* () {
       const stub = fresh();

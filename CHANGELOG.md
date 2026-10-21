@@ -121,7 +121,8 @@ and the copied implementation's no longer asks `is effect-actions installed twic
       socket-id counter, so `ActionDurableObject.wipe`, an `Effect<void, never, State | Feed>`,
       wipes it: it ends every subscriber, then runs `storage.deleteAll()`, under the runtime's
       `blockConcurrencyWhile`. `deleteAll()` alone leaves every subscriber's stream open and
-      sent nothing.
+      sent nothing. `end()` completes every subscriber the instance runs, even one whose record
+      was still being written, besides every record it finds.
     - Earlier previews' `ActionDurableObject.Feed` and its types are gone: yield the core's
       `Feed.Feed`, import `ChunkServices`, `Subscriber`, `SubscribeOptions`, `PublishOptions`
       and `EndOptions` from `@gjermundgaraba/effect-actions/Feed`, and compose
