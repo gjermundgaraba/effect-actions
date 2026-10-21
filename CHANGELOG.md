@@ -96,7 +96,7 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     routes, the alarm and `run`, so any of them publishes. A stream rpc's handler returns
     `feed.subscribe(request, { initial, key })`; `publish(rpc, value, { key })` sends the value
     to each subscriber of the rpc, or of the key, and `end(rpc, { key })` completes their
-    streams, finalizers included. `ChunkServices<R>` names what `publish` and `subscribe` of
+    streams, finalizers included, and `end()` every subscriber's. `ChunkServices<R>` names what `publish` and `subscribe` of
     `R` owe, the services its values need to encode. What to know:
     - The stream `subscribe` returns is a handle on the call, not its values: an operator such
       as `Stream.map` sees none, so transform a value before publishing it.
@@ -115,8 +115,10 @@ and the copied implementation's no longer asks `is effect-actions installed twic
       socket closes or `end` reaches it, so end a member's subscriptions by a key of their own.
     - The feed waits for no acknowledgement. A page whose socket drops subscribes again from the
       last value it holds, which `initial` sends on.
-    - Subscribers are kept in the object's storage beside the application's data:
-      `storage.deleteAll()` drops them, so `end` them first.
+    - Subscribers are kept in the object's storage beside the application's data, with the
+      socket-id counter: a wipe is `yield* feed.end()`, then `storage.deleteAll()`, which drops
+      them all, so a socket given a closed one's id later is sent nothing it did not ask for; a
+      wipe without `end()` leaves every subscriber's stream open and sent nothing.
   - `layerStub()` is the protocol `RpcServer.layer(group)` and `ActionRpc.layer` serve on over
     the object's stub, with Cloudflare's own RPC: one call of the object's
     `effectActionsRpc` method carries one call's messages and returns its responses once its

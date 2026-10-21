@@ -101,6 +101,7 @@ export const FeedCalls = RpcGroup.make(
   Rpc.make("release"),
   Rpc.make("finalized", { success: Schema.Int }),
   Rpc.make("publishSlowly", { payload: { value: Schema.Int } }),
+  Rpc.make("wipe"),
 );
 
 export class Announcer extends Context.Service<
@@ -200,6 +201,7 @@ export const feedCalls = RpcServer.layer(FeedCalls.merge(FeedRpcs)).pipe(
     FeedCalls.toLayer(
       Effect.gen(function* () {
         const feed = yield* ActionDurableObject.Feed;
+        const state = yield* ActionDurableObject.State;
         const announcer = yield* Announcer;
         const { read, released, finalized, encoding, encoded } = yield* Gate;
 
@@ -224,6 +226,11 @@ export const feedCalls = RpcServer.layer(FeedCalls.merge(FeedRpcs)).pipe(
           release: () => Effect.asVoid(Deferred.succeed(released, undefined)),
           finalized: () => Ref.get(finalized),
           publishSlowly: ({ value }) => feed.publish(SlowTicks, value),
+          wipe: () =>
+            Effect.andThen(
+              feed.end(),
+              Effect.promise(() => state.storage.deleteAll()),
+            ),
         });
       }),
     ),

@@ -722,6 +722,68 @@ describe("Feed", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "ends every subscriber of every rpc, live or hibernated, before a wipe of the object's storage, and a socket given a closed one's id after it receives only what it asked for",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const calls = yield* callsOf(stub);
+        const hibernated = yield* connect(stub);
+
+        const slow = yield* Effect.forkScoped(Stream.runCollect(hibernated.client.slowTicks()));
+
+        yield* Effect.promise(() => vi.waitUntil(() => hibernated.chunks.length > 0));
+        yield* Effect.promise(() => evictDurableObject(stub));
+
+        const live = yield* subscribe(yield* connect(stub), [20], "b");
+        const closing = yield* upgradeTo(stub, "https://object/rpc");
+
+        const records = Effect.promise(() =>
+          runInDurableObject(
+            stub,
+            async (_, state) => (await state.storage.list({ prefix: "effect-actions/" })).size,
+          ),
+        );
+
+        closing.close(1000);
+
+        yield* Effect.promise(() =>
+          vi.waitUntil(async () => (await Effect.runPromise(records)) === 3),
+        );
+
+        yield* calls.wipe();
+
+        const ended = {
+          slow: Array.from(yield* Fiber.join(slow)),
+          live: yield* Fiber.join(live.fiber),
+        };
+
+        const left = yield* records;
+        const finalized = yield* calls.finalized();
+
+        yield* Effect.promise(() => evictDurableObject(stub));
+
+        const later = yield* connect(stub);
+        const subscriber = yield* subscribe(later, [7]);
+
+        const ids = yield* Effect.promise(() =>
+          runInDurableObject(stub, (_, state) =>
+            state.getWebSockets().map((socket) => socketIdOf(state.getTags(socket))),
+          ),
+        );
+
+        yield* calls.publish({ value: 8, key: null });
+
+        expect(ended).toEqual({ slow: [5], live: undefined });
+        expect(finalized).toBe(1);
+        expect(left).toBe(0);
+        expect(ids.toSorted((a, b) => a - b)).toEqual([1, 2, 3]);
+        expect(subscriber.first).toEqual([7]);
+        expect(yield* subscriber.next(1)).toEqual([8]);
+        expect(later.chunks.map(({ values }) => values)).toEqual([[7], [8]]);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("drops the records of a socket the runtime reported closed", () =>
     Effect.gen(function* () {
       const stub = fresh();

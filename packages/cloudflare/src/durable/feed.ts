@@ -11,7 +11,7 @@ import {
   Semaphore,
   Stream,
 } from "effect";
-import { Rpc, type RpcMessage, RpcSchema, RpcSerialization } from "effect/rpc";
+import { type Rpc, type RpcMessage, RpcSchema, RpcSerialization } from "effect/rpc";
 import { RequestId, sendFrame } from "./frames.js";
 import { makeRegistries } from "./registry.js";
 import { State } from "./state.js";
@@ -165,21 +165,23 @@ const chunkOf = (requestId: string | number, values: Values): RpcMessage.Respons
   // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect's wire frame, which `RpcMessage` types and makes no constructor for: its type checks every field.
   ({ _tag: "Chunk", requestId, values });
 
-const exitOf = (rpc: Rpc.Any) =>
-  Schema.encodeUnknownSync(
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased rpc schemas: a successful stream's exit encodes no value, so it needs no service, to the exit Effect's client reads.
-    json.codecFor(Rpc.exitSchema(rpc)) as Schema.Codec<
-      unknown,
-      RpcMessage.ExitEncoded<unknown, unknown>
-    >,
-  )(Exit.void);
+// Why: a stream's exit schema has `Schema.Void` for its success, whatever the rpc, so a
+// completed stream's exit encodes alike for every rpc, and `end()` answers a subscriber whose
+// rpc it was not given.
+const completed = Schema.encodeSync(
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- JSON's codec types its encoding as any JSON: an exit's is the exit Effect's client reads.
+  json.codecFor(Schema.Exit(Schema.Void, Schema.Never, Schema.Defect())) as Schema.Codec<
+    Exit.Exit<void>,
+    RpcMessage.ExitEncoded<unknown, unknown>
+  >,
+)(Exit.void);
 
 /**
  * The object's subscribers to the rpcs that stream over `layerWebSocket`, kept in its storage, so
  * a value published reaches them after the object hibernated, was evicted or rebuilt, as long as
  * their sockets stay open: a push channel addressed by each call's request id, not a stream
  * pipeline. `subscribe` makes a stream rpc's call one, `publish` sends each of the rpc's
- * subscribers a value, and `end` completes their streams; `subscribe` and `publish` of an rpc owe
+ * subscribers a value, and `end` completes their streams, or every subscriber's; `subscribe` and `publish` of an rpc owe
  * its `ChunkServices`. `Feed.layer` makes one per instance;
  * `handlers` and `make` provide it to the services, the calls, the routes, the alarm and `run`,
  * so any of them publishes.
@@ -198,7 +200,7 @@ const exitOf = (rpc: Rpc.Any) =>
  * - The feed waits for no acknowledgement: a page that stops acknowledging still receives every value, and each chunk Effect's client acknowledges wakes a hibernating object, whose server ignores the ack.
  * - Effect's socket client fails every stream it runs when its socket drops, and a stream may end with a defect, from the server or a chunk the client cannot decode: a page observing only failures misses that end and shows a subscription that is gone, so it reads the stream's `Exit`, `Effect.exit` around its run, then subscribes again from the last value it holds, which `initial` sends on.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone or refusing the send; a socket closing while the object is evicted leaves its records until then.
- * - `storage.deleteAll()` drops every subscriber's record with the application's own data, silently: those subscribers get nothing more, so `end` them before wiping the object's storage.
+ * - Wipe the object's storage with `yield* feed.end()`, then `storage.deleteAll()`: `end()` completes every subscriber's stream, and the wipe drops their records with the socket-id counter, so a socket given a closed one's id is sent nothing it did not subscribe to; a wipe without `end()` cuts every subscriber off, its stream open and sent nothing.
  * - `publish` reads every subscriber's record from storage, one per open stream of every rpc, and one `publish` or `end` sends at a time, after the publish encoded its value.
  * - A value that does not encode as the rpc's chunk is a defect.
  *
@@ -222,8 +224,14 @@ export class Feed extends Context.Service<
       value: Rpc.SuccessChunk<R>,
       options?: PublishOptions,
     ) => Effect.Effect<void, never, ChunkServices<R>>;
-    /** Completes the stream of each subscriber of `rpc`, and drops their records. */
-    readonly end: (rpc: Rpc.Any, options?: EndOptions) => Effect.Effect<void>;
+    /**
+     * Completes the stream of each subscriber of `rpc`, or of every rpc without it, and drops
+     * their records.
+     */
+    readonly end: {
+      (): Effect.Effect<void>;
+      (rpc: Rpc.Any, options?: EndOptions): Effect.Effect<void>;
+    };
   }
 >()("effect-actions-cloudflare/ActionDurableObject/Feed") {
   /** The feed of the instance whose `State` it is given. */
@@ -267,7 +275,7 @@ export class Feed extends Context.Service<
             );
       });
 
-      const subscribersOf = (rpc: Rpc.Any, key: string | undefined) =>
+      const subscribersOf = (rpc: Rpc.Any | undefined, key: string | undefined) =>
         Effect.gen(function* () {
           const all = yield* Effect.promise(() => storage.list({ prefix: recordPrefix }));
 
@@ -284,7 +292,7 @@ export class Feed extends Context.Service<
             if (socket === undefined || Option.isNone(record)) {
               yield* drop(storageKey);
             } else if (
-              record.value.tag === rpc._tag &&
+              (rpc === undefined || record.value.tag === rpc._tag) &&
               (key === undefined || record.value.key === key)
             ) {
               matching.push({ storageKey, socket, requestId: record.value.requestId });
@@ -399,7 +407,7 @@ export class Feed extends Context.Service<
               }),
             ),
           ),
-        end: (rpc, options) =>
+        end: (rpc?: Rpc.Any, options?: EndOptions) =>
           lock.withPermits(1)(
             Effect.gen(function* () {
               const path = yield* served;
@@ -415,7 +423,7 @@ export class Feed extends Context.Service<
                       state,
                       socket,
                       // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect's wire frame, which `RpcMessage` types and makes no constructor for: its type checks every field.
-                      { _tag: "Exit", requestId, exit: exitOf(rpc) },
+                      { _tag: "Exit", requestId, exit: completed },
                       path,
                     )
                   : Deferred.succeed(live, undefined);

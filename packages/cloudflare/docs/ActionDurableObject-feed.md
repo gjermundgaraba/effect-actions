@@ -133,7 +133,8 @@ identity, and `ActionRpc.layer` requires them: `routes.ts` provides them to it
 - **One feed of many.** Give a subscriber a `key`, such as a topic or a document, and
   `publish(rpc, value, { key })` reaches only those given it.
 - **End the streams.** `end(rpc, { key })` completes each subscriber's stream, its finalizers
-  run, as when what it followed is gone.
+  run, as when what it followed is gone; `end()` completes every subscriber's, as before a
+  wipe of the object's storage, `storage.deleteAll()`.
 
 ## Follow from a page
 
