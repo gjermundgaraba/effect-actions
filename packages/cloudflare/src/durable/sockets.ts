@@ -134,17 +134,17 @@ const json = RpcSerialization.json;
 
 const encodeDefect = Schema.encodeSync(json.codecFor(Schema.Defect()));
 
-/**
- * A hibernating `RpcServer.Protocol` over the object's WebSockets, speaking JSON, and its
- * upgrade route at `path`. Each socket carries two tags, its group's and its own id's, and keeps
- * its upgrade request's headers in its attachment, so both survive hibernation.
- */
 // Why: `HttpServerResponse.raw` takes its status from its options, not from the web `Response`
 // it carries, and the request logger and the server's span read that status: without it, every
 // upgrade is logged and traced as 200.
 const upgraded = (client: WebSocket) =>
   HttpServerResponse.raw(new Response(null, { status: 101, webSocket: client }), { status: 101 });
 
+/**
+ * A hibernating `RpcServer.Protocol` over the object's WebSockets, speaking JSON, and its
+ * upgrade route at `path`. Each socket carries two tags, its group's and its own id's, and keeps
+ * its upgrade request's headers in its attachment, so both survive hibernation.
+ */
 const makeProtocol = (
   state: DurableObjectState,
   { receivers, allocate }: Registry,

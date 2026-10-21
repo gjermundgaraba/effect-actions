@@ -112,6 +112,13 @@ export class Feed extends Context.Service<
   }
 >()("effect-actions/Feed") {}
 
+// Why: a group's tags are unique within it alone, so two groups served beside each other may
+// each hold a `watch`; the success schema `Rpc.make` created is kept whole by every copy a group
+// makes of its rpc, through `middleware`, `annotate` and `prefix`, and belongs to that rpc alone.
+const definitionOf = (rpc: Rpc.Any) =>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native rpc boundary: every rpc a group holds is a native `Rpc`, carrying its schemas.
+  (rpc as Rpc.AnyWithProps).successSchema;
+
 /**
  * A feed kept in the memory of the process that builds it: each subscriber a queue the
  * server's stream reads, offered each value published to it. For a server holding its
@@ -126,13 +133,6 @@ export class Feed extends Context.Service<
  * - Subscribers live in the process: a restart drops their connections, and each page subscribes again from the last value it holds.
  * - An rpc is told apart by its definition, the success schema `Rpc.make` gave it, not its tag: a group's `middleware` or `prefix` keeps it, so publishing the definition reaches the group's subscribers, and two groups' rpcs of one tag are two audiences.
  */
-// Why: a group's tags are unique within it alone, so two groups served beside each other may
-// each hold a `watch`; the success schema `Rpc.make` created is kept whole by every copy a group
-// makes of its rpc, through `middleware`, `annotate` and `prefix`, and belongs to that rpc alone.
-const definitionOf = (rpc: Rpc.Any) =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native rpc boundary: every rpc a group holds is a native `Rpc`, carrying its schemas.
-  (rpc as Rpc.AnyWithProps).successSchema;
-
 export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
   const subscribers = new Set<Entry>();
 

@@ -44,6 +44,61 @@ const refuseInternalKeys = (declarations: string) => {
   }
 };
 
+const declared =
+  /^(?:export )?(?:declare )?(?:const|function|class|interface|type|enum|namespace) ([\w$]+)/;
+
+const exportedHere =
+  /^export (?:declare )?(?:const|function|class|interface|type|enum|namespace) ([\w$]+)/;
+
+const exportList = /^export \{([^}]*)\};?$/;
+
+const namesIn = (list: string) =>
+  list
+    .split(",")
+    .map(
+      (entry) =>
+        entry
+          .trim()
+          .replace(/^type /, "")
+          .split(" as ")[0]
+          ?.trim() ?? "",
+    )
+    .filter((name) => name !== "");
+
+const refuseUndocumented = (directory: string) => {
+  for (const entry of readdirSync(directory, { recursive: true, encoding: "utf8" })) {
+    if (!entry.endsWith(".d.mts")) continue;
+
+    const lines = readFileSync(join(directory, entry), "utf8").split("\n");
+    const documented = new Map<string, boolean>();
+
+    for (const [index, line] of lines.entries()) {
+      const name = declared.exec(line)?.[1];
+
+      if (name !== undefined && documented.get(name) !== true)
+        documented.set(name, lines[index - 1]?.trimEnd().endsWith("*/") === true);
+    }
+
+    const exported = lines.flatMap((line) => {
+      const here = exportedHere.exec(line)?.[1];
+
+      if (here !== undefined) return [here];
+
+      const list = exportList.exec(line)?.[1];
+
+      return list === undefined ? [] : namesIn(list);
+    });
+
+    const undocumented = exported.filter((name) => documented.get(name) === false);
+
+    if (undocumented.length > 0) {
+      throw new Error(
+        `${join(directory, entry)} ships ${undocumented.join(", ")} without JSDoc: put the comment on the exported declaration`,
+      );
+    }
+  }
+};
+
 const refuseUnshipped = (source: string, installed: string) => {
   for (const directory of ["docs", "examples"]) {
     for (const entry of readdirSync(join(source, directory))) {
@@ -99,6 +154,8 @@ try {
 
   refuseUnshipped(root, installed);
   refuseUnshipped(cloudflare, installedCloudflare);
+  refuseUndocumented(join(installed, "dist"));
+  refuseUndocumented(join(installedCloudflare, "dist"));
 
   const quickstart = join(installed, "examples", "quickstart", "src");
 

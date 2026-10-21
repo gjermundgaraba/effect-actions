@@ -348,6 +348,7 @@ export function remoteCommand(
 }
 
 // Why: One declaration of `client` for `remote` and `remoteCommand`, so its JSDoc has one home.
+/** The connection option `remote` and `remoteCommand` share. */
 export interface Calling<C> {
   /**
    * The connection: an Effect of the binding's client, such as

@@ -41,6 +41,10 @@ export interface SecurityMiddleware<I, Name extends string = string> {
 
 type Response = Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>;
 
+/**
+ * What a provider holds for the surfaces serving its descriptor's actions: the descriptor, its
+ * verifier, and how each surface runs it.
+ */
 export interface Runtime {
   /** The descriptor the provider was built from, the one a binding naming it must hold. */
   readonly descriptor: unknown;
@@ -112,6 +116,7 @@ export interface Descriptor<
  */
 export type Any = Descriptor<unknown, unknown, Security, string, Action.Errors>;
 
+/** The service the callers of the actions `A` name, which their handlers yield. */
 export type Identity<A extends Action.Any> = [A] extends [never]
   ? never
   : A["caller"] extends Context.Key<infer I, unknown>
@@ -121,6 +126,10 @@ export type Identity<A extends Action.Any> = [A] extends [never]
 type Covered<A extends Action.Any> =
   Exclude<A["caller"], typeof Anyone> extends Context.Key<infer I, unknown> ? I : never;
 
+/**
+ * The `authentication` option of a surface serving the actions `A`: optional where none is
+ * protected, otherwise a descriptor whose identity covers every protected action's caller.
+ */
 export type Required<A extends Action.Any> = [Protected<A>] extends [never]
   ? { readonly authentication?: Any }
   : {
@@ -133,6 +142,7 @@ export type Required<A extends Action.Any> = [Protected<A>] extends [never]
       >;
     };
 
+/** The `Provider` serving the descriptor `D`: of its identity, under its name. */
 export type ProviderOf<D> =
   D extends Descriptor<infer I, unknown, Security, infer Name, Action.Errors>
     ? Provider<I, Name>
@@ -202,6 +212,10 @@ export type VerifierError<A extends Action.Any, D> = A["caller"] extends typeof 
     ? E[number]
     : never;
 
+/**
+ * What a server of the actions `A` of the implementations `App` requires of the descriptor `D`:
+ * its `Provider`, where it serves a protected action; nothing otherwise.
+ */
 export type ServedProvider<App, A extends Action.Any, D> = [Protected<Serving<App, A>>] extends [
   never,
 ]
