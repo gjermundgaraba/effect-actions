@@ -78,8 +78,9 @@ export const feedContract = (name: string, serve: Effect.Effect<FeedServer, neve
         yield* controls.publish({ to: "ticks", value: 3, key: null });
         yield* controls.end({ to: null, key: null });
 
-        const { rest } = yield* subscriber.ended;
+        const { exit, rest } = yield* subscriber.ended;
 
+        expect(exit).toEqual(Exit.void);
         expect(new Set([...first, ...rest])).toEqual(new Set([1, 2, 3]));
       }).pipe(Effect.scoped),
     );
@@ -111,7 +112,7 @@ export const feedContract = (name: string, serve: Effect.Effect<FeedServer, neve
         yield* controls.end({ to: null, key: null });
 
         expect(ended).toEqual({ exit: Exit.void, rest: [] });
-        expect((yield* tocking.ended).rest).toEqual([7]);
+        expect(yield* tocking.ended).toEqual({ exit: Exit.void, rest: [7] });
       }).pipe(Effect.scoped),
     );
 
@@ -134,9 +135,9 @@ export const feedContract = (name: string, serve: Effect.Effect<FeedServer, neve
           yield* controls.publish({ to: "ticks", value: 2, key: null });
           yield* controls.end({ to: null, key: null });
 
-          expect(endedA.rest).toEqual([1]);
-          expect((yield* b.ended).rest).toEqual([2]);
-          expect((yield* none.ended).rest).toEqual([2]);
+          expect(endedA).toEqual({ exit: Exit.void, rest: [1] });
+          expect(yield* b.ended).toEqual({ exit: Exit.void, rest: [2] });
+          expect(yield* none.ended).toEqual({ exit: Exit.void, rest: [2] });
         }).pipe(Effect.scoped),
     );
 
@@ -187,8 +188,8 @@ export const feedContract = (name: string, serve: Effect.Effect<FeedServer, neve
         yield* controls.publish({ to: "other.ticks", value: 2, key: null });
         yield* controls.end({ to: null, key: null });
 
-        expect((yield* plain.ended).rest).toEqual([1]);
-        expect((yield* prefixed.ended).rest).toEqual([2]);
+        expect(yield* plain.ended).toEqual({ exit: Exit.void, rest: [1] });
+        expect(yield* prefixed.ended).toEqual({ exit: Exit.void, rest: [2] });
       }).pipe(Effect.scoped),
     );
 
@@ -207,7 +208,7 @@ export const feedContract = (name: string, serve: Effect.Effect<FeedServer, neve
           yield* controls.end({ to: null, key: null });
 
           expect(foreign).toContain(refusal);
-          expect((yield* subscriber.ended).rest).toEqual([1]);
+          expect(yield* subscriber.ended).toEqual({ exit: Exit.void, rest: [1] });
         }).pipe(Effect.scoped),
     );
   });
