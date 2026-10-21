@@ -217,16 +217,18 @@ and the copied implementation's no longer asks `is effect-actions installed twic
   - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
     service binding, so a Worker calls an object's routes with `ActionHttp.client`,
     `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.
-  - Its pages, `docs/ActionDurableObject.md`, a page for calls over the stub, a page for pushing
-    to pages, a page for a class that cannot extend `make`'s and a failures page, ship in the
-    package, in the core's docs model, the rules and gotchas in the JSDoc of each declaration,
-    with an example, chat-rooms: one object per room, its messages in the object's SQLite
-    database, an alarm expiring them, pages following a room's messages through a stream rpc on
-    the room's binding, which `Feed` pushes to, and a Worker routing pages' sockets to the rooms
-    and asking each for its latest message over its stub, through the room's own `RpcGroup`,
-    which its `RoomsEntrypoint` also serves to another Worker, a `WorkerEntrypoint` method
-    running each call as an Effect program given the client's Layer. The core's
-    `docs/README.md` routes to it.
+  - Its pages, `docs/ActionDurableObject.md`, a page for calls over the stub, a page for pushing to
+    pages, a page for a class that cannot extend `make`'s and a failures page, ship in the package,
+    in the core's docs model, the rules and gotchas in the JSDoc of each declaration, with an
+    example, chat-rooms: one object per room, its messages in the object's SQLite database, an alarm
+    expiring them, pages following a room's messages through a stream rpc on the room's binding,
+    which `Feed` pushes to, and a Worker routing pages' sockets to the rooms and asking each for its
+    latest message over its stub, through the room's own `RpcGroup`, which its `RoomsEntrypoint`
+    also serves to another Worker, a `WorkerEntrypoint` method running each call as an Effect
+    program given the client's Layer. Its `vite.config.ts` turns Vitest's `fsModuleCache` off: under
+    `@cloudflare/vitest-plugin` 1.4.4 a pool slot's second test file otherwise loses its runner, the
+    plugin sending the cached modules in one message its socket refuses. The core's `docs/README.md`
+    routes to it.
 
 - **`Feed` pushes values to the clients following a stream rpc**, in the new module
   `@gjermundgaraba/effect-actions/Feed`:
