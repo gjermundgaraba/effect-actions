@@ -133,11 +133,8 @@ The handlers are the host's, implemented on the binding's own `rpcs`, which prov
 identity, and `ActionRpc.layer` requires them: `routes.ts` provides them to it
 ([ActionDurableObject.md](ActionDurableObject.md#serve-rpcs-over-hibernating-websockets)).
 
-- **One feed of many.** Give a subscriber a `key`, such as a topic or a document, and
-  `publish(rpc, value, { key })` reaches only those given it.
-- **End the streams.** `end(rpc, { key })` completes each subscriber's stream, its finalizers
-  run, as when what it followed is gone; `end()` completes every subscriber's, which makes a
-  wipe of the object's storage, `storage.deleteAll()`, safe after it.
+What a `key` reaches and what `end` completes are the core's `Feed`'s rules; what this feed
+adds, wiping the object's storage among them, is on `ActionDurableObject.layerFeed`.
 
 ## Follow from a page
 
@@ -238,9 +235,8 @@ export const openRoom = (token: string) =>
   });
 ```
 
-- **Opened at the first value.** Effect's client tells a page nothing when its subscription is
-  kept, so a stream with nothing `initial` opens at its first published value: an rpc whose page
-  must know at once streams a first value, as the core's `docs/Feed.md` says.
+- **Opened at the first value.** A page learns its subscription is live at its first value, as
+  the core's Feed page says.
 - **Testing it.** `evictDurableObject(stub)` between a page subscribing and a post shows the
   value reach it from a new instance
   ([chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)).

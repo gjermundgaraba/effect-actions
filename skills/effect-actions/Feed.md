@@ -9,10 +9,11 @@ connections, as a Node server does; on Cloudflare, `ActionDurableObject.layerFee
 `@gjermundgaraba/effect-actions-cloudflare`, keeps them in a Durable Object's storage, so they
 outlive its hibernation. Domain code depends on `Feed` alone, whichever is provided.
 
-Import `@gjermundgaraba/effect-actions/Feed` as `Feed`: the service is `Feed.Feed`. A message the library throws says its fix; for a
-compiler diagnostic or Effect's own error, search [Feed-failures.md](Feed-failures.md). The rules
-every feed keeps are on `Feed.Feed`, and what the in-memory one adds on `Feed.layer`: grep the
-symbol. This page follows live-rpc, whose pages follow a room's messages.
+Import `@gjermundgaraba/effect-actions/Feed` as `Feed`: the service is `Feed.Feed`. A message
+the library throws says its fix; for a compiler diagnostic or Effect's own error, search
+[Feed-failures.md](Feed-failures.md). The rules every feed keeps are on `Feed.Feed`, and what the
+in-memory one adds on `Feed.layer`: grep the symbol. This page follows live-rpc, whose pages
+follow a room's messages.
 
 ## Declare an rpc that streams
 
@@ -116,16 +117,10 @@ export const watch = Rpc.rpcs.toLayer(
 );
 ```
 
-- **The stream is the call's.** A value goes to the client as it is published, so transform it
-  before publishing: an operator on the stream `subscribe` returns may see none of the values.
-- **One feed of many.** A subscriber has one `key`, or none: `publish(rpc, value, { key })`
-  reaches only those given it, and a publish without a key every subscriber of the rpc.
-- **End the streams.** `end(rpc, { key })` completes each subscriber's stream, its finalizers
-  run, as when a member leaves a room; `end()` completes every subscriber's. Access is checked
-  as the call subscribes, so a member removed is followed until their `watch` ends.
-- **Provide one feed.** [live-rpc/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/routes.ts) provides the
-  handler to the binding's layer, and [server.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/server.ts) provides
-  `Feed.layer` once, beside the store, around routes that both publish and subscribe.
+What a `key` reaches, what `end` completes and when access is checked are on `Feed.Feed`.
+[live-rpc/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/routes.ts) provides the handler to the
+binding's layer, and [server.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/server.ts) provides `Feed.layer` once,
+beside the store, around routes that both publish and subscribe.
 
 ## Follow from a page
 
@@ -192,8 +187,6 @@ export const follow = <E, R>(
 - **Opened at the first value.** A page learns its subscription is live at its first value:
   Effect's chunk is a non-empty array and its protocol has no "subscribed" frame. An rpc whose
   page must know at once streams a first value, such as a snapshot that may be an empty list.
-- **Repeats.** A value published as the page subscribes may arrive beside `initial` and again in
-  it: give values an id the page drops repeats by.
 
 ## Test it
 
