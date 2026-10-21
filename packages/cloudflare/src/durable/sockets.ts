@@ -313,15 +313,13 @@ const defaultReason = (version: string) => {
     : "This server speaks another protocol: reload the page";
 };
 
-// Why: the runtime's `close` accepts an irregular set of codes, so a code is judged by the
-// runtime itself, on a socket of its own.
-const closeAccepts = (code: number) =>
-  Effect.try(() => {
-    const { 1: server } = new WebSocketPair();
+// Why: the codes a close frame may carry, which the runtime's `close` accepts: 1004 is reserved,
+// and 1005, 1006 and 1015 stand for a close that sent none. Asking the runtime itself, with a
+// socket pair made at build, stalled a page's socket across an eviction on workerd.
+const reservedCloseCodes = new Set([1004, 1005, 1006, 1015]);
 
-    server.accept();
-    server.close(code);
-  });
+const closeAccepts = (code: number) =>
+  Number.isInteger(code) && code >= 1000 && code <= 4999 && !reservedCloseCodes.has(code);
 
 // Why: the runtime throws at `close` for a code or a reason it does not take, so a refusal judged
 // only as a page of another version arrives, after a deploy, would fail that upgrade, which the
@@ -332,14 +330,13 @@ const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
 
     const { version, code, reason = defaultReason(version) } = protocol;
 
-    yield* Effect.catch(closeAccepts(code), (cause) =>
-      Effect.die(
+    if (!closeAccepts(code)) {
+      return yield* Effect.die(
         new Error(
           `ActionDurableObject.layerWebSocket's protocol.code ${code} is refused by a socket's close: give an integer from 4000 to 4999, an application's own`,
-          { cause },
         ),
-      ),
-    );
+      );
+    }
 
     if (bytesOf(reason) > closeReasonBytes) {
       return yield* Effect.die(
@@ -391,7 +388,7 @@ export interface LayerWebSocketOptions {
   readonly protocol?: {
     /** The version served, compared with the query parameter as a string. */
     readonly version: string;
-    /** The close code of a refusal, an integer from 4000 to 4999 for an application's own: one the runtime's `close` refuses fails `layerWebSocket`'s build. */
+    /** The close code of a refusal, an integer from 4000 to 4999 for an application's own: one a close frame may not carry, outside 1000 to 4999 or 1004, 1005, 1006 or 1015, fails `layerWebSocket`'s build. */
     readonly code: number;
     /** The close reason of a refusal, at most 123 bytes UTF-8 encoded, as a close frame holds: a longer one fails `layerWebSocket`'s build. By default `This server speaks protocol <version>: reload the page`, or `This server speaks another protocol: reload the page` where the version would not fit, so any `version` builds. */
     readonly reason?: string;

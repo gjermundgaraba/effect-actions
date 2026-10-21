@@ -83,11 +83,11 @@ describe("layerWebSocket's protocol", () => {
         "Error: ActionDurableObject.layerWebSocket's protocol.code 5000 is refused by a socket's close: give an integer from 4000 to 4999, an application's own",
       );
 
-      for (const code of [999, 1005, 1015]) {
+      for (const code of [999, 1004, 1005, 1006, 1015, 4000.5]) {
         expect(yield* built({ version: "3", code })).toContain("is refused by a socket's close");
       }
 
-      for (const code of [1000, 3000, 4000, 4999]) {
+      for (const code of [1000, 1003, 1007, 1014, 1016, 3000, 4000, 4999]) {
         expect(yield* built({ version: "3", code })).toBe("built");
       }
     }),
