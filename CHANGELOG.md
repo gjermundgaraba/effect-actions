@@ -88,7 +88,8 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     protocol of one object needs a `path` of its own. `protocol: { version, code, reason?,
     parameter? }` refuses an upgrade whose `?protocol=` (or `parameter`) is absent or names
     another version with `refuseUpgrade(code, reason)`, the reason by default naming the version
-    and asking for a reload: 101 and a socket closed at once with that code and reason, which the
+    and asking for a reload; a `code` outside 4000 to 4999, or a reason over a close frame's 123
+    bytes, fails the build, where it would fail each refusal: 101 and a socket closed at once with that code and reason, which the
     page's client reads as `SocketCloseError`, since a browser cannot read a refused upgrade's
     status, and whose reconnection the core's `ActionRpc.reconnectUntil(code)` stops at that code:
     chat-rooms' `routes.ts` and `browser.ts` show it. Router middleware provided to it runs for

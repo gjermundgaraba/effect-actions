@@ -167,6 +167,8 @@ const makeProtocol = (
       );
     }
 
+    const refusal = yield* refusalOf(version);
+
     const idOf = (socket: WebSocket) => socketIdOf(state.getTags(socket));
 
     // Why: Effect's socket client pings every five seconds. Answered by the runtime, a ping never
@@ -267,15 +269,11 @@ const makeProtocol = (
           );
         }
 
-        if (version !== undefined) {
-          const { [version.parameter ?? "protocol"]: named } =
-            yield* HttpServerRequest.ParsedSearchParams;
+        if (refusal !== undefined) {
+          const { [refusal.parameter]: named } = yield* HttpServerRequest.ParsedSearchParams;
 
-          if (named !== version.version) {
-            return yield* refuseUpgrade(
-              version.code,
-              version.reason ?? `This server speaks protocol ${version.version}: reload the page`,
-            );
+          if (named !== refusal.version) {
+            return yield* refuseUpgrade(refusal.code, refusal.reason);
           }
         }
 
@@ -299,6 +297,43 @@ const makeProtocol = (
     );
 
     return protocol;
+  });
+
+const closeReasonBytes = 123;
+
+// Why: the runtime throws at `close` for a code or a reason it does not take, so a refusal judged
+// only as a page of another version arrives, after a deploy, would fail that upgrade, which the
+// page sees as a drop and its client connects again after for good: the loop the refusal ends.
+const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
+  Effect.suspend(() => {
+    if (protocol === undefined) return Effect.succeed(undefined);
+
+    const {
+      version,
+      code,
+      parameter = "protocol",
+      reason = `This server speaks protocol ${version}: reload the page`,
+    } = protocol;
+
+    const bytes = new TextEncoder().encode(reason).byteLength;
+
+    if (!Number.isInteger(code) || code < 4000 || code > 4999) {
+      return Effect.die(
+        new Error(
+          `ActionDurableObject.layerWebSocket's protocol.code is ${code}, no close code of an application's own: give an integer from 4000 to 4999`,
+        ),
+      );
+    }
+
+    if (bytes > closeReasonBytes) {
+      return Effect.die(
+        new Error(
+          `ActionDurableObject.layerWebSocket's protocol refuses with a reason of ${bytes} bytes, more than the ${closeReasonBytes} a close frame holds: give a protocol.reason of at most ${closeReasonBytes} bytes, UTF-8 encoded`,
+        ),
+      );
+    }
+
+    return Effect.succeed({ version, parameter, code, reason });
   });
 
 /**
@@ -340,9 +375,9 @@ export interface LayerWebSocketOptions {
   readonly protocol?: {
     /** The version served, compared with the query parameter as a string. */
     readonly version: string;
-    /** The close code of a refusal, 4000 to 4999 for an application's own. */
+    /** The close code of a refusal, an integer from 4000 to 4999, an application's own: another fails `layerWebSocket`'s build. */
     readonly code: number;
-    /** The close reason of a refusal, at most 123 bytes, as a close frame holds; by default it names `version` and asks for a reload. */
+    /** The close reason of a refusal, at most 123 bytes UTF-8 encoded, as a close frame holds, by default `This server speaks protocol <version>: reload the page`, which grows with `version`: a longer one fails `layerWebSocket`'s build. */
     readonly reason?: string;
     /** The query parameter naming the version; `protocol` by default. */
     readonly parameter?: string;

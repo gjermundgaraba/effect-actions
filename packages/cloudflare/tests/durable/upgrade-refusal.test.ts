@@ -1,8 +1,10 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Cause, Effect, Exit, Layer } from "effect";
+import { HttpRouter } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
+import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { allowedOrigin, expectedProtocol, statusKey, VersionedRpcs } from "../support/versioned.js";
 
 let objects = 0;
@@ -45,7 +47,61 @@ const acceptedAsTheClientListens = (socket: WebSocket) =>
     (protocol) => RpcClient.make(VersionedRpcs).pipe(Effect.provideContext(protocol)),
   );
 
+const built = (protocol: NonNullable<ActionDurableObject.LayerWebSocketOptions["protocol"]>) =>
+  Effect.promise(() =>
+    runInDurableObject(env.PLAIN.getByName(`built-${objects++}`), (_, state) =>
+      Effect.runPromiseExit(
+        Layer.build(
+          ActionDurableObject.layerWebSocket({ path: "/rpc", protocol }).pipe(
+            Layer.provide([
+              ActionDurableObject.Sockets.layer,
+              ActionDurableObject.layerFeed,
+              HttpRouter.layer,
+            ]),
+            Layer.provide(Layer.succeed(ActionDurableObject.State, state)),
+          ),
+        ).pipe(Effect.scoped),
+      ),
+    ),
+  ).pipe(Effect.map((exit) => (Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : "built")));
+
 describe("layerWebSocket's protocol", () => {
+  it.effect("fails the build with a code no application owns, naming the field and the range", () =>
+    Effect.gen(function* () {
+      expect(yield* built({ version: "3", code: 5000 })).toBe(
+        "Error: ActionDurableObject.layerWebSocket's protocol.code is 5000, no close code of an application's own: give an integer from 4000 to 4999",
+      );
+
+      for (const code of [1000, 3999, 4000.5]) {
+        expect(yield* built({ version: "3", code })).toContain("give an integer from 4000 to 4999");
+      }
+
+      for (const code of [4000, 4999]) {
+        expect(yield* built({ version: "3", code })).toBe("built");
+      }
+    }),
+  );
+
+  it.effect(
+    "fails the build with a reason past a close frame's 123 bytes, UTF-8 encoded, the default one growing with the version",
+    () =>
+      Effect.gen(function* () {
+        const failure = "a reason of 124 bytes, more than the 123 a close frame holds";
+        const defaultBytes = `This server speaks protocol : reload the page`.length;
+
+        expect(yield* built({ version: "3", code: 4000, reason: "é".repeat(62) })).toContain(
+          failure,
+        );
+        expect(yield* built({ version: "3", code: 4000, reason: `x${"é".repeat(61)}` })).toBe(
+          "built",
+        );
+        expect(yield* built({ version: "v".repeat(123 - defaultBytes + 1), code: 4000 })).toContain(
+          failure,
+        );
+        expect(yield* built({ version: "v".repeat(123 - defaultBytes), code: 4000 })).toBe("built");
+      }),
+  );
+
   it.effect(
     "refuses an upgrade naming another version, or none, with refuseUpgrade, 101 to Effect's server as to the page, its code and a reason naming the version for Effect's socket client",
     () =>
