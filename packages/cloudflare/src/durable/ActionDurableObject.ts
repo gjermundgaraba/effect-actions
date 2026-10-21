@@ -18,7 +18,7 @@ import { State } from "./state.js";
 
 export { Calls, layerStub, type StubRequest } from "./calls.js";
 
-export { layerWebSocket, Sockets, type LayerWebSocketOptions } from "./sockets.js";
+export { layerWebSocket, refuseUpgrade, Sockets, type LayerWebSocketOptions } from "./sockets.js";
 
 export { name, State } from "./state.js";
 

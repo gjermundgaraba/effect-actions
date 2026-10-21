@@ -1,9 +1,11 @@
 import { Effect, Layer, Schema } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServerRequest } from "effect/http";
 import { Rpc, RpcGroup, RpcServer } from "effect/rpc";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 
 export const expectedProtocol = "3";
+
+export const statusKey = "tests/versioned/status";
 
 export const VersionedRpcs = RpcGroup.make(Rpc.make("protocol", { success: Schema.String }));
 
@@ -19,17 +21,23 @@ const refuseOtherProtocols = HttpRouter.middleware((httpEffect) =>
       return yield* httpEffect;
     }
 
-    const { 0: client, 1: server } = new WebSocketPair();
-
-    server.accept();
-    server.close(4000, "unsupported protocol");
-
-    return HttpServerResponse.raw(new Response(null, { status: 101, webSocket: client }));
+    return yield* ActionDurableObject.refuseUpgrade(4000, "unsupported protocol");
   }),
+);
+
+const recordStatus = HttpRouter.middleware(
+  Effect.map(
+    ActionDurableObject.State,
+    (state) => (httpEffect) =>
+      Effect.tap(httpEffect, (response) =>
+        Effect.promise(() => state.storage.put(statusKey, response.status)),
+      ),
+  ),
 );
 
 export const versionedRoutes = RpcServer.layer(VersionedRpcs).pipe(
   Layer.provide(VersionedRpcs.toLayer({ protocol: () => Effect.succeed(expectedProtocol) })),
   Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
   Layer.provide(refuseOtherProtocols.layer),
+  Layer.provide(recordStatus.layer),
 );

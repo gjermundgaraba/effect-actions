@@ -1,9 +1,9 @@
-import { env } from "cloudflare:test";
+import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
-import { expectedProtocol, VersionedRpcs } from "../support/versioned.js";
+import { expectedProtocol, statusKey, VersionedRpcs } from "../support/versioned.js";
 
 let objects = 0;
 
@@ -19,7 +19,9 @@ const upgrade = (stub: DurableObjectStub, protocol: string) =>
 
     if (socket === null) throw new Error(`No WebSocket: ${response.status}`);
 
-    return { status: response.status, socket };
+    const logged = await runInDurableObject(stub, (_, state) => state.storage.get(statusKey));
+
+    return { status: response.status, logged, socket };
   });
 
 const acceptedAsTheClientListens = (socket: WebSocket) =>
@@ -45,14 +47,14 @@ const acceptedAsTheClientListens = (socket: WebSocket) =>
 
 describe("router middleware around layerWebSocket's route", () => {
   it.effect(
-    "refuses an upgrade by answering 101 and closing the socket with a code and reason, which Effect's socket client sees",
+    "refuses an upgrade with refuseUpgrade, 101 to Effect's server as to the page, closing the socket with a code and reason Effect's socket client sees",
     () =>
       Effect.gen(function* () {
-        const { status, socket } = yield* upgrade(fresh(), "2");
+        const { status, logged, socket } = yield* upgrade(fresh(), "2");
         const client = yield* acceptedAsTheClientListens(socket);
         const refused = yield* Effect.flip(client.protocol());
 
-        expect(status).toBe(101);
+        expect([status, logged]).toEqual([101, 101]);
         expect(refused.reason).toMatchObject({
           _tag: "SocketCloseError",
           code: 4000,
@@ -61,13 +63,15 @@ describe("router middleware around layerWebSocket's route", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("passes an upgrade it accepts on to the library's route, which serves it", () =>
-    Effect.gen(function* () {
-      const { status, socket } = yield* upgrade(fresh(), expectedProtocol);
-      const client = yield* acceptedAsTheClientListens(socket);
+  it.effect(
+    "passes an upgrade it accepts on to the library's route, which serves it, 101 to Effect's server as to the page",
+    () =>
+      Effect.gen(function* () {
+        const { status, logged, socket } = yield* upgrade(fresh(), expectedProtocol);
+        const client = yield* acceptedAsTheClientListens(socket);
 
-      expect(status).toBe(101);
-      expect(yield* client.protocol()).toBe(expectedProtocol);
-    }).pipe(Effect.scoped),
+        expect([status, logged]).toEqual([101, 101]);
+        expect(yield* client.protocol()).toBe(expectedProtocol);
+      }).pipe(Effect.scoped),
   );
 });

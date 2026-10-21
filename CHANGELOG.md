@@ -74,10 +74,11 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     own headers; an upgrade whose headers exceed a socket's 16 KiB attachment answers 431. Each
     protocol of one object needs a `path` of its own. Router middleware provided to it runs for
     the upgrade alone, and refuses one, such as a page naming another version in its query, by
-    answering 101 and closing the socket with a code and reason, which the page's client reads as
-    `SocketCloseError`, since a browser cannot read a refused upgrade's status, and whose
-    reconnection a `retryPolicy` stops at that code: chat-rooms' `platform/protocol-version.ts`
-    and `browser.ts` show it. Effect's web handler cannot upgrade a
+    returning `refuseUpgrade(code, reason)`: 101 and a socket closed at once with that code and
+    reason, which the page's client reads as `SocketCloseError`, since a browser cannot read a
+    refused upgrade's status, and whose reconnection a `retryPolicy` stops at that code:
+    chat-rooms' `platform/protocol-version.ts` and `browser.ts` show it. An upgrade is logged and
+    traced as 101. Effect's web handler cannot upgrade a
     request, so `RpcServer.layerProtocolWebsocket` serves no socket on Workers. The runtime
     answers a client's pings without waking the object. A message's event ends once the message
     is handed to the server: a call doing I/O or waiting on a timer keeps the object from
