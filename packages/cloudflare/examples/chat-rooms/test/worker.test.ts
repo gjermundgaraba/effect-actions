@@ -65,6 +65,26 @@ const following = (page: Effect.Success<ReturnType<typeof openRoom>>, after: num
     };
   });
 
+// First in the file, whose Worker module is its own: no request has reached the lobby before.
+// worker.ts builds the lobby's handler as the module loads, so its rooms' client starts outside
+// any request; built inside the first one, a 404 that ends without I/O, it would never start,
+// and the previews after it would wait until workerd cancelled them.
+describe("the lobby, built as the module loads", () => {
+  it.effect("answers a first request ending without I/O, then a call reaching every room", () =>
+    Effect.gen(function* () {
+      const missing = yield* Effect.promise(() =>
+        exports.default.fetch("https://chat.example/missing"),
+      );
+
+      const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl: "https://chat.example" });
+      const { previews } = yield* lobby.previews();
+
+      expect(missing.status).toBe(404);
+      expect(previews.map(({ room }) => room)).toEqual(["general", "design"]);
+    }).pipe(Effect.provide(worker)),
+  );
+});
+
 describe("the Worker and its rooms", () => {
   it.effect("serves a room's page over its socket, the token on each message", () =>
     Effect.gen(function* () {
