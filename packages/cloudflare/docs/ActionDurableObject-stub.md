@@ -72,11 +72,21 @@ Why no stub is held, and when one breaks, are on `ActionDurableObject.client`. F
 typing, with `RpcClientError` in every call's errors and a retry of your own, build
 `RpcClient.make(group)` over `layerStubClient(() => env.CHAT_ROOM.getByName(room))`, which calls
 the function as each call is sent, as `client` does. From another object, make the client in a startup
-service. A Worker's entrypoint that is no Effect program, such as a `WorkerEntrypoint` method or
-a queue consumer, runs each call as an Effect program given the client's Layer, so the client is
-built and closed in the request that uses it: `RpcClient.make` requires a `Scope` natively, so no
-client without one is offered. chat-rooms' `RoomsEntrypoint`, which
-[worker.ts](../examples/chat-rooms/src/worker.ts) exports, serves the rooms to another Worker:
+service. `RpcClient.make` requires a `Scope` natively, so no client without one is offered.
+
+In a Worker, build a runtime or handler kept across requests when the module loads, as chat-rooms'
+[worker.ts](../examples/chat-rooms/src/worker.ts) builds its lobby, or run each call as its own
+program given the client's Layer; never build one lazily inside a request. A client forks its
+own fiber on a timer of the request that builds it, and workerd drops a request's timers when it
+ends: a client first built inside a request that ends without waiting on I/O, succeeding or
+refused, never starts that fiber, and every later call through it waits until workerd cancels
+it as hung. `HttpRouter.toWebHandler`, which builds its Layer as it is called, fails the same way
+when called lazily inside a request. A Durable Object's build on its first event does not:
+workerd keeps an object's I/O context across its events, so the timer fires in a later one.
+
+A Worker's entrypoint that is no Effect program, such as a `WorkerEntrypoint` method or a queue
+consumer, runs each call as its own program. chat-rooms' `RoomsEntrypoint`, which `worker.ts`
+exports, serves the rooms to another Worker:
 
 ```ts example=chat-rooms/src/rooms-entrypoint.ts
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -90,8 +100,10 @@ const decodeRoom = Schema.decodeUnknownEffect(RoomName);
 // The rooms for another Worker, over a service binding to this one's `RoomsEntrypoint`, which
 // worker.ts exports. A method of a `WorkerEntrypoint` is no Effect program, so each call runs as
 // one, given the rooms' Layer: the client is built in the request that uses it, and closed with
-// it, which costs no I/O. A `ManagedRuntime` kept across requests is not: on workerd, one first
-// built by a call refused before any I/O, an unknown room, left every later call waiting.
+// it, which costs no I/O. A runtime kept across requests is built as the module loads instead,
+// as worker.ts builds the lobby: one first built inside a request that ends without waiting on
+// I/O, succeeding or refused, never starts its client's own fiber, and every later call through
+// it waits for good.
 export class RoomsEntrypoint extends WorkerEntrypoint<Cloudflare.Env> {
   // The calling Worker is another deployment, so its room is checked as any input is: an unknown
   // room rejects the call with the schema's error, as a room that cannot be reached rejects it
