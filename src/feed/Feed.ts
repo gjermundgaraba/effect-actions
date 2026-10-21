@@ -133,6 +133,7 @@ const sameDefinition = (one: Rpc.Any, other: Rpc.Any) => {
  * - Each subscriber's queue is unbounded, so a publish never waits: a client that stops reading holds every value published to it in the server's memory until its stream ends.
  * - Subscribers live in the process: a restart drops their connections, and each page subscribes again from the last value it holds.
  * - A second definition of a tag, such as another group's `watch`, dies at the `subscribe`, `publish` or `end` that brings it while a subscriber of the first is kept; a group's copy of an rpc, through its `middleware`, is the rpc itself.
+ * - Two rpcs of one tag made from one hand-built stream schema, with no payload or error of their own, are one definition to the feed, and one audience: give each its own schema, or `stream: true`.
  */
 export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
   const subscribers = new Set<Entry>();
