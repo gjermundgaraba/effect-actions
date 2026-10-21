@@ -170,15 +170,22 @@ export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
             Effect.as(Deferred.await(entry.ended), Option.none()),
           );
 
-          return Option.match(read, {
-            onNone: () => Stream.empty,
-            onSome: (values) =>
-              Stream.concat(
-                Stream.fromArray(values),
-                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased rpc definition: a subscriber's queue is offered only what a publish of its rpc's definition sends, its chunk.
-                Stream.fromQueue(entry.queue) as Stream.Stream<Rpc.SuccessChunk<R>>,
-              ),
-          });
+          // Why: an `initial` may complete in the step `end` reaches it, which the race does not
+          // see, so a read is sent only to a subscriber `end` has not reached.
+          const ended = yield* Deferred.isDone(entry.ended);
+
+          return Option.match(
+            Option.filter(read, () => !ended),
+            {
+              onNone: () => Stream.empty,
+              onSome: (values) =>
+                Stream.concat(
+                  Stream.fromArray(values),
+                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased rpc definition: a subscriber's queue is offered only what a publish of its rpc's definition sends, its chunk.
+                  Stream.fromQueue(entry.queue) as Stream.Stream<Rpc.SuccessChunk<R>>,
+                ),
+            },
+          );
         }),
       ),
     publish: (rpc, value, options) =>

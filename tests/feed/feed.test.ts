@@ -9,7 +9,7 @@ const Ticks = Rpc.make("ticks", {
   payload: {
     key: Schema.NullOr(Schema.String),
     initial: Schema.Array(Schema.Int),
-    read: Schema.Literals(["at once", "held", "failing"]),
+    read: Schema.Literals(["at once", "held", "failing", "ending"]),
   },
   success: Schema.Int,
   error: NoInitial,
@@ -62,6 +62,7 @@ const handlers = Group.toLayer(
             initial: Match.value(read).pipe(
               Match.when("failing", () => Effect.fail(new NoInitial())),
               Match.when("held", () => held(initial)),
+              Match.when("ending", () => Effect.as(feed.end(), initial)),
               Match.orElse(() => Effect.succeed(initial)),
             ),
           }),
@@ -232,6 +233,20 @@ describe("Feed.layer", () => {
         expect(yield* a.rest).toEqual([1]);
         expect(yield* b.rest).toEqual([2, 3]);
       }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
+  );
+
+  it.effect("sends nothing to a subscriber ended as its initial values are read", () =>
+    Effect.gen(function* () {
+      const { finalized } = yield* Gate;
+      const rpc = yield* client;
+
+      const collected = yield* Stream.runCollect(
+        rpc.ticks({ key: null, initial: [10], read: "ending" }),
+      );
+
+      expect(Array.from(collected)).toEqual([]);
+      expect(yield* Ref.get(finalized)).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(served)),
   );
 
   it.effect("fails a subscriber whose initial values fail, and sends it nothing more", () =>
