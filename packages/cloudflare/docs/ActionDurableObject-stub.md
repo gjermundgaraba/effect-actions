@@ -80,8 +80,12 @@ program given the client's Layer; never build one lazily inside a request. A cli
 own fiber on a timer of the request that builds it, and workerd drops a request's timers when it
 ends: a client first built inside a request that ends without waiting on I/O, succeeding or
 refused, never starts that fiber, and every later call through it waits until workerd cancels
-it as hung. `HttpRouter.toWebHandler`, which builds its Layer as it is called, fails the same way
-when called lazily inside a request. A Durable Object's build on its first event does not:
+it as hung. `HttpRouter.toWebHandler` builds its Layer as it is called, so one called as the module
+loads needs nothing more, which is why the lobby is the safe example, and one called lazily
+inside a request fails the same way. `ManagedRuntime.make(layer)` builds nothing until its
+first run, so one made at module scope is still built inside the first request: run it once as
+the module loads, `runtime.runFork(Effect.void)`, which one probe under `vitest-pool-workers`
+found enough, or prefer a program per call. A Durable Object's build on its first event does not:
 workerd keeps an object's I/O context across its events, so the timer fires in a later one.
 
 A Worker's entrypoint that is no Effect program, such as a `WorkerEntrypoint` method or a queue
@@ -103,7 +107,8 @@ const decodeRoom = Schema.decodeUnknownEffect(RoomName);
 // it, which costs no I/O. A runtime kept across requests is built as the module loads instead,
 // as worker.ts builds the lobby: one first built inside a request that ends without waiting on
 // I/O, succeeding or refused, never starts its client's own fiber, and every later call through
-// it waits for good.
+// it waits for good. `ManagedRuntime.make` at module scope builds nothing until its first run,
+// inside a request, so it is that lazy form unless it is run once as the module loads.
 export class RoomsEntrypoint extends WorkerEntrypoint<Cloudflare.Env> {
   // The calling Worker is another deployment, so its room is checked as any input is: an unknown
   // room rejects the call with the schema's error, as a room that cannot be reached rejects it

@@ -12,7 +12,8 @@ const decodeRoom = Schema.decodeUnknownEffect(RoomName);
 // it, which costs no I/O. A runtime kept across requests is built as the module loads instead,
 // as worker.ts builds the lobby: one first built inside a request that ends without waiting on
 // I/O, succeeding or refused, never starts its client's own fiber, and every later call through
-// it waits for good.
+// it waits for good. `ManagedRuntime.make` at module scope builds nothing until its first run,
+// inside a request, so it is that lazy form unless it is run once as the module loads.
 export class RoomsEntrypoint extends WorkerEntrypoint<Cloudflare.Env> {
   // The calling Worker is another deployment, so its room is checked as any input is: an unknown
   // room rejects the call with the schema's error, as a room that cannot be reached rejects it
