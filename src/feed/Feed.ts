@@ -74,7 +74,7 @@ interface Entry {
  * - `end` completes a live subscriber's stream through Effect's server, which runs its finalizers and answers its client, and the implementation answers a subscriber it no longer runs itself; an `end` that reaches a subscriber before its `initial` read completes sends it nothing.
  * - A subscriber has one `key`, or none: a `publish` or `end` naming a key reaches its subscribers alone, and one naming none every subscriber of the rpc; `end()` ends every subscriber of every rpc.
  * - Access is checked once, as the call subscribes: a subscriber is published to until its client interrupts it or `end` reaches it, whatever becomes of its credential or membership, so give each member's subscriptions a `key` of their own and `end(rpc, { key })` them.
- * - A client's stream fails when its connection drops, and may end with a defect, such as a chunk it cannot decode: a page observing only failures misses that end, so it reads the stream's `Exit` and subscribes again from the last value it holds, which `initial` sends on.
+ * - A client's stream fails when its connection drops, and may end with a defect, such as a chunk it cannot decode: a page observing only failures misses that end, so it reads the stream's `Exit`, as `ActionRpc.follow` tells it, and subscribes again from the last value it holds, which `initial` sends on.
  *
  * Guide: `docs/Feed.md` in this package; in an application: `examples/live-rpc/`.
  */

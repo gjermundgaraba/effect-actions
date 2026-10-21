@@ -43,6 +43,13 @@ and the copied implementation's no longer asks `is effect-actions installed twic
 
 ### Additions
 
+- **`ActionRpc.follow(stream, following)` follows a stream rpc as a page does**, telling an
+  `ActionRpc.Following<A, E>` its life: `opened` at the first value, `message` with each, then
+  `closed` with the stream's `Exit`, which holds a dropped socket's `RpcClientError` and a
+  defect such as an undecodable chunk. It retries nothing, and `closed` does not run when the
+  page interrupts it. live-rpc's `follow.ts` and chat-rooms' `browser.ts` call it, where each
+  defined its own `Following` and ran the chain; live-rpc's page is now told `opened` once, not
+  again at each resubscription after a drop.
 - **`ActionRpc.reconnectUntil(...codes)` is a socket client's `retryPolicy` that stops at a
   close code**: Effect's own default for `RpcClient.layerProtocolSocket`,
   `min(exponential(500, 1.5), spaced(5000))`, which Effect does not export, until the server

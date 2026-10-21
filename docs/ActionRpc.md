@@ -162,8 +162,8 @@ import { Effect, Layer, type Stream } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { roomHeader } from "./chat/Chat.js";
-import { follow, type Following } from "./follow.js";
+import { type Message, roomHeader } from "./chat/Chat.js";
+import { follow } from "./follow.js";
 import { Rpc } from "./Rpc.js";
 
 // Client module: what a web page imports. It holds the binding and nothing of the server, so a
@@ -212,8 +212,10 @@ export const openChat = Effect.gen(function* () {
 
         // The room's messages after `after`, then each one posted, told to `page`, across
         // drops: follow.ts.
-        follow: (after: number, page: Following<Stream.Error<ReturnType<typeof client.watch>>>) =>
-          follow((from) => client.watch({ after: from }, { headers }), after, page),
+        follow: (
+          after: number,
+          page: ActionRpc.Following<Message, Stream.Error<ReturnType<typeof client.watch>>>,
+        ) => follow((from) => client.watch({ after: from }, { headers }), after, page),
 
         // A declared error arrives as the contract's class. A message someone else already
         // removed is gone, which is what the page asked for.

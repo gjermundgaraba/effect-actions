@@ -124,69 +124,60 @@ beside the store, around routes that both publish and subscribe.
 
 ## Follow from a page
 
-The page runs the stream and observes its whole life, natively: `Stream.onFirst` for opened,
-each value, then `Effect.exit` for how it ended. Effect's socket client fails every stream it
-runs when its socket drops and connects again by itself, so the page subscribes again after a
-`Schedule` backoff, from the last value it holds, which `initial` sends on, and stops on a
-typed refusal. [live-rpc/src/browser.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/browser.ts) passes the room's
-`watch` to it.
+`ActionRpc.follow(stream, following)` runs the stream and tells the page its whole life, an
+`ActionRpc.Following`: opened at the first value, each value, then closed with the stream's
+`Exit`; what it tells and what it does not are on the symbol. It retries nothing: Effect's socket
+client fails every stream it runs when its socket drops and connects again by itself, so the page
+subscribes again after a `Schedule` backoff, from the last value it holds, which `initial` sends
+on, and stops on a typed refusal. [live-rpc/src/browser.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/browser.ts)
+passes the room's `watch` to it.
 
 ```ts example=live-rpc/src/follow.ts
-import { Effect, type Exit, Predicate, Ref, Schedule, Stream } from "effect";
+import { Effect, Predicate, Ref, Schedule, Stream } from "effect";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import type { Message } from "./chat/Chat.js";
-
-// A room followed, as a page renders it: `opened` at a subscription's first message, each
-// `message`, then `closed` with how following ended: a refusal, or a defect, such as a message
-// the page cannot decode, which a page watching only for failures would never see.
-export interface Following<E> {
-  readonly opened: Effect.Effect<void>;
-  readonly message: (message: Message) => Effect.Effect<void>;
-  readonly closed: (exit: Exit.Exit<void, E>) => Effect.Effect<void>;
-}
 
 // How long a page waits before it subscribes again, longer each time, at most ten seconds.
 // `Stream.retry` starts it over once a subscription sends a message, so a page that followed
 // for an hour waits a quarter of a second after its next drop, not ten.
 const backoff = Schedule.min([Schedule.exponential("250 millis"), Schedule.spaced("10 seconds")]);
 
-// The room's messages after `after`, then each one posted, told to `page`; `watch` is the
-// room's subscription from an id. Effect's socket client fails every stream it runs with
-// `RpcClientError` when its socket drops, and connects again by itself, so the page subscribes
-// again after the backoff, from the last message it holds, until a refusal or a defect ends it.
-// A message posted as the page subscribes may arrive twice, so the page drops an id it holds.
+// The room's messages after `after`, then each one posted, told to `page` by `ActionRpc.follow`:
+// `opened` at the first message, each `message`, then `closed` with how following ended, a
+// refusal or a defect. `watch` is the room's subscription from an id. Effect's socket client
+// fails every stream it runs with `RpcClientError` when its socket drops, and connects again by
+// itself, so the page subscribes again after the backoff, from the last message it holds, and is
+// told nothing of the drop. A message posted as the page subscribes may arrive twice, so the
+// page drops an id it holds.
 export const follow = <E, R>(
   watch: (after: number) => Stream.Stream<Message, E, R>,
   after: number,
-  page: Following<E>,
+  page: ActionRpc.Following<Message, E>,
 ) =>
   Effect.gen(function* () {
     const last = yield* Ref.make(after);
 
-    const subscription = Stream.unwrap(
-      Effect.map(Ref.get(last), (from) => watch(from).pipe(Stream.onFirst(() => page.opened))),
-    );
-
-    const exit = yield* subscription.pipe(
+    const subscription = Stream.unwrap(Effect.map(Ref.get(last), watch)).pipe(
       Stream.retry(($) =>
         $(backoff).pipe(Schedule.while(({ input }) => Predicate.isTagged(input, "RpcClientError"))),
       ),
-      Stream.runForEach((message) =>
+    );
+
+    yield* ActionRpc.follow(subscription, {
+      ...page,
+      message: (message) =>
         Effect.flatMap(Ref.get(last), (held) =>
           message.id > held
             ? Effect.andThen(Ref.set(last, message.id), page.message(message))
             : Effect.void,
         ),
-      ),
-      Effect.exit,
-    );
-
-    yield* page.closed(exit);
+    });
   });
 ```
 
-- **Opened at the first value.** A page learns its subscription is live at its first value:
-  Effect's chunk is a non-empty array and its protocol has no "subscribed" frame. An rpc whose
-  page must know at once streams a first value, such as a snapshot that may be an empty list.
+- **Opened at the first value, once.** A page learns its subscription is live at its first
+  value, so an rpc whose page must know at once streams a first value, such as a snapshot that
+  may be an empty list; a resubscription after a drop is not told again.
 
 ## Test it
 

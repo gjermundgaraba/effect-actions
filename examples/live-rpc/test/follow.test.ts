@@ -57,7 +57,7 @@ describe("follow", () => {
         ]);
 
         expect(calls.map(({ from }) => from)).toEqual([0, 2]);
-        expect(told).toEqual(["opened", "message 1", "message 2", "opened", "message 3", "closed"]);
+        expect(told).toEqual(["opened", "message 1", "message 2", "message 3", "closed"]);
       }).pipe(Effect.scoped),
   );
 

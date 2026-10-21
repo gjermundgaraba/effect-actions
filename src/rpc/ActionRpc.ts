@@ -3,12 +3,14 @@ import {
   type Context,
   Effect,
   ErrorReporter,
+  type Exit,
   Layer,
   Predicate,
   Result,
   Schedule,
   Schema,
   type Scope,
+  Stream,
   type Types,
   SchemaTransformation,
 } from "effect";
@@ -763,4 +765,40 @@ export const reconnectUntil = (...codes: ReadonlyArray<number>) =>
           codes.some((code) => code === reason.code)
         ),
     ),
+  );
+
+/**
+ * A page following a stream rpc, as `follow` tells it the stream's life: `opened` at its first
+ * value, `message` with each value, in order, then `closed` with how it ended.
+ */
+export interface Following<A, E> {
+  /** Runs at the stream's first value, before `message` is given it. */
+  readonly opened: Effect.Effect<void>;
+  /** Runs with each value the stream sends, in order. */
+  readonly message: (value: A) => Effect.Effect<void>;
+  /** Runs once the stream ends, with its `Exit`. */
+  readonly closed: (exit: Exit.Exit<void, E>) => Effect.Effect<void>;
+}
+
+/**
+ * Follows `stream`, as a page follows a stream rpc, telling `following` its life: `opened` at
+ * its first value, `message` with each value, then `closed` with its `Exit`. It completes after
+ * `closed`, never failing, and retries nothing.
+ *
+ * **Gotchas**
+ *
+ * - `opened` runs at the first value, as Effect's chunk is a non-empty array and its protocol has no "subscribed" frame: an rpc whose page must know at once, such as a snapshot that may be an empty list, sends a first value.
+ * - `closed` is given the stream's `Exit`, which holds a defect, such as a chunk the page cannot decode, and a dropped socket as an `RpcClientError`: a page watching only for its declared failures misses both, left showing a subscription that ended.
+ * - `closed` does not run when the follow itself is interrupted, as when the page stops following; an interruption arriving in the stream, such as the server's, is in its `Exit`.
+ * - Reconnecting is the page's: Effect's socket client fails every stream it runs when its socket drops, so a page follows again after a backoff of its own, from the last value it holds, as live-rpc's `examples/live-rpc/src/follow.ts` does.
+ */
+export const follow = <A, E, R>(
+  stream: Stream.Stream<A, E, R>,
+  following: Following<A, E>,
+): Effect.Effect<void, never, R> =>
+  stream.pipe(
+    Stream.onFirst(() => following.opened),
+    Stream.runForEach(following.message),
+    Effect.exit,
+    Effect.flatMap(following.closed),
   );

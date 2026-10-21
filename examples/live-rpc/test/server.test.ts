@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, Queue, Ref } from "effect";
+import { Effect, Layer, Queue } from "effect";
 import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import { HttpRouter, HttpServer } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
@@ -99,16 +99,10 @@ describe("the chat, over a WebSocket", () => {
       const ada = follower.room("lobby", "ada");
       const before = yield* ada.post("Before the drop.");
       const received = yield* Queue.unbounded<Message>();
-      const opened = yield* Ref.make(0);
-      const resubscribed = yield* Deferred.make<void>();
 
       yield* Effect.forkScoped(
         ada.follow(0, {
-          opened: Ref.updateAndGet(opened, (count) => count + 1).pipe(
-            Effect.flatMap((count) =>
-              count === 2 ? Deferred.succeed(resubscribed, undefined) : Effect.void,
-            ),
-          ),
+          opened: Effect.void,
           message: (message) => Queue.offer(received, message),
           closed: () => Effect.void,
         }),
@@ -122,9 +116,6 @@ describe("the chat, over a WebSocket", () => {
       const after = yield* Effect.promise(() => writer.room("lobby", "grace").post("After it."));
 
       expect(yield* Queue.take(received)).toEqual(after);
-
-      yield* Deferred.await(resubscribed);
-
       expect(sockets.length).toBeGreaterThan(1);
     }).pipe(Effect.scoped, Effect.provide(listening)),
   );
