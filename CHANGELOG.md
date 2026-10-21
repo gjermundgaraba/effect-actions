@@ -223,8 +223,10 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     with an example, chat-rooms: one object per room, its messages in the object's SQLite
     database, an alarm expiring them, pages following a room's messages through a stream rpc on
     the room's binding, which `Feed` pushes to, and a Worker routing pages' sockets to the rooms
-    and asking each for its latest message over its stub, through the room's own `RpcGroup`.
-    The core's `docs/README.md` routes to it.
+    and asking each for its latest message over its stub, through the room's own `RpcGroup`,
+    which its `RoomsEntrypoint` also serves to another Worker, a `WorkerEntrypoint` method
+    running each call as an Effect program given the client's Layer. The core's
+    `docs/README.md` routes to it.
 
 - **`Feed` pushes values to the clients following a stream rpc**, in the new module
   `@gjermundgaraba/effect-actions/Feed`:

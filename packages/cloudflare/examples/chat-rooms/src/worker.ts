@@ -8,6 +8,9 @@ import { layerRooms } from "./platform/room-stubs.js";
 import { layerSql } from "./platform/sql-store.js";
 import { lobbyRoutes, roomCalls, roomRoutes } from "./routes.js";
 
+// The rooms for another Worker, over a service binding: a named entrypoint of this one.
+export { RoomsEntrypoint } from "./rooms-entrypoint.js";
+
 // Entrypoint, Wrangler's `main`: the composition root of the Worker and of every room's
 // object. It chooses the store and the room, and routes each request.
 

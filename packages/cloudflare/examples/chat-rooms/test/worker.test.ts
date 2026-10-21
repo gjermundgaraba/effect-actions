@@ -253,6 +253,25 @@ describe("the Worker and its rooms", () => {
     }).pipe(Effect.provide(worker)),
   );
 
+  it.effect(
+    "answers another Worker's call of RoomsEntrypoint from the room's object, and refuses a room it does not list",
+    () =>
+      Effect.gen(function* () {
+        const posted = yield* (yield* roomAs("general", "grace")).postMessage({
+          text: "Seen from another Worker.",
+        });
+
+        const refused = yield* Effect.flip(
+          Effect.tryPromise(() => exports.RoomsEntrypoint.latestAt("kitchen")),
+        );
+
+        expect(yield* Effect.promise(() => exports.RoomsEntrypoint.latestAt("general"))).toBe(
+          posted.at,
+        );
+        expect(String(refused.cause)).toContain('Expected "general" | "design"');
+      }).pipe(Effect.provide(worker)),
+  );
+
   it.effect("routes only a room's own path to its object, and other names to the lobby", () =>
     Effect.gen(function* () {
       const status = (path: string) =>
