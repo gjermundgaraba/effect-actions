@@ -77,7 +77,7 @@ src/
 ├── Rpc.ts             the room's RPC binding: its actions and its feed
 ├── routes.ts          a room's routes, its calls over its stub and the lobby's routes
 ├── worker.ts          entrypoint: the room's Durable Object class and the Worker's fetch
-├── rooms-entrypoint.ts  the rooms for another Worker, a WorkerEntrypoint over a ManagedRuntime
+├── rooms-entrypoint.ts  the rooms for another Worker, a WorkerEntrypoint running a program per call
 ├── browser.ts         client module: a page's socket and its room
 └── env.d.ts           the bindings' types, as `wrangler types` writes them
 test/
