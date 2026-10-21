@@ -175,9 +175,8 @@ export const follow = <E, R>(
   });
 ```
 
-- **Opened at the first value, once.** A page learns its subscription is live at its first
-  value, so an rpc whose page must know at once streams a first value, such as a snapshot that
-  may be an empty list; a resubscription after a drop is not told again.
+Each `follow` tells `opened` once: this example retries the stream inside one, so a
+resubscription is not told again, where a page calling `follow` anew is.
 
 ## Test it
 
