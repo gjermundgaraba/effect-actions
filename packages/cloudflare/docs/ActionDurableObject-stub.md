@@ -74,18 +74,22 @@ typing, with `RpcClientError` in every call's errors and a retry of your own, bu
 the function as each call is sent, as `client` does. From another object, make the client in a startup
 service. `RpcClient.make` requires a `Scope` natively, so no client without one is offered.
 
-In a Worker, build a runtime or handler kept across requests when the module loads, as chat-rooms'
-[worker.ts](../examples/chat-rooms/src/worker.ts) builds its lobby, or run each call as its own
-program given the client's Layer; never build one lazily inside a request. A client forks its
-own fiber on a timer of the request that builds it, and workerd drops a request's timers when it
-ends: a client first built inside a request that ends without waiting on I/O, succeeding or
-refused, never starts that fiber, and every later call through it waits until workerd cancels
-it as hung. `HttpRouter.toWebHandler` builds its Layer as it is called, so one called as the module
-loads needs nothing more, which is why the lobby is the safe example, and one called lazily
-inside a request fails the same way. `ManagedRuntime.make(layer)` builds nothing until its
-first run, so one made at module scope is still built inside the first request: run it once as
-the module loads, `runtime.runFork(Effect.void)`, which one probe under `vitest-pool-workers`
-found enough, or prefer a program per call. A Durable Object's build on its first event did not
+In a Worker, run each call as its own program given the client's Layer, as chat-rooms'
+`RoomsEntrypoint` below does: the client is built and closed in the request that uses it. A
+client kept across requests needs care. It forks its receive fiber on a timer of the request
+that builds it, and workerd drops a request's timers when it ends: a client first built inside a
+request that ends without waiting on I/O, succeeding or refused, never starts that fiber, and
+every later call through it waits until workerd cancels it as hung. `HttpRouter.toWebHandler`
+builds its Layer as it is called, so one called as the module loads, as chat-rooms'
+[worker.ts](../examples/chat-rooms/src/worker.ts) builds its lobby, escapes it, and one called
+lazily inside a request does not; `ManagedRuntime.make(layer)` builds nothing until its first
+run, so one made at module scope is still built inside a request. For a runtime or handler
+deliberately shared across requests, follow Effect's own recipe in `HttpRouter.toWebHandler`'s
+gotchas: build it at module scope, and provide `new Scheduler.MixedScheduler("sync")` to the
+whole application Layer with `Layer.provideMerge`, for its build and its requests;
+`Scheduler.MixedScheduler`'s gotchas say what that does not fix. This forbids neither a
+`ManagedRuntime` nor a cached handler: pure services in a cached runtime stay usable, and only a
+client's receive fiber is stranded. A Durable Object's build on its first event did not
 strand its fibers in the tests (a first event with no I/O, then a call); Cloudflare's model of an
 object's I/O context, kept across its events, would explain it, unverified here.
 
@@ -105,11 +109,10 @@ const decodeRoom = Schema.decodeUnknownEffect(RoomName);
 // The rooms for another Worker, over a service binding to this one's `RoomsEntrypoint`, which
 // worker.ts exports. A method of a `WorkerEntrypoint` is no Effect program, so each call runs as
 // one, given the rooms' Layer: the client is built in the request that uses it, and closed with
-// it, which costs no I/O. A runtime kept across requests is built as the module loads instead,
-// as worker.ts builds the lobby: one first built inside a request that ends without waiting on
-// I/O, succeeding or refused, never starts its client's own fiber, and every later call through
-// it waits for good. `ManagedRuntime.make` at module scope builds nothing until its first run,
-// inside a request, so it is that lazy form unless it is run once as the module loads.
+// it, which costs no I/O. A client kept across requests instead, in a `ManagedRuntime` made at
+// module scope, would be built at its first run, inside a request: one that ends without waiting
+// on I/O, succeeding or refused, never starts the client's receive fiber, and every later call
+// through it waits for good. The stub page says how to share one safely.
 export class RoomsEntrypoint extends WorkerEntrypoint<Cloudflare.Env> {
   // The calling Worker is another deployment, so its room is checked as any input is: an unknown
   // room rejects the call with the schema's error, as a room that cannot be reached rejects it

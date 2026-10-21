@@ -112,7 +112,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * - An object serving no `calls`, once built, or a class without the method, fails each call, with the object's or the runtime's message as the error's cause; an object whose build fails fails it with that failure first.
  * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.
  * - Unary: an rpc that streams fails with a defect at its first chunk, so a handler returning a stream that never emits leaves the call waiting for good.
- * - `RpcClient.make` over it forks a fiber started on a timer of the request that builds it, which workerd drops when that request ends: a client first built lazily inside a Worker's request that ends without waiting on I/O never starts it, and every later call waits until workerd cancels it as hung; build the client as the module loads, or per request; an object's build on its first event did not strand it in the tests.
+ * - `RpcClient.make` over it forks a fiber started on a timer of the request that builds it, which workerd drops when that request ends: a client first built lazily inside a Worker's request that ends without waiting on I/O never starts it, and every later call waits until workerd cancels it as hung; build the client per request or, shared, at module scope under Effect's sync scheduler, as `HttpRouter.toWebHandler`'s gotchas show; an object's build on its first event did not strand it in the tests.
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
@@ -163,7 +163,7 @@ export type Client<Group> = RpcClient.RpcClient<Unary<RpcGroup.Rpcs<Group>>>;
  * - Only names you accept should reach `getByName`: each name is another object.
  * - An rpc that streams has no method, as `Client` types it: the transport is unary, and over `layerStubClient` the object answers one with a defect at its first chunk.
  * - It dies on the stub's failure, hiding its error, Cloudflare's `.retryable` and `.durableObjectReset` included: for typed transport errors and a retry of your own, call `RpcClient.make(group)` over `layerStubClient(() => stub)`, whose `RpcClientError` in every call's errors holds the runtime's error as its `RpcClientDefect`'s `cause`, whose `.retryable`, when true, says this call may be repeated, as Cloudflare's guide allows, and whose `.durableObjectReset`, when true, that the next call needs a new stub, which the function `layerStubClient` is given makes as each call is sent.
- * - It forks a fiber started on a timer of the request that builds it, which workerd drops when that request ends: built lazily inside a Worker's request that ends without waiting on I/O, the fiber never starts, and every later call waits until workerd cancels it as hung; build it as the module loads, or per request; an object's build on its first event did not strand it in the tests.
+ * - It forks a fiber started on a timer of the request that builds it, which workerd drops when that request ends: built lazily inside a Worker's request that ends without waiting on I/O, the fiber never starts, and every later call waits until workerd cancels it as hung; build it per request or, shared, at module scope under Effect's sync scheduler, as `HttpRouter.toWebHandler`'s gotchas show; an object's build on its first event did not strand it in the tests.
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
