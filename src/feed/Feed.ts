@@ -131,7 +131,7 @@ const definitionOf = (rpc: Rpc.Any) =>
  * - The stream carries the values here, so an operator applied to it sees them, which a durable feed's never does.
  * - Each subscriber's queue is unbounded, so a publish never waits: a client that stops reading holds every value published to it in the server's memory until its stream ends.
  * - Subscribers live in the process: a restart drops their connections, and each page subscribes again from the last value it holds.
- * - An rpc is told apart by its definition, the success schema `Rpc.make` gave it, not its tag: a group's `middleware` or `prefix` keeps it, so publishing the definition reaches the group's subscribers, and two groups' rpcs of one tag are two audiences.
+ * - An rpc is told apart by its definition, the success schema `Rpc.make` gave it, not its tag: a group's `middleware` or `prefix` keeps it, so publishing the definition reaches the group's subscribers, and two groups' rpcs of one tag are two audiences; two rpcs made with one hand-built `RpcSchema.Stream` value are one audience, so give each its own, or `stream: true`.
  */
 export const layer: Layer.Layer<Feed> = Layer.sync(Feed)(() => {
   const subscribers = new Set<Entry>();
