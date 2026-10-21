@@ -77,20 +77,24 @@ const built = (protocol: NonNullable<ActionDurableObject.LayerWebSocketOptions["
   ).pipe(Effect.map((exit) => (Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : "built")));
 
 describe("layerWebSocket's protocol", () => {
-  it.effect("fails the build with a code the runtime's close refuses, naming the field", () =>
-    Effect.gen(function* () {
-      expect(yield* built({ version: "3", code: 5000 })).toBe(
-        "Error: ActionDurableObject.layerWebSocket's protocol.code 5000 is refused by a socket's close: give an integer from 4000 to 4999, an application's own",
-      );
+  it.effect(
+    "fails the build with a code a page is not given whole, naming the field and the codes it is",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* built({ version: "3", code: 2000 })).toBe(
+          "Error: ActionDurableObject.layerWebSocket's protocol.code 2000 is not a close code a page is given whole: give 1000 or an integer from 3000 to 4999, from 4000 an application's own",
+        );
 
-      for (const code of [999, 1004, 1005, 1006, 1015, 4000.5]) {
-        expect(yield* built({ version: "3", code })).toContain("is refused by a socket's close");
-      }
+        for (const code of [999, 1001, 1004, 1005, 1006, 1015, 2999, 5000, 4000.5]) {
+          expect(yield* built({ version: "3", code })).toContain(
+            "is not a close code a page is given whole",
+          );
+        }
 
-      for (const code of [1000, 1003, 1007, 1014, 1016, 3000, 4000, 4999]) {
-        expect(yield* built({ version: "3", code })).toBe("built");
-      }
-    }),
+        for (const code of [1000, 3000, 3999, 4000, 4999]) {
+          expect(yield* built({ version: "3", code })).toBe("built");
+        }
+      }),
   );
 
   it.effect(

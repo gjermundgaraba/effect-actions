@@ -91,20 +91,21 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     closed at once with that code and reason, which the page's client reads as `SocketCloseError`,
     since a browser cannot read a refused upgrade's status, and whose reconnection the core's
     `ActionRpc.reconnectUntil(code)` stops at that code: chat-rooms' `routes.ts` and `browser.ts`
-    show it. A `code` the runtime's `close` refuses, or a `reason` given over a close frame's 123
-    bytes, UTF-8 encoded, fails the build rather than each refusal; the default reason names the
-    version only where it fits, so any version builds. Router middleware provided to it runs for the
-    upgrade alone, and refuses one by any other judge, such as a foreign `Origin`, by returning
-    `refuseUpgrade(code, reason)` itself. An upgrade is logged and traced as 101. Effect's web
-    handler cannot upgrade a request, so `RpcServer.layerProtocolWebsocket` serves no socket on
-    Workers. The runtime answers a client's pings without waking the object. A message's event ends
-    once the message is handed to the server: a call doing I/O or waiting on a timer keeps the
-    object from hibernating, and one waiting on memory alone is lost if it hibernates. A socket
-    whose runtime dropped its attachment, as celld 0.6.2 does when it evicts an idle object, keeps
-    serving with each message's own headers, and one whose attachment does not decode answers each
-    message with a defect, rather than failing the event. A handler's die under a plain
-    `RpcServer.layer` is Effect's fatal `Defect`, failing every call in flight on the socket, as
-    Effect designs it; `disableFatalDefects: true`, or `ActionRpc.layer`, fails that call alone.
+    show it. A `code` other than 1000 or 3000 to 4999, the codes a page is given whole, or a
+    `reason` given over a close frame's 123 bytes, UTF-8 encoded, fails the build rather than each
+    refusal; the default reason names the version only where it fits, so any version builds. Router
+    middleware provided to it runs for the upgrade alone, and refuses one by any other judge, such
+    as a foreign `Origin`, by returning `refuseUpgrade(code, reason)` itself. An upgrade is logged
+    and traced as 101. Effect's web handler cannot upgrade a request, so
+    `RpcServer.layerProtocolWebsocket` serves no socket on Workers. The runtime answers a client's
+    pings without waking the object. A message's event ends once the message is handed to the
+    server: a call doing I/O or waiting on a timer keeps the object from hibernating, and one
+    waiting on memory alone is lost if it hibernates. A socket whose runtime dropped its attachment,
+    as celld 0.6.2 does when it evicts an idle object, keeps serving with each message's own
+    headers, and one whose attachment does not decode answers each message with a defect, rather
+    than failing the event. A handler's die under a plain `RpcServer.layer` is Effect's fatal
+    `Defect`, failing every call in flight on the socket, as Effect designs it;
+    `disableFatalDefects: true`, or `ActionRpc.layer`, fails that call alone.
   - `Sockets` is the object's dispatcher for its protocols' sockets, one per instance from
     `Sockets.layer`, which `layerWebSocket` registers with and requires, as it does `Feed`. Its `message`,
     `close(socket, code, reason)` and `error` hand a socket's event to its protocol and succeed
