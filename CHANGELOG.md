@@ -103,8 +103,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     importing nothing of this package. What it adds to the core's rules:
     - Only a call over `layerWebSocket` subscribes; one over the stub or HTTP dies at once. It
       serves the sockets of one `layerWebSocket` path: on an object serving two, `subscribe`,
-      `publish` and `end` die at once, naming both, as they do before the routes register their
-      path, such as from a service as it is built. A socket another path accepted, still open
+      `publish` and `end` die at once, naming both. Before the routes register their path, such
+      as from a service as it is built, `subscribe` and `publish` die, and `end`, and so `wipe`,
+      ends nothing, as on an object without routes. A socket another path accepted, still open
       after an eviction from an instance serving that path, is sent nothing. `layerWebSocket`
       given a `Feed` that `layerFeed` did not build, such as the core's `Feed.layer`, dies
       naming `layerFeed`.

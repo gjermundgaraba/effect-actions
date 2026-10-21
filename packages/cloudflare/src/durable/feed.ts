@@ -153,7 +153,7 @@ const completed = Schema.encodeSync(
  * - `end` answers a subscriber whose call hibernation dropped itself, with its exit; one ended while its `initial` is encoded is sent nothing, as one ended while it is read.
  * - Only a call over `layerWebSocket` subscribes: one over the stub or another protocol dies at once, `subscribes a call over layerWebSocket alone`.
  * - It serves the sockets of one `layerWebSocket` path, since a record names its rpc by tag alone and a group holds one rpc per tag, a later one replacing an earlier: an object whose routes serve two dies at each `subscribe`, `publish` and `end`, naming them, so serve every rpc that streams on one path.
- * - It serves no path until the routes register theirs, after the services are built: a `subscribe`, `publish` or `end` before, such as a service's as it is built, dies, `none is registered yet`, so publish from a handler, the alarm or `run`.
+ * - It serves no path until the routes register theirs, after the services are built: a `subscribe` or `publish` before, such as a service's as it is built, dies, `none is registered yet`, so publish from a handler, the alarm or `run`; an `end` before ends nothing, as there is no subscriber to end.
  * - A socket another path accepted, still open from an instance that served that path before an eviction, is sent nothing, and its records are dropped as a closed socket's.
  * - The feed waits for no acknowledgement: a page that stops acknowledging still receives every value, and each chunk Effect's client acknowledges wakes a hibernating object, whose server ignores the ack.
  * - A record is dropped when the client interrupts its stream or the socket closes, and when a `publish` finds its socket gone or refusing the send; a socket closing while the object is evicted leaves its records until then.
@@ -344,6 +344,10 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
       end: (rpc?: Rpc.Any, options?: EndOptions) =>
         lock.withPermits(1)(
           Effect.gen(function* () {
+            // Why: an object serving no `layerWebSocket` path has no subscriber to end, and one
+            // without routes wipes its storage with `wipe` too.
+            if (paths.size === 0) return;
+
             const path = yield* served;
 
             for (const { storageKey, socket, requestId } of yield* subscribersOf(
@@ -397,6 +401,7 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
  *
  * - `storage.deleteAll()` alone cuts every subscriber off: its record is gone, so no `publish` or `end` reaches it, and its stream stays open, sent nothing, until its socket closes.
  * - The alarm is not dropped, as `deleteAll` leaves it: call `storage.deleteAlarm()` for it.
+ * - An object serving no `layerWebSocket` path, such as one without routes, has no subscriber, and `wipe` runs `deleteAll` alone there.
  * - It runs under the runtime's `blockConcurrencyWhile`, so no message, call or fetch reaches the object until the wipe completes; a subscribe already running in the instance is ended too, even one whose record was still being written, and one that has not yet reached the feed subscribes after the wipe, reading what is left.
  */
 export const wipe: Effect.Effect<void, never, State | Feed> = Effect.gen(function* () {

@@ -822,6 +822,33 @@ describe("Feed", () => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "wipe drops the storage of an object serving no socket path, whose end ends nothing and whose publish still dies",
+    () =>
+      Effect.gen(function* () {
+        const stub = env.NATIVE.getByName("unrouted");
+
+        const outcome = yield* Effect.promise(() =>
+          runInDurableObject(stub, async (instance, state) => {
+            await state.storage.put("tests/application", 1);
+            await instance.run(ActionDurableObject.wipe);
+
+            const published = await instance.run(
+              Effect.exit(Effect.flatMap(Feed.Feed, (feed) => feed.publish(Ticks, 1))),
+            );
+
+            return {
+              left: (await state.storage.list()).size,
+              published: Exit.isFailure(published) ? Cause.pretty(published.cause) : "published",
+            };
+          }),
+        );
+
+        expect(outcome.left).toBe(0);
+        expect(outcome.published).toContain("none is registered yet");
+      }),
+  );
+
   it.effect("drops the records of a socket the runtime reported closed", () =>
     Effect.gen(function* () {
       const stub = fresh();
