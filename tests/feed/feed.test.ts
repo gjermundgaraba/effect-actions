@@ -1,3 +1,5 @@
+import * as v8 from "node:v8";
+import * as vm from "node:vm";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Deferred, Effect, Fiber, Layer, Match, Queue, Ref, Schema, Stream } from "effect";
 import { Rpc, RpcGroup, RpcMiddleware, RpcTest } from "effect/rpc";
@@ -16,7 +18,11 @@ const Ticks = Rpc.make("ticks", {
   stream: true,
 });
 
-const Others = Rpc.make("others", { success: Schema.Int, stream: true });
+const Others = Rpc.make("others", {
+  payload: { key: Schema.NullOr(Schema.String) },
+  success: Schema.Int,
+  stream: true,
+});
 
 const Group = RpcGroup.make(Ticks, Others);
 
@@ -67,7 +73,8 @@ const handlers = Group.toLayer(
             ),
           }),
         ),
-      others: (_, request) => counted(feed.subscribe(request, { initial: [0] })),
+      others: ({ key }, request) =>
+        counted(feed.subscribe(request, { key: key ?? undefined, initial: [0] })),
     });
   }),
 );
@@ -118,6 +125,47 @@ const plainServed = Plain.toLayer(
   ),
 );
 
+const Held = Rpc.make("held", {
+  payload: { failing: Schema.Boolean },
+  success: Schema.Struct({ n: Schema.Int }),
+  error: NoInitial,
+  stream: true,
+});
+
+const Holding = RpcGroup.make(Held);
+
+const holdingServed = Holding.toLayer(
+  Effect.map(Feed.Feed, (feed) =>
+    Holding.of({
+      held: ({ failing }, request) =>
+        feed.subscribe(request, {
+          initial: failing ? Effect.fail(new NoInitial()) : Effect.succeed([{ n: 0 }]),
+        }),
+    }),
+  ),
+);
+
+v8.setFlagsFromString("--expose-gc");
+
+const publishHeld = (feed: Feed.Feed["Service"]) =>
+  Effect.suspend(() => {
+    const value = { n: 1 };
+
+    return Effect.as(feed.publish(Held, value), new WeakRef(value));
+  });
+
+const released = (value: WeakRef<object>) =>
+  Effect.promise(() => new Promise((resolve) => setImmediate(resolve))).pipe(
+    Effect.andThen(
+      Effect.sync(() => {
+        vm.runInNewContext("gc()");
+
+        return value.deref() === undefined;
+      }),
+    ),
+    Effect.repeat({ until: (done) => done, times: 20 }),
+  );
+
 const tick = (rpc: Client, initial: ReadonlyArray<number>, key: string | null = null) =>
   follow(rpc.ticks({ key, initial, read: "at once" }), initial.length);
 
@@ -127,7 +175,7 @@ describe("Feed.layer", () => {
       const feed = yield* Feed.Feed;
       const rpc = yield* client;
       const ticks = yield* tick(rpc, [1, 2]);
-      const others = yield* follow(rpc.others(), 1);
+      const others = yield* follow(rpc.others({ key: null }), 1);
 
       yield* feed.publish(Ticks, 3);
       yield* feed.publish(Others, 9);
@@ -175,7 +223,7 @@ describe("Feed.layer", () => {
         const rpc = yield* client;
         const a = yield* tick(rpc, [1], "a");
         const b = yield* tick(rpc, [2], "b");
-        const others = yield* follow(rpc.others(), 1);
+        const others = yield* follow(rpc.others({ key: null }), 1);
 
         yield* feed.end(Ticks, { key: "a" });
         yield* Fiber.join(a.fiber);
@@ -247,6 +295,71 @@ describe("Feed.layer", () => {
       expect(Array.from(collected)).toEqual([]);
       expect(yield* Ref.get(finalized)).toBe(1);
     }).pipe(Effect.scoped, Effect.provide(served)),
+  );
+
+  it.effect(
+    "ends a subscriber of one rpc by key, leaving another rpc's subscriber of the same key",
+    () =>
+      Effect.gen(function* () {
+        const feed = yield* Feed.Feed;
+        const rpc = yield* client;
+        const ticks = yield* tick(rpc, [1], "a");
+        const others = yield* follow(rpc.others({ key: "a" }), 1);
+
+        yield* feed.end(Ticks, { key: "a" });
+        yield* feed.publish(Others, 7, { key: "a" });
+        yield* feed.end();
+
+        expect(yield* ticks.rest).toEqual([]);
+        expect(yield* others.rest).toEqual([7]);
+      }).pipe(Effect.scoped, Effect.provide(served)),
+  );
+
+  it.effect("keeps no value published after a subscriber's initial values failed", () =>
+    Effect.gen(function* () {
+      const feed = yield* Feed.Feed;
+      const rpc = yield* Effect.provide(RpcTest.makeClient(Holding), holdingServed);
+
+      yield* Effect.flip(Stream.runDrain(rpc.held({ failing: true })));
+
+      expect(yield* released(yield* publishHeld(feed))).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
+  );
+
+  it.effect("keeps no value published after a subscriber's client interrupted it", () =>
+    Effect.gen(function* () {
+      const feed = yield* Feed.Feed;
+      const rpc = yield* Effect.provide(RpcTest.makeClient(Holding), holdingServed);
+      const received = yield* Queue.unbounded<number>();
+
+      const fiber = yield* Effect.forkScoped(
+        Stream.runForEach(rpc.held({ failing: false }), ({ n }) => Queue.offer(received, n)),
+      );
+
+      yield* Queue.take(received);
+      yield* Fiber.interrupt(fiber);
+
+      expect(yield* released(yield* publishHeld(feed))).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
+  );
+
+  it.effect("keeps a value published to a live subscriber until it is read", () =>
+    Effect.gen(function* () {
+      const feed = yield* Feed.Feed;
+      const rpc = yield* Effect.provide(RpcTest.makeClient(Holding), holdingServed);
+      const opened = yield* Deferred.make<void>();
+      const reading = yield* Deferred.make<void>();
+
+      yield* Effect.forkScoped(
+        Stream.runForEach(rpc.held({ failing: false }), () =>
+          Deferred.succeed(opened, undefined).pipe(Effect.andThen(Deferred.await(reading))),
+        ),
+      );
+
+      yield* Deferred.await(opened);
+
+      expect(yield* released(yield* publishHeld(feed))).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(Feed.layer)),
   );
 
   it.effect("fails a subscriber whose initial values fail, and sends it nothing more", () =>
