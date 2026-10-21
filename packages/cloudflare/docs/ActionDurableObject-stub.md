@@ -88,8 +88,7 @@ deliberately shared across requests, follow Effect's own recipe in `HttpRouter.t
 gotchas: build it at module scope, and provide `new Scheduler.MixedScheduler("sync")` to the
 whole application Layer with `Layer.provideMerge`, for its build and its requests;
 `Scheduler.MixedScheduler`'s gotchas say what that does not fix. This forbids neither a
-`ManagedRuntime` nor a cached handler: pure services in a cached runtime stay usable, and only a
-client's receive fiber is stranded. A Durable Object's build on its first event did not
+`ManagedRuntime` nor a cached handler: pure services in a cached runtime stay usable, and only the fibers its build forks, such as a client's receive fiber, are stranded. A Durable Object's build on its first event did not
 strand its fibers in the tests (a first event with no I/O, then a call); Cloudflare's model of an
 object's I/O context, kept across its events, would explain it, unverified here.
 
