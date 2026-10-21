@@ -110,7 +110,10 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     - Only a call over `layerWebSocket` subscribes; one over the stub or HTTP dies at once. It
       serves the sockets of one `layerWebSocket` path: on an object serving two, `subscribe` and
       `publish` die at once, naming both. Before the routes register their path, such as from a
-      service as it is built, `subscribe` and `publish` die. `end`, and so `wipe`, ends nothing
+      service as it is built, `subscribe` and `publish` die. A second definition of a served
+      tag, such as another group's rpc, dies at the `subscribe`, `publish` or `end` that brings
+      it while the instance runs a subscriber of the first; a subscriber hibernation dropped
+      keeps no definition to judge against. `end`, and so `wipe`, ends nothing
       on an object serving no path or two, where no subscriber can exist. A socket another path accepted, still open
       after an eviction from an instance serving that path, is sent nothing. `layerWebSocket`
       given a `Feed` that `layerFeed` did not build, such as the core's `Feed.layer`, dies

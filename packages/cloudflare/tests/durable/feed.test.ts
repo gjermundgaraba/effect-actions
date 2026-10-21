@@ -15,7 +15,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { RpcClient, RpcGroup, type RpcMessage, RpcSerialization } from "effect/rpc";
+import { Rpc, RpcClient, RpcGroup, type RpcMessage, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
@@ -974,6 +974,45 @@ describe("Feed", () => {
 
       expect(outcome).toBe(0);
     }),
+  );
+
+  it.effect(
+    "refuses another group's rpc of a served tag at its publish and end, sending its subscribers nothing of it",
+    () =>
+      Effect.gen(function* () {
+        const stub = fresh();
+        const page = yield* subscribe(yield* connect(stub), [10]);
+        const Foreign = Rpc.make("ticks", { success: Schema.String, stream: true });
+
+        const refused = yield* Effect.promise(() =>
+          runInDurableObject(stub, (instance) =>
+            instance.run(
+              Effect.flatMap(Feed.Feed, (feed) =>
+                Effect.all([
+                  Effect.exit(feed.publish(Foreign, "foreign")),
+                  Effect.exit(feed.end(Foreign)),
+                ]),
+              ),
+            ),
+          ),
+        );
+
+        yield* (yield* callsOf(stub)).publish({ value: 11, key: null });
+
+        expect(
+          refused.map((exit) => (Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit)),
+        ).toEqual(
+          Array.from(
+            { length: 2 },
+            () =>
+              new Error(
+                "ActionDurableObject.Feed serves one definition of each rpc tag, and a second definition of ticks reached it, as from two groups each defining one: give each rpc its own tag, or each group its own feed",
+              ),
+          ),
+        );
+        expect(yield* page.next(1)).toEqual([11]);
+        expect(page.sent()).toBe(2);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("drops the records of a socket the runtime reported closed", () =>

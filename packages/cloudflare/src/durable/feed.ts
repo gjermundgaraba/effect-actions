@@ -121,6 +121,22 @@ const encoderOf = (rpc: Rpc.Any): Encode => {
   return encoder;
 };
 
+const schemasOf = (rpc: Rpc.Any) => {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native rpc boundary: every rpc a group holds is a native `Rpc`, carrying its schemas.
+  const { payloadSchema, successSchema, errorSchema, defectSchema } = rpc as Rpc.AnyWithProps;
+
+  return [payloadSchema, successSchema, errorSchema, defectSchema];
+};
+
+// Why: the core's `Feed.layer` judges a definition alike, by the four schemas every copy a group
+// makes of an rpc keeps, through `middleware`, `annotate` or `prefix`: a feed of either kind
+// takes a group's copy for the rpc itself, and refuses another group's rpc of its tag.
+const sameDefinition = (one: Rpc.Any, other: Rpc.Any) => {
+  const theirs = schemasOf(other);
+
+  return schemasOf(one).every((schema, index) => schema === theirs[index]);
+};
+
 const chunkOf = (requestId: string | number, values: Values): RpcMessage.ResponseChunkEncoded =>
   // oxlint-disable-next-line anti-slop-effect/no-manual-tagged-construction -- Effect's wire frame, which `RpcMessage` types and makes no constructor for: its type checks every field.
   ({ _tag: "Chunk", requestId, values });
@@ -153,6 +169,7 @@ const completed = Schema.encodeSync(
  * - `end` answers a subscriber whose call hibernation dropped itself, with its exit; one ended while its `initial` is encoded is sent nothing, as one ended while it is read.
  * - Only a call over `layerWebSocket` subscribes: one over the stub or another protocol dies at once, `subscribes a call over layerWebSocket alone`.
  * - It serves the sockets of one `layerWebSocket` path, since a record names its rpc by tag alone and a group holds one rpc per tag, a later one replacing an earlier: an object whose routes serve two dies at each `subscribe` and `publish`, naming them, so serve every rpc that streams on one path; an `end` there ends nothing, as no subscriber can exist.
+ * - A second definition of a served tag, such as another group's rpc published from a service two objects share, dies at the `subscribe`, `publish` or `end` that brings it while this instance runs a subscriber of the first, as the core's `Feed.layer` refuses it; a subscriber whose call hibernation dropped keeps no definition to judge against, so until its page subscribes again another group's rpc of its tag reaches it, encoded by that rpc's schemas.
  * - It serves no path until the routes register theirs, after the services are built: a `subscribe` or `publish` before, such as a service's as it is built, dies, `none is registered yet`, so publish from a handler, the alarm or `run`; an `end` before ends nothing, as there is no subscriber to end.
  * - A socket another path accepted, still open from an instance that served that path before an eviction, is sent nothing, and its records are dropped as a closed socket's.
  * - The feed waits for no acknowledgement: a page that stops acknowledging still receives every value, and each chunk Effect's client acknowledges wakes a hibernating object, whose server ignores the ack.
@@ -172,8 +189,30 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
 
     // Why: a subscription this instance runs ends through its own stream, so Effect's server
     // answers it and runs its finalizers: `end` completes it by its latch, and answers only a
-    // subscriber whose call is gone, as after hibernation, itself.
-    const latches = new Map<string, Deferred.Deferred<void>>();
+    // subscriber whose call is gone, as after hibernation, itself. Its rpc is kept beside, the
+    // definition a `publish` or `end` of its tag must be.
+    const latches = new Map<
+      string,
+      { readonly ended: Deferred.Deferred<void>; readonly rpc: Rpc.Any }
+    >();
+
+    // Why: a record names its rpc by tag alone, so another group's rpc of that tag, published from
+    // a service the two objects share, would reach this path's subscribers, encoded by its own
+    // schemas; a subscriber whose call hibernation dropped keeps no rpc to judge against.
+    const oneDefinition = (rpc: Rpc.Any) =>
+      Effect.suspend(() => {
+        const second = [...latches.values()].some(
+          (live) => live.rpc._tag === rpc._tag && !sameDefinition(live.rpc, rpc),
+        );
+
+        return second
+          ? Effect.die(
+              new Error(
+                `ActionDurableObject.Feed serves one definition of each rpc tag, and a second definition of ${rpc._tag} reached it, as from two groups each defining one: give each rpc its own tag, or each group its own feed`,
+              ),
+            )
+          : Effect.void;
+      });
 
     const drop = (key: string) => Effect.promise(() => storage.delete(key));
 
@@ -274,15 +313,18 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
             }
 
             const path = yield* served;
+
+            yield* oneDefinition(request.rpc);
+
             const socket = found.value;
             const key = recordKey(socket, request.requestId);
             const ended = yield* Deferred.make<void>();
 
-            latches.set(key, ended);
+            latches.set(key, { ended, rpc: request.rpc });
 
             yield* Effect.addFinalizer(() =>
               Effect.sync(() => {
-                if (latches.get(key) === ended) latches.delete(key);
+                if (latches.get(key)?.ended === ended) latches.delete(key);
               }),
             );
 
@@ -325,7 +367,7 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
           }),
         ),
       publish: (rpc, value, options) =>
-        Effect.flatMap(encoderOf(rpc)([value]), (values) =>
+        Effect.flatMap(Effect.andThen(oneDefinition(rpc), encoderOf(rpc)([value])), (values) =>
           lock.withPermits(1)(
             Effect.gen(function* () {
               const path = yield* served;
@@ -348,13 +390,15 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
             // dies, has no subscriber to end, and wipes its storage with `wipe` too.
             if (paths.size !== 1) return;
 
+            if (rpc !== undefined) yield* oneDefinition(rpc);
+
             const path = yield* served;
 
             for (const { storageKey, socket, requestId } of yield* subscribersOf(
               rpc,
               options?.key,
             )) {
-              const live = latches.get(storageKey);
+              const live = latches.get(storageKey)?.ended;
 
               yield* live === undefined
                 ? sendFrame(
@@ -375,7 +419,7 @@ export const layerFeed: Layer.Layer<Feed, never, State> = Layer.effect(Feed)(
             if (rpc === undefined && options?.key === undefined) {
               yield* Effect.forEach(
                 latches.values(),
-                (latch) => Deferred.succeed(latch, undefined),
+                ({ ended }) => Deferred.succeed(ended, undefined),
                 {
                   discard: true,
                 },
