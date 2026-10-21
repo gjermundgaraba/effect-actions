@@ -201,4 +201,7 @@ workerd, Cloudflare's runtime, serves an object's sockets under any `compatibili
 celld 0.6.2 differs from it twice, each difference a gotcha of the declaration it touches: a
 socket's upgrade headers after an eviction, on `ActionDurableObject.layerWebSocket`, and an
 alarm set on a class made without `alarm`, on `ActionDurableObject.make`. What an eviction
-loses is on `ActionDurableObject.handlers`.
+loses is on `ActionDurableObject.handlers`. `ActionDurableObject.wipe` holds every other event
+of the object with `blockConcurrencyWhile`, so a subscribe arriving mid-wipe runs after it: that
+is Cloudflare's documented guarantee, untested here, as no test can land an event inside the
+gate, and unverified on celld, which accepts the call but whose behaviour under it is unknown.
