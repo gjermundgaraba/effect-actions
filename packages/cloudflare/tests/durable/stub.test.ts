@@ -19,7 +19,7 @@ const plugin = (id: string) => env.PLUGIN_HOST.getByName(id);
 
 const plugins = ActionDurableObject.client(PluginRpcs);
 
-const rawOver = (stub: ActionDurableObject.Stub) =>
+const rawOver = (stub: ActionDurableObject.Stub | (() => ActionDurableObject.Stub)) =>
   RpcClient.make(PluginRpcs).pipe(Effect.provide(ActionDurableObject.layerStubClient(stub)));
 
 const defectOf = <A, E>(exit: Exit.Exit<A, E>) =>
@@ -79,6 +79,46 @@ describe("layerStubClient", () => {
         yield* Effect.forEach(calls, (call) => client.echo(call), { concurrency: "unbounded" }),
       ).toEqual(calls.map(({ text }) => text));
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("calls a function it is given for a new stub as each call is sent", () =>
+    Effect.gen(function* () {
+      let made = 0;
+
+      const client = yield* rawOver(() => {
+        made += 1;
+
+        return plugin("factory");
+      });
+
+      yield* client.install({ code: { plugin: "notes", pane: true } });
+
+      expect(made).toBe(1);
+      expect(yield* client.start()).toEqual({ pane: "notes/1" });
+      expect(made).toBe(2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "reaches a new stub from its function after an exception broke the one before, the runtime's error the typed failure's cause",
+    () =>
+      Effect.gen(function* () {
+        const broken = plugin("factory-broken");
+        const stubs = [broken];
+        const client = yield* rawOver(() => stubs.shift() ?? plugin("factory-broken"));
+
+        yield* abort(broken);
+
+        const error = yield* Effect.flip(client.panes());
+
+        expect(error).toBeInstanceOf(RpcClientError.RpcClientError);
+        expect(String(error.reason.cause)).toContain("aborted");
+        expect(
+          Predicate.hasProperty(error.reason.cause, "durableObjectReset") &&
+            error.reason.cause.durableObjectReset,
+        ).toBe(true);
+        expect(yield* client.panes()).toEqual([]);
+      }).pipe(Effect.scoped),
   );
 
   it.effect("fails with RpcClientError when the stub throws", () =>

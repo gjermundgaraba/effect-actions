@@ -155,11 +155,12 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     answered as its own request's exit, so the call fails with that defect alone and the
     client's next call is answered. Nothing authenticates a stub call, which only
     a binding reaches; a caller forwards a principal in a header or the payload.
-  - `layerStubClient(stub)` is the `RpcClient.Protocol` calling an object's rpcs over a stub of a
-    class serving them, with `RpcClient.make(group)` or `ActionRpc.client`; a failure of the
-    stub itself, such as an object serving no calls or a call past Workers RPC's 32 MiB limit,
-    is an `RpcClientError`; it holds its stub, which many exceptions leave broken, so a caller
-    recovering from its failure builds it over a new one; an answer completes a call only with
+  - `layerStubClient(stub | () => stub)` is the `RpcClient.Protocol` calling an object's rpcs
+    over a stub of a class serving them, with `RpcClient.make(group)` or `ActionRpc.client`; a
+    failure of the stub itself, such as an object serving no calls or a call past Workers RPC's
+    32 MiB limit, is an `RpcClientError`, its cause the runtime's error; a stub given is held,
+    which many exceptions leave broken, and a function given is called for a new stub as each
+    call is sent, for typed transport errors and a retry of the caller's own; an answer completes a call only with
     that request's exit, its id of the same type, or a connection's end, so one for another request fails as an answer
     that ended too soon. `client(group)` makes one client, in
     the caller's `Scope`, for every object of a class, and returns `(stubOf) => client`, which
