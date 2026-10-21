@@ -61,7 +61,7 @@ describe("ActionRpc.follow", () => {
       }),
   );
 
-  it.effect("tells closed an interruption arriving in the stream, such as the server's", () =>
+  it.effect("tells closed an interrupt cause the stream itself fails with", () =>
     Effect.gen(function* () {
       const { exit } = yield* told(Stream.failCause(Cause.interrupt()));
 

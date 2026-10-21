@@ -789,7 +789,7 @@ export interface Following<A, E> {
  *
  * - `opened` runs at the first value, as Effect's chunk is a non-empty array and its protocol has no "subscribed" frame: an rpc whose page must know at once, such as a snapshot that may be an empty list, sends a first value.
  * - `closed` is given the stream's `Exit`, which holds a defect, such as a chunk the page cannot decode, and a dropped socket as an `RpcClientError`: a page watching only for its declared failures misses both, left showing a subscription that ended.
- * - `closed` does not run when the follow itself is interrupted, as when the page stops following; an interruption arriving in the stream, such as the server's, is in its `Exit`.
+ * - `closed` does not run when the follow itself is interrupted, as when the page stops following; an interrupt cause the stream itself fails with is in its `Exit`.
  * - Reconnecting is the page's: Effect's socket client fails every stream it runs when its socket drops, so a page follows again after a backoff of its own, from the last value it holds, as live-rpc's `examples/live-rpc/src/follow.ts` does.
  */
 export const follow = <A, E, R>(
