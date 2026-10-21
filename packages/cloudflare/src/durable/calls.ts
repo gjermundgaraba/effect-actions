@@ -114,11 +114,34 @@ const makeProtocol = (registry: Registry) =>
 
     interface Client {
       readonly responses: Queue.Queue<RpcMessage.FromServerEncoded, Cause.Done>;
-      readonly tags: Map<string, string>;
+      readonly pending: Map<string, { readonly id: string | number; readonly tag: string }>;
     }
 
     const clients = new Map<number, Client>();
     let nextId = 0;
+
+    // Why: Effect's server sends a defect it takes as fatal, such as a handler's die, to the
+    // client as a bare `Defect`, and Effect's client fails every call it holds then, iterating
+    // them as it resumes each caller: a caller resuming within that step and calling again is
+    // failed by the same defect. One call over the stub is one client, so the defect is the exit
+    // of each request it carries without one, sent as that request's.
+    const failPending = (client: Client, defect: RpcMessage.ResponseDefectEncoded) => {
+      const requests = [...client.pending.values()];
+
+      client.pending.clear();
+
+      return Queue.offerAll(
+        client.responses,
+        requests.length === 0
+          ? [defect]
+          : requests.map(({ id }) =>
+              RpcMessage.ResponseExitDieEncoded({
+                requestId: RpcMessage.RequestId(id),
+                encodedDefect: defect.defect,
+              }),
+            ),
+      );
+    };
 
     const protocol = yield* RpcServer.Protocol.make((write) => {
       registry.serve = (request) =>
@@ -127,7 +150,7 @@ const makeProtocol = (registry: Registry) =>
 
           const client: Client = {
             responses: yield* Queue.make<RpcMessage.FromServerEncoded, Cause.Done>(),
-            tags: new Map(),
+            pending: new Map(),
           };
 
           clients.set(clientId, client);
@@ -149,7 +172,7 @@ const makeProtocol = (registry: Registry) =>
               request,
               (message) => {
                 if (Predicate.isTagged(message, "Request"))
-                  client.tags.set(String(message.id), message.tag);
+                  client.pending.set(String(message.id), { id: message.id, tag: message.tag });
 
                 return write(clientId, message);
               },
@@ -157,7 +180,7 @@ const makeProtocol = (registry: Registry) =>
             ),
           ).pipe(
             Effect.catchDefect((defect) =>
-              Queue.offer(client.responses, RpcMessage.ResponseDefectEncoded(encodeDefect(defect))),
+              failPending(client, RpcMessage.ResponseDefectEncoded(encodeDefect(defect))),
             ),
           );
 
@@ -174,16 +197,22 @@ const makeProtocol = (registry: Registry) =>
 
             if (client === undefined) return Effect.void;
 
-            if (!Predicate.isTagged(response, "Chunk"))
+            if (Predicate.isTagged(response, "Defect")) return failPending(client, response);
+
+            if (!Predicate.isTagged(response, "Chunk")) {
+              if (Predicate.isTagged(response, "Exit"))
+                client.pending.delete(String(response.requestId));
+
               return Queue.offer(client.responses, response);
+            }
 
             // Why: one method call answers once, so a stream's chunks have nowhere to go: the
             // call is answered with a defect naming the rpc, and its client ended and
             // disconnected, which interrupts the stream.
-            const tag = client.tags.get(String(response.requestId)) ?? "";
+            const tag = client.pending.get(String(response.requestId))?.tag ?? "";
 
-            return Queue.offer(
-              client.responses,
+            return failPending(
+              client,
               RpcMessage.ResponseDefectEncoded(
                 encodeDefect(
                   new Error(
@@ -231,6 +260,7 @@ const makeProtocol = (registry: Registry) =>
  * - A schema with no JSON form, such as `Schema.instanceOf(Date)`, works over the stub, not over `layerWebSocket`, which speaks JSON; an `ActionRpc` binding's values cross as JSON over either.
  * - A value the clone refuses, such as a class instance in a `Schema.Unknown`, or a defect that is a class instance other than an `Error`, fails the whole call with workerd's `DataCloneError`, whatever its exit.
  * - Unary: a call answers once every request it carries has its exit, so an rpc that streams is answered with a defect at its first chunk, naming it: stream over `layerWebSocket`.
+ * - A defect Effect's server sends as fatal to the whole client, such as a handler's die, is answered as the exit of each request of the call still without one, a die: the call fails with that defect alone, and the client's next call is answered.
  * - Nothing authenticates a call: a stub is reachable only through a binding, so the caller is the Worker or another object of the deployment, and one acting for a principal forwards it in a header, with `RpcClient.withHeaders`, read by an `RpcMiddleware` or an `ActionRpc` binding's authentication, or in the payload.
  * - Each object serves one: a second registering with one `Calls` fails the build, so serve several groups as one, `group.merge(other)`.
  *

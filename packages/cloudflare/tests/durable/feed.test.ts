@@ -153,8 +153,18 @@ const forged = {
 
 const onSocketAlone = "subscribes a call over layerWebSocket alone";
 
-const defectOf = Schema.decodeUnknownOption(
-  Schema.Struct({ defect: Schema.Struct({ message: Schema.String }) }),
+const diedOf = Schema.decodeUnknownOption(
+  Schema.Struct({
+    _tag: Schema.Literal("Exit"),
+    exit: Schema.Struct({
+      cause: Schema.Tuple([
+        Schema.Struct({
+          _tag: Schema.Literal("Die"),
+          defect: Schema.Struct({ message: Schema.String }),
+        }),
+      ]),
+    }),
+  }),
 );
 
 describe("Feed", () => {
@@ -365,8 +375,8 @@ describe("Feed", () => {
 
         const refusals = overStub.map((answer) =>
           answer
-            .flatMap((frame) => Option.toArray(defectOf(frame)))
-            .map(({ defect }) => defect.message),
+            .flatMap((frame) => Option.toArray(diedOf(frame)))
+            .map(({ exit }) => exit.cause[0].defect.message),
         );
 
         expect(refusals).toEqual([
@@ -458,8 +468,8 @@ describe("Feed", () => {
           }),
         );
 
-        const ended = yield* Effect.exit(calls.end({ key: null }));
         const published = yield* Effect.exit(calls.publish({ value: 1, key: null }));
+        const ended = yield* Effect.exit(calls.end({ key: null }));
         const refusal = "serves /rpc and /other";
 
         expect(Exit.isFailure(published) && Cause.pretty(published.cause)).toContain(refusal);

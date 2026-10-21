@@ -149,7 +149,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     `Calls.layer`, whose `call(request)` answers one. One
     stub protocol serves an object; a second fails to build. It is unary: an rpc that streams
     is answered with a defect at its first chunk, so one that never emits leaves its call
-    waiting. Nothing authenticates a stub call, which only
+    waiting. A handler's die, which Effect's server sends as a defect of the whole client, is
+    answered as its own request's exit, so the call fails with that defect alone and the
+    client's next call is answered. Nothing authenticates a stub call, which only
     a binding reaches; a caller forwards a principal in a header or the payload.
   - `layerStubClient(stub)` is the `RpcClient.Protocol` calling an object's rpcs over a stub of a
     class serving them, with `RpcClient.make(group)` or `ActionRpc.client`; a failure of the

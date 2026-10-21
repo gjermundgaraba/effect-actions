@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { Cause, Effect, Exit, Option, Schema } from "effect";
+import { Cause, Effect, Exit, Option, Predicate, Schema } from "effect";
 import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
 import { describe, expect, it } from "@effect/vitest";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
@@ -105,6 +105,70 @@ describe("values over the stub", () => {
       expect(defectOf(yield* Effect.exit(client.crash({ message: "boom" })))).toEqual(
         new Error("boom"),
       );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "fail a call whose handler dies with its defect alone, the next call through the same client and a fresh one answered",
+    () =>
+      Effect.gen(function* () {
+        const stub = env.NATIVE.getByName("crashed");
+
+        const client = yield* RpcClient.make(NativeRpcs).pipe(
+          Effect.provide(ActionDurableObject.layerStubClient(stub)),
+        );
+
+        const calls = (yield* ActionDurableObject.client(NativeRpcs))(() => stub);
+
+        for (const crashing of [client, calls]) {
+          const crashed = yield* Effect.exit(crashing.crash({ message: "boom" }));
+
+          expect(defectOf(crashed)).toEqual(new Error("boom"));
+          expect(yield* crashing.maybe({ value: "next" })).toBe("next");
+        }
+
+        const fresh = yield* RpcClient.make(NativeRpcs).pipe(
+          Effect.provide(ActionDurableObject.layerStubClient(stub)),
+        );
+
+        expect(yield* fresh.maybe({ value: "fresh" })).toBe("fresh");
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("answer a handler's die as its request's exit, never a defect of the whole call", () =>
+    Effect.gen(function* () {
+      const target = env.NATIVE.getByName("died");
+      const sent: Array<string | number> = [];
+      const answered: Array<unknown> = [];
+
+      const recording: ActionDurableObject.Stub = {
+        effectActionsRpc: (request) => {
+          for (const message of request)
+            if (Predicate.isTagged(message, "Request")) sent.push(message.id);
+
+          return target.effectActionsRpc(request).then((answer) => {
+            answered.push(answer);
+
+            return answer;
+          });
+        },
+      };
+
+      const client = yield* RpcClient.make(NativeRpcs).pipe(
+        Effect.provide(ActionDurableObject.layerStubClient(recording)),
+      );
+
+      yield* Effect.exit(client.crash({ message: "boom" }));
+
+      expect(answered).toEqual([
+        [
+          {
+            _tag: "Exit",
+            requestId: sent[0],
+            exit: { _tag: "Failure", cause: [{ _tag: "Die", defect: new Error("boom") }] },
+          },
+        ],
+      ]);
     }).pipe(Effect.scoped),
   );
 
