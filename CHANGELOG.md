@@ -102,8 +102,7 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     alarm and `run`, so any of them publishes, and domain code yields the core's `Feed`,
     importing nothing of this package. What it adds to the core's rules:
     - The stream `subscribe` returns carries none of the values, which go to the socket as
-      published: an operator such as `Stream.map` sees none, so transform a value before
-      publishing it.
+      published: an operator such as `Stream.map` sees none.
     - Only a call over `layerWebSocket` subscribes; one over the stub or HTTP dies at once. It
       serves the sockets of one `layerWebSocket` path: on an object serving two, `subscribe`,
       `publish` and `end` die at once, naming both, as they do before the routes register their
@@ -119,9 +118,12 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     - The feed waits for no acknowledgement. A page whose socket drops subscribes again from the
       last value it holds, which `initial` sends on.
     - Subscribers are kept in the object's storage beside the application's data, with the
-      socket-id counter: a wipe is `yield* feed.end()`, then `storage.deleteAll()`, which drops
-      them all, so a socket given a closed one's id later is sent nothing it did not ask for; a
-      wipe without `end()` leaves every subscriber's stream open and sent nothing.
+      socket-id counter: a wipe is `yield* feed.end()`, then `storage.deleteAll()`; a wipe
+      without `end()` leaves every subscriber's stream open and sent nothing.
+    - Earlier previews' `ActionDurableObject.Feed` and its types are gone: yield the core's
+      `Feed.Feed`, import `ChunkServices`, `Subscriber`, `SubscribeOptions`, `PublishOptions`
+      and `EndOptions` from `@gjermundgaraba/effect-actions/Feed`, and compose
+      `ActionDurableObject.layerFeed` where `ActionDurableObject.Feed.layer` was.
   - `layerStub()` is the protocol `RpcServer.layer(group)` and `ActionRpc.layer` serve on over
     the object's stub, with Cloudflare's own RPC: one call of the object's
     `effectActionsRpc` method carries one call's messages and returns its responses once its
@@ -194,24 +196,25 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     The core's `docs/README.md` routes to it.
 
 - **`Feed` pushes values to the clients following a stream rpc**, in the new module
-  `@gjermundgaraba/effect-actions/Feed`. A stream rpc's handler returns
-  `feed.subscribe(request, { initial, key })`, making its call a subscriber, any handler, store
-  or job yields `Feed.Feed` and calls `publish(rpc, value, { key })`, which sends the value to
-  each subscriber of the rpc, or of the key, and `end(rpc, { key })` completes their streams
-  through Effect's server, finalizers included, `end()` every subscriber's. `ChunkServices<R>`
-  names what `publish` and `subscribe` of `R` owe, the services its values need to encode, and
-  `Subscriber<R>`, `SubscribeOptions`, `PublishOptions` and `EndOptions` the rest; a handler's
-  subscriber is typed by its rpc, so `initial` is checked as the rpc's chunk. Every
-  implementation keeps the rules on `Feed.Feed`: the subscriber is kept before `initial` is
-  read, so every value published once it subscribed reaches it, at least once; values
-  published one after another arrive in that order; an `end` while `initial` is read sends
-  nothing; access is checked once, as the call subscribes. `Feed.layer` keeps the subscribers
-  in a process's memory, a queue each, for a server holding its clients' connections, such as
-  Node's, and for tests, which provide it to their routes as any service: `Testing.layer`
-  provides none. The Cloudflare package's `ActionDurableObject.layerFeed` keeps them in a
-  Durable Object's storage. live-rpc's pages follow a room with `watch`, a stream rpc in the
-  binding's `rpcs`, subscribing again after a dropped socket from the last message they hold,
-  and `docs/Feed.md` teaches it.
+  `@gjermundgaraba/effect-actions/Feed`:
+  - A stream rpc's handler returns `feed.subscribe(request, { initial, key })`, making its call
+    a subscriber; any handler, store or job yields `Feed.Feed` and calls
+    `publish(rpc, value, { key })`, and `end(rpc, { key })` completes their streams through
+    Effect's server, finalizers included, `end()` every subscriber's.
+  - `ChunkServices<R>` names the services `R`'s values need to encode, which `publish` and
+    `subscribe` of `R` owe; `Subscriber<R>`, `SubscribeOptions`, `PublishOptions` and
+    `EndOptions` the rest. A handler's subscriber is typed by its rpc, so `initial` is checked
+    as the rpc's chunk.
+  - Every implementation keeps the rules on `Feed.Feed`, at-least-once delivery from the
+    moment a call subscribes among them.
+  - `Feed.layer` keeps the subscribers in a process's memory, for a server holding its clients'
+    connections, such as Node's, and for tests, which provide it to their routes: `Testing.layer`
+    provides none. It tells rpcs apart by definition, so two groups' rpcs of one tag are two.
+    The Cloudflare package's `ActionDurableObject.layerFeed` keeps them in a Durable Object's
+    storage.
+  - live-rpc's pages follow a room with `watch`, a stream rpc in the binding's `rpcs`, and
+    subscribe again after a dropped socket from the last message they hold; `docs/Feed.md`
+    teaches it.
 
 ### Other changes
 
