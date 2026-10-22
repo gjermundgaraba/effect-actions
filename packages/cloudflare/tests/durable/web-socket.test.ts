@@ -195,14 +195,14 @@ describe("layerWebSocket", () => {
         );
 
       socket.send(
-        JSON.stringify({ _tag: "Request", id: 1, tag: "pause", payload: {}, headers: [] }),
+        JSON.stringify({ _tag: "Request", id: 1, tag: "hold", payload: {}, headers: [] }),
       );
 
-      yield* stored("pauseStarted");
+      yield* stored("holdStarted");
 
       socket.close(1000);
 
-      expect(yield* stored("pauseInterrupted")).toBe(true);
+      expect(yield* stored("holdInterrupted")).toBe(true);
     }),
   );
 

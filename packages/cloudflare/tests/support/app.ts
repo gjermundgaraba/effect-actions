@@ -71,7 +71,13 @@ export const Pause = Action.make("pause", {
   caller: Action.Anyone,
 });
 
-const actions = [Whoami, Spend, ReadNote, Schedule, Alarms, Pause] as const;
+export const Hold = Action.make("hold", {
+  description: "Answer never, until interrupted",
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+const actions = [Whoami, Spend, ReadNote, Schedule, Alarms, Pause, Hold] as const;
 
 export const Http = ActionHttp.make([Whoami, Spend, Schedule, Alarms], { authentication: Login });
 
@@ -124,7 +130,11 @@ export const implementation = Action.implement(
       pause: () =>
         Effect.promise(() => storage.put("pauseStarted", true)).pipe(
           Effect.andThen(Effect.sleep("100 millis")),
-          Effect.onInterrupt(() => Effect.promise(() => storage.put("pauseInterrupted", true))),
+        ),
+      hold: () =>
+        Effect.promise(() => storage.put("holdStarted", true)).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Effect.promise(() => storage.put("holdInterrupted", true))),
         ),
     };
   }),
