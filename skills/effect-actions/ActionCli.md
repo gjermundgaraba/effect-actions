@@ -66,10 +66,12 @@ shared by `remote` and `remoteCommand`:
 [notes-service/src/commands.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/commands.ts) requires a token,
 mapping its absence to an error that says what to do, and
 [kitchen-sink/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/cli.ts) adds a tenant header, reads an
-optional token for a public command, and uses every command option. The host provides
+optional token for a public command. The host provides
 `HttpClient` (`NodeHttpClient.layerUndici`) in
 [notes-service/src/cli.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/cli.ts).
 
+- **Split one binding into groups of commands**, one `remote` per group with its own `actions`;
+  what each group's `client` needs is on `ActionCli.Calling`'s `client`.
 - **Test a remote command the same way** as a local one, with `Testing.layer(routes)` provided
   as its `HttpClient` ([Testing.md](Testing.md#test-routes-in-memory)). Export the command from
   a module apart from the entrypoint that runs it
@@ -109,8 +111,9 @@ encoded JSON value decides the kind of flag:
 
 ### Arguments, short flags and stdin
 
-`render`, `positional`, `aliases` and `stdin` shape one command; in an aggregate they go under
-`commands`, keyed by the action's name. Each one's rules are on its own declaration:
+`description`, `render`, `positional`, `aliases` and `stdin` shape one command; in an aggregate
+they go under `commands`, keyed by the action's name. Each one's rules are on its own
+declaration:
 
 ```ts example=assistant/src/commands.ts
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
@@ -124,8 +127,10 @@ export const commands = ActionCli.make([tasks, identity], {
   name: "assistant",
   commands: {
     // `assistant list-tasks -a ada`: a short flag beside `--assignee`. `render` prints a line
-    // per task for a person, and adds `--json` for the JSON a script reads.
+    // per task for a person, and adds `--json` for the JSON a script reads. `description` is the
+    // command's help, saying what a line holds; the action's stays what a model reads.
     listTasks: {
+      description: "Print one line per task: [x] when done, then its id, title and assignee.",
       aliases: { assignee: "a" },
       render: ({ tasks }) =>
         tasks

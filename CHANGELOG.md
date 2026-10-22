@@ -41,6 +41,19 @@ and the copied implementation's no longer asks `is effect-actions installed twic
 - Migrate: update code matching an old message. A one-character alias in a duplicate-flag
   message is now shown as `-n`; every other message keeps its start.
 
+### Additions
+
+**A remote command's `client` needs only the methods of the actions it derives.** With
+`actions`, `ActionCli.remote`'s `client` holds those actions' methods, and `remoteCommand`'s its
+one action's, where both held every action of the binding. A CLI splitting one binding into
+groups of commands no longer needs a binding per group for a client of its own. Without
+`actions`, `client` still holds every action; methods beyond the needed ones are allowed, as
+before.
+
+**A derived command takes a `description`** in the options of `command`, `remoteCommand`, and
+`make`'s and `remote`'s `commands`, shown in `--help` instead of the action's description, which
+HTTP, MCP and RPC keep.
+
 ### Other changes
 
 - `ActionToolkit.Options.needsApproval` may return an Effect that fails, and a call whose

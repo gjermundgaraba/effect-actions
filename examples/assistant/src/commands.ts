@@ -9,8 +9,10 @@ export const commands = ActionCli.make([tasks, identity], {
   name: "assistant",
   commands: {
     // `assistant list-tasks -a ada`: a short flag beside `--assignee`. `render` prints a line
-    // per task for a person, and adds `--json` for the JSON a script reads.
+    // per task for a person, and adds `--json` for the JSON a script reads. `description` is the
+    // command's help, saying what a line holds; the action's stays what a model reads.
     listTasks: {
+      description: "Print one line per task: [x] when done, then its id, title and assignee.",
       aliases: { assignee: "a" },
       render: ({ tasks }) =>
         tasks

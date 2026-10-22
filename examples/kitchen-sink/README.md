@@ -244,13 +244,13 @@ search for in the file.
 
 ### ActionCli
 
-| Export or option                                               | File                                       |
-| -------------------------------------------------------------- | ------------------------------------------ |
-| `remote`: `name`, `commands`, `client`                         | `src/cli.ts`                               |
-| `commands`: `stdin`, `positional`, `aliases`, `render`, `name` | `src/cli.ts`                               |
-| A client from `Config`, its credentials optional               | `src/cli.ts`                               |
-| `make`, with a trusted identity the host supplies              | `src/ops.ts`                               |
-| `logToStderr`                                                  | `src/cli.ts`, `src/ops.ts`, `src/stdio.ts` |
+| Export or option                                                              | File                                       |
+| ----------------------------------------------------------------------------- | ------------------------------------------ |
+| `remote`: `name`, `commands`, `client`                                        | `src/cli.ts`                               |
+| `commands`: `stdin`, `positional`, `aliases`, `render`, `name`, `description` | `src/cli.ts`                               |
+| A client from `Config`, its credentials optional                              | `src/cli.ts`                               |
+| `make`, with a trusted identity the host supplies                             | `src/ops.ts`                               |
+| `logToStderr`                                                                 | `src/cli.ts`, `src/ops.ts`, `src/stdio.ts` |
 
 ### Testing
 

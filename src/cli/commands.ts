@@ -43,6 +43,13 @@ export interface Options<A extends Action.Any> {
   /** Override the command name. The action name, in kebab case, is used by default. */
   readonly name?: string;
   /**
+   * The command's help, where the CLI's command differs from the action, such as one rendering
+   * a summary: `"List the open issues, one per line."`. The action's `description` is used by
+   * default, and stays what HTTP, MCP and RPC describe. With `stdin`, the paragraph naming the
+   * field stdin fills follows it.
+   */
+  readonly description?: string;
+  /**
    * Human output: the decoded success to text for a person. Adds a `--json` flag to the
    * command that selects JSON instead.
    */
@@ -705,6 +712,7 @@ export const command = <A extends Action.Any, E, R>(
   errors: Action.Errors,
 ) => {
   const name = options?.name ?? kebab(action.name);
+  const description = options?.description ?? action.description;
   const render = options?.render;
 
   const { flags, positional, decode, stdinHelp } = inputConfig(
@@ -773,9 +781,9 @@ export const command = <A extends Action.Any, E, R>(
         );
 
   return stdinHelp === undefined
-    ? Command.withDescription(command, action.description)
+    ? Command.withDescription(command, description)
     : command.pipe(
-        Command.withDescription(`${action.description}\n\n${stdinHelp}`),
-        Command.withShortDescription(action.description),
+        Command.withDescription(`${description}\n\n${stdinHelp}`),
+        Command.withShortDescription(description),
       );
 };

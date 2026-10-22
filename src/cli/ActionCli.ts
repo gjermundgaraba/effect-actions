@@ -220,7 +220,7 @@ const overHttp = <A extends Action.Any>(
 
         if (method === undefined) {
           throw new Error(
-            `No client method for ${action.name} (give \`client\` a client of this binding, made by \`ActionHttp.client\`, whose methods hold this action)`,
+            `No client method for ${action.name} (give \`client\` a method for this action)`,
           );
         }
 
@@ -328,7 +328,7 @@ export function remoteCommand<
   const H extends AnyHttp,
   A extends H["actions"][number],
   const O = {},
-  C extends ClientOf<H> | undefined = undefined,
+  C extends ClientOf<H, A> | undefined = undefined,
 >(
   binding: H,
   action: A,
@@ -354,7 +354,9 @@ export interface Calling<C> {
    * `ActionHttp.client(Http, { baseUrl, transformClient })`, run each time a command runs, so one
    * reading `Config` is an `Effect.gen` returning `yield* ActionHttp.client(…)` and `--help`
    * reads nothing. What it requires, the host provides. Omitted, it is
-   * `ActionHttp.client(binding)` on the host's `HttpClient`, with no `baseUrl`.
+   * `ActionHttp.client(binding)` on the host's `HttpClient`, with no `baseUrl`. It needs only the
+   * methods of the actions it derives commands for: those `remote`'s `actions` lists, or
+   * `remoteCommand`'s one.
    *
    * **Gotchas**
    *
@@ -365,9 +367,23 @@ export interface Calling<C> {
   readonly client?: C;
 }
 
-type ClientOf<H extends AnyHttp> = Effect.Effect<Client<H, unknown, unknown>, unknown, unknown>;
+type ClientOf<H extends AnyHttp, A extends Action.Any> = Effect.Effect<
+  Pick<Client<H, unknown, unknown>, A["name"]>,
+  unknown,
+  unknown
+>;
 
-type ErasedClient = ClientOf<AnyHttp>;
+type ErasedClient = ClientOf<AnyHttp, Action.Any>;
+
+// Why: TypeScript first checks a call without its unannotated arrows, such as an inline `render`,
+// and an options literal holding one is not yet inferred into `O` then; `L`, inferred from
+// `actions` alone, holds the selection meanwhile. Checked against `Selected` alone, a client
+// narrowed to the listed actions is rejected as lacking every other action's method.
+type Needed<O, L extends ReadonlyArray<Action.Any>, All extends Action.Any> = "actions" extends (
+  O extends unknown ? keyof O : never
+)
+  ? Selected<O, All>
+  : L[number];
 
 type RemoteKeys<Keys> = Keys & { readonly client?: unknown };
 
@@ -395,10 +411,10 @@ type CallServices<C, A extends Action.Any> =
     : HttpClient.HttpClient;
 
 /**
- * Project every implemented action as a subcommand of one aggregate command, each derived as
- * `command` derives it and run in process. `commands` gives a subcommand the options `command`
- * takes, by action name; `subcommands` adds commands of your own. `remote` calls a server
- * instead. A test runs it in memory, with no process: `Command.runWith(command, { version })(args)`.
+ * Project the implemented actions, every one or those `actions` selects, as subcommands of one
+ * aggregate command, each derived as `command` derives it and run in process. `commands` gives a
+ * subcommand the options `command` takes, by action name; `subcommands` adds commands of your
+ * own. `remote` calls a server instead. A test runs it in memory, with no process: `Command.runWith(command, { version })(args)`.
  * Guide: `docs/ActionCli.md` in this package; in an application: `examples/assistant/src/commands.ts`.
  *
  * **Gotchas**
@@ -447,23 +463,25 @@ export function make<
 }
 
 /**
- * Project every action of an HTTP binding as a subcommand of one aggregate command, derived as
- * `make` derives it, each calling its action through `client`'s method, as `remoteCommand`
- * does. `commands` gives one the options `command` takes; `subcommands` adds commands of your
- * own, which call through the same client by yielding the Effect given as `client`.
+ * Project the actions of an HTTP binding, every one or those `actions` selects, as subcommands of
+ * one aggregate command, derived as `make` derives them, each calling its action through
+ * `client`'s method, as `remoteCommand` does. `commands` gives one the options `command` takes;
+ * `subcommands` adds commands of your own, which call through the same client by yielding the
+ * Effect given as `client`.
  * In an application: `examples/notes-service/src/commands.ts`.
  */
 export function remote<
   const H extends AnyHttp,
   const O extends Selection<H["actions"][number]> = {},
   const Own extends Subcommands = [],
-  C extends ClientOf<H> | undefined = undefined,
+  const L extends ReadonlyArray<H["actions"][number]> = H["actions"],
+  C extends ClientOf<H, Needed<O, L, H["actions"][number]>> | undefined = undefined,
 >(
   binding: H,
   options: O &
     NoInfer<Options<H["actions"][number]>> &
     NoInfer<KnownOptions<O, RemoteKeys<Options<Action.Any>>, H["actions"][number]>> &
-    Calling<C> & { readonly subcommands?: Own | undefined },
+    Calling<C> & { readonly actions?: L | undefined; readonly subcommands?: Own | undefined },
 ): Command.Command<
   string,
   {},

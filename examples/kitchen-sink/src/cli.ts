@@ -15,8 +15,10 @@ const tracker = ActionCli.remote(Http, {
   // Each command's options, keyed by its action's name and typed by that action.
   commands: {
     // `tracker list-issues -n 5 -s open`: short flags, and text instead of JSON (`--json` gives
-    // the JSON back).
+    // the JSON back). Its help says so: the action's description, which HTTP and MCP keep, says
+    // what the JSON holds.
     listIssues: {
+      description: "List your workspace's issues, newest first, one line each: id, status, title.",
       aliases: { limit: "n", status: "s" },
       render: ({ issues }) =>
         issues.map(({ id, status, title }) => `${id}  ${status}  ${title}`).join("\n"),

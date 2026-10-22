@@ -345,9 +345,6 @@ expectTypeOf<Command.Error<typeof prompting>>().toEqualTypeOf<
   ActionCli.UserError<RemoteFailure> | CliError.UserError
 >();
 
-// @ts-expect-error -- The client is one of this binding.
-ActionCli.remote(http, { name: "remote", client: ActionHttp.client(ActionHttp.make([Count])) });
-
 const localWithOwn = ActionCli.make(local, {
   name: "local",
   actions: [One],
@@ -690,3 +687,92 @@ const unbuiltGroup = ActionCli.make(unbuilt, { name: "local" });
 expectTypeOf<Command.Error<typeof unbuiltGroup>>().toEqualTypeOf<
   ActionCli.UserError<Action.BuiltIn> | CliError.UserError
 >();
+
+const remoteOnly = Effect.succeed({
+  remote: ({ value }: { value: string }) =>
+    value === "" ? Effect.fail(new Domain()) : Effect.succeed(value),
+});
+
+const remoteGroupOnly = ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  client: remoteOnly,
+});
+
+expectTypeOf<Command.Error<typeof remoteGroupOnly>>().toEqualTypeOf<ActionCli.UserError<Domain>>();
+
+expectTypeOf<Command.Services<typeof remoteGroupOnly>>().toBeNever();
+
+// @ts-expect-error -- Without `actions`, the client holds every action of the binding.
+ActionCli.remote(http, { name: "remote", client: remoteOnly });
+
+const countOnly = Effect.succeed({ count: () => Effect.succeed(1) });
+
+// @ts-expect-error -- The client holds each listed action.
+ActionCli.remote(http, { name: "remote", actions: [RemoteAction], client: countOnly });
+
+const remoteCommandOnly = ActionCli.remoteCommand(http, RemoteAction, { client: remoteOnly });
+
+expectTypeOf<Command.Error<typeof remoteCommandOnly>>().toEqualTypeOf<
+  ActionCli.UserError<Domain>
+>();
+
+// @ts-expect-error -- A remote command's client holds its action.
+ActionCli.remoteCommand(http, RemoteAction, { client: countOnly });
+
+const overridden = Effect.map(ActionHttp.client(http), (full) => ({
+  ...full,
+  count: () => Effect.fail(new OwnFailure()),
+}));
+
+const overriddenRemote = ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  client: overridden,
+});
+
+expectTypeOf<Command.Error<typeof overriddenRemote>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure>
+>();
+
+const numberInput = Effect.succeed({ remote: (value: number) => Effect.succeed(String(value)) });
+
+// @ts-expect-error -- A listed action's method takes its input.
+ActionCli.remote(http, { name: "remote", actions: [RemoteAction], client: numberInput });
+
+const renderedRemoteOnly = ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  client: remoteOnly,
+  commands: { remote: { render: (value) => String(value) } },
+});
+
+expectTypeOf<Command.Error<typeof renderedRemoteOnly>>().toEqualTypeOf<
+  ActionCli.UserError<Domain>
+>();
+
+const renderedRemoteCommandOnly = ActionCli.remoteCommand(http, RemoteAction, {
+  client: remoteOnly,
+  render: (value) => String(value),
+});
+
+expectTypeOf<Command.Error<typeof renderedRemoteCommandOnly>>().toEqualTypeOf<
+  ActionCli.UserError<Domain>
+>();
+
+ActionCli.remote(http, {
+  name: "remote",
+  // @ts-expect-error -- An unannotated `render` narrows nothing without `actions`.
+  client: remoteOnly,
+  commands: { remote: { render: (value) => String(value) } },
+});
+
+declare const mayList: { readonly actions?: ReadonlyArray<typeof RemoteAction> };
+
+ActionCli.remote(http, {
+  name: "remote",
+  ...mayList,
+  // @ts-expect-error -- Nor does `actions` that may be absent, which selects every action.
+  client: remoteOnly,
+  commands: { remote: { render: (value) => String(value) } },
+});

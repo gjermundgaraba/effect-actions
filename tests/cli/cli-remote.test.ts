@@ -686,3 +686,53 @@ it.effect("sends a field read from stdin as its flag would send it", () =>
     expect(output).toEqual(['"42"']);
   }),
 );
+
+it.effect("calls through a client holding only the methods of the actions it derives", () =>
+  Effect.gen(function* () {
+    const Echo = Action.make("echo", {
+      description: "Echoes its input",
+      readOnly: true,
+      caller: Action.Anyone,
+      input: Schema.Struct({ value: Schema.String }),
+      success: Schema.String,
+    });
+
+    const Both = ActionHttp.make([Remote, Echo]);
+
+    const app = Action.implement([Remote, Echo], {
+      remote: ({ value }) => Effect.succeed(value * 2),
+      echo: ({ value }) => Effect.succeed(value),
+    });
+
+    const remoteOnly = Effect.map(ActionHttp.client(Both), ({ remote }) => ({ remote }));
+    const group = ActionCli.remote(Both, { name: "api", actions: [Remote], client: remoteOnly });
+    const single = ActionCli.remoteCommand(Both, Remote, { client: remoteOnly });
+
+    const run = <Name extends string, Input, E>(
+      command: Command.Command<Name, Input, {}, E, HttpClient.HttpClient>,
+      args: ReadonlyArray<string>,
+    ) =>
+      Effect.map(logged(exec(command, args)), ([, logs]) => logs).pipe(
+        Effect.provide(Testing.layer(ActionHttp.layer(Both, app))),
+      );
+
+    expect(yield* run(group, ["remote", "--value", "21"])).toEqual(['"42"']);
+    expect(yield* run(single, ["--value", "4"])).toEqual(['"8"']);
+  }),
+);
+
+it.effect("describes a remote command as its options say", () =>
+  Effect.gen(function* () {
+    const description = "Double a number on the server";
+    const command = ActionCli.remoteCommand(Http, Remote, { description });
+
+    const [, logs] = yield* logged(exec(command, ["--help"])).pipe(
+      Effect.provide(Testing.layer(ActionHttp.layer(Http, freshRecordingImplementation().app))),
+    );
+
+    const help = logs.join("\n");
+
+    expect(help).toContain(description);
+    expect(help).not.toContain("Doubles an encoded finite number");
+  }),
+);

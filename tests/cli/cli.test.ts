@@ -2109,6 +2109,49 @@ it.effect("reads the field its options name from stdin, without the line endings
   }),
 );
 
+it.effect("describes a command as its options say, by its action's description otherwise", () =>
+  Effect.gen(function* () {
+    const Store = Action.make("store", {
+      description: "Store a secret",
+      readOnly: false,
+      caller: Action.Anyone,
+      input: { apiToken: Schema.String },
+    });
+
+    const app = Action.implement(Store, () => Effect.void);
+    const description = "Store a token piped in";
+
+    const help = <Name extends string, Input, E>(
+      command: Command.Command<Name, Input, {}, E, never>,
+      args: ReadonlyArray<string>,
+    ) => Effect.map(lines(command, args), (logs) => logs.join("\n"));
+
+    const own = yield* help(ActionCli.command(app, Store, { description }), ["--help"]);
+
+    const piped = yield* help(ActionCli.command(app, Store, { description, stdin: "apiToken" }), [
+      "--help",
+    ]);
+
+    const vault = ActionCli.make(app, {
+      name: "vault",
+      commands: { store: { description, stdin: "apiToken" } },
+    });
+
+    const derived = ActionCli.make(app, { name: "vault" });
+
+    const listing = yield* help(vault, ["--help"]);
+
+    expect(own).toContain(description);
+    expect(own).not.toContain("Store a secret");
+    expect(piped).toMatch(/Store a token piped in\s+Reads api-token from stdin\./);
+    expect(piped).not.toContain("Store a secret");
+    expect(listing).toMatch(/store\s+Store a token piped in$/m);
+    expect(listing).not.toContain("Store a secret");
+    expect(yield* help(ActionCli.command(app, Store), ["--help"])).toContain("Store a secret");
+    expect(yield* help(derived, ["--help"])).toMatch(/store\s+Store a secret$/m);
+  }),
+);
+
 it.effect("reads any kind of field from stdin: a string as text, JSON otherwise", () =>
   Effect.gen(function* () {
     const inputs: unknown[] = [];
