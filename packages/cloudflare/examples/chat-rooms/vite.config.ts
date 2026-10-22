@@ -6,11 +6,10 @@ export default defineConfig({
   plugins: [cloudflareTest({ wrangler: { configPath: "./wrangler.jsonc" } })],
   test: {
     include: ["test/**/*.test.ts"],
-    // Why: @cloudflare/vitest-plugin 1.4.4 answers a second runner's fetchWarmModules with every
-    // module the filesystem module cache holds in one WebSocket message, 41 MB here, which the
-    // runner's control socket closes with 1009 "Message is too large", reported as "Worker
-    // exited unexpectedly": with the cache on, every test file after the first in a pool slot
-    // is lost, as on CI's few cores.
+    // Why: under @cloudflare/vitest-plugin 1.4.4, the warm-module response for a later file in a
+    // pool slot can exceed what the runner's control socket accepts, 41 MB in 709 entries
+    // measured on chat-rooms, which closes it with 1009 and loses the file as "Worker exited
+    // unexpectedly"; two small files alone did not trigger it.
     fsModuleCache: false,
   },
 });

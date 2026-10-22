@@ -226,9 +226,9 @@ and the copied implementation's no longer asks `is effect-actions installed twic
     latest message over its stub, through the room's own `RpcGroup`, which its `RoomsEntrypoint`
     also serves to another Worker, a `WorkerEntrypoint` method running each call as an Effect
     program given the client's Layer. Its `vite.config.ts` turns Vitest's `fsModuleCache` off: under
-    `@cloudflare/vitest-plugin` 1.4.4 a pool slot's second test file otherwise loses its runner, the
-    plugin sending the cached modules in one message its socket refuses. The core's `docs/README.md`
-    routes to it.
+    `@cloudflare/vitest-plugin` 1.4.4 a later test file in a pool slot can otherwise lose its
+    runner, the plugin's warm-module response exceeding what its control socket accepts. The core's
+    `docs/README.md` routes to it.
 
 - **`Feed` pushes values to the clients following a stream rpc**, in the new module
   `@gjermundgaraba/effect-actions/Feed`:
