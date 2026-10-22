@@ -1,6 +1,6 @@
 # ActionRpc
 
-Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one unary rpc per action.
+Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one unary rpc per action, and native rpcs beside them, which may stream.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionRpc-failures.md](ActionRpc-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
 
@@ -11,18 +11,34 @@ A binding that holds a protected action names its authentication descriptor
 are on `ActionRpc.Options`. Call `ActionRpc.make` once and export the binding:
 
 ```ts example=live-rpc/src/Rpc.ts
+import { RpcGroup } from "effect/rpc";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { ListRooms, Messages } from "./chat/Chat.js";
+import { ListRooms, Messages, Watch } from "./chat/Chat.js";
+import { ResolveRoom } from "./chat/room.js";
 import { Login } from "./identity/Identity.js";
 
 // The RPC binding: one native rpc per action, named after it, the protected ones requiring
-// `Login`. It is plain data and imports no server code, so the server and a browser page both
-// import this one value. `Rpc.group` is the native `RpcGroup`, for Effect's own `RpcClient.make`.
-export const Rpc = ActionRpc.make([ListRooms, ...Messages], { authentication: Login });
+// `Login`, and `watch`, a native rpc of its own, which streams. It is plain data and imports no
+// server code, so the server and a browser page both import this one value. `Rpc.group` is the
+// native `RpcGroup`, for Effect's own `RpcClient.make`. `ActionRpc.layer`'s `middleware` runs on
+// actions alone, so `watch`'s group adds the room's middleware itself.
+export const Rpc = ActionRpc.make([ListRooms, ...Messages], {
+  authentication: Login,
+  rpcs: RpcGroup.make(Watch).middleware(ResolveRoom),
+});
 ```
 
 [kitchen-sink/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Rpc.ts) adds `error`, what its
 middleware fails with.
+
+- **An rpc that streams.** An action answers once. Give the binding native rpcs in `rpcs`,
+  `ActionRpc.make(actions, { authentication, rpcs: RpcGroup.make(Watch) })`, each with its own
+  schemas, such as `stream: true`: under the binding's `authentication` each message
+  authenticates as a protected action's does, and the client has their methods beside the
+  actions', a stream rpc's a `Stream`. The host implements them with the binding's own
+  `Rpc.rpcs.toLayer(handlers)`, whose handlers read the identity, and provides that to
+  `ActionRpc.layer`, which otherwise does not compile. The rules are on `ActionRpc.Options.rpcs`.
+  live-rpc's `watch` streams a room's messages, published with a `Feed`: [Feed.md](Feed.md).
 
 ## Serve the rpcs
 
@@ -34,7 +50,7 @@ provider ([Authentication.md](Authentication.md#verify-credentials)).
 ```ts example=live-rpc/src/routes.ts
 import { Layer } from "effect";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { messages, rooms } from "./chat/handlers.js";
+import { messages, rooms, watch } from "./chat/handlers.js";
 import { ResolveRoom, resolveRoom } from "./chat/room.js";
 import { authenticate } from "./identity/verifier.js";
 import { Rpc } from "./Rpc.js";
@@ -47,10 +63,14 @@ import { Rpc } from "./Rpc.js";
 // room: `Layer.succeed(CurrentRoom, "lobby")` provided here would leave the layer still
 // requiring it, in its type.
 //
-// It still requires three things, each chosen by whoever serves it. The protocol and its
+// `watch`'s handler is the host's, as an Effect rpc's is: it is provided here.
+//
+// It still requires four things, each chosen by whoever serves it. The protocol and its
 // serialization: server.ts gives it a WebSocket, and a test Effect's HTTP protocol, which
-// answers in memory. And `MessageStore`.
+// answers in memory. `MessageStore`, and `Feed`, which `postMessage` publishes to and `watch`
+// subscribes to: one, provided around both.
 export const rpc = ActionRpc.layer(Rpc, [rooms, messages], { middleware: [ResolveRoom] }).pipe(
+  Layer.provide(watch),
   Layer.provide([resolveRoom, authenticate]),
 );
 ```
@@ -62,6 +82,7 @@ The entrypoint serves the result with `HttpRouter.serve`; a test serves it in me
 import { createServer } from "node:http";
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Config, Effect, Layer } from "effect";
+import * as Feed from "@gjermundgaraba/effect-actions/Feed";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { MessageStore } from "./chat/store.js";
@@ -99,6 +120,11 @@ const server = Layer.unwrap(
       // DEMO ONLY: messages live in this process's memory; a deployment provides a store that
       // lasts.
       Layer.provide(MessageStore.layerMemory),
+      // The feed holds the pages following a room, which this process's sockets serve, so it
+      // lives in its memory too, one for the whole server, as a deployment of one process keeps
+      // it. Several processes behind a balancer would each hold their own pages, and a message
+      // posted to one would reach no page of another.
+      Layer.provide(Feed.layer),
     );
   }),
 );
@@ -114,6 +140,9 @@ in `middleware`, keyed on the caller, and
 [kitchen-sink/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Rpc.ts) binds the protected actions
 alone for it.
 
+- **On Cloudflare Workers.** `RpcServer.layerProtocolWebsocket` cannot upgrade a request there:
+  serve the rpcs from a Durable Object with `@gjermundgaraba/effect-actions-cloudflare`, whose
+  sockets hibernate.
 - **The same actions as JSON too.** Merge `ActionHttp.layer(Http, implementations)` beside the
   rpc layer, each given its descriptor's provider
   ([kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) defines both, and
@@ -129,11 +158,12 @@ alone for it.
 `ActionRpc.MethodError`. A page's client module:
 
 ```ts example=live-rpc/src/browser.ts
-import { Effect, Layer } from "effect";
+import { Effect, Layer, type Stream } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { roomHeader } from "./chat/Chat.js";
+import { type Message, roomHeader } from "./chat/Chat.js";
+import { follow } from "./follow.js";
 import { Rpc } from "./Rpc.js";
 
 // Client module: what a web page imports. It holds the binding and nothing of the server, so a
@@ -161,7 +191,8 @@ export const openChat = Effect.gen(function* () {
     room: (name: string, token: string) => {
       // A browser WebSocket cannot set an `Authorization` header on its upgrade, so the token
       // travels on each message, and the room beside it. A refreshed token needs no new socket.
-      const here = RpcClient.withHeaders({ authorization: `Bearer ${token}`, [roomHeader]: name });
+      const headers = { authorization: `Bearer ${token}`, [roomHeader]: name };
+      const here = RpcClient.withHeaders(headers);
 
       return {
         // Called again and again while the page is open, with the last id it holds. A token
@@ -178,6 +209,13 @@ export const openChat = Effect.gen(function* () {
           ),
 
         post: (text: string) => client.postMessage({ text }).pipe(here),
+
+        // The room's messages after `after`, then each one posted, told to `page`, across
+        // drops: follow.ts.
+        follow: (
+          after: number,
+          page: ActionRpc.Following<Message, Stream.Error<ReturnType<typeof client.watch>>>,
+        ) => follow((from) => client.watch({ after: from }, { headers }), after, page),
 
         // A declared error arrives as the contract's class. A message someone else already
         // removed is gone, which is what the page asked for.
@@ -219,7 +257,8 @@ import { defaultRoom, roomHeader } from "./Chat.js";
 export class CurrentRoom extends Context.Service<CurrentRoom, string>()("live-rpc/CurrentRoom") {}
 
 // Native Effect RPC middleware, declared as providing `CurrentRoom`. Listed in
-// `ActionRpc.layer`'s `middleware`, it runs once per message.
+// `ActionRpc.layer`'s `middleware` for the actions, and added to `watch`'s own group in Rpc.ts,
+// it runs once per message.
 export class ResolveRoom extends RpcMiddleware.Service<ResolveRoom, { provides: CurrentRoom }>()(
   "live-rpc/ResolveRoom",
 ) {}

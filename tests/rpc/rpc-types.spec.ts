@@ -1,8 +1,10 @@
-import { Context, Effect, Layer, Redacted, Schema, type Scope } from "effect";
+import { Context, Effect, Layer, Redacted, Schema, type Scope, Stream } from "effect";
 import type { HttpRouter } from "effect/http";
 import {
+  Rpc as NativeRpc,
   RpcClient,
   type RpcClientError,
+  RpcGroup,
   RpcMiddleware,
   RpcSerialization,
   RpcServer,
@@ -327,3 +329,103 @@ expectTypeOf<
 >().toEqualTypeOf<HttpRouter.HttpRouter>();
 
 export const nativeClientOfGroup = RpcClient.make(Rpc.group);
+
+const Watch = NativeRpc.make("watch", {
+  payload: { after: Schema.Int },
+  success: Schema.String,
+  stream: true,
+});
+
+const Watched = ActionRpc.make([Open, Get], {
+  authentication: Checked,
+  rpcs: RpcGroup.make(Watch),
+});
+
+export const watchedClient = Effect.gen(function* () {
+  const client = yield* ActionRpc.client(Watched);
+
+  const watching = client.watch({ after: 0 });
+
+  expectTypeOf(watching).toEqualTypeOf<
+    Stream.Stream<string, Action.Unauthenticated | Unavailable | RpcClientError.RpcClientError>
+  >();
+
+  // @ts-expect-error -- `watch` takes its payload.
+  client.watch();
+
+  expectTypeOf<Effect.Error<ReturnType<typeof client.get>>>().toEqualTypeOf<
+    Missing | Unavailable | EveryCallFailure
+  >();
+});
+
+expectTypeOf<Effect.Services<ReturnType<typeof ActionRpc.client<typeof Watched>>>>().toEqualTypeOf<
+  RpcClient.Protocol | Scope.Scope
+>();
+
+const watchingWithTheIdentity = Watched.rpcs.toLayer({
+  watch: ({ after }) =>
+    Stream.unwrap(Effect.map(Actor, (actor) => Stream.make(`${actor}:${after}`))),
+});
+
+expectTypeOf<Layer.Services<typeof watchingWithTheIdentity>>().toBeNever();
+
+const unwatched = ActionRpc.layer(Watched, app);
+
+expectTypeOf<NativeRpc.Handler<"watch">>().toExtend<Layer.Services<typeof unwatched>>();
+
+export const servedWithHandlers = ActionRpc.layer(Watched, app).pipe(
+  Layer.provide(watchingWithTheIdentity),
+  Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(Authentication.layer(Checked, verify)),
+  Layer.provide(Layer.succeed(BuilderClock, 0)),
+);
+
+type HostOwed = HttpRouter.HttpRouter | HttpRouter.Request<"Requires", Tenant>;
+
+expectTypeOf<Layer.Services<typeof servedWithHandlers>>().toEqualTypeOf<HostOwed>();
+
+// @ts-expect-error -- The layer requires the native rpcs' handlers.
+export const servedWithoutHandlers: Layer.Layer<never, never, HostOwed> = ActionRpc.layer(
+  Watched,
+  app,
+).pipe(
+  Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(Authentication.layer(Checked, verify)),
+  Layer.provide(Layer.succeed(BuilderClock, 0)),
+);
+
+class Denied extends Schema.TaggedError<Denied>()("Denied", {}) {}
+
+class Gate extends RpcMiddleware.Service<Gate>()("rpc-types/Gate", {
+  error: Schema.Union([Denied]),
+}) {}
+
+const Gated = ActionRpc.make([], { rpcs: RpcGroup.make(NativeRpc.make("one")).middleware(Gate) });
+
+const gatedUnprovided = ActionRpc.layer(Gated, []).pipe(
+  Layer.provide(Gated.rpcs.toLayer({ one: () => Effect.void })),
+);
+
+expectTypeOf<Layer.Services<typeof gatedUnprovided>>().toEqualTypeOf<RpcServer.Protocol | Gate>();
+
+const GatedWatch = ActionRpc.make([Open, Get], {
+  authentication: Checked,
+  rpcs: RpcGroup.make(Watch).middleware(Gate),
+});
+
+const gatedWatchUnprovided = ActionRpc.layer(GatedWatch, app).pipe(
+  Layer.provide(
+    GatedWatch.rpcs.toLayer({
+      watch: ({ after }) =>
+        Stream.unwrap(Effect.map(Actor, (actor) => Stream.make(`${actor}:${after}`))),
+    }),
+  ),
+  Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(Authentication.layer(Checked, verify)),
+  Layer.provide(Layer.succeed(BuilderClock, 0)),
+);
+
+expectTypeOf<Layer.Services<typeof gatedWatchUnprovided>>().toEqualTypeOf<HostOwed | Gate>();

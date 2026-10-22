@@ -51,7 +51,7 @@ examples with a stricter `tsconfig.json`; this is the minimum a project needs. T
 There is no package root. Import one module per subpath, as a namespace,
 `import * as Action from "@gjermundgaraba/effect-actions/Action"`.
 The modules: `Action`, `ActionHttp`, `ActionMcp`, `ActionRpc`, `ActionToolkit`, `ActionCli`,
-`Authentication`, `Testing`.
+`Authentication`, `Feed`, `Testing`.
 
 Effect's own modules are subpaths of `effect` too: `effect/http` (`HttpRouter`, `HttpClient`,
 `FetchHttpClient`), `effect/http-api` (`OpenApi`, `HttpApiMiddleware`), `effect/rpc`

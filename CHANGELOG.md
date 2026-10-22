@@ -41,7 +41,229 @@ and the copied implementation's no longer asks `is effect-actions installed twic
 - Migrate: update code matching an old message. A one-character alias in a duplicate-flag
   message is now shown as `-n`; every other message keeps its start.
 
+### Additions
+
+- **`ActionRpc.follow(stream, following)` follows a stream rpc as a page does**, telling an
+  `ActionRpc.Following<A, E>` its life: `opened` at the first value, `message` with each, then
+  `closed` with the stream's `Exit`, which holds a dropped socket's `RpcClientError` and a
+  defect such as an undecodable chunk. It retries nothing, and `closed` does not run when the
+  page interrupts it. live-rpc's `follow.ts` and chat-rooms' `browser.ts` call it, where each
+  defined its own `Following` and ran the chain; live-rpc's page is now told `opened` once, not
+  again at each resubscription after a drop.
+- **`ActionRpc.reconnectUntil(...codes)` is a socket client's `retryPolicy` that stops at a
+  close code**: Effect's own default for `RpcClient.layerProtocolSocket`,
+  `min(exponential(500, 1.5), spaced(5000))`, which Effect does not export, until the server
+  closes the socket with one of `codes`. It is the client half of the Cloudflare package's
+  `ActionDurableObject.refuseUpgrade`: without it, a refused page connects again every five
+  seconds for good, each upgrade waking the object.
+- **An RPC binding serves native rpcs beside its actions, such as one that streams.**
+  `ActionRpc.make(actions, { rpcs: RpcGroup.make(Watch) })` adds a native `RpcGroup`, each rpc
+  with its own schemas; the binding's `group` is both, and its `rpcs` the native ones as served.
+  Under the binding's `authentication`, each of their messages authenticates as a protected
+  action's does, through native middleware the binding adds: its handler reads the identity, and
+  a refusal is the call's typed `Unauthenticated`, or the verifier's declared error, and the
+  verifier's defect `Internal server error`, its cause reported. The authentication is the
+  binding's, whatever `layer`'s `actions` selects, runs before the group's own middleware, and is
+  provided beneath the server, so no Layer of the host's under its key replaces it; `layer`
+  refuses a protected binding whose native rpc does not run it outermost, such as one added with
+  `rpcs.add` after `make`. A native rpc runs no `authorize`: its handler authorizes the identity.
+  `ActionRpc.client` has their methods beside the actions', a stream rpc's a `Stream`.
+  `ActionRpc.layer` serves them with their own schemas on the same protocol, and requires their
+  handlers, which the host provides with `Rpc.rpcs.toLayer(handlers)`, so a layer without them
+  does not compile; its `middleware` runs on actions alone. A native rpc named after an action is
+  refused as the binding is made. An action stays unary.
+- **`@gjermundgaraba/effect-actions-cloudflare` serves actions from Cloudflare Durable Objects**,
+  and calls them, released with this package at the same version and requiring it at `~` that
+  version. Its module `ActionDurableObject` offers primitives any Durable Object class composes,
+  and a class built from them:
+  - `State` is the object's `DurableObjectState`, a startup service of its services, calls,
+    routes and alarm. `name`, an `Effect<string, never, State>`, is the name the Worker reached
+    the object by, `getByName(name)`, which a startup service such as a room is built from,
+    `Layer.effect(Room)(name)`; an object reached by an id carrying none, from `idFromString`
+    or `newUniqueId`, dies naming `getByName`.
+  - `layerWebSocket({ path, protocol? })` is the protocol `ActionRpc.layer` serves on: WebSockets
+    the runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
+    Effect's own socket protocol does, and each message is authenticated with them under its own
+    headers; an upgrade whose headers exceed a socket's 16 KiB attachment answers 431. Each protocol
+    of one object needs a `path` of its own. `protocol: { version, code, reason? }` refuses an
+    upgrade whose `?protocol=` is absent or names another version with `refuseUpgrade(code,
+    reason)`, the reason by default naming the version and asking for a reload: 101 and a socket
+    closed at once with that code and reason, which the page's client reads as `SocketCloseError`,
+    since a browser cannot read a refused upgrade's status, and whose reconnection the core's
+    `ActionRpc.reconnectUntil(code)` stops at that code: chat-rooms' `routes.ts` and `browser.ts`
+    show it. A `code` other than 1000 or an integer from 3000 to 4999, the codes a page's own
+    `close()` takes, or a `reason` given over a close frame's 123 bytes, UTF-8 encoded, fails the
+    build rather than each refusal; the default reason names the version only where it fits, so any
+    version builds. Router middleware provided to it runs for the upgrade alone, and refuses one by
+    any other judge, such as a foreign `Origin`, by returning `refuseUpgrade(code, reason)` itself.
+    An upgrade is logged and traced as 101. Effect's web handler cannot upgrade a request, so
+    `RpcServer.layerProtocolWebsocket` serves no socket on Workers. The runtime answers a client's
+    pings without waking the object. A message's event ends once the message is handed to the
+    server: a call doing I/O or waiting on a timer keeps the object from hibernating, and one
+    waiting on memory alone is lost if it hibernates. A socket whose runtime dropped its attachment,
+    as celld 0.6.2 does when it evicts an idle object, keeps serving with each message's own
+    headers, and one whose attachment does not decode answers each message with a defect, rather
+    than failing the event. A handler's die under a plain `RpcServer.layer` is Effect's fatal
+    `Defect`, failing every call in flight on the socket, as Effect designs it;
+    `disableFatalDefects: true`, or `ActionRpc.layer`, fails that call alone.
+  - `Sockets` is the object's dispatcher for its protocols' sockets, one per instance from
+    `Sockets.layer`, which `layerWebSocket` registers with and requires, as it does `Feed`. Its `message`,
+    `close(socket, code, reason)` and `error` hand a socket's event to its protocol and succeed
+    with `true`, or with `false` for a socket no protocol accepted, such as one the class
+    accepted itself. `close` completes the closing handshake, replying with the client's code
+    and reason, so a page closing its socket gets a clean close under any `compatibility_date`,
+    without the runtime's `web_socket_auto_reply_to_close`. It gives each
+    socket an id unique across the object's protocols, kept in storage so no later socket has an
+    earlier one's.
+  - `layerFeed` is an object's `Feed`, the core's service, kept in the object's storage: a
+    value published reaches the pages following a stream rpc over `layerWebSocket` after the
+    object hibernated or was evicted too, as long as their sockets stay open. `handlers` and
+    `make` provide it, `Layer<Feed, never, State>`, to the services, the calls, the routes, the
+    alarm and `run`, so any of them publishes, and domain code yields the core's `Feed`,
+    importing nothing of this package. What it adds to the core's rules:
+    - Only a call over `layerWebSocket` subscribes; one over the stub or HTTP dies at once. It
+      serves the sockets of one `layerWebSocket` path: on an object serving two, `subscribe` and
+      `publish` die at once, naming both. Before the routes register their path, such as from a
+      service as it is built, `subscribe` and `publish` die. A second definition of a served
+      tag, such as another group's rpc, dies at the `subscribe`, `publish` or `end` that brings
+      it while the instance runs a subscriber of the first; a subscriber hibernation dropped
+      keeps no definition to judge against. `end`, and so `wipe`, reads no path: it answers every
+      record it finds on its socket, before the routes register theirs too, as a `wipe` while
+      the services build. A socket another path accepted, still open after an eviction from an
+      instance serving that path, is sent no published value, only an `end`'s exit. `layerWebSocket`
+      given a `Feed` that `layerFeed` did not build, such as the core's `Feed.layer`, dies
+      naming `layerFeed`.
+    - A value published while `initial` is read may arrive before it and again in it, and with
+      a schema that encodes asynchronously, one published between the read and the send
+      arrives before it. After `initial`, values arrive in the order their publishes finished
+      encoding. An `end` while `initial` is read or encoded interrupts it and sends nothing, and
+      a subscriber whose call hibernation dropped gets its exit from `end` itself.
+    - The feed waits for no acknowledgement. A page whose socket drops subscribes again from the
+      last value it holds, which `initial` sends on.
+    - Subscribers are kept in the object's storage beside the application's data, with the
+      socket-id counter, so `ActionDurableObject.wipe`, an `Effect<void, never, State | Feed>`,
+      wipes it: it ends every subscriber, then runs `storage.deleteAll()`, under the runtime's
+      `blockConcurrencyWhile`; a step that fails fails `wipe` with its defect, the object left
+      whole. It drops the alarm as well from `compatibility_date` `2026-02-24`, as
+      `deleteAll` does there. `deleteAll()` alone leaves every subscriber's stream open and
+      sent nothing. `end()` completes every subscriber the instance runs, even one whose record
+      was still being written, besides every record it finds.
+    - Earlier previews' `ActionDurableObject.Feed` and its types are gone: yield the core's
+      `Feed.Feed`, import `ChunkServices`, `Subscriber`, `SubscribeOptions`, `PublishOptions`
+      and `EndOptions` from `@gjermundgaraba/effect-actions/Feed`, and compose
+      `ActionDurableObject.layerFeed` where `ActionDurableObject.Feed.layer` was.
+  - `layerStub()` is the protocol `RpcServer.layer(group)` and `ActionRpc.layer` serve on over
+    the object's stub, with Cloudflare's own RPC: one call of the object's
+    `effectActionsRpc` method carries one call's messages and returns its responses once its
+    exit is known, as values Workers RPC's structured clone copies, each schema's plain form,
+    never JSON: a `Date`, bytes and `undefined` cross as themselves, and a schema with no JSON
+    form works over the stub, not over the socket. A value the clone refuses, such as a class
+    instance in a `Schema.Unknown`, fails the whole call with workerd's `DataCloneError`. It
+    registers with `Calls`, the object's dispatcher for those calls, one per instance from
+    `Calls.layer`, whose `call(request)` answers one. One
+    stub protocol serves an object; a second fails to build. It is unary: an rpc that streams
+    is answered with a defect at its first chunk, so one that never emits leaves its call
+    waiting. A handler's die, which Effect's server sends as a defect of the whole client, is
+    answered as its own request's exit, so the call fails with that defect alone and the
+    client's next call is answered. Nothing authenticates a stub call, which only
+    a binding reaches; a caller forwards a principal in a header or the payload.
+  - `layerStubClient(stub | () => stub)` is the `RpcClient.Protocol` calling an object's rpcs
+    over a stub of a class serving them, with `RpcClient.make(group)` or `ActionRpc.client`; a
+    failure of the stub itself, such as an object serving no calls or a call past Workers RPC's
+    32 MiB limit, is an `RpcClientError`, its cause the runtime's error; a stub given is held,
+    which many exceptions leave broken, and a function given is called for a new stub as each
+    call is sent, for typed transport errors and a retry of the caller's own; an answer completes a call only with
+    that request's exit, its id of the same type, or a connection's end, so one for another request fails as an answer
+    that ended too soon. `client(group)` makes one client, in
+    the caller's `Scope`, for every object of a class, and returns `(stubOf) => client`, which
+    calls `stubOf` for a new stub as each call is sent, so no stub is held and a client over
+    one object is kept for good; its calls fail with their declared errors alone, a stub's
+    failure being a defect: an application's
+    `hosts.plugin(id).start()` is an `Effect<{ pane }, PluginNotFound | PluginHasNoPane>`,
+    where it wrapped a hand-typed stub method's promise and rebuilt the errors. An rpc that
+    streams has no method, as `Client` types it, the object's defect at its first chunk being
+    the stub's one refusal of a stream. `Stub` and `Client<typeof group>` are their types, and
+    `StubRequest` the method's parameter, so a class delegating it writes
+    `effectActionsRpc(request: ActionDurableObject.StubRequest)`.
+  - `handlers(ctx, { services, routes, calls, alarm, disableLogger })` returns a class's
+    handlers, `fetch`, `webSocketMessage`, `webSocketClose`, `webSocketError`,
+    `effectActionsRpc`, `alarm` and `run`, each taking the runtime's arguments, for a class
+    of your own to delegate to. The first event builds the object once: `services`, its
+    startup services, which may require `State` and the core's `Feed`, then `calls`, given `Calls` and `layerStub()`, and
+    `routes`, given `Sockets`; every event awaits that build, which makes the routes' web handler too,
+    so a defect making it, such as global middleware throwing, fails it, and a failed build is
+    dropped with all it built, so the next event builds again. `fetch` serves the routes, or answers 404
+    without them; the socket handlers, `SocketHandlers`, returned only with routes, since
+    without them no protocol accepts a socket, dispatch through `Sockets`, resolving for a
+    socket no protocol accepted; `effectActionsRpc`
+    dispatches through `Calls`, and rejects without calls, once the object is built, reversing
+    an earlier refusal at once that built nothing, so the build's refusal is the only one: a
+    call to an object whose build fails gets that failure; `alarm(info)` runs `alarm`,
+    given the runtime's retry count, through `run`; and `run(effect)` runs an Effect in the
+    object with the services, `State`, `Feed` and a `Scope`, for the class's own methods. The calls,
+    the routes, every request, the alarm and every `run` share the one build of `services`; a
+    Layer a `run` provides itself, or an `Action.client` it acquires, is built for that call
+    alone. An object serving only calls builds no router. `disableLogger` leaves out the
+    request logger.
+  - `make(options)` is a Durable Object class delegating every handler and `run` to `handlers`,
+    for a class extending it to override; made without `alarm`, it has no `alarm` handler, and
+    made without `routes`, no socket handlers, so it never wakes for a socket the class
+    accepted itself, and a class accepting its own defines them. Its `services` is a
+    function of the instance's `env`, `() => layer` for services reading none, called as
+    each instance is constructed, so a class
+    reading its bindings extends it without a constructor or delegates of its own; the
+    function's parameter type is the class's `env`, so an application passes its own `Env`
+    without augmenting `Cloudflare.Env`.
+  - `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
+    service binding, so a Worker calls an object's routes with `ActionHttp.client`,
+    `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.
+  - Its pages, `docs/ActionDurableObject.md`, a page for calls over the stub, a page for pushing to
+    pages, a page for a class that cannot extend `make`'s and a failures page, ship in the package,
+    in the core's docs model, the rules and gotchas in the JSDoc of each declaration, with an
+    example, chat-rooms: one object per room, its messages in the object's SQLite database, an alarm
+    expiring them, pages following a room's messages through a stream rpc on the room's binding,
+    which `Feed` pushes to, and a Worker routing pages' sockets to the rooms and asking each for its
+    latest message over its stub, through the room's own `RpcGroup`, which its `RoomsEntrypoint`
+    also serves to another Worker, a `WorkerEntrypoint` method running each call as an Effect
+    program given the client's Layer. Its `vite.config.ts` turns Vitest's `fsModuleCache` off: under
+    `@cloudflare/vitest-plugin` 1.4.4 a later test file in a pool slot can otherwise lose its
+    runner, the plugin's warm-module response exceeding what its control socket accepts. The core's
+    `docs/README.md` routes to it.
+
+- **`Feed` pushes values to the clients following a stream rpc**, in the new module
+  `@gjermundgaraba/effect-actions/Feed`:
+  - A stream rpc's handler returns `feed.subscribe(request, { initial, key })`, making its call
+    a subscriber; any handler, store or job yields `Feed.Feed` and calls
+    `publish(rpc, value, { key })`, and `end(rpc, { key })` completes their streams through
+    Effect's server, finalizers included, `end()` every subscriber's.
+  - `ChunkServices<R>` names the services `R`'s values need to encode, which `publish` and
+    `subscribe` of `R` owe; `Subscriber<R>`, `SubscribeOptions`, `PublishOptions` and
+    `EndOptions` the rest. A handler's subscriber is typed by its rpc, so `initial` is checked
+    as the rpc's chunk.
+  - Every implementation keeps the rules on `Feed.Feed`, at-least-once delivery from the
+    moment a call subscribes among them. An rpc is its tag, and a feed serves one definition of
+    each: give two groups' rpcs tags of their own, or each group its own feed. Treat the stream
+    `subscribe` returns as a handle: an operator on it sees the values on one implementation
+    and none on another, so transform a value before publishing it.
+  - `Feed.layer` keeps the subscribers in a process's memory, for a server holding its clients'
+    connections, such as Node's, and for tests, which provide it to their routes: `Testing.layer`
+    provides none. A second definition of a tag, such as another group's `watch`, dies at the
+    `subscribe`, `publish` or `end` that brings it, even after every subscriber of the first
+    ended, as the feed keeps the first definition of each tag it meets for its life. The Cloudflare package's `ActionDurableObject.layerFeed` keeps them in a Durable Object's
+    storage.
+  - live-rpc's pages follow a room with `watch`, a stream rpc in the binding's `rpcs`, and
+    subscribe again after a dropped socket from the last message they hold; `docs/Feed.md`
+    teaches it.
+
 ### Other changes
+
+- **`ActionRpc` serves and calls over a protocol passing values**, such as a Durable Object
+  stub's, whose codec is not JSON's: the actions' values cross as JSON whatever the protocol's
+  codec, so `layer` and `client` give the protocol JSON's codec, and refuse one that does not
+  keep a JSON value as it is, such as schema-binary's. `layer` refused every codec but JSON's;
+  `client` now refuses schema-binary's too, as it is made. The message is
+  `ActionRpc puts JSON in a protocol's messages, which this protocol's codec does not keep as it is (…)`,
+  naming the codecs to provide, where it was `ActionRpc serves a protocol speaking JSON: …`.
 
 - `ActionToolkit.Options.needsApproval` may return an Effect that fails, and a call whose
   policy fails asks for approval, where Effect's own default ran it unapproved; a defect ends

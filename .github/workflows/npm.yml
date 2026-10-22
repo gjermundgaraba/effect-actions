@@ -21,15 +21,19 @@ jobs:
           node-version-file: .node-version
           cache: true
           run-install: false
-      - name: Check that the tag matches the package version
-        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
+      - name: Check that the tag matches both packages' version
+        run: |
+          test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "v$(node -p "require('./packages/cloudflare/package.json').version")"
       - run: vp install --frozen-lockfile
       - run: vp check
       - run: vp test
       - run: vp run test:package
-      - name: Check that package.json's exports are the build's
-        run: git diff --exit-code -- package.json
-      # The package lists this repository and workflow as its npm trusted publisher, so
-      # publishing authenticates with the job's OIDC token and attaches provenance.
-      # A tag checkout is a detached HEAD, which the branch check would refuse.
-      - run: vp pm publish --no-git-checks
+      - name: Check that each package.json's exports are the build's
+        run: git diff --exit-code -- package.json packages/cloudflare/package.json
+      # Each package lists this repository and workflow as its npm trusted publisher, so
+      # publishing authenticates with the job's OIDC token and attaches provenance; a new package
+      # is published once by hand first (AGENTS.md#release). A recursive publish takes the core
+      # before the package depending on it and skips a version already published, so a failed
+      # run can be re-run. A tag checkout is a detached HEAD, which the branch check would refuse.
+      - run: vp pm publish -r --no-git-checks

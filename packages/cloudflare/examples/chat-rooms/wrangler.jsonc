@@ -1,0 +1,11 @@
+{
+  "name": "chat-rooms",
+  "main": "./src/worker.ts",
+  // From 2026-04-07 the flag web_socket_auto_reply_to_close is on by default: the runtime
+  // replies to a client's close frame itself, which ActionDurableObject.layerWebSocket relies on.
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "CHAT_ROOM", "class_name": "ChatRoom" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ChatRoom"] }],
+}

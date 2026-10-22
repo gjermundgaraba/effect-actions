@@ -50,6 +50,7 @@ export function layer(
  * - No request is logged: only the cause of a defect, of a result that does not encode or of a failure a route leaves unhandled, as an error on the process console, even under `it.effect`'s `TestConsole`; a client reads it as an empty 500.
  * - It never requires `FileSystem`, `Path`, `HttpPlatform` or `Etag.Generator`: one provided around it is the routes', and `HttpServer.layerServices`' defaults stand in for the rest, whose `FileSystem` is a no-op, so a file the routes read is `NotFound` until `NodeFileSystem.layer` is provided around it.
  * - It answers HTTP requests and cannot upgrade a WebSocket: give an rpc layer `RpcServer.layerProtocolHttp` in the test, and its client `RpcClient.layerProtocolHttp` over this layer.
+ * - A stream rpc over `RpcServer.layerProtocolHttp` yields nothing under JSON's serialization, which answers once every request of a call has its exit, a subscription's only as it ends: give the server and the client `RpcSerialization.layerNdjson`, which frames each message.
  */
 export function layer<A, E, R>(
   routes: Layer.Layer<A, E, R>,

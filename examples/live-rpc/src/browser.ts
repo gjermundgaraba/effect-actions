@@ -1,8 +1,9 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, type Stream } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { roomHeader } from "./chat/Chat.js";
+import { type Message, roomHeader } from "./chat/Chat.js";
+import { follow } from "./follow.js";
 import { Rpc } from "./Rpc.js";
 
 // Client module: what a web page imports. It holds the binding and nothing of the server, so a
@@ -30,7 +31,8 @@ export const openChat = Effect.gen(function* () {
     room: (name: string, token: string) => {
       // A browser WebSocket cannot set an `Authorization` header on its upgrade, so the token
       // travels on each message, and the room beside it. A refreshed token needs no new socket.
-      const here = RpcClient.withHeaders({ authorization: `Bearer ${token}`, [roomHeader]: name });
+      const headers = { authorization: `Bearer ${token}`, [roomHeader]: name };
+      const here = RpcClient.withHeaders(headers);
 
       return {
         // Called again and again while the page is open, with the last id it holds. A token
@@ -47,6 +49,13 @@ export const openChat = Effect.gen(function* () {
           ),
 
         post: (text: string) => client.postMessage({ text }).pipe(here),
+
+        // The room's messages after `after`, then each one posted, told to `page`, across
+        // drops: follow.ts.
+        follow: (
+          after: number,
+          page: ActionRpc.Following<Message, Stream.Error<ReturnType<typeof client.watch>>>,
+        ) => follow((from) => client.watch({ after: from }, { headers }), after, page),
 
         // A declared error arrives as the contract's class. A message someone else already
         // removed is gone, which is what the page asked for.

@@ -28,6 +28,8 @@ release. Add a tool name to select part of the graph. For example, run
 
 # effect-actions
 
+`@gjermundgaraba/effect-actions` at the root, and `@gjermundgaraba/effect-actions-cloudflare` in `packages/cloudflare`, a pnpm workspace package released with it.
+
 ## Working safely and validating
 
 These rules override the regenerated Vite+ block above; do not edit that block.
@@ -39,7 +41,8 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 
 ## Design
 
-- Keep flat `src/<domain>/` folders: PascalCase public modules beside lowercase private files. Shared behavior belongs in `contract`, the shared kernel, which imports no other domain; name each of its private files for the one concept it holds (`caller`, `declared`, `status`), never a catch-all such as `rules` or `utils`. Each surface owns its projection and validates only names it serves. Public modules expose consumer types as `Options`, `<Function>Options` and `Any`, or a named options interface two functions share. Reach another domain through its public module; `vite.config.ts` names the few shared private files, and domains import without cycles.
+- These rules hold for both packages. `packages/cloudflare` imports the core by its package name, its public modules alone, and its tests run on workerd through `@cloudflare/vitest-plugin`, as the root `vp test`'s second project.
+- Keep flat `src/<domain>/` folders: PascalCase public modules beside lowercase private files. Shared behavior belongs in `contract`, the shared kernel, which imports no other domain; name each of its private files for the one concept it holds (`caller`, `declared`, `status`), never a catch-all such as `rules` or `utils`. Each surface owns its projection and validates only names it serves. Public modules expose consumer types as `Options`, `<Function>Options` and `Any`, or a named options interface two functions share, or a named type a consumer writes, such as a method's parameter. Reach another domain through its public module; `vite.config.ts` names the few shared private files, and domains import without cycles.
 - Use native Effect servers, clients and composition; add no protocol runtime. Consult pinned `node_modules/effect` before inventing helpers or assuming APIs. Remove restrictions that obstruct useful native composition. Support the pinned TypeScript, without older-compiler workarounds.
 - Applications own verification, login, consent and authorization policy; the library enforces it. Operational limits belong in handlers with declared errors, record checks in data access. Separate startup dependencies from request requirements; never provide request identity at server startup.
 - An expected failure is a tagged error whose fields say what failed. Several failures of one operation are one error with a tagged `reason`, as Effect's `HttpClientError`, never one message standing for them all; a `message` is a declared field built in one place from the others.
@@ -55,6 +58,7 @@ The readers are coding agents, and they read two ways. Each fact has one home, c
 - **Looking up, by grepping one symbol or one message**: a rule about an option lives in that option's JSDoc; a wire fact in the JSDoc of the declaration that produces it, and in an example test that asserts it as sent; the fix for a failure the library throws in its message, one fix per check, chosen by the check and not by which claimant collided. A declaration's JSDoc is one paragraph saying what it is, then optional `**Gotchas**`: one line per trap, symptom and consequence on that line, since a grep returns one line. `<Module>-failures.md` holds only what is found by a fragment of a message the library does not own, a compiler diagnostic or Effect's own error, one line per entry; its reader arrives by the message, so an entry may repeat a gotcha's sentence.
 - `README.md` is the human pitch and quickstart, not a reference: its fences are plain snippets showing the shape of the code, no imports, exports or comments, and the whole files are the examples it links. Route readers through `docs/README.md`. Define a term where it is first used, and prefer Effect's and TypeScript's words to new ones.
 - Examples are independent, complete applications following `examples/README.md`, importing the package by name and no other example. Their domains declare services; a Layer reaching a technology (a file, a database, an upstream API) is an adapter in `src/platform/`, which no domain imports. Comments teach why; mark deployment shortcuts `DEMO ONLY`.
+- The Cloudflare package's pages and examples are its own, in `packages/cloudflare/docs/` and `packages/cloudflare/examples/`, and ship with it, under the same rules: its `ts` fences are whole files of its own examples, it links inside that package alone and names the core's pages in prose, and it defines its terms where first used.
 - Edit `docs/`, never generated `skills/effect-actions/`; run `vp run docs:sync` after docs changes.
 
 ## Tests
@@ -72,10 +76,10 @@ The readers are coding agents, and they read two ways. Each fact has one home, c
 
 ## Release
 
-- When asked to release: set `package.json`'s version, rename `Unreleased` to it, commit as `Prepare <version>`, tag `v<version>` and push both. The tag publishes via `.github/workflows/npm.yml`. Manual publishing must use `vp pm publish` so `publishConfig.exports` is applied.
-- After adding, renaming or removing public modules, run `vp run build` and include the generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
+- Both packages carry one version. When asked to release: set it in `package.json` and `packages/cloudflare/package.json`, rename `Unreleased` to it, commit as `Prepare <version>`, tag `v<version>` and push both. The tag publishes both, the core first, via `.github/workflows/npm.yml`; a re-run skips a version already published. Manual publishing must use `vp pm publish -r` so `publishConfig.exports` is applied and the Cloudflare package's `workspace:~` peer becomes `~<version>`. npm's trusted publishing needs a package to exist: before the first tag that publishes a new package, publish it once by hand and list this repository and workflow as its trusted publisher.
+- After adding, renaming or removing public modules, run `vp run -r build` and include each package's generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
 - `package.json`'s `engines` is the floor stated to consumers, lower than `devEngines` on purpose: do not align them.
-- Upgrade Effect development packages together and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
+- Upgrade Effect development packages together, in the catalog of `pnpm-workspace.yaml` both packages read, and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
 
 ## Effect
 
