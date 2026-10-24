@@ -72,7 +72,7 @@ The readers are coding agents, and they read two ways. Each fact has one home, c
 
 ## Release
 
-- When asked to release: set `package.json`'s version, rename `Unreleased` to it, commit as `Prepare <version>`, tag `v<version>` and push both. The tag publishes via `.github/workflows/npm.yml`. Manual publishing must use `vp pm publish` so `publishConfig.exports` is applied.
+- To release: bump `package.json`'s version, commit, tag `v<version>` and push the tag. `.github/workflows/npm.yml` publishes it.
 - After adding, renaming or removing public modules, run `vp run build` and include the generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
 - `package.json`'s `engines` is the floor stated to consumers, lower than `devEngines` on purpose: do not align them.
 - Upgrade Effect development packages together and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.

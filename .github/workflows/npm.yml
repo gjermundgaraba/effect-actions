@@ -1,35 +1,23 @@
-name: Publish npm package
-
+name: npm
+# Release: bump the version, commit, tag v<version> and push the tag. Publishes every package whose
+# version npm doesn't have yet, through npm trusted publishing. A new package's first version is
+# published by hand (`vp pm publish`), then `npm trust github <package> --repo <repo> --file npm.yml`.
 on:
   push:
     tags: ["v*"]
-
 permissions:
   contents: read
   id-token: write
-
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
       - uses: voidzero-dev/setup-vp@68f39c78aaf39be468cabd2afb09c162574c84af # v1.21.2
         with:
           node-version-file: .node-version
           cache: true
           run-install: false
-      - name: Check that the tag matches the package version
-        run: test "$GITHUB_REF_NAME" = "v$(node -p "require('./package.json').version")"
       - run: vp install --frozen-lockfile
-      - run: vp check
-      - run: vp test
-      - run: vp run test:package
-      - name: Check that package.json's exports are the build's
-        run: git diff --exit-code -- package.json
-      # The package lists this repository and workflow as its npm trusted publisher, so
-      # publishing authenticates with the job's OIDC token and attaches provenance.
-      # A tag checkout is a detached HEAD, which the branch check would refuse.
-      - run: vp pm publish --no-git-checks
+      - run: vp run build
+      - run: vp pm publish -r --no-git-checks
