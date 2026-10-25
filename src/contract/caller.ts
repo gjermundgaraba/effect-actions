@@ -33,8 +33,8 @@ export const isNamed = (keyed: Keyed | undefined): keyed is Named => keyed?.prin
 
 /**
  * The principal of the caller of `called`, as `keyed` names it: a poll's subscriber, for its
- * `subscription` hook. None where `called` is public or `keyed` has no `principal`: every caller
- * is then one.
+ * `subscription` hook, and whose idempotency keys a call's are. None where `called` is public or
+ * `keyed` has no `principal`: every caller is then one.
  */
 export const principalOf = (
   called: Pick<Called, "caller">,

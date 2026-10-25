@@ -276,7 +276,7 @@ const registerTools = Effect.fnUntraced(function* (
   authentication: Authentication | undefined,
 ) {
   const registry = yield* McpServer.McpServer;
-  const bound = yield* acquire(apps);
+  const bound = yield* acquire(apps, authentication);
   const built = yield* Effect.context<unknown>();
 
   const internalError = (cause: Cause.Cause<ErasedValue>) =>

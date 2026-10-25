@@ -15,6 +15,7 @@ import type { Entry, Log, Logged, Read } from "./log.js";
 import { Anyone } from "./caller.js";
 import { jsonRoundTrip } from "./call.js";
 import { canonicalInput } from "./canonical.js";
+import { checkInput } from "./input-check.js";
 import { Unauthenticated } from "./errors.js";
 import {
   builderLayer,
@@ -74,7 +75,8 @@ export interface PollOptions {
   readonly maxEvents?: number | undefined;
 }
 
-interface Run extends Omit<Feed, "event" | "stream" | "admit"> {
+/** What reads one event type's source, before its subscriber is admitted. */
+export interface Run extends Omit<Feed, "event" | "stream" | "admit"> {
   readonly stream: (
     input: ErasedValue,
     cursor: string | null,
@@ -591,7 +593,9 @@ const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>)
     release: run.release,
     admit: admitted,
     poll: (input, cursor, options) =>
-      Effect.andThen(admitted, () => run.poll(input, cursor, options)).pipe(
+      Effect.andThen(Effect.andThen(checkInput(event, input), admitted), () =>
+        run.poll(input, cursor, options),
+      ).pipe(
         Effect.annotateLogs(attributes),
         Effect.withSpan(event.name, { attributes }, { captureStackTrace: false }),
       ),
@@ -599,7 +603,7 @@ const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>)
     // failure reads on under that admission, as a held stream does between reads, and a client's
     // reconnect is a new subscription, admitted again.
     stream: (input) =>
-      Effect.as(admitted, (cursor: string | null) =>
+      Effect.as(Effect.andThen(checkInput(event, input), admitted), (cursor: string | null) =>
         run.stream(input, cursor).pipe(Stream.withSpan(event.name, { attributes })),
       ),
   };

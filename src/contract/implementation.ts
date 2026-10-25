@@ -14,7 +14,8 @@ import {
 import type { Scope } from "effect";
 import type * as Action from "./Action.js";
 import type * as Event from "./Event.js";
-import { Anyone } from "./caller.js";
+import { checkInput } from "./input-check.js";
+import { Anyone, type Keyed, principalOf } from "./caller.js";
 import { projectedErrors } from "./declared.js";
 import { assertOnce, heldOnce } from "./names.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
@@ -39,6 +40,7 @@ export type WrittenHandler<R> = {
   handle(
     input: ErasedValue,
     reporting?: Reporting,
+    principal?: string,
   ): Effect.Effect<ErasedValue, ErasedValue, R> | Stream.Stream<ErasedValue, ErasedValue, R>;
 }["handle"];
 
@@ -210,7 +212,10 @@ export class Implementation<
    * The actions of `app` with their handlers, behind its authorizer, from the context
    * `layerOf(app)` provides.
    */
-  static boundOf(app: AnyImplementation): Effect.Effect<Bound, never, unknown> {
+  static boundOf(
+    app: AnyImplementation,
+    keyed: Keyed | undefined,
+  ): Effect.Effect<Bound, never, unknown> {
     const { actions } = app;
     const source = Implementation.own(app);
 
@@ -223,7 +228,7 @@ export class Implementation<
 
       return actions.flatMap((action) =>
         bound.flatMap(([held, handle]) =>
-          held === action ? [[action, dispatch(action, handle, before)] as const] : [],
+          held === action ? [[action, dispatch(action, handle, before, keyed)] as const] : [],
         ),
       );
     });
@@ -575,9 +580,10 @@ export const provideHandlers = (apps: ReadonlyArray<AnyImplementation>) =>
 
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,
+  keyed?: Keyed,
 ): Effect.Effect<Bound, never, unknown> =>
   Effect.map(
-    Effect.forEach(apps, (app) => Implementation.boundOf(app)),
+    Effect.forEach(apps, (app) => Implementation.boundOf(app, keyed)),
     (bound) => bound.flat(),
   );
 
@@ -610,6 +616,7 @@ const dispatch = (
   action: Action.Any,
   handle: WrittenHandler<unknown>,
   before: ErasedAuthorize,
+  keyed: Keyed | undefined,
 ): ErasedHandler<unknown> => {
   const actionAttributes = {
     "action.name": action.name,
@@ -661,7 +668,8 @@ const dispatch = (
     return yield* Effect.failCause(Cause.fromReasons(reasons));
   });
 
-  const admitted = Effect.andThen(authentication, authorization);
+  const admitted = (input: ErasedValue) =>
+    Effect.andThen(checkInput(action, input), Effect.andThen(authentication, authorization));
 
   const span = { attributes: actionAttributes };
   const trace = { captureStackTrace: false };
@@ -673,7 +681,7 @@ const dispatch = (
     return (input, sink) =>
       Effect.succeed(
         Stream.unwrap(
-          Effect.map(admitted, () =>
+          Effect.map(admitted(input), () =>
             streamReportedTo(action.progress, sink, (reporting) =>
               streamed(handle(input, reporting)),
             ),
@@ -692,12 +700,20 @@ const dispatch = (
   const answered = (answer: ReturnType<WrittenHandler<unknown>>) =>
     Stream.isStream(answer) ? Effect.die(notAStream) : answer;
 
+  // Why: only a keyed action's handler, `keyed`'s own, is given the principal: a handler as
+  // written is called with what it declares.
+  const principal =
+    action.idempotencyKey === undefined ? Effect.succeed(undefined) : principalOf(action, keyed);
+
   return (input, sink) =>
     Effect.scoped(
-      admitted.pipe(
-        Effect.andThen(
-          Effect.suspend(() =>
-            reportedTo(action.progress, sink, (reporting) => answered(handle(input, reporting))),
+      admitted(input).pipe(
+        Effect.andThen(principal),
+        Effect.flatMap((caller) =>
+          reportedTo(action.progress, sink, (reporting) =>
+            answered(
+              caller === undefined ? handle(input, reporting) : handle(input, reporting, caller),
+            ),
           ),
         ),
         Effect.catchCause(declaredOrDefect),

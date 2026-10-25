@@ -191,6 +191,16 @@ does.
   call's `ErrorReporter`s is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `ActionRpc.layer`;
   a Toolkit and a CLI make a defect the call's.
 
+## Answer a retried call once
+
+A write a caller may send again, after a dropped connection or a timeout, names a string field
+of its input as its `idempotencyKey`. The caller makes the key at random for the call and sends
+it again on each retry: a repeat with the same input is answered as the first call was, its
+handler run once, on every surface, since the key travels with the input. An implementation of
+such an action requires `Action.Idempotency` at startup, where the answers are kept: provide
+`Action.layerIdempotency` around the surfaces, as `Event.layerMemory` is provided. What is kept, whose a key is, and what a repeat
+with another input answers, are on the option.
+
 ## Call actions in process
 
 `Action.client(implementations)` gives the methods `ActionHttp.client` gives, for a job, an

@@ -1,6 +1,6 @@
 import { Effect, type Schema, Stream } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest } from "effect/http";
-import { type HttpApi, HttpApiClient } from "effect/http-api";
+import { type HttpApi, HttpApiClient, type HttpApiGroup } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
 import type * as Event from "../contract/Event.js";
 import type { Any as Authentication, VerifierError } from "../authentication/provider.js";
@@ -184,6 +184,27 @@ const nativeOf = <E, R>(
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
   HttpApiClient.makeWith(http.api as HttpApi.HttpApi<string>, { baseUrl, httpClient });
 
+// Why: a placed call sends one contract's request, so it builds that endpoint's method alone,
+// where the whole binding's client would compile every endpoint's codecs for each call.
+const endpointOf = <M, E, R>(
+  http: AnyHttp,
+  httpClient: HttpClient.HttpClient.With<E, R>,
+  name: string,
+): Effect.Effect<NativeClient<M>> => {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: as in `nativeOf`, every binding API is one top-level group, whose endpoints take `{ payload }`; only the invariant static group map is dropped.
+  const api = http.api as HttpApi.HttpApi<string, HttpApiGroup.Top>;
+
+  return Effect.map(
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased endpoint: the caller names the method type its endpoint answers with, and a middleware's client is read from the context as the call runs, as `nativeOf`'s erased group types it.
+    HttpApiClient.endpoint(api, {
+      group: Object.values(api.groups)[0]?.identifier ?? "",
+      endpoint: name,
+      httpClient,
+    }) as Effect.Effect<M>,
+    (method) => ({ [name]: method }),
+  );
+};
+
 const actionMethodOf = <R>(
   action: Action.Any,
   native: NativeClient<NativeMethod<R>>,
@@ -202,6 +223,17 @@ const actionMethodOf = <R>(
     Effect.flatMap(method({ payload }), (answer) => readWithProgress(answer, onProgress)),
   );
 };
+
+/** The method of `action` over `httpClient`, as `client` has it. */
+export const actionMethodWith = <E, R>(
+  http: AnyHttp,
+  httpClient: HttpClient.HttpClient.With<E, R>,
+  action: Action.Any,
+) =>
+  Effect.map(
+    endpointOf<NativeMethod<R>, E, R>(http, acceptingStreams(httpClient), action.name),
+    (native) => actionMethodOf(action, native),
+  );
 
 const methodsWith = <E, R>(
   http: AnyHttp,
@@ -252,6 +284,28 @@ const methodsWith = <E, R>(
 
     return { ...actions, watch };
   });
+
+/** The transport of one subscription to `event` over `httpClient`, as `watch` reads it. */
+export const transportWith = <E, R>(
+  http: AnyHttp,
+  httpClient: HttpClient.HttpClient.With<E, R>,
+  event: Event.Any,
+  input: ErasedValue,
+) =>
+  Effect.map(
+    Effect.all([
+      endpointOf<PollMethod<R>, E, R>(http, httpClient, event.name),
+      endpointOf<StreamMethod<R>, E, R>(http, asksForStream(httpClient), event.name),
+    ]),
+    ([polls, streams]) =>
+      transportOf(
+        event,
+        methodOf(polls, event.name, "event"),
+        methodOf(streams, event.name, "event"),
+        undefined,
+        input,
+      ),
+  );
 
 export const methods = <E, R>(
   http: AnyHttp,

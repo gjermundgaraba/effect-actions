@@ -93,6 +93,10 @@ import {
 } from "../contract/implementation.js";
 import { provideServed, servingOf } from "../contract/serving.js";
 
+export { placed } from "./placed.js";
+
+export type { Placed } from "./placed.js";
+
 export type { Client } from "./client.js";
 
 export type { MethodError, WatchError } from "./client.js";
@@ -612,7 +616,7 @@ export function layer(
 
   const handlers = Layer.unwrap(
     Effect.gen(function* () {
-      const bound = yield* acquire(apps);
+      const bound = yield* acquire(apps, authentication);
       const feeds = yield* acquireFeeds(events);
       const refusal = unkeyedHook("ActionHttp", feeds, authentication?.principal !== undefined);
 

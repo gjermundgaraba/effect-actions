@@ -7,6 +7,7 @@ import { type Call, inputOf, jsonRoundTrip, onProgressOf, watchInput } from "./c
 import { type BuiltIn, InvalidInput } from "./errors.js";
 import { progressSink, type ReportingOf } from "./progress.js";
 import { type Answer, elementOf } from "./stream.js";
+import { type Idempotency, idempotency, keyed } from "./idempotency.js";
 import {
   type Authorizer,
   authorizerOf,
@@ -114,6 +115,10 @@ export {
 
 export { Image } from "./media.js";
 
+export { InputCheck } from "./input-check.js";
+
+export { Idempotency, layerIdempotency } from "./idempotency.js";
+
 /** What `make` needs to define an action. */
 export interface Options {
   /**
@@ -199,6 +204,25 @@ export interface Options {
   readonly readOnly: boolean;
   /** How the action's tool presents itself over MCP, and on a native Toolkit's tools. */
   readonly mcp?: Mcp;
+  /**
+   * The input field, a string, holding the call's idempotency key: a call repeated with the key
+   * and the same input is answered as the first was, its handler run once, on every surface, as
+   * the key travels with the input. The caller makes the key at random for the call it means,
+   * and sends it again on each retry; a call without it runs as any other. What is answered
+   * again is kept by `Action.Idempotency`, which an implementation of the action requires at
+   * startup: provide `Action.layerIdempotency`.
+   *
+   * **Gotchas**
+   *
+   * - Kept are an answer and a failure the action declares or a built-in one; a defect or an interruption is not, and the call runs again when retried: at least once, not exactly once.
+   * - A repeat with the key and another input fails with `InvalidInput`, naming the key: the key stands for one call, and a record's keys in another order are the same input.
+   * - A repeat while the first runs waits for its answer, in the same server; two servers sharing a store run both, the later answer kept.
+   * - A repeat answers without the progress the first reported.
+   * - An answer kept before a deployment changed `success` or an error schema, so that it no longer decodes, is ignored: the call runs again.
+   * - An action answering `Action.Stream` throws at `make`: an answer is kept whole.
+   * - A key is each caller's own only where the surface's authentication has `principal`: without one, as over `Action.client`, `ActionToolkit`, the CLI or a public action, another caller sending it with the same input is given the answer, as a model filling the field in may, so make it at random, never from the input.
+   */
+  readonly idempotencyKey?: string | undefined;
 }
 
 type UnknownMcp<O> = O extends { readonly mcp?: infer H }
@@ -206,6 +230,26 @@ type UnknownMcp<O> = O extends { readonly mcp?: infer H }
   : never;
 
 type KnownMcp<O> = { readonly mcp?: { readonly [K in UnknownMcp<O>]: never } };
+
+type StringFields<I> = {
+  readonly [F in keyof I]-?: I[F] extends string | undefined ? F : never;
+}[keyof I] &
+  string;
+
+// Why: the field named is branded, not replaced by the fields allowed, so the error is the
+// option's alone: two different literals intersect to `never`, which reduces the whole argument
+// to `never` and reports every option.
+type KnownKey<O> = O extends { readonly idempotencyKey: infer K extends string }
+  ? K extends StringFields<SchemaOf<O, "input", typeof NoInput>["Type"]>
+    ? unknown
+    : {
+        readonly idempotencyKey: K & {
+          readonly "~": "idempotencyKey names a string field of the input";
+        };
+      }
+  : unknown;
+
+type KeyOf<O> = O extends { readonly idempotencyKey: infer K extends string } ? K : undefined;
 
 type ErrorMembers<G> = G extends ReadonlyArray<infer E> ? E : G;
 
@@ -217,7 +261,7 @@ type OnlyOptions<O> = {
 // properties: a misspelled option or hint would be ignored. Options that fail `Options` itself
 // infer as `Options`, whose error the compiler already reports; checked against the rules too,
 // a missing option would be reported as the whole argument not being assignable.
-type Rules<O> = Options extends O ? unknown : OnlyOptions<O> & KnownMcp<O>;
+type Rules<O> = Options extends O ? unknown : OnlyOptions<O> & KnownMcp<O> & KnownKey<O>;
 
 type OptionOf<O, K extends keyof Options, Default> = O extends unknown
   ? K extends keyof O
@@ -252,6 +296,7 @@ export interface Action<
   ReadOnly extends boolean = boolean,
   Caller extends Options["caller"] = Options["caller"],
   Progress extends Codec | undefined = Codec | undefined,
+  Key extends string | undefined = string | undefined,
 > {
   readonly caller: Caller;
   readonly name: Name;
@@ -269,6 +314,8 @@ export interface Action<
   readonly readOnly: ReadOnly;
   /** The `mcp` options as given, none when left out. */
   readonly mcp: Mcp;
+  /** The input field holding the call's idempotency key; `undefined` where none is named. */
+  readonly idempotencyKey: Key;
 }
 
 /** Any action, with its schemas erased. */
@@ -320,7 +367,8 @@ export function make<const Name extends string, const O extends Options>(
   ErrorSchemasOf<O>,
   O["readOnly"],
   O["caller"],
-  ProgressOf<O>
+  ProgressOf<O>,
+  KeyOf<O>
 >;
 export function make(name: string, options: Options): Any {
   assertName(name);
@@ -343,7 +391,14 @@ export function make(name: string, options: Options): Any {
     progress: options.progress === undefined ? undefined : codecOf(options.progress),
     readOnly,
     mcp: { ...options.mcp },
+    idempotencyKey: options.idempotencyKey,
   };
+
+  if (action.idempotencyKey !== undefined && elementOf(action.success) !== undefined) {
+    throw new Error(
+      `Action "${name}" answers a stream, so it takes no idempotencyKey (a kept answer is whole: answer a value, or remove the key)`,
+    );
+  }
 
   assertDistinctTags(`Action "${action.name}"`, projectedErrors(action));
 
@@ -384,6 +439,12 @@ type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Ex
 
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
+type KeepsAnswers<T extends Target> = [
+  Extract<ActionsOf<T>, { readonly idempotencyKey: string }>,
+] extends [never]
+  ? never
+  : Idempotency;
+
 // Why: This must stay a named alias carrying `R`. While a builder's inner call, such as
 // `Effect.gen`, is inferred, TypeScript keeps an alias's arguments marked as not yet inferred,
 // where `never` or this type written inline becomes a candidate, and the builder's record loses its
@@ -419,7 +480,7 @@ type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = I
     >;
   },
   Deferred<EX>,
-  Deferred<Exclude<RX, Scope.Scope>>,
+  Deferred<Exclude<RX, Scope.Scope> | KeepsAnswers<T>>,
   Exclude<RA, Scope.Scope>,
   Deferred<EAX>,
   Deferred<Exclude<RAX, Scope.Scope>>
@@ -526,9 +587,17 @@ export function implement(
     return bound;
   };
 
-  const recorded = Effect.isEffect(handlers)
+  const paired = Effect.isEffect(handlers)
     ? Effect.map(handlers, pairWithActions)
     : Effect.succeed(pairWithActions(handlers));
+
+  const recorded = listed.some((action) => action.idempotencyKey !== undefined)
+    ? Effect.flatMap(paired, (written) =>
+        Effect.map(idempotency, (store) =>
+          written.map(([action, handle]) => [action, keyed(action, store, handle)] as const),
+        ),
+      )
+    : paired;
 
   return new Implementation(listed, memoized(recorded), authorizer);
 }

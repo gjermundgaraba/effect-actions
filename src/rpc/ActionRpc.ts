@@ -519,7 +519,7 @@ export interface LayerOptions<M extends Middleware = [], C extends Action.Any | 
 // on a socket runs in a fiber of its own, and a hibernated object's message arrives with none. A
 // verifier is typed as reading the request, as over HTTP, so it reads one holding the message's
 // headers, which a socket's upgrade headers precede, where the credential is decoded from too;
-// every call runs with it, so a handler reads the same request.
+// every call runs with it, so a placed action sends those headers on.
 const withRequestOf =
   (headers: Headers.Headers) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -975,7 +975,7 @@ export function layer(
       const authenticating =
         authentication === undefined ? undefined : yield* authenticatingOf(authentication);
 
-      const bound = yield* acquire(apps);
+      const bound = yield* acquire(apps, authentication);
       const feeds = yield* acquireFeeds(events);
 
       const requested: Step = (effect, { headers }) => withRequestOf(headers)(effect);

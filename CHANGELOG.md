@@ -101,6 +101,33 @@ attached or not, so a request-scoped server answers a change announced between r
 once its event has attached as a check source, whose subscribers never read it.
 build-events' `pipeline.status` is one.
 
+**Contracts served where another server serves them.** `ActionHttp.placed(binding, client)`
+returns implementations of the binding's actions and event types that send each call and
+subscription on, over the binding, to the server `client` reaches for its input and its contract, with the caller's
+headers but those of its request's connection, body, `Accept` and MCP routing, and pass back its
+answer, its declared errors and its occurrences; a header `client` sets is sent in place of the
+caller's of that name. `ActionHttp.layer`, `ActionMcp.layerHttp` and
+`ActionRpc.layer` serve them beside their own implementations: the surface authenticates a
+protected one as its own, and the server reached authenticates and authorizes again. A server
+reached that does not serve one is a defect naming it. Guide:
+`docs/ActionHttp.md`.
+
+**`Action.InputCheck`**, a check every call and subscription runs on its decoded input, on every
+surface, once the surface has verified its caller and before its authorizer: what a host provides, as a `Layer.succeed`, to refuse an input
+it does not serve. Defaults to none.
+
+**Idempotency keys.** `Action.make`'s `idempotencyKey` names a string field of the input as the
+call's key: a call repeated with the key and the same input is answered as the first was, its
+answer or its declared failure, its handler run once, on every surface; a repeat with another
+input fails with `InvalidInput`, and a repeat while the first runs waits for it. A key is its
+caller's own where the surface's authentication gives a `principal`, and shared otherwise; a
+record's keys in another order are the same input. A defect or an
+interruption is not kept, so a retry runs again. An implementation of such an action requires
+`Action.Idempotency`, the store of kept answers, at startup: `Action.layerIdempotency` keeps them
+in memory for 24 hours; a store of your own keeps
+`Action.Idempotency.Kept` for `Action.Idempotency.keptFor`. An action answering a stream takes no key. Guide:
+`docs/Action.md`.
+
 **MCP events (experimental).** `ActionMcp.layerHttp` and `runStdio` serve the event
 implementations among those they are given as SEP-3415 events, a draft pinned to its PR head
 2ec39b9c49c583411b73cb460dea5f52b5c541a6: 2026-07-28 discovery advertises the extension,
