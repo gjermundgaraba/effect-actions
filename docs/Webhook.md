@@ -90,7 +90,8 @@ address check, and how long a failing delivery is retried, are `Webhook.Options`
 holds is on `layer`.
 
 - **Which deployment.** Subscriptions are delivered from the server's memory, so a long-lived
-  process serves them and a serverless host cannot. A restart drops them until each subscriber's
+  process serves them and a serverless host cannot; a Cloudflare Durable Object can, with
+  `@gjermundgaraba/effect-actions-cloudflare`'s `ActionDurableObject.layerWebhooks`. A restart drops them until each subscriber's
   next refresh, unless the layer keeps them: `Webhook.layer({ persist: true })` writes each to
   the application's `KeyValueStore`, and each surface restores its own as it builds, the
   subscriber's identity kept by its authentication's `schema`, as `server.ts` and

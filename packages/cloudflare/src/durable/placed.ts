@@ -35,6 +35,7 @@ export type AnyPlacement = Placement<ActionHttp.Any>;
  * given it as `make`'s or `handlers`' `placed`, so that it refuses an input naming another
  * object, and serves `binding` in an `ActionHttp.layer` of its routes, where each call arrives; a
  * Worker serves `reaching(placement, () => env.ROOM)` on any surface.
+ * Guide: `docs/ActionDurableObject-placement.md` in this package.
  */
 export const placed = <const H extends ActionHttp.Any>(
   binding: H,

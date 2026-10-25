@@ -566,6 +566,8 @@ const handlersOf = <S>(
  * - A log source fed by `emit` dies as it attaches, naming `publish`: an evicted object would miss what the stream sends meanwhile, with no gap, and its open stream would keep the object awake.
  * - A subscriber's read that fails is tried again 5 seconds later, on a timer, until one succeeds: a source failing for good keeps the object awake, billed, and sends each subscriber a `Failed` each time.
  * - A poll's `subscription` hook is held until 5 minutes after its last poll, on a timer that keeps the object awake, and an eviction tears down no hook: one it ends is set up again as its subscription resumes, its teardown never run.
+ *
+ * Guide: `docs/ActionDurableObject-own-class.md` in this package.
  */
 export const handlers = <
   S = never,
@@ -598,6 +600,8 @@ export type Instance<S = never, Env = Cloudflare.Env> = Handlers<S> & DurableObj
 /**
  * `make` with `services`, a function of the instance's `env`, whose parameter's type is the
  * class's `env`: the class `make` returns otherwise.
+ *
+ * Guide: `docs/ActionDurableObject.md` in this package.
  */
 export function make<
   S,
@@ -642,6 +646,9 @@ export function make<
  * - Its socket handlers resolve for a socket no protocol accepted, such as one a class extending it accepts itself, `webSocketClose` once it has replied to the client's close: an override answers its own sockets and calls `super` for the rest.
  * - The `services` function's parameter type is the class's `env`, so an application's own `Env` needs no augmenting of `Cloudflare.Env`; services reading no `env` are `() => layer`, and a class without one has `Cloudflare.Env`.
  * - It always has `alarm`, the package's, which runs the `alarm` option at the time `Alarm.set` gave: an override reaches it with `await super.alarm(info)`, and one that does not call it runs none of the times `Alarm` keeps.
+ *
+ * Guide: `docs/ActionDurableObject.md` in this package; in an application:
+ * `examples/chat-rooms/`.
  */
 export function make<
   S = never,

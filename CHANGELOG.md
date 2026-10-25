@@ -352,7 +352,11 @@ object's own `Event.Events`, its logs kept in its storage, and `layerWebhooks` i
 object's alarm, through the instance's `Waits`, which `handlers` and `make` provide to the routes.
 `layerStubClient` and `client` call an object's rpcs over its stub, `layerHttpClient` calls its
 routes, and `State`, `name` and `Alarm` are what the object is and when its `alarm` runs. Each
-option's and declaration's rules are in its JSDoc. Guide: `packages/cloudflare/docs/README.md`.
+option's and declaration's rules are in its JSDoc. Guide: `packages/cloudflare/docs/README.md`;
+example: chat-rooms, one object per room, served by one Worker on one `/api` and one `/mcp` through
+`ActionDurableObject.placed`, its messages in the object's SQLite database and expired by its alarm,
+a page following a room through `MessagePosted` across hibernation and a lobby object told by each
+room's `lobby` task. The core's `docs/README.md` and `docs/ActionRpc.md` route to it.
 
 ### Other changes
 

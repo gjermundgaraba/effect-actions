@@ -167,6 +167,7 @@ try {
   const installedCloudflare = join(consumer, "node_modules", cloudflareManifest.name);
 
   refuseUnshipped(root, installed);
+  refuseUnshipped(cloudflare, installedCloudflare);
   refuseUndocumented(join(installed, "dist"));
   refuseUndocumented(join(installedCloudflare, "dist"));
 
@@ -195,6 +196,11 @@ try {
   cpSync(join(cloudflare, "scripts/package-consumer"), join(consumer, "cloudflare"), {
     recursive: true,
   });
+  cpSync(
+    join(installedCloudflare, "examples", "chat-rooms", "src"),
+    join(consumer, "cloudflare", "chat-rooms"),
+    { recursive: true },
+  );
 
   writeFileSync(
     join(consumer, "cloudflare", "tsconfig.json"),
@@ -205,7 +211,7 @@ try {
         types: ["@cloudflare/workers-types"],
         lib: ["es2023"],
       },
-      include: ["*.ts"],
+      include: ["*.ts", "chat-rooms/**/*.ts"],
     }),
   );
 

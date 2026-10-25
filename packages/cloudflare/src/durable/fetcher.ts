@@ -12,6 +12,8 @@ import { FetchHttpClient, type HttpClient } from "effect/http";
  * - A request's URL needs a host, which the fetcher ignores, such as `https://object/api`: a relative URL fails before it is sent.
  * - Nothing authenticates the request on its way: forward the caller's credential, with the client's `transformClient`, as for any remote surface.
  * - To pass a page's request on to an object, forward the `Request` itself with the stub's `fetch`: its upgrade goes with it, which this client does not send.
+ *
+ * Guide: `docs/ActionDurableObject.md` in this package.
  */
 export const layerHttpClient = (
   fetcher: Pick<Fetcher, "fetch">,

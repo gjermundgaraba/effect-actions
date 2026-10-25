@@ -509,6 +509,8 @@ export interface LayerWebSocketOptions {
  * - The runtime answers a client's pings itself, every five seconds, so an open page does not wake the object.
  * - Effect's `RpcServer.layerProtocolWebsocket` cannot upgrade a web handler's request: on Workers, serve sockets with this.
  * - A handler's die under a plain `RpcServer.layer` is Effect's fatal `Defect`, failing every call in flight on that socket, a call made in the dying one's continuation included, as Effect's own design, unlike over the object's stub: serve with `RpcServer.layer(group, { disableFatalDefects: true })`, or through `ActionRpc.layer`, to fail that call alone.
+ *
+ * Guide: `docs/ActionDurableObject.md` in this package.
  */
 export const layerWebSocket = (
   options: LayerWebSocketOptions,

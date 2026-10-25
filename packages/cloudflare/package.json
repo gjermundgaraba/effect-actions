@@ -22,7 +22,9 @@
     "directory": "packages/cloudflare"
   },
   "files": [
-    "dist"
+    "dist",
+    "docs",
+    "examples"
   ],
   "type": "module",
   "sideEffects": false,

@@ -3,7 +3,8 @@
 Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to a model as a
 native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients
 underneath. Events go the same way: watched over HTTP, MCP, Effect RPC and the CLI, or delivered
-by webhook.
+by webhook. A companion package,
+[effect-actions-cloudflare](packages/cloudflare/), serves the HTTP, MCP and RPC routes, events and webhooks included, from Cloudflare Durable Objects.
 
 **If you are a coding agent**, start at [docs/README.md](docs/README.md), not here. It routes
 every task, protecting an action and limiting request bodies included, to its page and its

@@ -112,6 +112,8 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.
  * - Unary: an rpc that streams fails with a defect at its first chunk, so a handler returning a stream that never emits leaves the call waiting for good; `client` gives such an rpc no method.
  * - `RpcClient.make` over it forks a fiber started on a timer of the request that builds it, which workerd drops when that request ends: a client first built lazily inside a Worker's request that ends without waiting on I/O never starts it, and every later call waits until workerd cancels it as hung; build the client per request or, shared, at module scope under Effect's sync scheduler, as `HttpRouter.toWebHandler`'s gotchas show; an object's build, under the microtask scheduler, did not strand it in the tests.
+ *
+ * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
 export const layerStubClient = (stub: Stub | (() => Stub)): Layer.Layer<RpcClient.Protocol> =>
   Layer.effect(RpcClient.Protocol)(
@@ -164,6 +166,8 @@ export type Client<Group> = RpcClient.RpcClient<
  * - Only names you accept should reach `getByName`: each name is another object.
  * - An `ActionRpc` binding's `group` fails here, `Expected null`, as `ActionRpc.layer` carries its values as JSON over the stub's protocol passing values: call such an object's actions and native rpcs with `ActionRpc.client` over `layerStubClient(() => stub)`.
  * - An rpc that streams has no method, as `Client` types it.
+ *
+ * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
 export const client = <Rpcs extends Rpc.Any>(
   group: RpcGroup.RpcGroup<Rpcs>,

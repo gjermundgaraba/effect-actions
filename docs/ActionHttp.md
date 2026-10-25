@@ -247,7 +247,9 @@ headers, to the server `client` reaches for its input and its contract, which se
 `ActionHttp.layer` of the binding, and its answer is passed back. `ActionHttp.layer`,
 `ActionMcp.layerHttp` and `ActionRpc.layer` take it beside their own implementations. Both servers
 verify the credential, so both are given the verifier; the server reached authorizes. Its rules
-are on `ActionHttp.placed`.
+are on `ActionHttp.placed`. An application doing it, a Worker sending each room's calls to its
+Durable Object, is `@gjermundgaraba/effect-actions-cloudflare`'s chat-rooms, through
+`ActionDurableObject.placed`: that package's `docs/ActionDurableObject-placement.md`.
 
 ## Call the API from a browser
 
