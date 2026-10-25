@@ -246,35 +246,68 @@ describe("ActionRpc native rpcs", () => {
   );
 
   it.effect(
-    "refuses to serve a protected binding's native rpc that does not run its authentication outermost",
+    "refuses to serve a protected binding's native rpc added without its authentication",
     () =>
       Effect.gen(function* () {
         const Extra = Rpc.make("extra", { success: Schema.String });
+        const added = { ...Protected, rpcs: Protected.rpcs.add(Extra) };
+
+        const exit = yield* Effect.exit(
+          whoseOver(
+            Protected,
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: a binding modified past its types, as plain JavaScript could.
+            ActionRpc.layer(added as typeof Protected, [status, userActions]).pipe(
+              Layer.provide(signedIn),
+              Layer.provide(authenticate),
+            ),
+            (client) => client.whose().pipe(as("alice")),
+          ),
+        );
+
+        expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
+          "the native rpc extra of a protected binding runs without its authentication",
+        );
+      }),
+  );
+
+  it.effect(
+    "serves a native rpc whose host middleware runs outside its authentication, before the identity exists",
+    () =>
+      Effect.gen(function* () {
+        const seen: Array<string> = [];
 
         class Outer extends RpcMiddleware.Service<Outer>()("native-test/Outer") {}
 
-        const modified = {
-          added: { ...Protected, rpcs: Protected.rpcs.add(Extra) },
-          wrapped: { ...Protected, rpcs: Protected.rpcs.middleware(Outer) },
-        };
+        const Wrapped = { ...Protected, rpcs: Protected.rpcs.middleware(Outer) };
 
-        for (const [name, binding] of Object.entries(modified)) {
-          const exit = yield* Effect.exit(
-            whoseOver(
-              Protected,
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: a binding modified past its types, as plain JavaScript could.
-              ActionRpc.layer(binding as typeof Protected, [status, userActions]).pipe(
-                Layer.provide(signedIn),
-                Layer.provide(authenticate),
-              ),
-              (client) => client.whose().pipe(as("alice")),
+        const server = ActionRpc.layer(Wrapped, [status, userActions]).pipe(
+          Layer.provide(
+            Wrapped.rpcs.toLayer({
+              countdown: (payload) => countdown(payload, Effect.succeed("unused")),
+              whose: () => Effect.map(CurrentActor, (actor) => actor.id),
+            }),
+          ),
+          Layer.provide(authenticate),
+          Layer.provide(
+            Layer.succeed(Outer)((effect) =>
+              Effect.flatMap(Effect.serviceOption(CurrentActor), (actor) => {
+                seen.push(Option.match(actor, { onNone: () => "nobody", onSome: ({ id }) => id }));
+
+                return effect;
+              }),
             ),
-          );
+          ),
+        );
 
-          expect(Exit.isFailure(exit) && Cause.pretty(exit.cause), name).toContain(
-            "of a protected binding does not run its authentication outermost",
-          );
-        }
+        const refused = yield* Effect.flip(whoseOver(Wrapped, server, (client) => client.whose()));
+
+        const signed = yield* whoseOver(Wrapped, server, (client) =>
+          client.whose().pipe(as("alice")),
+        );
+
+        expect(refused).toBeInstanceOf(Action.Unauthenticated);
+        expect(signed).toBe("alice");
+        expect(seen).toEqual(["nobody", "nobody"]);
       }),
   );
 

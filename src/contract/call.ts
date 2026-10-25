@@ -57,24 +57,25 @@ export type ErasedMethod<R = never> = (
 ) => Effect.Effect<ErasedValue, unknown, R>;
 
 /**
- * A client's method of `action`, its input checked before `send` sends it, with the call's
- * `onProgress` where it gave one, taking decoded values, for `send` to use where the action
- * declares `progress`.
+ * A client's method of `action`, its input checked by encoding it before `send` sends it, given
+ * as it is and as its JSON, with the call's `onProgress` where it gave one, taking decoded
+ * values, for `send` to use where the action declares `progress`.
  */
 export const checked = <R, A = ErasedValue>(
   action: Action.Any,
   send: (
     payload: ErasedValue,
-    onProgress?: CallOptions<unknown>["onProgress"],
+    onProgress: CallOptions<unknown>["onProgress"],
+    json: Schema.Json,
   ) => Effect.Effect<A, unknown, R>,
 ): ((...input: ReadonlyArray<ErasedValue>) => Effect.Effect<A, unknown, R>) => {
   const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(action.input), { errors: "all" });
 
   return (...args) =>
     inputOf(action, args).pipe(
-      Effect.tap(encode),
+      Effect.flatMap((payload) => Effect.map(encode(payload), (json) => ({ payload, json }))),
       Effect.mapError(InvalidInput.fromSchemaError),
-      Effect.flatMap((payload) => send(payload, onProgressOf(args))),
+      Effect.flatMap(({ payload, json }) => send(payload, onProgressOf(args), json)),
     );
 };
 
@@ -87,11 +88,12 @@ export const checkedStream = <R>(
   action: Action.Any,
   send: (
     payload: ErasedValue,
-    onProgress?: CallOptions<unknown>["onProgress"],
+    onProgress: CallOptions<unknown>["onProgress"],
+    json: Schema.Json,
   ) => Stream.Stream<ErasedValue, unknown, R>,
 ): ErasedStreamMethod<R> => {
-  const method = checked(action, (payload, onProgress) =>
-    Effect.succeed(send(payload, onProgress)),
+  const method = checked(action, (payload, onProgress, json) =>
+    Effect.succeed(send(payload, onProgress, json)),
   );
 
   return (...args) => Stream.unwrap(method(...args));

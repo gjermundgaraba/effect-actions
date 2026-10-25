@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, ErrorReporter, Exit, Layer, Schema, Stream } from "effect";
-import { RpcClient } from "effect/rpc";
+import { RpcClient, RpcSerialization } from "effect/rpc";
 import * as Action from "../../src/contract/Action.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
@@ -9,6 +9,7 @@ import { CurrentActor } from "../support/app/authorization.js";
 import { Count, countsReleasing } from "../support/app/count.js";
 import { recorder } from "../support/reporter.js";
 import { overHttp } from "../support/rpc.js";
+import { inMemoryValuesProtocolTo } from "../support/values.js";
 
 class LogGone extends Schema.TaggedError<LogGone>()("LogGone", { at: Schema.Finite }) {}
 
@@ -59,13 +60,13 @@ const builds = Action.implement(
 
 const Rpc = ActionRpc.make([Tail, Build], { authentication: Login });
 
-const served = (reported: Array<string> = []) =>
-  overHttp(
-    ActionRpc.layer(Rpc, [tails, builds]).pipe(
-      Layer.provide(Authentication.layer(Login, verify)),
-      Layer.provide(ErrorReporter.layer([recorder(reported)])),
-    ),
+const server = (reported: Array<string> = []) =>
+  ActionRpc.layer(Rpc, [tails, builds]).pipe(
+    Layer.provide(Authentication.layer(Login, verify)),
+    Layer.provide(ErrorReporter.layer([recorder(reported)])),
   );
+
+const served = (reported: Array<string> = []) => overHttp(server(reported));
 
 const Counting = ActionRpc.make([Count]);
 
@@ -83,6 +84,31 @@ describe("RPC element streams", () => {
       ]);
       expect(yield* Stream.runCollect(client.tail({ count: 0 }))).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(served())),
+  );
+
+  it.effect.each([
+    ["schema-binary", overHttp(server(), RpcSerialization.layerSchemaBinary())],
+    ["a protocol passing values", inMemoryValuesProtocolTo(server())],
+  ] as const)("streams the elements and their progress under %s", ([, protocol]) =>
+    Effect.gen(function* () {
+      const client = yield* ActionRpc.client(Rpc);
+      const reported: Array<number> = [];
+
+      const tailed = yield* Stream.runCollect(client.tail({ count: 2 }));
+
+      const built = yield* Stream.runCollect(
+        client.build(
+          { steps: 2 },
+          { onProgress: ({ step }) => Effect.sync(() => reported.push(step)) },
+        ),
+      ).pipe(signedInAs("alice"));
+
+      expect([tailed, built, reported]).toEqual([
+        [{ n: 1 }, { n: 2 }],
+        [{ line: "alice: step 1" }, { line: "alice: step 2" }],
+        [1, 2],
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(protocol)),
   );
 
   it.effect("streams each element as an Element to a native client, beside its progress", () =>

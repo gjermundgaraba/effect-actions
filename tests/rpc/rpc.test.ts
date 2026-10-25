@@ -14,7 +14,7 @@ import {
   SchemaTransformation,
   Tracer,
 } from "effect";
-import { FetchHttpClient, HttpRouter, HttpServer, HttpServerRequest } from "effect/http";
+import { HttpRouter, HttpServer, HttpServerRequest } from "effect/http";
 import {
   Rpc as NativeRpc,
   RpcClient,
@@ -254,6 +254,11 @@ describe("ActionRpc serializations", () => {
       "jsonRpc of its own content type",
       RpcSerialization.layerJsonRpc({ contentType: "application/custom" }),
     ],
+    ["schema-binary", RpcSerialization.layerSchemaBinary()],
+    [
+      "schema-binary fingerprinting its payloads",
+      RpcSerialization.layerSchemaBinary({ fingerprintPayloads: true }),
+    ],
   ] as const)("serves %s", ([, serialization]) =>
     Effect.gen(function* () {
       const client = yield* ActionRpc.client(Rpc);
@@ -267,38 +272,6 @@ describe("ActionRpc serializations", () => {
       Effect.scoped,
       Effect.provide(inMemoryProtocolTo(serving(serialization), serialization)),
       Effect.provide(Users.layerMemory),
-    ),
-  );
-
-  it.effect("refuses to build under schema-binary", () =>
-    Effect.gen(function* () {
-      const built = yield* Effect.exit(
-        Effect.void.pipe(
-          Effect.provide(Testing.layer(serving(RpcSerialization.layerSchemaBinary()))),
-        ),
-      );
-
-      expect(Exit.isFailure(built) && Cause.squash(built.cause)).toEqual(
-        new Error(
-          "ActionRpc puts JSON in a protocol's messages, which this protocol's codec does not keep as it is (provide RpcSerialization.layerJson, layerNdjson, layerJsonRpc or layerNdJsonRpc, or a protocol passing values)",
-        ),
-      );
-    }).pipe(Effect.provide(Users.layerMemory)),
-  );
-
-  it.effect("refuses to make a client under schema-binary", () =>
-    Effect.gen(function* () {
-      const made = yield* Effect.exit(Effect.scoped(ActionRpc.client(Rpc)));
-
-      expect(Exit.isFailure(made) && String(Cause.squash(made.cause))).toContain(
-        "which this protocol's codec does not keep as it is",
-      );
-    }).pipe(
-      Effect.provide(
-        RpcClient.layerProtocolHttp({ url: "http://localhost/rpc" }).pipe(
-          Layer.provide([RpcSerialization.layerSchemaBinary(), FetchHttpClient.layer]),
-        ),
-      ),
     ),
   );
 });
@@ -643,23 +616,6 @@ describe("ActionRpc selection", () => {
       "Duplicate middleware: rpc-test/Twice",
     );
   });
-
-  it.effect("dies naming the fix for a binding whose group lacks an action's rpc", () =>
-    Effect.gen(function* () {
-      const spread = { ...Rpc, actions: [...Rpc.actions, Crashy] };
-      const made = yield* Effect.exit(ActionRpc.client(spread));
-
-      expect(Exit.isFailure(made) && Cause.squash(made.cause)).toEqual(
-        new Error(
-          "No client method for crashy (use the binding `ActionRpc.make` returned, whose group holds the rpc of this action)",
-        ),
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(inMemoryProtocolTo(routes)),
-      Effect.provide(Users.layerMemory),
-    ),
-  );
 
   it.effect("dies when the provider is another descriptor's of the binding's name", () =>
     Effect.gen(function* () {
@@ -1056,6 +1012,50 @@ describe("ActionRpc over a protocol passing values", () => {
         );
 
         expect(answered).toEqual(startedAt);
+      }),
+  );
+
+  it.effect(
+    "keeps a native rpc under the protocol's own codec where it shares an action's schema, alone or in an array",
+    () =>
+      Effect.gen(function* () {
+        const Sharing = ActionRpc.make([Double], {
+          authentication: Login,
+          rpcs: RpcGroup.make(
+            NativeRpc.make("half", { payload: Double.input, success: Schema.Finite }),
+            NativeRpc.make("total", {
+              payload: Schema.Array(Double.input),
+              success: Schema.Finite,
+            }),
+          ),
+        });
+
+        const answered = yield* Effect.flatMap(ActionRpc.client(Sharing), (client) =>
+          Effect.all([
+            client.half({ value: 3 }),
+            client.total([{ value: 1 }, { value: 2 }]),
+            client.double({ value: 4 }),
+          ]).pipe(signedInAs("alice")),
+        ).pipe(
+          Effect.scoped,
+          Effect.provide(
+            inMemoryValuesProtocolTo(
+              ActionRpc.layer(Sharing, double).pipe(
+                Layer.provide(
+                  Sharing.rpcs.toLayer({
+                    half: ({ value }) => Effect.succeed(value / 2),
+                    total: (values) =>
+                      Effect.succeed(values.reduce((sum, { value }) => sum + value, 0)),
+                  }),
+                ),
+                Layer.provide(Authentication.layer(Login, verify)),
+              ),
+            ),
+          ),
+          Effect.provide(Users.layerMemory),
+        );
+
+        expect(answered).toEqual([1.5, 3, 8]);
       }),
   );
 

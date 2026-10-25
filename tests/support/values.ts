@@ -3,14 +3,8 @@ import { RpcClient, type RpcMessage, type RpcSerialization, RpcServer } from "ef
 
 const valuesCodecFor = Schema.toCodecIso as RpcSerialization.CodecFor;
 
-export interface ValuesProtocolOptions {
-  readonly acknowledges?: boolean;
-  readonly sent?: Array<RpcMessage.FromServerEncoded>;
-}
-
 export const inMemoryValuesProtocolTo = <E, R>(
   server: Layer.Layer<never, E, R>,
-  { acknowledges = false, sent }: ValuesProtocolOptions = {},
 ): Layer.Layer<RpcClient.Protocol, E, Exclude<R, RpcServer.Protocol>> =>
   Layer.unwrap(
     Effect.gen(function* () {
@@ -33,15 +27,11 @@ export const inMemoryValuesProtocolTo = <E, R>(
         return Effect.succeed({
           disconnects,
           send: (clientId, response) =>
-            Effect.suspend(() => {
-              sent?.push(response);
-
-              return toClient(clientId, structuredClone(response));
-            }),
+            Effect.suspend(() => toClient(clientId, structuredClone(response))),
           end: () => Effect.void,
           clientIds: Effect.sync(() => clientIds),
           initialMessage: Effect.succeedNone,
-          supportsAck: acknowledges,
+          supportsAck: false,
           supportsTransferables: false,
           supportsSpanPropagation: false,
           supportsNotifications: false,
@@ -59,7 +49,7 @@ export const inMemoryValuesProtocolTo = <E, R>(
 
               return toServer(clientId, structuredClone(message));
             }),
-          supportsAck: acknowledges,
+          supportsAck: false,
           supportsTransferables: false,
           codecFor: valuesCodecFor,
         });

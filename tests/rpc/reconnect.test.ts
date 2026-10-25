@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Clock, Effect, Fiber, Ref } from "effect";
+import { Effect, Exit, Fiber, Ref } from "effect";
 import { Socket } from "effect/socket";
 import { TestClock } from "effect/testing";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
@@ -11,49 +11,44 @@ const dropped = new Socket.SocketError({
   reason: new Socket.SocketReadError({ cause: new Error("The connection dropped.") }),
 });
 
-const attempts = (failures: ReadonlyArray<Socket.SocketError>) =>
+const connecting = (codes: ReadonlyArray<number>, failures: ReadonlyArray<Socket.SocketError>) =>
   Effect.gen(function* () {
-    const at = yield* Ref.make<ReadonlyArray<number>>([]);
+    const attempts = yield* Ref.make(0);
 
     const connect = Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const made = yield* Ref.modify(at, (times) => [times.length, [...times, now]]);
-      const failure = failures[made];
+      const failure = failures[yield* Ref.getAndUpdate(attempts, (made) => made + 1)];
 
       if (failure !== undefined) return yield* Effect.fail(failure);
     });
 
     const fiber = yield* Effect.forkScoped(
-      Effect.exit(Effect.retry(connect, ActionRpc.reconnectUntil(4000))),
+      Effect.exit(Effect.retry(connect, ActionRpc.reconnectUntil(...codes))),
     );
 
-    yield* TestClock.adjust("1 minute");
+    yield* TestClock.adjust("1 hour");
 
-    return { exit: yield* Fiber.join(fiber), at: yield* Ref.get(at) };
+    return { exit: yield* Fiber.join(fiber), attempts: yield* Ref.get(attempts) };
   });
 
 describe("reconnectUntil", () => {
-  it.effect(
-    "waits as Effect's default socket policy waits, 500 ms growing by 1.5 to at most 5 s",
-    () =>
-      Effect.gen(function* () {
-        const { exit, at } = yield* attempts(Array.from({ length: 8 }, () => dropped));
+  it.effect("connects again after a drop or a close with another code, until it connects", () =>
+    Effect.gen(function* () {
+      const { exit, attempts } = yield* connecting([4000], [dropped, closed(1006), closed(4001)]);
 
-        const waits = at.slice(1).map((time, index) => time - (at[index] ?? 0));
-
-        expect(exit._tag).toBe("Success");
-        expect(waits).toEqual(
-          Array.from({ length: 8 }, (_, retry) => Math.min(500 * 1.5 ** retry, 5000)),
-        );
-      }).pipe(Effect.scoped),
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(attempts).toBe(4);
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("stops at a close with a code it was given, and connects again after another", () =>
+  it.effect("stops at a close with any code it was given, failing with that close", () =>
     Effect.gen(function* () {
-      const { exit, at } = yield* attempts([closed(1006), closed(4001), closed(4000)]);
+      for (const code of [4000, 4001]) {
+        const refusal = closed(code);
+        const { exit, attempts } = yield* connecting([4000, 4001], [dropped, refusal, dropped]);
 
-      expect(exit).toMatchObject({ _tag: "Failure" });
-      expect(at.length).toBe(3);
+        expect(exit).toEqual(Exit.fail(refusal));
+        expect(attempts).toBe(2);
+      }
     }).pipe(Effect.scoped),
   );
 });
