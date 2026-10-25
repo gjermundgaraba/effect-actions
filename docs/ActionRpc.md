@@ -1,6 +1,7 @@
 # ActionRpc
 
-Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one rpc per action.
+Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one rpc per action, and
+native rpcs of your own beside them.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionRpc-failures.md](ActionRpc-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
 
@@ -121,6 +122,13 @@ alone for it.
   is built once. The routes need what the rpcs did not: an `httpApiStatus` on a declared error,
   by the rule on `Action.Options.error`, and router middleware for a service an `RpcMiddleware`
   provides ([ActionHttp.md](ActionHttp.md#serve-the-routes)).
+- **An rpc of your own beside the actions.** Give `ActionRpc.make` native rpcs in `rpcs`,
+  `ActionRpc.make(actions, { authentication, rpcs: RpcGroup.make(Upload) })`, each with its own
+  schemas: under the binding's `authentication` each message authenticates as a protected
+  action's does, and the client has their methods beside the actions'. Implement them with the
+  binding's own `Rpc.rpcs.toLayer(handlers)`, whose handlers read the identity and authorize it
+  themselves, and provide that to `ActionRpc.layer`, which otherwise does not compile. The rules
+  are on `ActionRpc.Options.rpcs`.
 - **An action reporting progress or answering a stream is a stream rpc.** Over a WebSocket, or
   HTTP under `RpcSerialization.layerNdjson`, its values and elements arrive as sent; under
   `layerJson` over HTTP, all at the end (`ActionRpc.layer`).
@@ -202,6 +210,11 @@ export const openChat = Effect.gen(function* () {
 [live-rpc/src/client.ts](../examples/live-rpc/src/client.ts) runs it from Node, and
 [live-rpc/src/page.ts](../examples/live-rpc/src/page.ts) wraps it in promises for a page that is
 not one Effect program. The client's traps are on `ActionRpc.client`.
+
+- **A server that closes a socket to refuse it.** Effect's socket client connects again after
+  any close, backing off to every five seconds, for good. Give `RpcClient.layerProtocolSocket` the
+  `retryPolicy` `ActionRpc.reconnectUntil(code)`, and a close with that code ends its calls
+  instead.
 
 ## Send request context with a call
 

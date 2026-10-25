@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Context,
+  DateTime,
   Effect,
   ErrorReporter,
   Exit,
@@ -14,8 +15,15 @@ import {
   SchemaTransformation,
   Tracer,
 } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
-import { RpcClient, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
+import { FetchHttpClient, HttpRouter, HttpServer, HttpServerRequest } from "effect/http";
+import {
+  Rpc as NativeRpc,
+  RpcClient,
+  RpcGroup,
+  RpcMiddleware,
+  RpcSerialization,
+  RpcServer,
+} from "effect/rpc";
 import { SocketServer } from "effect/socket";
 import { authenticate, verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
@@ -36,6 +44,7 @@ import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { recorder } from "../support/reporter.js";
 import { sendRawNdjson, valueOrSquashedCause } from "../support/requests.js";
+import { inMemoryValuesProtocolTo } from "../support/values.js";
 
 const Rpc = ActionRpc.make([Status, GetUser, RenameUser, Double, WhoAmI], {
   authentication: Login,
@@ -272,10 +281,26 @@ describe("ActionRpc serializations", () => {
 
       expect(Exit.isFailure(built) && Cause.squash(built.cause)).toEqual(
         new Error(
-          "ActionRpc serves a protocol speaking JSON: RpcSerialization.layerJson, layerNdjson, layerJsonRpc or layerNdJsonRpc, not another codec, such as schema-binary's",
+          "ActionRpc puts JSON in a protocol's messages, which this protocol's codec does not keep as it is (provide RpcSerialization.layerJson, layerNdjson, layerJsonRpc or layerNdJsonRpc, or a protocol passing values)",
         ),
       );
     }).pipe(Effect.provide(Users.layerMemory)),
+  );
+
+  it.effect("refuses to make a client under schema-binary", () =>
+    Effect.gen(function* () {
+      const made = yield* Effect.exit(Effect.scoped(ActionRpc.client(Rpc)));
+
+      expect(Exit.isFailure(made) && String(Cause.squash(made.cause))).toContain(
+        "which this protocol's codec does not keep as it is",
+      );
+    }).pipe(
+      Effect.provide(
+        RpcClient.layerProtocolHttp({ url: "http://localhost/rpc" }).pipe(
+          Layer.provide([RpcSerialization.layerSchemaBinary(), FetchHttpClient.layer]),
+        ),
+      ),
+    ),
   );
 });
 
@@ -627,7 +652,7 @@ describe("ActionRpc selection", () => {
 
       expect(Exit.isFailure(made) && Cause.squash(made.cause)).toEqual(
         new Error(
-          "No client method for crashy (use the binding `ActionRpc.make` returned, whose group holds this action's rpc)",
+          "No client method for crashy (use the binding `ActionRpc.make` returned, whose group holds the rpc of this action)",
         ),
       );
     }).pipe(
@@ -928,5 +953,121 @@ describe("ActionRpc over a socket server", () => {
       expect(alice).toEqual({ id: "alice", tenantId: "acme" });
       expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
     }).pipe(Effect.provide(server), Effect.provide(Users.layerMemory)),
+  );
+  it.effect(
+    "gives a verifier reading the request one holding the message's headers, as no socket gives one",
+    () =>
+      Effect.gen(function* () {
+        const tenanted = ActionRpc.layer(Rpc, [status, userActions]).pipe(
+          Layer.provide(RpcServer.layerProtocolSocketServer),
+          Layer.provide(RpcSerialization.layerNdjson),
+          Layer.provide(
+            Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
+              Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+                Effect.map(verify(token), (actor) => ({
+                  ...actor,
+                  tenantId: request.headers["x-tenant"] ?? "none",
+                })),
+              ),
+            ),
+          ),
+          Layer.provideMerge(NodeSocketServer.layer({ host: "127.0.0.1", port: 0 })),
+        );
+
+        const answers = yield* Effect.gen(function* () {
+          const { address } = yield* SocketServer.SocketServer;
+          const port = "port" in address ? address.port : 0;
+
+          return yield* Effect.flatMap(ActionRpc.client(Rpc), (client) =>
+            Effect.all([
+              client.whoAmI().pipe(signedInAs("alice"), RpcClient.withHeaders({ "x-tenant": "a" })),
+              client.whoAmI().pipe(signedInAs("bob"), RpcClient.withHeaders({ "x-tenant": "b" })),
+              client.whoAmI().pipe(signedInAs("bob")),
+            ]),
+          ).pipe(
+            Effect.scoped,
+            Effect.provide(
+              RpcClient.layerProtocolSocket().pipe(
+                Layer.provide(NodeSocket.layerNet({ host: "127.0.0.1", port })),
+                Layer.provide(RpcSerialization.layerNdjson),
+              ),
+            ),
+          );
+        }).pipe(Effect.provide(tenanted), Effect.provide(Users.layerMemory));
+
+        expect(answers).toEqual([
+          { id: "alice", tenantId: "a" },
+          { id: "bob", tenantId: "b" },
+          { id: "bob", tenantId: "none" },
+        ]);
+      }),
+  );
+});
+
+const Crashes = ActionRpc.make([Crashy]);
+
+describe("ActionRpc over a protocol passing values", () => {
+  const served = ActionRpc.layer(Rpc, [status, userActions, double]).pipe(
+    Layer.provide(Authentication.layer(Login, verify)),
+  );
+
+  const overValues = <A, E, R>(
+    program: (client: ActionRpc.Client<typeof Rpc>) => Effect.Effect<A, E, R>,
+  ) =>
+    Effect.flatMap(ActionRpc.client(Rpc), program).pipe(
+      Effect.scoped,
+      Effect.provide(inMemoryValuesProtocolTo(served)),
+      Effect.provide(Users.layerMemory),
+    );
+
+  it.effect("carries an action's input, success and declared error as their JSON", () =>
+    overValues((client) =>
+      Effect.gen(function* () {
+        expect(yield* client.double({ value: 21 }).pipe(signedInAs("alice"))).toBe(42);
+        expect(yield* Effect.flip(client.getUser({ id: "9" }).pipe(signedInAs("alice")))).toEqual(
+          new UserNotFound({ id: "9" }),
+        );
+        expect(yield* client.status()).toEqual({ service: "effect-actions", users: 2 });
+      }),
+    ),
+  );
+
+  it.effect("answers a native rpc beside the actions through ActionRpc.client, as its JSON", () =>
+    Effect.gen(function* () {
+      const Clocked = ActionRpc.make([Status], {
+        rpcs: RpcGroup.make(NativeRpc.make("startedAt", { success: Schema.DateTimeUtc })),
+      });
+
+      const startedAt = DateTime.makeUnsafe(0);
+
+      const answered = yield* Effect.flatMap(ActionRpc.client(Clocked), (client) =>
+        client.startedAt(),
+      ).pipe(
+        Effect.scoped,
+        Effect.provide(
+          inMemoryValuesProtocolTo(
+            ActionRpc.layer(Clocked, status).pipe(
+              Layer.provide(Clocked.rpcs.toLayer({ startedAt: () => Effect.succeed(startedAt) })),
+            ),
+          ),
+        ),
+        Effect.provide(Users.layerMemory),
+      );
+
+      expect(answered).toEqual(startedAt);
+    }),
+  );
+
+  it.effect("answers a defect as its request's generic failure", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.flatMap(ActionRpc.client(Crashes), (client) =>
+        Effect.exit(client.crashy()),
+      ).pipe(
+        Effect.scoped,
+        Effect.provide(inMemoryValuesProtocolTo(ActionRpc.layer(Crashes, crashy))),
+      );
+
+      expect(valueOrSquashedCause(exit)).toEqual(internalServerErrorDefect);
+    }),
   );
 });

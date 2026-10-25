@@ -457,6 +457,7 @@ type Resource =
  * **Gotchas**
  *
  * - Call it once per descriptor, and provide that value to every layer serving a protected action: nothing else satisfies the provider they require, neither the identity nor another descriptor's provider, which type-checks under the same name and identity, then dies when the layer builds; only a client may hold another descriptor of the name, such as one of a cookie name the server decides at startup.
+ * - Over `ActionRpc` a verifier reading `HttpServerRequest` reads one holding the message's headers alone, a socket's upgrade headers before its own, at `/` with no query or body, on every protocol: one judging the URL or query sees none of the client's.
  */
 export function layer<
   const Name extends string,

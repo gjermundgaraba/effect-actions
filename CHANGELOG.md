@@ -4,13 +4,57 @@
 
 ### Breaking changes
 
+**A verifier or a handler reading `HttpServerRequest` over `ActionRpc` reads one holding the
+message's headers**, a socket's upgrade headers before its own, at `/`, with no query or body, on
+every protocol, and `ActionRpc.layer` no longer owes it. A protocol that gives a call no request, a
+socket server or a protocol passing values, made such a verifier or handler die with `Service not
+found`, answered `Internal server error`, so an application kept a second provider for those
+surfaces; over `RpcServer.layerProtocolHttp` and Effect's WebSocket it read the router's request
+instead.
+
+- Migrate: judge a request's path or query, or a credential in its query, in router middleware,
+  which runs with the real request, not in the verifier or the handler.
+
 **`ActionMcp.McpCallError` has a reason `FrameTooLarge`**: an endpoint's event stream holding
 more than the 10 MiB a client keeps with no frame ending fails the call with it, where it failed
 with `NoReply`.
 
 - Migrate: a match over `reason` that names every member names `FrameTooLarge` too.
 
+**`ActionRpc.layer` and `ActionRpc.client` refuse a codec that does not keep a JSON value as it
+is**, such as schema-binary's: `client` now refuses one too, as it is made, and both give the
+protocol JSON's codec, so a protocol passing values, such as a Durable Object stub's, which `layer`
+refused before, works. The message, the same for both, is
+`ActionRpc puts JSON in a protocol's messages, which this protocol's codec does not keep as it is (…)`,
+naming the codecs to provide; `layer`'s was `ActionRpc serves a protocol speaking JSON: …`.
+
+- Migrate: give a client `RpcSerialization.layerJson` or `layerNdjson`, and update code matching
+  `layer`'s old message.
+
+**`ActionRpc.client`'s message for a binding whose group lacks an rpc** names "the rpc of this
+action" (or native rpc), where it named "this action's rpc".
+
+- Migrate: update code matching the old fragment.
+
 ### Additions
+
+**Native rpcs beside actions.** `ActionRpc.make` takes `rpcs`, a native `RpcGroup` served beside
+the actions on the same protocol, with its own schemas, such as one that
+streams. Under the binding's `authentication`, each of their messages authenticates as a
+protected action's does, a refusal failing the call with `Unauthenticated`; the binding's
+`rpcs` holds them behind that middleware, and the host implements them with
+`Rpc.rpcs.toLayer(handlers)`, which `ActionRpc.layer` requires. `ActionRpc.client` has their
+methods beside the actions'. A native rpc named after an action, `then` or
+`watch` is refused as the binding is made. Guide: `docs/ActionRpc.md#serve-the-rpcs`.
+
+**`ActionRpc.unaryProtocol`** is the key a protocol answering each call once sets to `true` on
+its `RpcServer.Protocol` service: `layer` then
+fails its build serving a streaming action or a native stream rpc, where one
+would be answered with a defect at its first element, or wait for good.
+
+**`ActionRpc.reconnectUntil(...codes)`**, a socket client's `retryPolicy` that stops
+connecting again once the server closes the socket with one of `codes`, and is otherwise
+Effect's own default. Guide: `docs/ActionRpc.md#call-the-rpcs`.
 
 **Progress.** `Action.make` takes `progress`, a schema or struct fields: the handler reports
 values through its second argument, `{ progress }`, without waiting for the caller, and a
