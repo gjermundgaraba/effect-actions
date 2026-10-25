@@ -8,13 +8,13 @@ A message the library throws says its fix; for a compiler diagnostic or Effect's
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions effect@~4.0.4
+pnpm add @gjermundgaraba/effect-actions effect@~4.0.5
 ```
 
 | Need                                | Add                                                             |
 | ----------------------------------- | --------------------------------------------------------------- |
-| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.4`                                  |
-| Tests                               | `vitest@^5` and `@effect/vitest@~4.0.4`, as dev dependencies    |
+| Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.0.5`                                  |
+| Tests                               | `vitest@^5` and `@effect/vitest@~4.0.5`, as dev dependencies    |
 | Type checking                       | `typescript@^7.0.2`, as a dev dependency                        |
 | Node's types, for `node:` imports   | `@types/node`, as a dev dependency                              |
 | Running a TypeScript entrypoint     | `tsx`, as a dev dependency: `node --import tsx <entrypoint>.ts` |
@@ -22,8 +22,8 @@ pnpm add @gjermundgaraba/effect-actions effect@~4.0.4
 The `effect` peer admits the 4.0.x patches from the oldest whose APIs the package uses, and no
 minor release: a minor release may change the unstable Effect modules the surfaces build on.
 
-Keep the tilde in `package.json`: `^4.0.4`, which npm writes for `effect@4.0.4`, admits a minor
-release outside the peer range. `npm install effect@~4.0.4` keeps it.
+Keep the tilde in `package.json`: `^4.0.5`, which npm writes for `effect@4.0.5`, admits a minor
+release outside the peer range. `npm install effect@~4.0.5` keeps it.
 
 Node `>=26`: the package's `engines`, the Node the library is developed and tested on. TypeScript 7 or newer. ESM only. The repository checks the
 examples with a stricter `tsconfig.json`; this is the minimum a project needs. The package's modules resolve only through its

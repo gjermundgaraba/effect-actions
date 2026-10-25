@@ -2,7 +2,15 @@
 
 ## Unreleased
 
+Built and tested against `effect` and `@effect/platform-node` `4.0.5`. The `effect` peer is now
+`~4.0.5`.
+
 ### Breaking changes
+
+**The `effect` peer requires Effect 4.0.5 or a later 4.0.x patch**: `ActionMcp`'s events are
+served through the internals of Effect's MCP server as 4.0.5 has them.
+
+- Migrate: install `effect` and every `@effect/*` package at `~4.0.5`.
 
 **`watch` is not an action name.** `Action.make` refuses it as it refuses `then`, since every
 client watches events through a method of that name, beside one per action:

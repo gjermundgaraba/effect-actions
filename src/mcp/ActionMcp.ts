@@ -187,7 +187,7 @@ type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provi
 
 type Features<R> = Exclude<R, McpServer.McpServer>;
 
-const isToolArgumentsSchema = Schema.is(McpSchema.ToolJson);
+const isObjectSchema = Schema.is(McpSchema.ToolJson);
 
 const isJson = Schema.is(Schema.Json);
 
@@ -249,9 +249,7 @@ const assertToolShapes = (lifted: ReadonlyArray<readonly [Action.Any, Lift]>): v
   const actions = lifted.map(([action]) => action);
 
   const inputs = actions
-    .filter(
-      (action) => !isToolArgumentsSchema(toolJsonSchema(Schema.toCodecJson(action.input), true)),
-    )
+    .filter((action) => !isObjectSchema(toolJsonSchema(Schema.toCodecJson(action.input), true)))
     .map(({ name }) => name);
 
   if (inputs.length > 0) {
@@ -447,8 +445,6 @@ const registerTools = Effect.fnUntraced(function* (
   }
 });
 
-const isEventPayloadSchema = Schema.is(McpSchema.ToolOutputJson);
-
 /**
  * The JSON Schemas `events/list` lists for each event type of `events`, by name, refusing an event
  * type whose input or payload is no object.
@@ -465,7 +461,7 @@ const eventSchemasOf = (events: ReadonlyArray<AnyEventImplementation>): Serving[
   }));
 
   const inputs = schemas
-    .filter(({ inputSchema }) => !isToolArgumentsSchema(inputSchema))
+    .filter(({ inputSchema }) => !isObjectSchema(inputSchema))
     .map(({ name }) => name);
 
   if (inputs.length > 0) {
@@ -475,7 +471,7 @@ const eventSchemasOf = (events: ReadonlyArray<AnyEventImplementation>): Serving[
   }
 
   const payloads = schemas
-    .filter(({ payloadSchema }) => !isEventPayloadSchema(payloadSchema))
+    .filter(({ payloadSchema }) => !isObjectSchema(payloadSchema))
     .map(({ name }) => name);
 
   if (payloads.length > 0) {
@@ -486,7 +482,7 @@ const eventSchemasOf = (events: ReadonlyArray<AnyEventImplementation>): Serving[
 
   return new Map(
     schemas.flatMap(({ name, inputSchema, payloadSchema }) =>
-      isToolArgumentsSchema(inputSchema) && isEventPayloadSchema(payloadSchema)
+      isObjectSchema(inputSchema) && isObjectSchema(payloadSchema)
         ? [[name, { inputSchema, payloadSchema }] as const]
         : [],
     ),

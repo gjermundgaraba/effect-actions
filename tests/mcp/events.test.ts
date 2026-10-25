@@ -113,6 +113,26 @@ const framesOf = (response: HttpClientResponse.HttpClientResponse, count: number
 
 const settle = TestClock.adjust("0 millis");
 
+it("refuses an event type whose input or payload is no object, naming it", () => {
+  const options = { name: "events", version: "0" };
+  const emitted = { log: { emit: Stream.empty } };
+  const read = { description: "", caller: Action.Anyone } as const;
+
+  const Counted = Event.make("count.changed", { ...read, payload: Schema.Finite });
+  const Tagged = Event.make("tags.changed", { ...read, payload: Schema.Array(Schema.String) });
+  const Named = Event.make("name.changed", { ...read, input: Schema.String, payload: {} });
+
+  expect(() => ActionMcp.layerHttp(Event.implement(Counted, emitted), options)).toThrow(
+    "MCP event payload must be one object, such as a struct: count.changed (wrap an array or a scalar in a field)",
+  );
+  expect(() => ActionMcp.layerHttp(Event.implement(Tagged, emitted), options)).toThrow(
+    "MCP event payload must be one object, such as a struct: tags.changed",
+  );
+  expect(() => ActionMcp.layerHttp(Event.implement(Named, emitted), options)).toThrow(
+    "MCP event input must be one object with keys, such as a struct: name.changed",
+  );
+});
+
 describe("MCP events over HTTP", () => {
   it.effect(
     "advertises the events extension in 2026-07-28 discovery alone, and lists each event with its schemas and delivery",
