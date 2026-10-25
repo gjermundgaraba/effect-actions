@@ -136,7 +136,6 @@ export const placed = <const H extends AnyHttp>(
 
     return {
       emits: false,
-      subscribes: false,
       poll: (input, cursor) =>
         Effect.flatMap(transport(input), ({ poll }) => poll(cursor)).pipe(
           Effect.catchIf(isNotServed, () => Effect.die(notServedThere(event.name))),
