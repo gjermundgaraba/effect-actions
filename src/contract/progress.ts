@@ -182,7 +182,7 @@ export const answerFrom = <E, R>(
   stream: Stream.Stream<Progressed, E, R>,
   onProgress: CallOptions<unknown>["onProgress"],
 ): Effect.Effect<unknown, E, R> => {
-  const report = onProgress === undefined ? () => Effect.void : shown(onProgress);
+  const report = progressSink(onProgress)?.progress ?? (() => Effect.void);
 
   return Effect.flatMap(
     Stream.runFoldEffect(
@@ -205,7 +205,7 @@ export const elementsFrom = <E, R>(
   stream: Stream.Stream<Progressed, E, R>,
   onProgress: CallOptions<unknown>["onProgress"],
 ): Stream.Stream<unknown, E, R> => {
-  const report = onProgress === undefined ? () => Effect.void : shown(onProgress);
+  const report = progressSink(onProgress)?.progress ?? (() => Effect.void);
 
   return Stream.flatMap(stream, (sent) =>
     Progressed.$is("Progress")(sent)

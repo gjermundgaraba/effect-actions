@@ -283,11 +283,7 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
             (input: ErasedValue, { preliminary }: Toolkit.HandlerContext<Tool.Any>) =>
               run(
                 input,
-                progressSink(
-                  action.progress === undefined
-                    ? undefined
-                    : (value) => preliminary(new Reported(value)),
-                ),
+                progressSink((value) => preliminary(new Reported(value))),
               ),
           ];
         }),

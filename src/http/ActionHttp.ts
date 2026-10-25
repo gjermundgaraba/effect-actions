@@ -304,11 +304,9 @@ const endpointOf = (action: Action.Any, path: `/${string}`, errors: Action.Error
 const answerOf = (action: Action.Any, run: ErasedHandler<unknown>) => {
   const element = elementOf(action.success);
 
-  if (element !== undefined) return answeringElements(element, action.progress, run);
+  if (element !== undefined) return answeringElements(element, run);
 
-  return action.progress === undefined
-    ? run
-    : answeringWithProgress(action.progress, action.success, run);
+  return action.progress === undefined ? run : answeringWithProgress(action.success, run);
 };
 
 const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middleware = []) =>

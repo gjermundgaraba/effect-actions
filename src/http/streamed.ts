@@ -100,9 +100,8 @@ export const elementStreamOf = (
 // then drops the oldest values, and not the server's memory. A call ending before any event
 // answers a stream of none.
 const streamed = (
-  progress: Codec | undefined,
   answer: (
-    reporting: Reporting | undefined,
+    reporting: Reporting,
     send: (sent: Sent) => Effect.Effect<void>,
   ) => Effect.Effect<void, unknown, unknown>,
 ) =>
@@ -118,10 +117,7 @@ const streamed = (
         }),
       );
 
-    const reporting: Reporting | undefined =
-      progress === undefined
-        ? undefined
-        : { progress: (data) => send({ event: "progress", data }) };
+    const reporting: Reporting = { progress: (data) => send({ event: "progress", data }) };
 
     const ended = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasDies(cause)) return concealed(cause);
@@ -158,7 +154,6 @@ const checkedBy = (schema: Codec) => {
  * where the request's `Accept` names `text/event-stream`, its answer alone otherwise.
  */
 export const answeringWithProgress = (
-  progress: Codec,
   success: Action.Any["success"],
   run: ErasedHandler<unknown>,
 ) => {
@@ -167,7 +162,7 @@ export const answeringWithProgress = (
   return (payload: ErasedValue) =>
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
       (request.headers.accept ?? "").includes("text/event-stream")
-        ? streamed(progress, (reporting, send) =>
+        ? streamed((reporting, send) =>
             run(payload, reporting).pipe(
               Effect.tap(check),
               Effect.flatMap((data) => send({ event: "final", data })),
@@ -178,15 +173,11 @@ export const answeringWithProgress = (
 };
 
 /** The route handler of an action answering a stream: its elements and its progress, streamed. */
-export const answeringElements = (
-  element: Codec,
-  progress: Codec | undefined,
-  run: ErasedHandler<unknown>,
-) => {
+export const answeringElements = (element: Codec, run: ErasedHandler<unknown>) => {
   const check = checkedBy(element);
 
   return (payload: ErasedValue) =>
-    streamed(progress, (reporting, send) =>
+    streamed((reporting, send) =>
       Stream.runForEach(elementsOf(run(payload, reporting)), (data) =>
         Effect.andThen(check(data), send({ event: "element", data })),
       ),

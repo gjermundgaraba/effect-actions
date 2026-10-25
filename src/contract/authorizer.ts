@@ -29,18 +29,6 @@ export interface Holding {
   readonly module: "Action";
 }
 
-const assertRule =
-  ({ module }: Holding) =>
-  <C>(rule: ErasedAuthorize<C>): ErasedAuthorize<C> => {
-    if (!Predicate.isFunction(rule)) {
-      throw new Error(
-        `Missing authorize: not a function (pass your rule, ${module}.allowAll, or an Effect returning one)`,
-      );
-    }
-
-    return rule;
-  };
-
 /**
  * The memoized authorizer of an implementation: the `authorize` given where it holds a protected
  * contract, which then requires one, and a rule allowing every call where it holds none, which
@@ -63,8 +51,17 @@ export const authorizerOf = <C>(
     );
   }
 
+  const checked = (rule: ErasedAuthorize<C>): ErasedAuthorize<C> => {
+    if (!Predicate.isFunction(rule)) {
+      throw new Error(
+        `Missing authorize: not a function (pass your rule, ${module}.allowAll, or an Effect returning one)`,
+      );
+    }
+
+    return rule;
+  };
+
   const given: ErasedAuthorizer<C> = authorize ?? (() => Effect.void);
-  const checked = assertRule(holding);
 
   return memoized(
     Effect.isEffect(given) ? Effect.map(given, checked) : Effect.succeed(checked(given)),

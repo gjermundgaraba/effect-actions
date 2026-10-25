@@ -44,7 +44,8 @@ export type Handlers<R> = Readonly<Record<string, WrittenHandler<R>>>;
 /**
  * A handler behind its action's authentication, authorization and declared errors, as a surface
  * calls it. For an action answering a stream it succeeds at once with the call's stream, which
- * `elementsOf` reads, the refusals included.
+ * `elementsOf` reads, the refusals included. `reporting` is where its progress goes, ignored for
+ * an action declaring no `progress`, so a surface may hand one to every call.
  */
 export type ErasedHandler<R> = (
   input: ErasedValue,
