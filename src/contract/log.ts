@@ -144,7 +144,6 @@ const separator = ":";
 export const makeLogStore = <A>(
   storage: LogStorage<A>,
   { maxAge = defaultBounds.maxAge, maxEvents = defaultBounds.maxEvents }: Bounds = {},
-  mintEpoch: () => string = uniqueKey,
 ): LogStore<A> => {
   if (!Number.isSafeInteger(maxEvents) || maxEvents < 1) {
     throw new Error(`Invalid log maxEvents: ${maxEvents} (give a positive integer)`);
@@ -158,7 +157,7 @@ export const makeLogStore = <A>(
   const positioned = Effect.flatMap(storage.position, (found) => {
     if (found !== undefined) return Effect.succeed(found);
 
-    const minted = { epoch: mintEpoch(), last: 0 };
+    const minted = { epoch: uniqueKey(), last: 0 };
 
     return Effect.as(storage.put(minted), minted);
   });

@@ -10,8 +10,7 @@ import {
 import type { Scope, Stream } from "effect";
 import type * as Action from "./Action.js";
 import { Anyone, assertCaller } from "./caller.js";
-import type { NoInput } from "./codec.js";
-import { type Codec, type CodecOf, codecOf, type Fields } from "./codec.js";
+import { type Codec, type CodecOf, codecOf, type Fields, type NoInput } from "./codec.js";
 import {
   type Authorizer,
   authorizerOf,

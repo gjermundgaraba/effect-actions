@@ -184,11 +184,6 @@ export const pushed = <R>(
       : Effect.raceFirst(Effect.forever(once), heartbeat);
   });
 
-// Why: Started at once in the request's scope, which the surface closes as its response ends, so
-// a watch from now starts where it asked. The response's status is sent before the
-// first read, so a failure before the subscription is confirmed resumes as a later one does, as a
-// poll's 500 is retried; each element is encoded before it is queued, inside the read's boundary,
-// so the surface's own encoder, which would send a defect's details, never fails.
 /** How `queuedPush` queues a subscription, beside `pushed`'s `inOrder`. */
 export interface QueueOptions extends Pick<PushOptions, "inOrder"> {
   /** Gives the failure that ends the subscription as the surface sends it. */
@@ -199,6 +194,11 @@ export interface QueueOptions extends Pick<PushOptions, "inOrder"> {
   readonly capacity?: number | undefined;
 }
 
+// Why: Started at once in the request's scope, which the surface closes as its response ends, so
+// a watch from now starts where it asked. The response's status is sent before the
+// first read, so a failure before the subscription is confirmed resumes as a later one does, as a
+// poll's 500 is retried; each element is encoded before it is queued, inside the read's boundary,
+// so the surface's own encoder, which would send a defect's details, never fails.
 /**
  * A push subscription for a surface's streamed response: read into a bounded queue, each element
  * as `encode` gives it, forked in the current scope.

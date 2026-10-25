@@ -160,7 +160,8 @@ interface Kept {
   feeding: boolean;
 }
 
-const reaches = (target: string | undefined, key: string | undefined) =>
+/** Whether an announcement to `target` reaches a subscriber of `key`: either absent means every one. */
+export const reaches = (target: string | undefined, key: string | undefined) =>
   target === undefined || key === undefined || target === key;
 
 const holding = <A>(set: Set<A>, value: A): Effect.Effect<A, never, Scope.Scope> =>
@@ -327,18 +328,15 @@ export const makeEvents = (
                 Effect.as(holding(checkOf(event).waiters, { key, woken }), Queue.take(woken)),
               ),
             revision: (key) =>
-              Effect.map(
-                key === undefined
-                  ? revisions.get(everyKey(event))
-                  : Effect.map(
-                      Effect.all([revisions.get(noKey(event)), revisions.get(ofKey(event, key))]),
-                      ([unkeyed, keyed]) => unkeyed + keyed,
-                    ),
-                (count) =>
-                  key === undefined
-                    ? `${revisions.epoch}:${count}`
-                    : `${revisions.epoch}:${count}:${key}`,
-              ),
+              key === undefined
+                ? Effect.map(
+                    revisions.get(everyKey(event)),
+                    (count) => `${revisions.epoch}:${count}`,
+                  )
+                : Effect.map(
+                    Effect.all([revisions.get(noKey(event)), revisions.get(ofKey(event, key))]),
+                    ([unkeyed, keyed]) => `${revisions.epoch}:${unkeyed + keyed}:${key}`,
+                  ),
           }),
         ),
       log: (event, bounds, emit) =>

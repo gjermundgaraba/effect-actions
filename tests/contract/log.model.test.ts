@@ -23,17 +23,20 @@ const Command = Schema.Union([
 
 const Commands = Schema.Array(Command).check(Schema.isMinLength(1), Schema.isMaxLength(40));
 
-const cursorAt = (seq: number) => `epoch:${seq}`;
-
 const logOf = (bounds?: { readonly maxAge?: number; readonly maxEvents?: number }) =>
-  makeLogStore<number>(memoryStorage(), bounds, () => "epoch");
+  Effect.gen(function* () {
+    const log = makeLogStore<number>(memoryStorage(), bounds);
+    const epoch = (yield* log.read(null, 1)).cursor.replace(/:0$/, "");
+
+    return { log, epoch, cursorAt: (seq: number) => `${epoch}:${seq}` };
+  });
 
 it.effect.prop(
   "reads, from any cursor, exactly the kept entries after it, and a gap where one after it is no longer kept or the cursor is not its own",
   { steps: Commands },
   ({ steps }) =>
     Effect.gen(function* () {
-      const log = logOf({ maxAge, maxEvents });
+      const { log, epoch, cursorAt } = yield* logOf({ maxAge, maxEvents });
       const pushed: Array<{ readonly seq: number; readonly at: number }> = [];
       const minted: Array<{ readonly cursor: string; readonly seq: number }> = [];
       let now = 0;
@@ -57,9 +60,9 @@ it.effect.prop(
           Match.when("start", () => ({ cursor: null, seq: pushed.length })),
           Match.when("foreign", () => ({ cursor: "another:1", seq: undefined })),
           Match.when("future", () => ({ cursor: cursorAt(pushed.length + 1), seq: undefined })),
-          Match.when("negative", () => ({ cursor: "epoch:-1", seq: undefined })),
-          Match.when("extra", () => ({ cursor: "epoch:1:2", seq: undefined })),
-          Match.when("word", () => ({ cursor: "epoch:x", seq: undefined })),
+          Match.when("negative", () => ({ cursor: `${epoch}:-1`, seq: undefined })),
+          Match.when("extra", () => ({ cursor: `${epoch}:1:2`, seq: undefined })),
+          Match.when("word", () => ({ cursor: `${epoch}:x`, seq: undefined })),
           Match.orElse((index) => minted[index % Math.max(minted.length, 1)]),
         );
 
@@ -97,8 +100,8 @@ it.effect.prop(
 
 it.effect("keeps 10,000 entries of at most 10 minutes where no bounds are given", () =>
   Effect.gen(function* () {
-    const counted = logOf();
-    const aged = logOf();
+    const { log: counted, cursorAt } = yield* logOf();
+    const { log: aged, cursorAt: agedAt } = yield* logOf();
 
     for (let n = 1; n <= 10_000; n += 1) yield* counted.append({ value: n, key: undefined });
 
@@ -112,7 +115,7 @@ it.effect("keeps 10,000 entries of at most 10 minutes where no bounds are given"
 
     yield* TestClock.adjust(10 * 60 * 1000);
 
-    const agedAtLimit = yield* aged.read(cursorAt(0), 1);
+    const agedAtLimit = yield* aged.read(agedAt(0), 1);
 
     yield* TestClock.adjust(1);
 
@@ -121,7 +124,7 @@ it.effect("keeps 10,000 entries of at most 10 minutes where no bounds are given"
       countedFrom0.truncated,
       countedFrom1.truncated,
       agedAtLimit.truncated,
-      (yield* aged.read(cursorAt(0), 1)).truncated,
+      (yield* aged.read(agedAt(0), 1)).truncated,
     ]).toEqual([false, true, false, false, true]);
   }),
 );

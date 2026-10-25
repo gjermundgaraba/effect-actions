@@ -10,7 +10,7 @@ import {
   Stream,
 } from "effect";
 import type * as Event from "./Event.js";
-import { attachmentsOf, type Checking, Events } from "./hub.js";
+import { attachmentsOf, type Checking, Events, reaches } from "./hub.js";
 import type { Entry, Log, Logged, Read } from "./log.js";
 import { Anyone } from "./caller.js";
 import { jsonRoundTrip } from "./call.js";
@@ -137,6 +137,16 @@ const occurrencesOf = (event: Event.Any) => {
 
 const isOccurrence = (fed: Fed): fed is ErasedOccurrence => Predicate.isTagged(fed, "Occurrence");
 
+/** A poll's page of `items`: their occurrences, `truncated` too where a gap stands for one. */
+const pageOf = (
+  items: ReadonlyArray<ErasedOccurrence | Gap>,
+  { truncated, ...page }: Omit<Page, "events">,
+): Page => {
+  const events = items.filter(isOccurrence);
+
+  return { ...page, events, truncated: truncated || events.length < items.length };
+};
+
 const lifted = <A, R>(value: A | Effect.Effect<A, never, R>): Effect.Effect<A, never, R> =>
   Effect.isEffect(value) ? value : Effect.succeed(value);
 
@@ -177,30 +187,26 @@ const checkRun = (
       ),
     );
 
-  const pageOf = ({
+  const answeredPage = ({
     answered,
     items,
   }: {
     readonly answered: Event.Page<Event.Any>;
     readonly items: ReadonlyArray<ErasedOccurrence | Gap>;
-  }): Page => {
-    const events = items.filter(isOccurrence);
-
-    return {
-      events,
+  }): Page =>
+    pageOf(items, {
       cursor: answered.cursor,
-      truncated: answered.truncated === true || events.length < items.length,
+      truncated: answered.truncated === true,
       hasMore: answered.hasMore === true,
       nextPoll: Duration.min(
         Duration.fromInputUnsafe(answered.nextPoll ?? defaultNextPoll),
         longestNextPoll,
       ),
-    };
-  };
+    });
 
   return {
     emits: false,
-    poll: (input, cursor) => Effect.map(read(input, cursor), pageOf),
+    poll: (input, cursor) => Effect.map(read(input, cursor), answeredPage),
     // Why: The waiter is held before the first read, so a notify while it runs reads again at
     // once rather than at the next poll.
     stream: (input, cursor) =>
@@ -209,7 +215,7 @@ const checkRun = (
           pagedFrom(
             (at) =>
               Effect.map(read(input, at), (delivered) => ({
-                ...pageOf(delivered),
+                ...answeredPage(delivered),
                 fed: fedOf({
                   items: delivered.items,
                   truncated: delivered.answered.truncated === true,
@@ -260,55 +266,48 @@ const logRun = (
   const delivered = (
     input: ErasedValue,
     key: string | undefined,
-    entry: Entry<Logged<Event.Emitted<Event.Any>> | undefined>,
-  ): Effect.Effect<ErasedOccurrence | Gap | undefined, never, unknown> => {
-    const { cursor, value: logged } = entry;
-
-    // Why: An entry its storage could not read is a gap at its cursor, before any of the source's
-    // callbacks, which are owed the data it was published with.
-    if (logged === undefined)
-      return Effect.as(
-        Effect.annotateLogs(
+    { cursor, at, value: logged }: Entry<Logged<Event.Emitted<Event.Any>> | undefined>,
+  ): Effect.Effect<ErasedOccurrence | Gap | undefined, never, unknown> =>
+    Effect.gen(function* () {
+      // Why: An entry its storage could not read is a gap at its cursor, before any of the
+      // source's callbacks, which are owed the data it was published with.
+      if (logged === undefined) {
+        yield* Effect.annotateLogs(
           Effect.logWarning(
             `An entry of the log of ${event.name} could not be read: sent as a gap`,
           ),
           "event",
           event.name,
-        ),
-        Gap.make({ cursor }),
+        );
+
+        return Gap.make({ cursor });
+      }
+
+      const emitted = logged.value;
+
+      if (!reaches(logged.key, key)) return undefined;
+
+      if (source.match !== undefined && !(yield* lifted(source.match(input, emitted.data)))) {
+        return undefined;
+      }
+
+      const data =
+        source.transform === undefined
+          ? emitted.data
+          : yield* lifted(source.transform(input, emitted.data));
+
+      // Why: An entry's id and time are fixed when it was appended, so every read and every
+      // subscriber receive the same: a replay is deduplicated, and stamped when it happened. The
+      // cursor is unique, its epoch changing with each log.
+      return yield* occurrenceOf(
+        {
+          data,
+          eventId: emitted.eventId ?? cursor,
+          timestamp: emitted.timestamp ?? DateTime.makeUnsafe(at),
+        },
+        cursor,
       );
-
-    const emitted = logged.value;
-    const reached = key === undefined || logged.key === undefined || logged.key === key;
-
-    return Effect.flatMap(
-      !reached
-        ? Effect.succeed(false)
-        : source.match === undefined
-          ? Effect.succeed(true)
-          : lifted(source.match(input, emitted.data)),
-      (matches): Effect.Effect<ErasedOccurrence | Gap | undefined, never, unknown> =>
-        matches
-          ? Effect.flatMap(
-              source.transform === undefined
-                ? Effect.succeed(emitted.data)
-                : lifted(source.transform(input, emitted.data)),
-              // Why: An entry's id and time are fixed when it was appended, so every read and
-              // every subscriber receive the same: a replay is deduplicated, and stamped when it
-              // happened. The cursor is unique, its epoch changing with each log.
-              (data) =>
-                occurrenceOf(
-                  {
-                    data,
-                    eventId: emitted.eventId ?? cursor,
-                    timestamp: emitted.timestamp ?? DateTime.makeUnsafe(entry.at),
-                  },
-                  cursor,
-                ),
-            )
-          : Effect.undefined,
-    );
-  };
+    });
 
   // Why: An entry the subscriber does not reach or match sends nothing: the read's closing
   // `Checked` moves the position past it, so an `inOrder` push sends one per read, not one
@@ -329,17 +328,14 @@ const logRun = (
       Effect.flatMap(
         Effect.all([keyOf(source, input), log.read(cursor, pageLimit(maxEvents))]),
         ([key, read]) =>
-          Effect.map(received(input, key, read), (items): Page => {
-            const events = items.filter(isOccurrence);
-
-            return {
-              events,
+          Effect.map(received(input, key, read), (items) =>
+            pageOf(items, {
               cursor: read.cursor,
-              truncated: read.truncated || events.length < items.length,
+              truncated: read.truncated,
               hasMore: read.hasMore,
               nextPoll: defaultNextPoll,
-            };
-          }),
+            }),
+          ),
       ),
     stream: (input, cursor) =>
       Stream.unwrap(
