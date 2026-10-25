@@ -11,7 +11,7 @@ import { commands } from "../src/commands.js";
 import { routes } from "../src/routes.js";
 import { inMemory } from "./support/memory.js";
 
-const served = Testing.layer(routes).pipe(Layer.provide(inMemory));
+const served = Testing.layer(routes).pipe(Layer.provide(inMemory()));
 
 // Effect's own runner, given arguments instead of the process's, as the member `token` names.
 const run = (token: string, args: ReadonlyArray<string>) =>

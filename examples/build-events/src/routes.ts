@@ -3,6 +3,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import { Http } from "./Api.js";
 import { buildEvents } from "./builds/events.js";
 import { builds } from "./builds/handlers.js";
@@ -45,4 +46,14 @@ const rpc = ActionRpc.layer(Rpc, implementations).pipe(
   Layer.provide(RpcSerialization.layerNdjson),
 );
 
-export const routes = Layer.mergeAll(mcp, api, rpc).pipe(Layer.provide(authenticate));
+// Webhook delivery for MCP and HTTP alike: a member names a callback URL and a secret, with
+// MCP's `events/subscribe` or `POST /api/events/<name>/subscribe`, and each occurrence it may see
+// is POSTed there, signed. One layer holds the subscriptions of both, so either surface refreshes
+// one made over the other. `persist` keeps each in a `KeyValueStore`, so a restart goes on
+// delivering from where it reached, as the subscriber `Login`'s `schema` keeps. It needs an
+// `HttpClient` to POST, `Dns` to check where each callback resolves, and the store, which
+// `server.ts` provides.
+export const routes = Layer.mergeAll(mcp, api, rpc).pipe(
+  Layer.provide(authenticate),
+  Layer.provide(Webhook.layer({ persist: true })),
+);

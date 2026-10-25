@@ -229,7 +229,8 @@ export const Http = ActionHttp.make(
 implementations over HTTP, MCP and RPC. A client of the binding has `watch(event, input, options)`, as
 `Action.client`'s: [build-events/test/http.test.ts](../examples/build-events/test/http.test.ts)
 watches by stream and by poll. What a route answers is on `layer`; what a watch fails with is on
-`client`.
+`client`. A protected event's binding also has `/subscribe` and `/unsubscribe` routes, for
+webhook delivery ([Webhook.md](Webhook.md)), which `make` says when it adds.
 
 - **Not a browser `EventSource`.** It sends neither a JSON body nor a header credential, so a page
   watches with `fetchClient`, whose `watch` reads the stream through `fetch`.

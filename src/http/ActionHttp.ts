@@ -3,6 +3,7 @@ import {
   Effect,
   type FileSystem,
   Layer,
+  Option,
   type Path,
   type Schema,
   Scope,
@@ -22,8 +23,17 @@ import {
 import type * as Action from "../contract/Action.js";
 import type * as Event from "../contract/Event.js";
 import { listed, type Only } from "../contract/listed.js";
+import { offersWebhook, Webhooks } from "../contract/webhooks.js";
 import type { SubscriptionOf } from "../contract/push.js";
-import { answering, eventEndpointOf, type pageOf, type sentOf, servedSent } from "./events.js";
+import {
+  answering,
+  eventEndpointOf,
+  type pageOf,
+  type sentOf,
+  servedSent,
+  webhookAnswers,
+  webhookEndpointsOf,
+} from "./events.js";
 import {
   acquireFeeds,
   type EventBuildError,
@@ -387,6 +397,7 @@ const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middle
  * **Gotchas**
  *
  * - An action and an event type of one name, or an event type listed twice, throw when `make` is called: they would share a client's method.
+ * - A protected event type, where `authentication` has `principal`, is bound at `POST <prefix>/events/<name>/subscribe` and `/unsubscribe` too, for `Webhook.layer`'s delivery, and OpenAPI lists both: a binding cannot know whether its server provides that layer, and without it they answer a 409 `Event.SubscriptionError`, reason `Unsupported`.
  */
 export function make<
   const Contracts extends ReadonlyArray<
@@ -434,16 +445,17 @@ export function make(
         action,
       ),
     ),
-    ...events.map((event) =>
-      secured(
-        eventEndpointOf(
-          event,
-          absolutePath([...mount, "events", event.name]),
-          eventErrors(event, bound),
-        ),
-        event,
-      ),
-    ),
+    ...events.flatMap((event) => {
+      const path = absolutePath([...mount, "events", event.name]);
+      const errors = eventErrors(event, bound);
+
+      return [
+        eventEndpointOf(event, path, errors),
+        ...(offersWebhook(event, bound.authentication)
+          ? webhookEndpointsOf(event, path, errors)
+          : []),
+      ].map((endpoint) => secured(endpoint, event));
+    }),
   ];
 
   const api = apiOf(groupName(mount), endpoints);
@@ -530,7 +542,7 @@ const jsonContentType = () =>
  * - A source's failure no refusal explains is logged and reported once, sent as a bare `Failed`, and read again from where it reached after 5 seconds, before the stream's first `Checked` too; a poll's is a 500, which `client`'s `watch` reconnects after.
  * - A stream is read only as fast as its client reads it: a slow reader of a log source falls behind its log, and receives a `Gap`.
  * - A protected event with a `subscription` hook needs `principal` on its descriptor to key poll subscribers: without it the layer fails to build with a message naming the event.
- * - On a host with no lasting process, such as `HttpRouter.toWebHandler` on a serverless platform, serve check sources alone, without a `subscription` hook: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a `Gap`, and its own leases, lost as it ends.
+ * - On a host with no lasting process, such as `HttpRouter.toWebHandler` on a serverless platform, serve check sources alone, without a `subscription` hook or `Webhook.layer`: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a `Gap`, and its own leases and webhook subscriptions, lost as it ends.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   binding: H,
@@ -588,17 +600,15 @@ export function layer(
         action,
       ),
     ),
-    ...eventTypes.map((event) =>
-      routed(
-        eventEndpointOf(
-          event,
-          absolutePath([...mount, "events", event.name]),
-          eventErrors(event, { error: binding.error }),
-          servedSent,
-        ),
-        event,
-      ),
-    ),
+    ...eventTypes.flatMap((event) => {
+      const path = absolutePath([...mount, "events", event.name]);
+      const errors = eventErrors(event, { error: binding.error });
+
+      return [
+        eventEndpointOf(event, path, errors, servedSent),
+        ...(offersWebhook(event, authentication) ? webhookEndpointsOf(event, path, errors) : []),
+      ].map((endpoint) => routed(endpoint, event));
+    }),
   ]).annotate(HttpApi.PayloadParseOptions, inputParseOptions);
 
   const handlers = Layer.unwrap(
@@ -606,8 +616,15 @@ export function layer(
       const bound = yield* acquire(apps);
       const feeds = yield* acquireFeeds(events);
       const refusal = unkeyedHook("ActionHttp", feeds, authentication?.principal !== undefined);
+      const webhooks = yield* Effect.serviceOption(Webhooks);
 
       if (refusal !== undefined) return yield* Effect.die(new Error(refusal));
+
+      if (Option.isSome(webhooks))
+        yield* webhooks.value.serve(
+          feeds.filter((feed) => offersWebhook(feed.event, authentication)),
+          authentication,
+        );
 
       const security =
         authentication === undefined
@@ -623,6 +640,10 @@ export function layer(
         Effect.map(Effect.service(key), (service) => Layer.succeed(key, service)),
       );
 
+      const webhookAnswered = feeds
+        .filter((feed) => offersWebhook(feed.event, authentication))
+        .map((feed) => [feed.event.name, webhookAnswers(feed, authentication, webhooks)] as const);
+
       const byName = {
         ...Object.fromEntries(
           bound.map(([action, run]) => {
@@ -633,6 +654,14 @@ export function layer(
         ),
         ...Object.fromEntries(
           feeds.map((feed) => [feed.event.name, answering(feed, authentication)] as const),
+        ),
+        ...Object.fromEntries(
+          webhookAnswered.map(([name, { subscribe }]) => [`${name}/subscribe`, subscribe] as const),
+        ),
+        ...Object.fromEntries(
+          webhookAnswered.map(
+            ([name, { unsubscribe }]) => [`${name}/unsubscribe`, unsubscribe] as const,
+          ),
         ),
       };
 

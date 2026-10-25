@@ -1,4 +1,15 @@
-import { Cause, Context, Duration, Effect, Exit, Match, Option, Predicate, Schema } from "effect";
+import {
+  Cause,
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  Match,
+  Option,
+  Predicate,
+  Result,
+  Schema,
+} from "effect";
 import { type McpProtocol, McpSchema } from "effect/ai";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/http";
 import type { Rpc, RpcGroup, RpcMessage } from "effect/rpc";
@@ -6,7 +17,7 @@ import { type Any as Authentication, promote } from "../authentication/provider.
 import { recordStepUp } from "../authentication/refusal.js";
 import { inputParseOptions } from "../contract/call.js";
 import { Anyone, principalOf } from "../contract/caller.js";
-import type * as Event from "../contract/Event.js";
+import * as Event from "../contract/Event.js";
 import {
   acquireFeeds,
   type AnyEventImplementation,
@@ -16,6 +27,13 @@ import {
 import { encodeUntaggedOf } from "../contract/occurrence.js";
 import { type Pushed, pushed, refusalIn } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
+import { InvalidInput } from "../contract/errors.js";
+import {
+  offersWebhook,
+  terminationError,
+  Webhooks,
+  webhookSubscriber,
+} from "../contract/webhooks.js";
 import {
   Active,
   codes,
@@ -30,7 +48,6 @@ import {
   Requests,
   subscriptionIdKey,
   Terminated,
-  terminationError,
   type WireOccurrence,
 } from "./events.js";
 import { isObjectSchema, routingFormsOf, toolJsonSchema } from "./protocol.js";
@@ -149,6 +166,40 @@ const headerMismatch = (request: HttpServerRequest.HttpServerRequest) =>
     ),
   );
 
+const isInvalidInput = Schema.is(InvalidInput);
+
+const isSubscriptionError = Schema.is(Event.SubscriptionError);
+
+// Why: What a webhook's request got wrong, or its callback failed with, is the subscriber's
+// answer in SEP-3415's codes; anything else is answered as any other `events/*` failure.
+const webhookWireError = (cause: Cause.Cause<unknown>): Effect.Effect<EventsError> => {
+  const failure = Cause.hasDies(cause) ? undefined : Result.getOrUndefined(Cause.findFail(cause));
+  const error = failure?.error;
+
+  if (isInvalidInput(error))
+    return Effect.succeed(new EventsError({ code: codes.invalidParams, message: error.message }));
+
+  if (!isSubscriptionError(error)) return wireErrorOf(cause);
+
+  const { message, reason } = error;
+
+  return Effect.succeed(
+    Match.valueTags(reason, {
+      CallbackFailed: ({ category }) =>
+        new EventsError({ code: codes.callbackEndpoint, message, data: { reason: category } }),
+      NotSubscribed: () =>
+        new EventsError({ code: codes.notFound, message, data: { kind: "subscription" } }),
+      Unsupported: ({ feature, value }) =>
+        new EventsError({
+          code: codes.unsupported,
+          message,
+          data: value === undefined ? { feature } : { feature, value },
+        }),
+      NotServed: () => new EventsError({ code: codes.notFound, message, data: { kind: "event" } }),
+    }),
+  );
+};
+
 // Why: Effect's runtime checks `Mcp-Name` against the body for the core methods alone, and a mixed
 // endpoint admits a public event's request signed out by that header, so a body naming another
 // event is refused here, before it is read, as SEP-3415 requires.
@@ -214,6 +265,25 @@ export const refuseUnservable = ({
       });
 
 /**
+ * Serves the feeds the endpoint of `serving` offers by webhook to `Webhooks`, where it is
+ * provided, run where the endpoint's layer is built: it restores their kept subscriptions, and
+ * dies where they cannot be kept.
+ */
+export const serveWebhooks = (serving: Serving): Effect.Effect<void, never, unknown> =>
+  Effect.gen(function* () {
+    const webhooks = yield* Effect.serviceOption(Webhooks);
+
+    if (Option.isNone(webhooks)) return;
+
+    const feeds = yield* acquireFeeds(serving.events);
+
+    yield* webhooks.value.serve(
+      feeds.filter((feed) => offersWebhook(feed.event, serving.authentication)),
+      serving.authentication,
+    );
+  });
+
+/**
  * `base`, the 2026-07-28 adapter, also serving SEP-3415's `events/list`, `events/poll` and
  * `events/stream` for the event implementations of `serving`, and advertising the extension in
  * its discovery.
@@ -236,12 +306,20 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
         (serverInfo) => ({ "io.modelcontextprotocol/serverInfo": serverInfo }),
       );
 
-      const delivery: EventDescriptor["delivery"] = [
+      const webhooks = Context.getOption(built, Webhooks);
+
+      const webhookOffered = (event: Event.Any) =>
+        Option.isSome(webhooks) && offersWebhook(event, authentication);
+
+      const deliveryOf = (event: Event.Any): EventDescriptor["delivery"] => [
         "poll",
         ...(send === undefined ? [] : ["push" as const]),
+        ...(webhookOffered(event) ? ["webhook" as const] : []),
       ];
 
-      const served = new Map(feeds.map((feed) => [feed.event.name, servedOf(feed, delivery)]));
+      const served = new Map(
+        feeds.map((feed) => [feed.event.name, servedOf(feed, deliveryOf(feed.event))]),
+      );
 
       const servedNamed = (name: string) => {
         const found = served.get(name);
@@ -263,6 +341,21 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
         authentication === undefined || event.caller === Anyone
           ? run
           : recordStepUp(promote(authentication, run));
+
+      const asWebhook = <A, R>(
+        event: Event.Any,
+        run: (webhooks: Webhooks["Service"], principal: string) => Effect.Effect<A, unknown, R>,
+      ) =>
+        Effect.catchCause(
+          asSubscriber(
+            event,
+            Effect.flatMap(
+              webhookSubscriber(event, authentication, webhooks),
+              ({ webhooks, principal }) => run(webhooks, principal),
+            ),
+          ),
+          (cause) => Effect.flatMap(webhookWireError(cause), Effect.fail),
+        );
 
       const fromBuilt = <A, E, R>(handled: Effect.Effect<A, E, R>) =>
         Effect.updateContext(handled, (request: Context.Context<never>) =>
@@ -329,6 +422,40 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
                   ),
                 ),
             );
+          }).pipe(fromBuilt),
+        "events/subscribe": ({ name, arguments: args, delivery: { url, secret }, cursor, ttlMs }) =>
+          Effect.gen(function* () {
+            yield* routedTo(name);
+
+            const { feed, decode } = yield* servedNamed(name);
+            const input = yield* decode(args);
+
+            const grant = yield* asWebhook(feed.event, (webhooks, principal) =>
+              webhooks.subscribe({
+                feed,
+                principal,
+                input,
+                url,
+                secret,
+                cursor: cursor ?? null,
+                ttlMs,
+              }),
+            );
+
+            return { resultType: "complete" as const, ...grant, _meta: yield* meta };
+          }).pipe(fromBuilt),
+        "events/unsubscribe": ({ name, arguments: args, delivery: { url } }) =>
+          Effect.gen(function* () {
+            yield* routedTo(name);
+
+            const { feed, decode } = yield* servedNamed(name);
+            const input = yield* decode(args);
+
+            yield* asWebhook(feed.event, (webhooks, principal) =>
+              webhooks.unsubscribe({ feed, principal, input, url }),
+            );
+
+            return { resultType: "complete" as const, _meta: yield* meta };
           }).pipe(fromBuilt),
       });
 

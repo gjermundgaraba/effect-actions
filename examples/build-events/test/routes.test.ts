@@ -13,7 +13,7 @@ import { inMemory } from "./support/memory.js";
 
 // What the wire adds: the real routes, behind their real authentication, answering in memory.
 // No port is opened. The subscriber is the token each client sends, as in production.
-const served = Testing.layer(routes).pipe(Layer.provide(inMemory));
+const served = Testing.layer(routes).pipe(Layer.provide(inMemory()));
 
 const as = (token: string) => ({
   authentication: Login,

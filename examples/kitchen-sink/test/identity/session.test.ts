@@ -9,6 +9,7 @@ import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../../src/Api.js";
 import { QuotaExceeded } from "../../src/identity/Identity.js";
 import { memory } from "../../src/memory.js";
+import { services } from "../support/services.js";
 import { publicRoutes, rpc } from "../../src/routes.js";
 import { Rpc } from "../../src/Rpc.js";
 import { WorkspaceRegistry } from "../../src/workspaces/registry.js";
@@ -34,7 +35,7 @@ const served = socket.pipe(Layer.provideMerge(memory));
 // with the `HttpClient` the rpc client's protocol is given.
 const servedWithHttp = protocol.pipe(
   Layer.provideMerge(Testing.layer(Layer.merge(server, publicRoutes))),
-  Layer.provide(memory),
+  Layer.provide(services()),
 );
 
 // Each call carries its caller's session cookie, as a browser attaches it, so one client

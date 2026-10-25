@@ -115,7 +115,8 @@ export interface PushOptions {
   readonly resumesUnconfirmed?: boolean | undefined;
   /**
    * Send each position the source reaches in order with its occurrences, and no heartbeat:
-   * where a position sent is one every occurrence before it was delivered. Otherwise a heartbeat sends the position reached every 30 seconds.
+   * where a position sent is one every occurrence before it was delivered, as a webhook's
+   * watermark is. Otherwise a heartbeat sends the position reached every 30 seconds.
    */
   readonly inOrder?: boolean | undefined;
 }

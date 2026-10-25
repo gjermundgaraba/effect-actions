@@ -7,6 +7,7 @@ import {
   Option,
   Predicate,
   Redacted,
+  type Schema,
   type Scope,
 } from "effect";
 import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -338,13 +339,33 @@ export interface Options<A = unknown> {
    *
    * - A surface serving a protected event type whose source has a `subscription` hook refuses to start without it, its message naming this option.
    * - Two identities with one principal share those subscriptions, so give each its own: a tenant's id alone merges its users.
+   * - Without it no surface offers a protected event by webhook, which a subscription keys by its principal: the listing names no webhook, and a webhook subscription fails with `Event.SubscriptionError`, reason `Unsupported`.
    */
   readonly principal?: ((identity: A) => string) | undefined;
+  /**
+   * The identity's schema, its `Type` the identity: how a surface keeps an identity past a
+   * restart, as `Webhook.layer` with `persist` keeps each webhook subscriber's, its JSON in the
+   * store.
+   *
+   * **Gotchas**
+   *
+   * - `Webhook.layer` with `persist` refuses to serve a protected event by webhook without it, its message naming this option.
+   */
+  readonly schema?: Schema.Codec<unknown, unknown, never, never> | undefined;
 }
 
 // Why: `principal` is checked apart from the inferred options, against the identity `make` was
 // given, which also types its parameter: inferred with them, it would take an `any` identity.
 type PrincipalOf<A> = NoInfer<Pick<Options<A>, "principal">>;
+
+// Why: A given `schema` is checked against the identity here, both ways, since `Options` cannot
+// type it: the options are bounded by `Options<never>`, which fixes the identity as `never` before
+// `make` knows it. One way alone would take a schema of a wider or a narrower type.
+type SchemaOf<O, A> = O extends { readonly schema: infer S extends Schema.Top }
+  ? [S["Type"], A] extends [A, S["Type"]]
+    ? unknown
+    : { readonly schema: "a schema whose Type is the identity's" }
+  : unknown;
 
 type SecurityOf<O> = O extends { readonly security: infer S extends Security }
   ? S
@@ -362,11 +383,12 @@ type SecurityOf<O> = O extends { readonly security: infer S extends Security }
 export const make = <const Name extends string, I, A, const O extends Options<never> = {}>(
   name: Name,
   identity: Context.Key<I, A>,
-  ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>> & PrincipalOf<A>>
+  ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>> & PrincipalOf<A> & SchemaOf<O, A>>
 ): Descriptor<I, A, SecurityOf<O>, Name, ErrorsOf<O>> => {
   const security: Security = options[0]?.security ?? HttpApiSecurity.bearer;
   const error = errorList(options[0]?.error);
   const principal = options[0]?.principal;
+  const schema = options[0]?.schema;
 
   // Why: The name keys its scheme in the OpenAPI document as it is, so one that is no key throws.
   // Rejected: replacing other characters with `_`, which gives `app/Login` and `app:Login` one key,
@@ -397,6 +419,7 @@ export const make = <const Name extends string, I, A, const O extends Options<ne
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A type read from the options: `ErrorsOf` is the list given, one schema as a list of one, or none.
     error: error as ErrorsOf<O>,
     ...(principal === undefined ? {} : { principal }),
+    ...(schema === undefined ? {} : { schema }),
     "~provider": Context.Service<Provider<I, Name>, Runtime>(
       `effect-actions/Authentication/Provider/${name}`,
     ),

@@ -1,4 +1,4 @@
-import { type Context, Effect, Option } from "effect";
+import { type Context, Effect, Option, type Schema } from "effect";
 import type { HttpRouter, HttpServerResponse } from "effect/http";
 import type { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
@@ -105,6 +105,8 @@ export interface Descriptor<
   readonly error: E;
   /** `Options.principal` of `make`, the stable id of an identity, where given. */
   principal?(identity: A): string;
+  /** `Options.schema` of `make`, how an identity is kept, where given. */
+  readonly schema?: Schema.Codec<unknown, unknown, never, never> | undefined;
   readonly "~provider": Context.Key<Provider<I, Name>, Runtime>;
   readonly "~middleware": Context.Key<SecurityMiddleware<I, Name>, unknown>;
   /** An MCP request's verified identity, which a protected tool's call promotes. */

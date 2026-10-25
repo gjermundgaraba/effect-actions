@@ -8,17 +8,17 @@ import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../../src/Api.js";
 import { Directory } from "../../src/identity/directory.js";
 import { IssuerUnavailable, Login, QuotaExceeded, WhoAmI } from "../../src/identity/Identity.js";
-import { memory } from "../../src/memory.js";
+import { services } from "../support/services.js";
 import { publicRoutes } from "../../src/routes.js";
 
 // What authentication adds on the wire: the public port behind its real providers, answering
 // in memory. A caller is the credential its client sends.
-const served = Testing.layer(publicRoutes).pipe(Layer.provide(memory));
+const served = Testing.layer(publicRoutes).pipe(Layer.provide(services()));
 
-// A test replaces the one service it is about. Provided before `memory`, this layer is the
-// `Directory` the routes are built with; `memory` gives them the rest.
+// A test replaces the one service it is about. Provided before `services`, this layer is the
+// `Directory` the routes are built with; `services` gives them the rest.
 const servedWith = (directory: Layer.Layer<Directory>) =>
-  Testing.layer(publicRoutes).pipe(Layer.provide(directory), Layer.provide(memory));
+  Testing.layer(publicRoutes).pipe(Layer.provide(directory), Layer.provide(services()));
 
 // A directory that cannot reach its issuer.
 const issuerDown = Layer.succeed(

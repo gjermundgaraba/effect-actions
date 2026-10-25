@@ -6,7 +6,8 @@ source its occurrences come from, behind an authorizer. Event implementations go
 list as action implementations: `Action.client` watches them in process; an MCP endpoint
 ([ActionMcp.md](ActionMcp.md#serve-events)), HTTP routes
 ([ActionHttp.md](ActionHttp.md#serve-and-watch-events)) and rpcs
-([ActionRpc-events.md](ActionRpc-events.md)) serve them; and a CLI watches them
+([ActionRpc-events.md](ActionRpc-events.md)) serve them; a server POSTs them to a
+subscriber's callback by webhook ([Webhook.md](Webhook.md)); and a CLI watches them
 ([ActionCli.md](ActionCli.md#watch-events)). Events are experimental: their surfaces follow MCP's
 events extension, SEP-3415, a draft, and may change with it.
 

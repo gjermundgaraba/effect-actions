@@ -6,13 +6,14 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../src/Api.js";
 import { memory } from "../src/memory.js";
+import { services } from "./support/services.js";
 import { adminRoutes, publicRoutes } from "../src/routes.js";
 
 // Each port as a web handler, `Request` in and `Response` out: what a platform without
 // Effect's server runs, and what a test sends raw requests to. A handler builds its routes
 // once; the test owns it, and disposes it when done.
 const web = HttpRouter.toWebHandler(
-  publicRoutes.pipe(Layer.provide(HttpServer.layerServices), Layer.provide(memory)),
+  publicRoutes.pipe(Layer.provide(HttpServer.layerServices), Layer.provide(services())),
 );
 
 const adminWeb = HttpRouter.toWebHandler(

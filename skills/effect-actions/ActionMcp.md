@@ -141,6 +141,7 @@ import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import { Http } from "./Api.js";
 import { buildEvents } from "./builds/events.js";
 import { builds } from "./builds/handlers.js";
@@ -183,19 +184,33 @@ const rpc = ActionRpc.layer(Rpc, implementations).pipe(
   Layer.provide(RpcSerialization.layerNdjson),
 );
 
-export const routes = Layer.mergeAll(mcp, api, rpc).pipe(Layer.provide(authenticate));
+// Webhook delivery for MCP and HTTP alike: a member names a callback URL and a secret, with
+// MCP's `events/subscribe` or `POST /api/events/<name>/subscribe`, and each occurrence it may see
+// is POSTed there, signed. One layer holds the subscriptions of both, so either surface refreshes
+// one made over the other. `persist` keeps each in a `KeyValueStore`, so a restart goes on
+// delivering from where it reached, as the subscriber `Login`'s `schema` keeps. It needs an
+// `HttpClient` to POST, `Dns` to check where each callback resolves, and the store, which
+// `server.ts` provides.
+export const routes = Layer.mergeAll(mcp, api, rpc).pipe(
+  Layer.provide(authenticate),
+  Layer.provide(Webhook.layer({ persist: true })),
+);
 ```
 
 [build-events/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/test/routes.test.ts) watches both
 events with `client`, by stream and by poll. What each method answers, and when the endpoint
 refuses to start, is on `layerHttp`; what a watch fails with is on `client`.
 
+Webhook delivery, `events/subscribe` and `events/unsubscribe`, is `Webhook.layer`'s
+([Webhook.md](Webhook.md)), provided to the endpoint.
+
 - **Which deployment.** Push needs a server that outlives a request, so a `requestScoped`
-  endpoint serves events by poll alone. Sources, logs and `subscription` hooks' leases are built
-  once with the endpoint, either way. On a host with no lasting process, such as a serverless
-  platform, serve check sources alone, without a `subscription` hook: nothing refuses the others,
-  and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors
-  another reads as a gap, and its own leases, lost as it ends.
+  endpoint serves events by poll, and by webhook where `Webhook.layer` is provided. Sources, logs,
+  `subscription` hooks' leases and webhook subscriptions are built once with the endpoint, either
+  way. On a host with no lasting process, such as a serverless platform, serve check sources
+  alone, without a `subscription` hook or `Webhook.layer`: nothing refuses the others, and under
+  `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads
+  as a gap, and its own leases and webhook subscriptions, lost as it ends.
 
 ## Allow browser clients
 

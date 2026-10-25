@@ -20,7 +20,7 @@ import type { sentOf } from "./events.js";
 import { readElements, readWithProgress } from "./streamed.js";
 import { type Answer, elementOf, type StreamOf } from "../contract/stream.js";
 import type { Codec } from "../contract/codec.js";
-import { type PollMethod, type StreamMethod, transportOf } from "./watch.js";
+import { type PollMethod, type StreamMethod, transportOf, type WebhookMethods } from "./watch.js";
 
 /**
  * The native `HttpApiClient.make` options except `transformResponse`, which may change a call's
@@ -217,6 +217,18 @@ const methodsWith = <E, R>(
     const polls: NativeClient<PollMethod<R>> = yield* nativeOf(http, httpClient, baseUrl);
     const streams: NativeClient<StreamMethod<R>> = native;
 
+    const subscribes: NativeClient<WebhookMethods<R>["subscribe"]> = client;
+    const unsubscribes: NativeClient<WebhookMethods<R>["unsubscribe"]> = client;
+
+    const webhookOf = (name: string): WebhookMethods<R> | undefined => {
+      const subscribe = subscribes[`${name}/subscribe`];
+      const unsubscribe = unsubscribes[`${name}/unsubscribe`];
+
+      return subscribe === undefined || unsubscribe === undefined
+        ? undefined
+        : { subscribe, unsubscribe };
+    };
+
     const watch: ErasedWatch<R> = (event, input, options) =>
       Stream.unwrap(
         Effect.map(watchInput(event, input), ({ value }) =>
@@ -225,6 +237,7 @@ const methodsWith = <E, R>(
               event,
               methodOf(polls, event.name, "event"),
               methodOf(streams, event.name, "event"),
+              webhookOf(event.name),
               value,
             ),
             options,

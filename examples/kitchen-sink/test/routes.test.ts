@@ -7,13 +7,13 @@ import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Tools } from "../src/Actions.js";
 import { AdminHttp, Http } from "../src/Api.js";
-import { memory } from "../src/memory.js";
+import { services } from "./support/services.js";
 import { adminRoutes, builders, publicRoutes } from "../src/routes.js";
 
 // The host's surfaces, as routes.ts builds them, answering in memory: no port is opened. Each
 // port is a `Testing.layer` of its own, and what they share is provided above both, as
 // server.ts does.
-const shared = builders.pipe(Layer.provideMerge(memory));
+const shared = builders.pipe(Layer.provideMerge(services()));
 
 const onPublicPort = Effect.provide(Testing.layer(publicRoutes));
 

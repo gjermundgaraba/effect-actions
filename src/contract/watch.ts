@@ -1,18 +1,53 @@
-import { Cause, Duration, Effect, Predicate, Schedule, Schema, Stream } from "effect";
+import {
+  Cause,
+  Clock,
+  Duration,
+  Effect,
+  Option,
+  Predicate,
+  Queue,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
 import * as Event from "./Event.js";
+import { Checked, Gap } from "./occurrence.js";
 import { type Fed, type Page, paged } from "./pages.js";
 import { makeRecent } from "./recent.js";
+import { type Delivered, Receiving, type Subscribed, watchParameter } from "./webhooks.js";
+
+/** A webhook subscription a watch asks for: where to POST, signed how, from where, for how long. */
+export interface WebhookRequest {
+  readonly url: string;
+  readonly secret: string;
+  readonly cursor: string | null;
+  readonly ttlMs?: number | undefined;
+}
+
+/** What a subscribe answers a watch: when to refresh by, and where delivery starts. */
+export type Grant = Pick<Subscribed, "refreshBefore" | "cursor" | "truncated">;
 
 /**
- * How a client reaches one subscription to the event `name`: a poll from a cursor and a stream
- * from one, each failing with `Unsupported` where its surface serves no such mode. Each answers
- * decoded occurrences. Where the stream crosses a network, `transient`
+ * How a client keeps one webhook subscription: subscribing, or refreshing, and unsubscribing at
+ * its surface, and reading each body delivered to it.
+ */
+export interface WebhookTransport<E, R> {
+  readonly subscribe: (request: WebhookRequest) => Effect.Effect<Grant, E, R>;
+  readonly unsubscribe: (url: string) => Effect.Effect<void, E, R>;
+  readonly read: (body: Delivered) => Effect.Effect<ReadonlyArray<Fed>, E>;
+}
+
+/**
+ * How a client reaches one subscription to the event `name`: a poll from a cursor, a stream from
+ * one, each failing with `Unsupported` where its surface serves no such mode, and a webhook
+ * subscription where it delivers by webhook. Each answers decoded occurrences. Where the stream crosses a network, `transient`
  * says which of its failures a reconnect may outlast.
  */
 export interface Transport<E, R> {
   readonly name: string;
   readonly poll: (cursor: string | null) => Effect.Effect<Page, E, R>;
   readonly stream: (cursor: string | null) => Stream.Stream<Fed, E, R>;
+  readonly webhook?: WebhookTransport<E, R> | undefined;
   readonly transient?: ((error: E) => boolean) | undefined;
 }
 
@@ -139,11 +174,59 @@ export const watching = <E, R, SE>(
     const polled = (cursor: string | null) =>
       reconnecting((at) => paged(transport.poll, at), cursor);
 
+    // Why: A watch keeps one place at the receiver, and one subscription, for as long as it runs:
+    // a reconnect refreshes it, and what the receiver accepted waits for the watch through it.
+    const webhooked = ({ url, ttl }: Event.WebhookDelivery, cursor: string | null) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const { webhook } = transport;
+
+          if (webhook === undefined)
+            return yield* Effect.fail(
+              Event.SubscriptionError.of(
+                transport.name,
+                new Event.Unsupported({ feature: "deliveryMode", value: "webhook" }),
+              ),
+            );
+
+          const receiving = yield* Effect.serviceOption(Receiving);
+
+          if (Option.isNone(receiving)) return yield* noReceiver;
+
+          const received = yield* Queue.unbounded<Effect.Effect<ReadonlyArray<Fed>, E>>();
+
+          const { id, secret } = yield* receiving.value.register(
+            (body) =>
+              Queue.sizeUnsafe(received) < capacity &&
+              Queue.offerUnsafe(received, webhook.read(body)),
+          );
+
+          const callback = new URL(url);
+          callback.searchParams.set(watchParameter, id);
+
+          const request = {
+            url: callback.href,
+            secret,
+            ttlMs: ttl === undefined ? undefined : Duration.toMillis(Duration.fromInputUnsafe(ttl)),
+          };
+
+          yield* Effect.addFinalizer(() =>
+            webhook
+              .unsubscribe(request.url)
+              .pipe(Effect.timeout(unsubscribeTimeout), Effect.ignore),
+          );
+
+          return reconnecting((at) => delivered(webhook, request, received, at), cursor);
+        }),
+      );
+
     return Stream.unwrap(
       Effect.map(start, (cursor) =>
-        mode === "poll"
-          ? polled(cursor)
-          : reconnecting(transport.stream, cursor, mode === "stream" ? undefined : polled),
+        Predicate.isTagged(mode, "WebhookDelivery")
+          ? webhooked(mode, cursor)
+          : mode === "poll"
+            ? polled(cursor)
+            : reconnecting(transport.stream, cursor, mode === "stream" ? undefined : polled),
       ),
     ).pipe(
       Stream.rechunk(1),
@@ -157,6 +240,82 @@ export const watching = <E, R, SE>(
       Stream.flattenIterable,
     );
   });
+
+const noReceiver = Effect.die(
+  new Error(
+    "A watch by webhook found no receiver (provide Webhook.layerReceiver to the watch, and serve its route at the delivery's url)",
+  ),
+);
+
+// Why: A watch holds what its receiver accepted until its consumer reads it, so a consumer
+// behind by this many has the next POST answered 503, which the server retries, rather than
+// the watch holding more.
+const capacity = 16;
+
+// Why: Unsubscribing is cleanup the server's expiry does anyway, so a server that does not
+// answer delays a watch's end by this much at most.
+const unsubscribeTimeout = Duration.seconds(5);
+
+/**
+ * One webhook subscription from `cursor`, read from `received`, where its receiver puts each
+ * body: each grant, the subscribe's and each refresh's when half of it is left, is put there too,
+ * behind what was accepted before it, so its position is kept in order; a refresh's failure is
+ * put there as well, and ends the run where it is read.
+ */
+const delivered = <E, R>(
+  webhook: WebhookTransport<E, R>,
+  request: Omit<WebhookRequest, "cursor">,
+  received: Queue.Queue<Effect.Effect<ReadonlyArray<Fed>, E>>,
+  cursor: string | null,
+): Stream.Stream<Fed, E, R> => {
+  let at = cursor;
+
+  const subscribed = Effect.suspend(() => webhook.subscribe({ ...request, cursor: at })).pipe(
+    Effect.tap((grant) =>
+      Queue.offer(
+        received,
+        Effect.succeed([
+          grant.truncated
+            ? Gap.make({ cursor: grant.cursor })
+            : Checked.make({ cursor: grant.cursor }),
+        ]),
+      ),
+    ),
+  );
+
+  const refreshed = (refreshBefore: string | null): Effect.Effect<never, E, R> =>
+    refreshBefore === null
+      ? Effect.never
+      : Effect.flatMap(Clock.currentTimeMillis, (now) =>
+          Effect.andThen(
+            Effect.sleep(Duration.millis(Math.max(0, (Date.parse(refreshBefore) - now) / 2))),
+            Effect.flatMap(subscribed, (grant) => refreshed(grant.refreshBefore)),
+          ),
+        );
+
+  return Stream.unwrap(
+    Effect.gen(function* () {
+      const grant = yield* subscribed;
+
+      yield* Effect.forkScoped(
+        Effect.catchCause(refreshed(grant.refreshBefore), (cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.void
+            : Queue.offer(received, Effect.failCause(cause)),
+        ),
+      );
+
+      return Stream.fromEffectRepeat(Effect.flatten(Queue.take(received))).pipe(
+        Stream.flattenIterable,
+        Stream.tap((fed) =>
+          Effect.sync(() => {
+            at = fed.cursor ?? at;
+          }),
+        ),
+      );
+    }),
+  );
+};
 
 /**
  * The arguments of `watch(event, ...)` after the event: its input, which may be left out when

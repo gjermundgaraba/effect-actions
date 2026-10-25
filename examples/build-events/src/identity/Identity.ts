@@ -21,7 +21,9 @@ export class CurrentMember extends Context.Service<CurrentMember, Member>()(
 // with the contracts; its verifier stays on the server. `principal` names a member as one
 // subscriber: a poll arrives as a request among others, and a surface keys what it holds
 // between polls, deploy.requested's standing by, by it. Without it, MCP and HTTP refuse to
-// serve that event.
+// serve that event, and no event is offered by webhook. `schema` keeps a webhook subscriber's
+// identity, so the deliveries a restart restores run as that member.
 export const Login = Authentication.make("build-events.Login", CurrentMember, {
   principal: (member) => member.id,
+  schema: Member,
 });

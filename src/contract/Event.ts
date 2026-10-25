@@ -1,5 +1,6 @@
 import {
   Array as Arr,
+  Data,
   type DateTime,
   type Duration,
   Effect,
@@ -152,7 +153,7 @@ export interface Emitted<E extends Any> {
    *
    * **Gotchas**
    *
-   * - An id given again for another occurrence is dropped as a duplicate by a `watch`, which keeps its last 1,000: an id from a counter that restarts with the process repeats, so leave it out rather than give one.
+   * - An id given again for another occurrence is dropped as a duplicate by a `watch` and by `Webhook.layerReceiver`, each keeping its last 1,000: an id from a counter that restarts with the process repeats, so leave it out rather than give one.
    */
   readonly eventId?: string | undefined;
   readonly timestamp?: DateTime.Utc | undefined;
@@ -181,12 +182,13 @@ interface Hooked<E extends Any, R> {
    * What a subscription needs set up upstream while it lasts, such as joining a channel: a scoped
    * Effect, whose finalizer tears it down, run as the subscriber. A stream's lasts as long as the
    * stream, a poll subscription's until `lease` after its last poll, or, watched in process, until
-   * the watch ends.
+   * the watch ends, and a webhook subscription's until it is unsubscribed or lapses, set up again
+   * as `persist` restores it.
    *
    * **Gotchas**
    *
    * - Write it so it may run twice for one subscription: a lease does not outlive the process, so a poll after a restart sets it up again.
-   * - A poll subscription's runs in its first poll's context, that request included, held until its lease ends.
+   * - A poll subscription's runs in its first poll's context, that request included, held until its lease ends, where a webhook subscription's runs without the request: read what it needs from the request in middleware, which provides it as a service.
    */
   readonly subscription?:
     | ((input: E["input"]["Type"]) => Effect.Effect<void, never, R | Scope.Scope>)
@@ -331,12 +333,38 @@ export class Unsupported extends Schema.TaggedError<Unsupported>()("Unsupported"
   value: Schema.optional(Schema.String),
 }) {}
 
-const Reason = Schema.Union([NotServed, Unsupported]);
+/**
+ * Why a webhook's callback endpoint failed, in SEP-3415's categories: it refused the connection
+ * or was unreachable, timed out, failed TLS, answered a 4xx or a 5xx, or did not echo the
+ * verification challenge.
+ */
+export const CallbackCategory = Schema.Literals([
+  "connection_refused",
+  "timeout",
+  "tls_error",
+  "http_4xx",
+  "http_5xx",
+  "challenge_failed",
+]);
+
+export type CallbackCategory = typeof CallbackCategory.Type;
+
+/** A webhook subscription's callback endpoint failed its verification, or was unreachable. */
+export class CallbackFailed extends Schema.TaggedError<CallbackFailed>()("CallbackFailed", {
+  category: CallbackCategory,
+}) {}
+
+/** No webhook subscription matches the one an unsubscribe names. */
+export class NotSubscribed extends Schema.TaggedError<NotSubscribed>()("NotSubscribed", {}) {}
+
+const Reason = Schema.Union([NotServed, Unsupported, CallbackFailed, NotSubscribed]);
 
 const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
   NotServed: () => "is not served",
   Unsupported: ({ feature, value }) =>
     `is not served with this ${feature}${value === undefined ? "" : `: ${value}`}`,
+  CallbackFailed: ({ category }) => `could not reach its webhook's callback: ${category}`,
+  NotSubscribed: () => "has no such webhook subscription",
 });
 
 /**
@@ -370,6 +398,18 @@ export interface CursorStore<E = never> {
 }
 
 /**
+ * A watch delivered by webhook, which `Webhook.delivery` makes: the server POSTs each occurrence
+ * to `url`, a route `Webhook.layerReceiver` serves in the watching process, for as long as the
+ * watch is read, each grant asking for `ttl`.
+ */
+export class WebhookDelivery extends Data.TaggedClass("WebhookDelivery")<{
+  /** The https URL of the watching process's `layerReceiver` route, as the server reaches it. */
+  readonly url: string;
+  /** The lifetime each subscribe asks for; omitted, the server's longest. */
+  readonly ttl?: Duration.Input | undefined;
+}> {}
+
+/**
  * How a client watches an event type; `E` is what its `resume` store fails with.
  *
  * **Gotchas**
@@ -381,10 +421,12 @@ export interface WatchOptions<E = never> {
   /** Where to start: a cursor an occurrence or a gap carried; defaults to now. */
   readonly cursor?: string | null | undefined;
   /**
-   * `"stream"` holds one subscription open and `"poll"` asks again and again; left out, a watch
-   * streams where its surface can and polls where the server serves the event by poll alone.
+   * `"stream"` holds one subscription open, `"poll"` asks again and again, and a
+   * `Webhook.delivery` has the server POST each occurrence to a receiver this process serves;
+   * left out, a watch streams where its surface can and polls where the server serves the event
+   * by poll alone.
    */
-  readonly mode?: "stream" | "poll" | undefined;
+  readonly mode?: "stream" | "poll" | WebhookDelivery | undefined;
   /**
    * Where to keep the cursor between watches, such as across restarts: it starts from the cursor
    * kept under `key`, when no `cursor` is given, and keeps each new one there. Effect's
@@ -457,7 +499,7 @@ type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = E
  * - A source holds exactly one of `check`, `current` or `log`, checked as a surface serving its event type builds, which fails otherwise: a source of an event type no surface serves is not checked.
  * - Serving or watching an event type needs `Event.Events`, which its source attaches to as it builds: provide `Event.layerMemory` once, around the handlers announcing and the surfaces serving.
  * - An occurrence whose data breaks the event's payload is reported, and every surface sends a `Gap` in its place, a poll's page `truncated`: the rest of its page is still delivered.
- * - A read failing with no refusal is reported once, and the subscription reads on from where it reached: a stream a server holds and `Action.client`'s `watch` after 5 seconds, a client's poll, which a server answers with an error, after its reconnect backoff, from 1 second doubling to 30; a refusal ends the subscription.
+ * - A read failing with no refusal is reported once, and the subscription reads on from where it reached: a stream a server holds, a webhook's and `Action.client`'s `watch` after 5 seconds, a client's poll, which a server answers with an error, after its reconnect backoff, from 1 second doubling to 30; a refusal ends the subscription.
  */
 export function implement<
   const T extends Target,

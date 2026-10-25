@@ -11,7 +11,7 @@ import { DeployRequested } from "../src/deploys/Deploys.js";
 import { routes } from "../src/routes.js";
 import { inMemory } from "./support/memory.js";
 
-const served = Testing.layer(routes).pipe(Layer.provide(inMemory));
+const served = Testing.layer(routes).pipe(Layer.provide(inMemory()));
 
 // One client of the binding per member: the token is the member, as in production.
 const as = (token: string) =>

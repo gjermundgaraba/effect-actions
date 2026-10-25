@@ -44,6 +44,7 @@
     "./Authentication": "./src/authentication/Authentication.ts",
     "./Event": "./src/contract/Event.ts",
     "./Testing": "./src/testing/Testing.ts",
+    "./Webhook": "./src/webhook/Webhook.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -57,6 +58,7 @@
       "./Authentication": "./dist/Authentication.mjs",
       "./Event": "./dist/Event.mjs",
       "./Testing": "./dist/Testing.mjs",
+      "./Webhook": "./dist/Webhook.mjs",
       "./package.json": "./package.json"
     },
     "access": "public"

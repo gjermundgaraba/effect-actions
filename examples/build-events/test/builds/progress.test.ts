@@ -10,7 +10,7 @@ import { Login } from "../../src/identity/Identity.js";
 import { routes } from "../../src/routes.js";
 import { inMemory } from "../support/memory.js";
 
-const served = Testing.layer(routes).pipe(Layer.provide(inMemory));
+const served = Testing.layer(routes).pipe(Layer.provide(inMemory()));
 
 const bearer = (token: string) => HttpClient.mapRequest(HttpClientRequest.bearerToken(token));
 

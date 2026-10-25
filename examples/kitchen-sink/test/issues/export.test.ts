@@ -7,9 +7,9 @@ import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../../src/Api.js";
 import { ExportIssues, RateLimited } from "../../src/issues/Issues.js";
-import { memory } from "../../src/memory.js";
 import { publicRoutes, rpc } from "../../src/routes.js";
 import { Rpc } from "../../src/Rpc.js";
+import { services } from "../support/services.js";
 
 // The public port's routes and the web app's rpcs under one `Testing.layer`, as server.ts
 // serves them under one router.
@@ -26,7 +26,7 @@ const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
       ),
     ),
   ),
-  Layer.provide(memory),
+  Layer.provide(services()),
 );
 
 const ada = {

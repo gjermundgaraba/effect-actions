@@ -1,5 +1,6 @@
 import { Context, Effect } from "effect";
 import type * as Action from "./Action.js";
+import type { Codec } from "./codec.js";
 
 /**
  * The caller of a public action, `caller: Action.Anyone`: anyone, signed in or not, and no
@@ -19,6 +20,7 @@ export type Called = Pick<Action.Any, "name" | "caller">;
 /** What names one caller of a surface: its authentication's `principal`, where it has one. */
 export interface Keyed {
   principal?(identity: Action.Any["input"]["Type"]): string;
+  readonly schema?: Codec | undefined;
 }
 
 /**

@@ -2,7 +2,8 @@
 
 Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to a model as a
 native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients
-underneath. Events go the same way: watched over HTTP, MCP, Effect RPC and the CLI.
+underneath. Events go the same way: watched over HTTP, MCP, Effect RPC and the CLI, or delivered
+by webhook.
 
 **If you are a coding agent**, start at [docs/README.md](docs/README.md), not here. It routes
 every task, protecting an action and limiting request bodies included, to its page and its
@@ -103,8 +104,8 @@ type-checked and tested with the library and ship in the package.
 - [assistant](examples/assistant/): no server, the same implementations as a model's tools
   and as local commands.
 - [live-rpc](examples/live-rpc/): Effect RPC over a WebSocket.
-- [build-events](examples/build-events/): events watched over MCP, HTTP, RPC and a command line,
-  and actions reporting progress and answering a stream.
+- [build-events](examples/build-events/): events watched over MCP, HTTP, RPC, a command line and
+  webhooks, and actions reporting progress and answering a stream.
 - [kitchen-sink](examples/kitchen-sink/): every module and nearly every option in one
   application, with an index from each to the file that shows it.
 

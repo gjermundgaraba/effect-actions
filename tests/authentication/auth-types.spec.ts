@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Redacted, type Scope } from "effect";
+import { Context, Effect, Layer, Redacted, Schema, type Scope } from "effect";
 import type { HttpRouter } from "effect/http";
 import { type HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import { expectTypeOf } from "@effect/vitest";
@@ -278,3 +278,29 @@ export const securityMiddlewareSpellsEffectsUnexportedMiddlewareMarker = () => {
 
   expectTypeOf<HttpApiMiddleware.Requires<SecurityMiddleware<Stranger>>>().toEqualTypeOf<never>();
 };
+
+const Member = Schema.Struct({
+  id: Schema.String,
+  tenantId: Schema.String,
+  permissions: Schema.Array(Schema.Literals(["users:read", "users:write"])),
+});
+
+Authentication.make("auth-types.Kept", CurrentActor, {
+  principal: (actor) => actor.id,
+  schema: Member,
+});
+
+Authentication.make("auth-types.Other", CurrentActor, {
+  // @ts-expect-error -- A schema of another type than the identity.
+  schema: Schema.Struct({ id: Schema.Number }),
+});
+
+Authentication.make("auth-types.Wider", CurrentActor, {
+  // @ts-expect-error -- A schema whose type has a field the identity lacks.
+  schema: Schema.Struct({ ...Member.fields, team: Schema.String }),
+});
+
+Authentication.make("auth-types.Narrower", CurrentActor, {
+  // @ts-expect-error -- A schema whose type lacks one of the identity's fields.
+  schema: Schema.Struct({ id: Member.fields.id, tenantId: Member.fields.tenantId }),
+});

@@ -1,8 +1,7 @@
-import { ErrorReporter, Option, Schema } from "effect";
+import { ErrorReporter, Schema } from "effect";
 import { McpSchema } from "effect/ai";
 import { Rpc, RpcGroup } from "effect/rpc";
-import { Forbidden, Refusal } from "../contract/errors.js";
-import * as Event from "../contract/Event.js";
+import { CallbackUrl, eventCodes, Subscribed, WebhookSecret } from "../contract/webhooks.js";
 
 /** The extension's identifier, its key in `capabilities.extensions`. */
 export const extension = "io.modelcontextprotocol/events";
@@ -10,64 +9,14 @@ export const extension = "io.modelcontextprotocol/events";
 /** The `_meta` key a push stream's notifications carry its request id under. */
 export const subscriptionIdKey = "io.modelcontextprotocol/subscriptionId";
 
-// Why: SEP-3415's error codes, from `notFound` to `unsupported`, are provisional until it is
-// accepted, pinned to the PR head 2ec39b9c49c583411b73cb460dea5f52b5c541a6; a subscription's
-// request fails with them, and its termination carries them. The others are core MCP's and
+// Why: Beside SEP-3415's codes, `eventCodes`, provisional until it is accepted, core MCP's and
 // JSON-RPC's. tests/mcp/events.test.ts asserts them as sent.
 export const codes = {
   headerMismatch: -32020,
-  notFound: -32023,
-  forbidden: -32024,
-  unsupported: -32026,
+  ...eventCodes,
   invalidParams: -32602,
   internal: -32603,
 } as const;
-
-const encodeRefusal = Schema.encodeUnknownSync(Schema.toCodecJson(Refusal));
-
-const decodeRefusal = Schema.decodeUnknownOption(Schema.toCodecJson(Refusal));
-
-/**
- * The error SEP-3415 ends a subscription with where its subscriber is refused: `-32024`, the
- * refusal's message, and the refusal as its data.
- */
-export const terminationError = (refusal: Refusal) => ({
-  code: codes.forbidden,
-  message: refusal.message,
-  data: encodeRefusal(refusal),
-});
-
-const decodeUnsupported = Schema.decodeUnknownOption(
-  Schema.Struct({ feature: Schema.String, value: Schema.optional(Schema.String) }),
-);
-
-/**
- * What a SEP-3415 error of the event `name` names, as a subscription's request fails with one and
- * its termination carries one: a reason of `Event.SubscriptionError`, or the refusal; `undefined`
- * for a code SEP-3415 does not define, or one whose `data` does not say what it names.
- */
-export const reasonOf = (
-  name: string,
-  error: { readonly code?: number | undefined; readonly message: string; readonly data?: unknown },
-): Event.SubscriptionError | Refusal | undefined => {
-  switch (error.code) {
-    case codes.notFound:
-      return Event.SubscriptionError.of(name, new Event.NotServed());
-    case codes.forbidden:
-      return Option.getOrElse(
-        decodeRefusal(error.data),
-        () => new Forbidden({ message: error.message }),
-      );
-    case codes.unsupported:
-      return Option.getOrUndefined(
-        Option.map(decodeUnsupported(error.data), (unsupported) =>
-          Event.SubscriptionError.of(name, new Event.Unsupported(unsupported)),
-        ),
-      );
-    default:
-      return undefined;
-  }
-};
 
 const Meta = Schema.optional(Schema.Record(Schema.String, Schema.Json));
 
@@ -98,7 +47,7 @@ export class EventsError extends Schema.Error<EventsError>("effect-actions/McpEv
 export const EventDescriptor = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
-  delivery: Schema.Array(Schema.Literals(["poll", "push"])),
+  delivery: Schema.Array(Schema.Literals(["poll", "push", "webhook"])),
   inputSchema: McpSchema.ToolJson,
   payloadSchema: McpSchema.ToolOutputJson,
 });
@@ -154,6 +103,35 @@ export class StreamEvents extends Rpc.make("events/stream", {
   error: EventsError,
 }) {}
 
+export class SubscribeEvents extends Rpc.make("events/subscribe", {
+  payload: {
+    ...subscription,
+    delivery: Schema.Struct({
+      mode: Schema.Literal("webhook"),
+      url: CallbackUrl,
+      secret: WebhookSecret,
+    }),
+    ttlMs: Schema.optional(Schema.NullOr(Schema.Finite)),
+  },
+  success: Schema.Struct({
+    resultType: Schema.Literal("complete"),
+    ...Subscribed.fields,
+    _meta: Meta,
+  }),
+  error: EventsError,
+}) {}
+
+export class UnsubscribeEvents extends Rpc.make("events/unsubscribe", {
+  payload: {
+    _meta: Meta,
+    name: Schema.String,
+    arguments: Arguments,
+    delivery: Schema.Struct({ url: CallbackUrl }),
+  },
+  success: Schema.Struct({ resultType: Schema.Literal("complete"), _meta: Meta }),
+  error: EventsError,
+}) {}
+
 export const Active = Rpc.make("notifications/events/active", {
   payload: { _meta: Meta, cursor: Cursor, truncated: Schema.optional(Schema.Boolean) },
 });
@@ -174,6 +152,12 @@ export const Terminated = Rpc.make("notifications/events/terminated", {
   payload: { _meta: Meta, error: WireError },
 });
 
-export const Requests = RpcGroup.make(ListEvents, PollEvents, StreamEvents);
+export const Requests = RpcGroup.make(
+  ListEvents,
+  PollEvents,
+  StreamEvents,
+  SubscribeEvents,
+  UnsubscribeEvents,
+);
 
 export const Notifications = RpcGroup.make(Active, Occurred, Heartbeat, Failed, Terminated);

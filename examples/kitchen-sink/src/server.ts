@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
-import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
+import { NodeDns, NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { ByteSize, Config, Effect, Layer } from "effect";
-import { HttpRouter, HttpServerRequest } from "effect/http";
+import { FetchHttpClient, HttpRouter, HttpServerRequest } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { memory } from "./memory.js";
 import { adminRoutes, builders, publicRoutes, rpc } from "./routes.js";
@@ -53,6 +53,8 @@ const server = Layer.unwrap(
       // suspends on one port is refused on the other.
       Layer.provide(builders),
       Layer.provide(memory),
+      // Webhook delivery POSTs with fetch, and resolves each callback with the system's resolver.
+      Layer.provide([FetchHttpClient.layer, NodeDns.layer]),
     );
   }),
 );

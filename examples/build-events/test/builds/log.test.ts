@@ -11,7 +11,7 @@ import { routes } from "../../src/routes.js";
 import { Rpc } from "../../src/Rpc.js";
 import { inMemory } from "../support/memory.js";
 
-const served = Testing.layer(routes).pipe(Layer.provide(inMemory));
+const served = Testing.layer(routes).pipe(Layer.provide(inMemory()));
 
 const overRpc = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerNdjson),

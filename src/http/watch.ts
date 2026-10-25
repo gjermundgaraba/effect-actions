@@ -10,7 +10,8 @@ import {
   isTransient,
   receivedFrom,
 } from "../contract/transient.js";
-import type { Transport } from "../contract/watch.js";
+import type { Transport, WebhookTransport } from "../contract/watch.js";
+import { type Subscribed, webhookFed } from "../contract/webhooks.js";
 
 interface Subscription {
   readonly payload: AnySubscription;
@@ -29,17 +30,60 @@ const isNotFound = Predicate.compose(
   (error) => answeredStatus(error) === 404,
 );
 
+/** The native client's methods of one event's webhook routes, where its binding has them. */
+export interface WebhookMethods<R> {
+  readonly subscribe: (request: {
+    readonly payload: {
+      readonly input: ErasedValue;
+      readonly delivery: { readonly url: string; readonly secret: string };
+      readonly cursor: string | null;
+      readonly ttlMs?: number | undefined;
+    };
+  }) => Effect.Effect<Subscribed, unknown, R>;
+  readonly unsubscribe: (request: {
+    readonly payload: { readonly input: ErasedValue; readonly delivery: { readonly url: string } };
+  }) => Effect.Effect<void, unknown, R>;
+}
+
 /**
  * The transport of one subscription to `event` over its route, `input` its decoded input: each
- * page from `poll` and the stream from `stream`, a 404 failing as `NotServed`.
+ * page from `poll`, the stream from `stream`, and a webhook subscription from `webhook`'s routes
+ * where the binding has them, a 404 failing as `NotServed`.
  */
 export const transportOf = <R>(
   event: Event.Any,
   poll: PollMethod<R>,
   stream: StreamMethod<R>,
+  webhook: WebhookMethods<R> | undefined,
   input: ErasedValue,
 ): Transport<unknown, R> => {
   const notServed = Effect.fail(Event.SubscriptionError.of(event.name, new Event.NotServed()));
+
+  const webhooks: WebhookTransport<unknown, R> | undefined =
+    webhook === undefined
+      ? undefined
+      : {
+          subscribe: ({ url, secret, cursor, ttlMs }) =>
+            webhook
+              .subscribe({
+                payload: {
+                  input,
+                  delivery: { url, secret },
+                  cursor,
+                  ...(ttlMs === undefined ? {} : { ttlMs }),
+                },
+              })
+              .pipe(
+                failingWhenUnanswered,
+                Effect.catchIf(isNotFound, () => notServed),
+              ),
+          unsubscribe: (url) =>
+            webhook.unsubscribe({ payload: { input, delivery: { url } } }).pipe(
+              failingWhenUnanswered,
+              Effect.catchIf(isNotFound, () => notServed),
+            ),
+          read: webhookFed(event),
+        };
 
   const read = (sent: Stream.Stream<Pushed, unknown>): Stream.Stream<Fed, unknown> =>
     sent.pipe(
@@ -78,6 +122,7 @@ export const transportOf = <R>(
           ),
         ),
       ),
+    webhook: webhooks,
     transient: isTransient,
   };
 };

@@ -31,9 +31,12 @@ export class IssuerUnavailable extends Schema.TaggedError<IssuerUnavailable>()(
 ) {}
 
 // How an API client, the CLI and an MCP client prove they are CurrentMember: a bearer token,
-// the default scheme.
+// the default scheme. `principal` names one subscriber, for what MCP and HTTP hold between its
+// requests, such as its webhook subscriptions: a member of two workspaces is two subscribers,
+// so it names the workspace too, encoded so no two pairs spell one principal.
 export const Login = Authentication.make("tracker.Login", CurrentMember, {
   error: IssuerUnavailable,
+  principal: (member) => JSON.stringify([member.workspace, member.id]),
 });
 
 // How the web app proves the same identity: the session cookie its sign-in page set. It is

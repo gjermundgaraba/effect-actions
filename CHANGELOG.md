@@ -115,8 +115,8 @@ reconnecting with a backoff after a transient failure, a silent stream or a requ
 `mode`, left out, streams where the surface can and polls where it serves events by poll alone,
 which a watch learns from `Event.SubscriptionError`'s reason `Unsupported` (`feature`, `value`).
 The client reads SEP-3415's codes: `-32602` as `InvalidInput`, `-32023` as the reason
-`NotServed`, `-32026` as `Unsupported`, or `McpCallError`'s `ProtocolError` where its `data`
-does not say what it names, and `-32024` as the refusal its `data` carries,
+`NotServed`, or `NotSubscribed` where it names a subscription, `-32026` as `Unsupported`, or
+`McpCallError`'s `ProtocolError` where its `data` does not say what it names, and `-32024` as the refusal its `data` carries,
 `Action.Forbidden` where it carries none, which a subscriber whose access is revoked also gets, with
 no reason of its own. A
 `requestScoped` endpoint serves events by poll alone; on a host with no lasting process, serve
@@ -201,6 +201,57 @@ implementations, and `ActionCli.remote` a binding listing event types: each adds
 JSON until it is stopped. Guide: `docs/ActionCli.md#watch-events`; example:
 `examples/build-events/src/commands.ts`.
 
+**Webhook delivery (experimental).** A new module, `Webhook`: `Webhook.layer`, provided to an
+MCP endpoint or HTTP routes serving events, delivers a protected event whose descriptor has
+`principal` by SEP-3415's webhooks. A subscriber names a callback URL and a `whsec_` secret,
+over MCP's new `events/subscribe` and `events/unsubscribe`, or HTTP's new
+`POST <prefix>/events/<name>/subscribe` and `/unsubscribe`; the server checks the callback
+echoes a challenge, unless `allowedCallbacks` trusts it or the subscriber verified it for another subscription still granted, then POSTs each occurrence the
+subscriber may see, signed as Standard Webhooks signs, one at a time, running its authorizer
+before each, and retrying a failed POST, each wait as long as the subscription has been failing,
+from 1 second to 5 minutes, for `retryFor` from its first failure, after which the subscription
+suspends until the next refresh, which delivers it again with a fresh `retryFor`; an occurrence given up,
+before its POST or by a `410` or `413`, is a `gap`. A subscription lasts the TTL it is granted,
+at most `maxTtl`, and subscribing again refreshes it, shortening or lengthening it, rotating its
+secret, signing with both secrets for 5 minutes, answering its `deliveryStatus`, and reading on
+as the refreshed subscriber; a refusal, of a delivery or of a refresh, ends it with a
+`terminated` envelope, and any other failure is reported and read on from. A callback resolving to an
+address not globally reachable is never POSTed to, no redirect is followed by fetch's client, and no trace header
+is sent. One layer holds the subscriptions of every surface it is provided to.
+A subscribe or unsubscribe fails with `Event.SubscriptionError`'s reasons `CallbackFailed`
+(`category`) and `NotSubscribed`, a 409 over HTTP. The layer needs an `HttpClient` and `Dns`, unless
+`resolveCallbacks: false` checks a literal callback address alone and leaves a name to the
+platform's egress, for a host with no resolver such as Cloudflare Workers.
+Subscriptions live in memory, unless `persist: true` writes each, its secret, watermark, status
+and subscriber's identity included, to the application's `KeyValueStore`, which the layer then
+needs: each surface restores the ones of the events it serves as it builds, delivering on from
+their watermark with the retry budget their failures reached, a write that failed tried again
+with the next. A subscribe asking `ttlMs: null` is granted `maxTtl`, so one whose subscriber is
+gone ends there; `maxTtl` is finite, a layer given `Duration.infinity` throwing as it is made. A delivery's answer is not read, and a verification's only as far as 4 KiB. The identity is
+kept by `schema`, a new option of `Authentication.make` beside `principal`; a surface offering a
+protected event by webhook from such a layer refuses to start without it. Callback verification
+is not kept. Departures from the draft: `retryFor` defaults to 1 hour where it suggests 10 to 15
+minutes, verification POSTs have no per-host rate limit, `tls_error` is never reported apart
+from `connection_refused`, HTTP names a subscription's arguments `input`, and `maxAgeMs` is not
+honored. Guide: `docs/Webhook.md`; example: `examples/build-events`, which keeps its
+subscriptions with `persist`.
+
+**Watching by webhook (experimental).** `ActionHttp.client` and `ActionMcp.client` watch with
+`mode: Webhook.delivery({ url, ttl })`: the watch keeps a place at `Webhook.layerReceiver({ path
+})`, subscribes `url` with that place's `watch` query parameter and secret, over the binding's
+`/subscribe` route or `events/subscribe`, reads what the server POSTs there, keeps each grant's
+position in order behind what came before it, refreshes the subscription when half its grant is
+left and through a reconnect, fails with what a `terminated` envelope's code names, as an MCP
+watch does, `NotServed`, `Unsupported` or the refusal it carries, and
+unsubscribes when it ends, waiting at most 5 seconds. The receiver verifies each POST's Standard
+Webhooks signature and timestamp against its watch's secret, echoes a verification's challenge,
+drops a `webhook-id` repeated among its watch's last 1,000, answers 503 while its watch has 16 unread and 410 for a watch it
+does not have; it is served by the watching process, there being no mode forwarding deliveries
+to another. `Action.client` and `ActionRpc.client` fail such a watch with
+`Event.SubscriptionError`, reason `Unsupported`. Guide: `docs/Webhook.md#watch-by-webhook`;
+example: `examples/build-events`, whose notifier, a second service, watches failed builds by
+webhook.
+
 **Progress.** `Action.make` takes `progress`, a schema or struct fields: the handler reports
 values through its second argument, `{ progress }`, without waiting for the caller, and a
 client's call takes `{ onProgress }` after its input. Progress is lossy: a caller falling behind
@@ -250,10 +301,11 @@ for what a surface holds between one subscriber's requests: MCP and HTTP key a p
   keyed by the room a watch's header names, notified by `postMessage`; the page's `messages`
   watches it from the last id the page read, and `page.ts` gains `watch`. Its tests serialize with NDJSON, as a watch over
   HTTP needs.
-- kitchen-sink uses `Event`: `issue.changed`, a log source fed by the issue store's
+- kitchen-sink uses `Event` and `Webhook`: `issue.changed`, a log source fed by the issue store's
   changes, each keyed by its workspace and reaching that workspace's subscribers alone, shaped by
-  `transform`, served over HTTP, MCP, RPC and the CLI; and `exportIssues`, an action answering a
-  stream of issues with progress, under an export limit.
+  `transform`, served over HTTP, MCP, RPC and the CLI and by webhook (`Login` gains a `principal`,
+  and `server.ts` gives delivery `FetchHttpClient` and `NodeDns`); and `exportIssues`, an action
+  answering a stream of issues with progress, under an export limit.
 
 ## 0.20.0
 

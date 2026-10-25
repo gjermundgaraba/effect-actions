@@ -227,7 +227,15 @@ it.effect("sends a gap first to a subscriber resuming from a cursor the store ne
 A watch forked before what it should see starts from now, so let it take its first position before
 acting, with `TestClock.adjust("0 millis")`. An announcement, `notify` or `publish`, is read at
 once; without one, a check source is asked again on its own schedule, every 5 seconds unless it
-says otherwise, which `TestClock.adjust` moves past.
+says otherwise, which `TestClock.adjust` moves past. Move the clock only past what the test
+waits for: a webhook's POST still in flight times out after 5 seconds of it.
+
+Webhook delivery needs an `HttpClient` answering for the subscriber and a `Dns` resolving its
+callback to a public address, as
+[build-events/test/support/memory.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/test/support/memory.ts) provides:
+`Testing.layer` of the subscriber's routes or of a handler, and `Dns.layerStatic`. A subscription
+made through requests in memory runs on promises the test clock does not drive, so wait for it
+as that file's `settled` does.
 
 ## Assert on errors
 

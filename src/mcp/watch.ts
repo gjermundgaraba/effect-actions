@@ -14,7 +14,8 @@ import {
   isTransient,
   isTransientStatus,
 } from "../contract/transient.js";
-import type { Transport } from "../contract/watch.js";
+import type { Transport, WebhookTransport } from "../contract/watch.js";
+import { reasonOf, webhookFed } from "../contract/webhooks.js";
 import {
   Active,
   codes,
@@ -23,8 +24,9 @@ import {
   type Notifications,
   Occurred,
   PollEvents,
-  reasonOf,
+  SubscribeEvents,
   Terminated,
+  UnsubscribeEvents,
   WireError,
   type WireOccurrence,
 } from "./events.js";
@@ -82,6 +84,20 @@ const reading = <N extends Notified>(
 
   return (params) => Option.map(decode(params), read);
 };
+
+const SubscribeReply = Schema.Union([
+  Schema.Struct({ result: SubscribeEvents.successSchema }),
+  Schema.Struct({ error: WireError }),
+]);
+
+const subscribeReplyOf = Schema.decodeUnknownOption(Schema.fromJsonString(SubscribeReply));
+
+const UnsubscribeReply = Schema.Union([
+  Schema.Struct({ result: UnsubscribeEvents.successSchema }),
+  Schema.Struct({ error: WireError }),
+]);
+
+const unsubscribeReplyOf = Schema.decodeUnknownOption(Schema.fromJsonString(UnsubscribeReply));
 
 // Why: An endpoint's transient status, and an internal error answering a poll or a stream, which
 // `layerHttp` answers for a source's failure, are what a 5xx is to an HTTP watch: a reconnect may
@@ -141,20 +157,32 @@ export const transportOf = <R>(
             ),
     );
 
-  const poll = (cursor: string | null): Effect.Effect<Page, unknown, R> =>
+  /** The result of one `method` request, or what its error reply fails with. */
+  const answered = <A>(
+    method: string,
+    params: { readonly [key: string]: Schema.Json },
+    replyOf: (
+      message: string,
+    ) => Option.Option<{ readonly result: A } | { readonly error: WireError }>,
+  ): Effect.Effect<A, unknown, R> =>
     Effect.gen(function* () {
-      const messages = yield* bodyOf("events/poll", name, yield* sent("events/poll", { cursor }));
+      const messages = yield* bodyOf(method, name, yield* sent(method, params));
 
-      const reply = messages.flatMap((message) => Option.toArray(pollReplyOf(message))).at(-1);
+      const reply = messages.flatMap((message) => Option.toArray(replyOf(message))).at(-1);
 
       if (reply === undefined)
         return yield* Effect.fail(
-          callError("events/poll", name, new NoReply({ body: messages.join("\n") })),
+          callError(method, name, new NoReply({ body: messages.join("\n") })),
         );
 
-      if ("error" in reply) return yield* Effect.fail(failed("events/poll", reply.error));
+      if ("error" in reply) return yield* Effect.fail(failed(method, reply.error));
 
-      const { result } = reply;
+      return reply.result;
+    }).pipe(failingWhenUnanswered);
+
+  const poll = (cursor: string | null): Effect.Effect<Page, unknown, R> =>
+    Effect.gen(function* () {
+      const result = yield* answered("events/poll", { cursor }, pollReplyOf);
 
       return {
         events: yield* Effect.forEach(result.events, occurrenceOf),
@@ -164,7 +192,7 @@ export const transportOf = <R>(
         nextPoll:
           result.nextPollMs === undefined ? defaultNextPoll : Duration.millis(result.nextPollMs),
       };
-    }).pipe(failingWhenUnanswered);
+    });
 
   const readers = new Map<string, Reader>(
     Object.entries({
@@ -227,5 +255,23 @@ export const transportOf = <R>(
       ),
     ).pipe(readOn("MCP", name));
 
-  return { name, poll, stream, transient };
+  const webhook: WebhookTransport<unknown, R> = {
+    subscribe: ({ url: callback, secret, cursor, ttlMs }) =>
+      answered(
+        "events/subscribe",
+        {
+          delivery: { mode: "webhook", url: callback, secret },
+          cursor,
+          ...(ttlMs === undefined ? {} : { ttlMs }),
+        },
+        subscribeReplyOf,
+      ),
+    unsubscribe: (callback) =>
+      Effect.asVoid(
+        answered("events/unsubscribe", { delivery: { url: callback } }, unsubscribeReplyOf),
+      ),
+    read: webhookFed(event),
+  };
+
+  return { name, poll, stream, webhook, transient };
 };

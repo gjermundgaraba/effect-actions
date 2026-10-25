@@ -1022,6 +1022,27 @@ it("refuses a binding error with a built-in error's tag where it binds an event 
   expect(() => ActionRpc.make([Ticked], { error: [Forbidden] })).toThrow(`ActionRpc ${refusal}`);
 });
 
+it("refuses a binding error tagged SubscriptionError where it offers an event type's webhook routes", () => {
+  const Changed = Event.make("user.changed", {
+    description: "",
+    payload: {},
+    caller: CurrentActor,
+  });
+
+  const Principal = Authentication.make("bindings.Principal", CurrentActor, {
+    principal: (actor) => actor.id,
+  });
+
+  const Shadow = Schema.TaggedStruct("SubscriptionError", { message: Schema.String });
+
+  expect(() => ActionHttp.make([Changed], { authentication: Principal, error: Shadow })).toThrow(
+    `ActionHttp binding of event "user.changed"'s webhook routes: error _tag "SubscriptionError" names two error schemas`,
+  );
+  expect(ActionRpc.make([Changed], { authentication: Principal, error: Shadow }).events).toEqual([
+    Changed,
+  ]);
+});
+
 it("refuses at serving a binding spread with another descriptor than its protected event type names, on each binding", () => {
   class Stranger extends Context.Service<Stranger, { readonly id: string }>()(
     "bindings/Stranger",

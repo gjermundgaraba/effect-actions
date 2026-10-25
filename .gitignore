@@ -14,3 +14,6 @@ dist
 coverage/
 *.tsbuildinfo
 .vitest/
+
+# build-events keeps its webhook subscriptions here when run from the repository root.
+.build-events/

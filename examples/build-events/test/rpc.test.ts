@@ -15,7 +15,7 @@ import { inMemory } from "./support/memory.js";
 const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerNdjson),
   Layer.provide(Testing.layer(routes)),
-  Layer.provide(inMemory),
+  Layer.provide(inMemory()),
 );
 
 // An rpc's credential is its own headers: each call or watch says who is calling.

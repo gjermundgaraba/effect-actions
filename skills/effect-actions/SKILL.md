@@ -60,9 +60,10 @@ the installed version. Install first ([setup.md](setup.md#install)).
 | [ActionRpc-events.md](ActionRpc-events.md)               | serve and watch events over rpcs, follow what a request names, such as a room                                                                                                                |
 | [ActionToolkit.md](ActionToolkit.md)                     | give a model actions as a native Effect AI `Toolkit`, name the caller, ask for approval                                                                                                      |
 | [ActionCli.md](ActionCli.md)                             | run actions as local commands, or call a server from commands; watch events; shape flags, input and output; name the caller; add a command of your own                                       |
+| [Webhook.md](Webhook.md)                                 | deliver events to a subscriber's callback by webhook, signed, and watch by webhook                                                                                                           |
 | [Authentication.md](Authentication.md)                   | declare how callers sign in, verify credentials, publish OAuth discovery, step up for a scope                                                                                                |
 | [Authentication-advanced.md](Authentication-advanced.md) | use an API key or a cookie, read the request in a verifier, protect a route of your own, run a request policy before authentication                                                          |
-| [Testing.md](Testing.md)                                 | test an implementation in process, and routes, tools and rpcs in memory, as a signed-in caller; test events; assert on errors                                                                |
+| [Testing.md](Testing.md)                                 | test an implementation in process, and routes, tools and rpcs in memory, as a signed-in caller; test events and webhooks; assert on errors                                                   |
 
 ## Examples
 

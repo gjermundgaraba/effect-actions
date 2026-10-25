@@ -1,15 +1,24 @@
-import { Effect, Schema, Stream } from "effect";
+import { Effect, type Option, Schema, Stream } from "effect";
 import { HttpServerRequest } from "effect/http";
 import { HttpApiEndpoint, HttpApiSchema, OpenApi } from "effect/http-api";
 import type { Any as Authentication } from "../authentication/provider.js";
 import { Refusal } from "../contract/errors.js";
 import type * as Action from "../contract/Action.js";
-import type * as Event from "../contract/Event.js";
+import * as Event from "../contract/Event.js";
 import { principalOf } from "../contract/caller.js";
 import type { Feed } from "../contract/feed.js";
+import type { ErasedValue } from "../contract/implementation.js";
 import { OccurrenceOf } from "../contract/occurrence.js";
 import { type AnySubscription, PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
+import { assertDistinctTags } from "../contract/declared.js";
 import { declared } from "../contract/status.js";
+import {
+  CallbackUrl,
+  Subscribed,
+  WebhookSecret,
+  type Webhooks,
+  webhookSubscriber,
+} from "../contract/webhooks.js";
 
 /**
  * One poll's answer: the occurrences since the cursor, and when to ask again, sent as
@@ -56,6 +65,96 @@ export const eventEndpointOf = (
     success: [pageOf(event), sent],
     error: errors.map(declared),
   }).annotate(OpenApi.Description, event.description);
+
+/** What a webhook subscribe to `event` takes: its input, the callback, a cursor, a lifetime. */
+export const WebhookSubscriptionOf = <E extends Event.Any>(event: E) =>
+  Schema.Struct({
+    input: event.input,
+    delivery: Schema.Struct({ url: CallbackUrl, secret: WebhookSecret }),
+    cursor: Schema.optional(Schema.NullOr(Schema.String)).annotate({
+      description: "Where to start: a cursor a delivery or a refresh carried; omitted, from now.",
+    }),
+    ttlMs: Schema.optional(Schema.NullOr(Schema.Finite)).annotate({
+      description:
+        "The lifetime it suggests, in milliseconds; the answer's refreshBefore is the grant.",
+    }),
+  });
+
+/** What a webhook unsubscribe from `event` takes: the input and callback it subscribed with. */
+export const WebhookCancellationOf = <E extends Event.Any>(event: E) =>
+  Schema.Struct({ input: event.input, delivery: Schema.Struct({ url: CallbackUrl }) });
+
+/**
+ * The webhook routes of one protected event type at `path`: `/subscribe`, which starts or
+ * refreshes a subscription and answers its grant, and `/unsubscribe`, which ends it.
+ */
+export const webhookEndpointsOf = (event: Event.Any, path: `/${string}`, errors: Action.Errors) => {
+  const withWebhooks = [...errors, Event.SubscriptionError];
+
+  assertDistinctTags(`ActionHttp binding of event "${event.name}"'s webhook routes`, withWebhooks);
+
+  const error = withWebhooks.map(declared);
+
+  return [
+    HttpApiEndpoint.post(`${event.name}/subscribe`, `${path}/subscribe`, {
+      payload: WebhookSubscriptionOf(event).pipe(HttpApiSchema.asJson()),
+      success: Subscribed,
+      error,
+    }).annotate(OpenApi.Description, `Deliver ${event.name} to a webhook, or refresh its grant.`),
+    HttpApiEndpoint.post(`${event.name}/unsubscribe`, `${path}/unsubscribe`, {
+      payload: WebhookCancellationOf(event).pipe(HttpApiSchema.asJson()),
+      success: HttpApiSchema.NoContent,
+      error,
+    }).annotate(OpenApi.Description, `Stop delivering ${event.name} to a webhook.`),
+  ] as const;
+};
+
+/**
+ * The handlers of `feed`'s webhook routes, through `webhooks` where the host provided
+ * `Webhook.layer`; without it, both fail with `Unsupported`.
+ */
+export const webhookAnswers = (
+  feed: Feed,
+  authentication: Authentication | undefined,
+  webhooks: Option.Option<Webhooks["Service"]>,
+) => {
+  const served = webhookSubscriber(feed.event, authentication, webhooks);
+
+  return {
+    subscribe: ({
+      payload: { input, delivery, cursor = null, ttlMs },
+    }: {
+      readonly payload: {
+        readonly input: ErasedValue;
+        readonly delivery: { readonly url: string; readonly secret: string };
+        readonly cursor?: string | null | undefined;
+        readonly ttlMs?: number | null | undefined;
+      };
+    }) =>
+      Effect.flatMap(served, ({ webhooks, principal }) =>
+        webhooks.subscribe({
+          feed,
+          principal,
+          input,
+          url: delivery.url,
+          secret: delivery.secret,
+          cursor,
+          ttlMs,
+        }),
+      ),
+    unsubscribe: ({
+      payload: { input, delivery },
+    }: {
+      readonly payload: {
+        readonly input: ErasedValue;
+        readonly delivery: { readonly url: string };
+      };
+    }) =>
+      Effect.flatMap(served, ({ webhooks, principal }) =>
+        webhooks.unsubscribe({ feed, principal, input, url: delivery.url }),
+      ),
+  };
+};
 
 /**
  * Answers a subscription's request to `feed`: a page, or, where it accepts `text/event-stream`,

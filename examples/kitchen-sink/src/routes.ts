@@ -5,6 +5,7 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import { MemberActions, Tools } from "./Actions.js";
 import { authenticateOperator } from "./admin/authenticate.js";
 import { assistant } from "./assistant/handlers.js";
@@ -45,7 +46,8 @@ const api = Layer.mergeAll(
 );
 
 // The same actions as MCP tools at `/mcp`: a mixed endpoint, serving the public `getStatus`
-// beside the members' tools, and `issue.changed` as an MCP event, polled or streamed.
+// beside the members' tools, and `issue.changed` as an MCP event, polled, streamed or
+// delivered by webhook.
 const mcp = Layer.unwrap(
   Effect.map(allowedOrigins, (origins) =>
     ActionMcp.layerHttp(implementations, {
@@ -100,7 +102,14 @@ const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 // The assistant's builder yields its tools, so their handlers are provided to the layers
 // serving it, here and on `rpc`: one Layer, built once in the layer graph serving both, where
 // the tools run the issue implementation the routes serve, with no second build of it.
+//
+// Webhook delivery serves MCP's `events/subscribe` and HTTP's
+// `POST /api/v1/events/issue.changed/subscribe`: a member names a callback URL and a secret,
+// and each change it may see is POSTed there, signed. One layer holds the subscriptions of
+// both. It POSTs with an `HttpClient` and checks where each callback resolves with `Dns`, which
+// server.ts provides.
 export const publicRoutes = Layer.mergeAll(api, mcp, download, documentation, health).pipe(
+  Layer.provide(Webhook.layer()),
   Layer.provide(assistantTools),
   Layer.provide([authenticateBearer, authenticateSession, quota]),
   Layer.provide(resolveTenant.layer),

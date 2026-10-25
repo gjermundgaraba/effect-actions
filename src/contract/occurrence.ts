@@ -61,7 +61,7 @@ const untaggedOf = (event: Event.Any) =>
 
 /**
  * How a subscriber of `event` decodes an occurrence sent as JSON without its tag, as MCP's
- * notifications carry one.
+ * notifications and a webhook's body carry one.
  */
 export const untaggedOccurrenceOf = (event: Event.Any) => {
   const occurrence = OccurrenceOf(event);
