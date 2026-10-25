@@ -71,7 +71,7 @@ const Commands = Schema.Array(Command).check(Schema.isMinLength(1), Schema.isMax
 
 describe("Event current source", () => {
   it.effect.prop(
-    "answers a cursor behind the notifies reaching its key with the value as it is, under an id never given before, and its own cursor with nothing",
+    "answers a cursor behind the notifies reaching its key, or another key's, with the value as it is, under an id never given before, and its own cursor with nothing",
     { steps: Commands },
     ({ steps }) =>
       Effect.gen(function* () {
@@ -112,12 +112,11 @@ describe("Event current source", () => {
             Match.when("start", () => ({ cursor: null, current: false })),
             Match.when("foreign", () => ({ cursor: "another:0", current: false })),
             Match.orElse((index) => {
-              const own = minted.filter((each) => each.key === key);
-              const held = own[index % Math.max(own.length, 1)];
+              const held = minted[index % Math.max(minted.length, 1)];
 
               return held === undefined
                 ? { cursor: null, current: false }
-                : { cursor: held.cursor, current: held.at === reachedOf(key) };
+                : { cursor: held.cursor, current: held.key === key && held.at === reachedOf(key) };
             }),
           );
 

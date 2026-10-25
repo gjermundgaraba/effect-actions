@@ -519,6 +519,31 @@ describe("HTTP events", () => {
     }).pipe(Effect.provide(Event.layerMemory)),
   );
 
+  it.effect("holds one set-up for the polls of one input, until 5 minutes after the last", () =>
+    Effect.gen(function* () {
+      const held: Array<string> = [];
+
+      const hooked = Event.implement(Posted, {
+        check: () => Effect.succeed({ cursor: "0", events: [] }),
+        subscription: () =>
+          Effect.acquireRelease(
+            Effect.sync(() => held.push("set up")),
+            () => Effect.sync(() => held.push("torn down")),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        yield* subscribe("message.posted", { input: {} });
+        yield* TestClock.adjust("4 minutes");
+        yield* subscribe("message.posted", { input: {} });
+        yield* TestClock.adjust("4 minutes");
+        expect(held).toEqual(["set up"]);
+        yield* TestClock.adjust("1 minute");
+        expect(held).toEqual(["set up", "torn down"]);
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Public, hooked))));
+    }).pipe(Effect.provide(Event.layerMemory)),
+  );
+
   it.effect("tears its subscription hook down when the client stops reading", () =>
     Effect.gen(function* () {
       const held: Array<string> = [];
