@@ -357,8 +357,8 @@ describe("client", () => {
         };
 
         expect(failures).toMatchObject([
-          [unavailable, { ...undeclared, tool: "status" }],
-          { ...undeclared, tool: "whoAmI" },
+          [unavailable, { ...undeclared, method: "tools/call", name: "status" }],
+          { ...undeclared, method: "tools/call", name: "whoAmI" },
         ]);
       }),
   );
@@ -417,17 +417,18 @@ describe("client", () => {
       expect([...failures, ...nonMcpAnswers]).toMatchObject([
         {
           _tag: "McpCallError",
-          tool: "getUser",
+          method: "tools/call",
+          name: "getUser",
           reason: { _tag: "UndeclaredError" },
         },
         {
-          tool: "missing_tool",
+          name: "missing_tool",
           reason: { _tag: "ProtocolError", code: -32602 },
         },
-        { tool: "missing_tool", reason: { _tag: "StatusError", status: 404 } },
-        { tool: "missing_tool", reason: { _tag: "NoReply", body: "not json" } },
+        { name: "missing_tool", reason: { _tag: "StatusError", status: 404 } },
+        { name: "missing_tool", reason: { _tag: "NoReply", body: "not json" } },
         {
-          tool: "missing_tool",
+          name: "missing_tool",
           reason: {
             _tag: "NoStructuredContent",
             body: JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [] } }),

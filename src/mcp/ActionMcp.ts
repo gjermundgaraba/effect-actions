@@ -14,9 +14,11 @@ import {
   Stdio,
   Stream,
 } from "effect";
+import type { McpProtocol } from "effect/ai";
 import { AiError, McpSchema, McpServer } from "effect/ai";
 import { type Headers, HttpRouter, HttpServerRequest, type HttpServerResponse } from "effect/http";
 import type * as Action from "../contract/Action.js";
+import type * as Event from "../contract/Event.js";
 import {
   promote,
   providerOf,
@@ -28,6 +30,16 @@ import {
   type ServerBuildServices,
 } from "../authentication/provider.js";
 import { Anyone, assertAuthentication } from "../contract/caller.js";
+import {
+  type AnyEventImplementation,
+  type EventBuildError,
+  type EventBuildServices,
+  type EventOf,
+  type EventRequestOf,
+  type EventServedRequest,
+  type HoldingEvents,
+} from "../contract/feed.js";
+import { provideServed, selectFrom } from "../contract/serving.js";
 import { projectedErrors } from "../contract/declared.js";
 import { hintsOf } from "../contract/hints.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
@@ -45,12 +57,12 @@ import {
   protocols,
   routingFormsOf,
 } from "./protocol.js";
+import { refuseUnservable, type Serving, withEvents } from "./bridge.js";
 import { progressNotifier } from "./progress.js";
 import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
 import {
   acquire,
-  toList,
   answeringWhole,
   type Protected,
   type ActionOf,
@@ -60,12 +72,11 @@ import {
   type ErasedValue,
   type Holding,
   type Member,
-  provideHandlers,
-  select,
   type Known,
+  type SelectedEventsOf,
   type SelectedOf,
   type Selection,
-  type ServedActions,
+  type Served,
   type ServedRequest,
 } from "../contract/implementation.js";
 
@@ -82,15 +93,21 @@ export type { Params, RequestOptions } from "./request.js";
 /**
  * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option but `protocols`,
  * the server information, `instructions` and `extensions` among them, the actions `A` that are
- * its tools, and the native features it serves beside them.
+ * its tools and the event types `A` it serves, and the native features it serves beside them.
  */
-export interface Options<E = never, R = never, A extends Action.Any = Action.Any> extends Omit<
-  Parameters<typeof McpServer.layerStdio>[0],
-  "protocols"
-> {
+export interface Options<
+  E = never,
+  R = never,
+  A extends Action.Any | Event.Any = Action.Any | Event.Any,
+> extends Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols"> {
   /**
-   * The actions that are tools, among the implementations' actions: `[GetUser, RenameUser]`.
-   * Each keeps its implementation's authorization and builder. Defaults to every action of them.
+   * The actions that are tools and the event types it serves, among the implementations':
+   * `[GetUser, RenameUser, UserRenamed]`, exactly those. Each keeps its implementation's
+   * authorization and builder. Defaults to every action and event type of them.
+   *
+   * **Gotchas**
+   *
+   * - A list naming actions alone serves no event type: the events extension is not declared, and `events/*` answer `-32601`, until the event types are listed beside them.
    */
   readonly actions?: ReadonlyArray<A> | undefined;
   /**
@@ -113,7 +130,11 @@ export interface Options<E = never, R = never, A extends Action.Any = Action.Any
  * `McpServer.layerHttp` option, `allowedOrigins` among them, except `protocols` and
  * `allowSessionTermination`, which are fixed.
  */
-export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = Action.Any>
+export interface LayerHttpOptions<
+  E = never,
+  R = never,
+  A extends Action.Any | Event.Any = Action.Any | Event.Any,
+>
   extends
     Options<E, R, A>,
     Omit<
@@ -140,9 +161,13 @@ export interface LayerHttpOptions<E = never, R = never, A extends Action.Any = A
   readonly authentication?: Authentication;
   /**
    * Whether MCP 2026-07-28 clients may subscribe, holding a stream open for list changes and
-   * resource updates. Defaults to whether `features` are given: an endpoint of actions alone
-   * registers its tools once, before any client connects, and serves no resource. Pass `true`
-   * where a handler changes the server through `McpServer.McpServer`.
+   * resource updates. Defaults to whether `features` or event implementations are given: an
+   * endpoint of actions alone registers its tools once, before any client connects, and serves no
+   * resource. Pass `true` where a handler changes the server through `McpServer.McpServer`.
+   *
+   * **Gotchas**
+   *
+   * - `false` also serves events by poll alone: Effect's server pushes no notification without subscriptions, so `events/list` lists `["poll"]` and `events/stream` answers `-32026`.
    */
   readonly allowSubscriptions?: boolean | undefined;
   /**
@@ -422,12 +447,70 @@ const registerTools = Effect.fnUntraced(function* (
   }
 });
 
+const isEventPayloadSchema = Schema.is(McpSchema.ToolOutputJson);
+
+/**
+ * The JSON Schemas `events/list` lists for each event type of `events`, by name, refusing an event
+ * type whose input or payload is no object.
+ */
+const eventSchemasOf = (events: ReadonlyArray<AnyEventImplementation>): Serving["schemas"] => {
+  const listed = events.flatMap((app) => app.events);
+
+  assertOnce("MCP event", listed);
+
+  const schemas = listed.map((event) => ({
+    name: event.name,
+    inputSchema: toolJsonSchema(Schema.toCodecJson(event.input), true),
+    payloadSchema: toolJsonSchema(Schema.toCodecJson(event.payload), false),
+  }));
+
+  const inputs = schemas
+    .filter(({ inputSchema }) => !isToolArgumentsSchema(inputSchema))
+    .map(({ name }) => name);
+
+  if (inputs.length > 0) {
+    throw new Error(
+      `MCP event input must be one object with keys, such as a struct: ${inputs.join(", ")} (wrap a union, an array or a scalar in a field, or omit input for no arguments)`,
+    );
+  }
+
+  const payloads = schemas
+    .filter(({ payloadSchema }) => !isEventPayloadSchema(payloadSchema))
+    .map(({ name }) => name);
+
+  if (payloads.length > 0) {
+    throw new Error(
+      `MCP event payload must be one object, such as a struct: ${payloads.join(", ")} (wrap an array or a scalar in a field)`,
+    );
+  }
+
+  return new Map(
+    schemas.flatMap(({ name, inputSchema, payloadSchema }) =>
+      isToolArgumentsSchema(inputSchema) && isEventPayloadSchema(payloadSchema)
+        ? [[name, { inputSchema, payloadSchema }] as const]
+        : [],
+    ),
+  );
+};
+
+/** The revisions an endpoint speaks, the 2026-07-28 one serving `serving`'s events if any. */
+const servingEvents = <P extends ReadonlyArray<McpProtocol.AnyProtocolAdapter>>(
+  [stateless, ...rest]: readonly [typeof httpProtocol, ...P],
+  serving: Serving,
+): readonly [
+  McpProtocol.ProtocolAdapter<"2026-07-28", McpProtocol.StatelessRuntimeDescriptor>,
+  ...P,
+] =>
+  serving.events.length === 0 ? [stateless, ...rest] : [withEvents(stateless, serving), ...rest];
+
 const server = <Out, R>(
   apps: ReadonlyArray<AnyImplementation>,
+  serving: Serving,
   transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
   features: Layer.Layer<never, unknown, unknown> = Layer.empty,
-  authentication?: Authentication,
 ) => {
+  const { events, authentication } = serving;
+
   assertOnce(
     "MCP tool",
     apps.flatMap((app) => app.actions),
@@ -457,33 +540,54 @@ const server = <Out, R>(
       );
     }
 
+    yield* refuseUnservable(serving);
     yield* registerTools(apps, authentication);
   });
 
   // Why: Effect's registry is one layer, shared by a whole layer graph, so `Layer.fresh` gives each
   // endpoint its own, and the features are provided inside it, as each native helper provides that
-  // layer itself. The handlers' builders are provided outside it, so they stay shared with the
-  // graph's other surfaces.
+  // layer itself. The builders, the handlers' and the event sources', are provided outside it, so
+  // they stay shared with the graph's other surfaces.
   return Layer.effectDiscard(register).pipe(
     Layer.provide(features),
     Layer.provide(transport),
     Layer.fresh,
-    provideHandlers(apps),
+    provideServed({ apps, events }),
   );
 };
 
-const anonymousMethods = new Set(["server/discover", "tools/list", "notifications/cancelled"]);
+const anonymousMethods = new Set([
+  "server/discover",
+  "tools/list",
+  "events/list",
+  "notifications/cancelled",
+]);
 
-const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
+const namedMethods = new Map<string, "tool" | "event">([
+  ["tools/call", "tool"],
+  ["events/poll", "event"],
+  ["events/stream", "event"],
+]);
+
+const requiresAuthentication = (
+  actions: ReadonlyArray<Action.Any>,
+  events: ReadonlyArray<Event.Any>,
+) => {
   // Why: The runtime routes a 2026-07-28 request by its `Mcp-Name` decoded, a name as sent or
-  // base64-encoded between `=?base64?` and `?=`, so a public tool's name is admitted in either form.
-  // An action's name is plain ASCII, whose standard encoding is one string: any other fails closed.
-  const open = new Set(
-    actions.filter(({ caller }) => caller === Anyone).flatMap(({ name }) => routingFormsOf(name)),
-  );
+  // base64-encoded between `=?base64?` and `?=`, so a public tool's or event's name is admitted in
+  // either form. A name is plain ASCII, whose standard encoding is one string: any other fails
+  // closed.
+  const openOf = (contracts: ReadonlyArray<Pick<Action.Any, "name" | "caller">>) =>
+    new Set(
+      contracts
+        .filter(({ caller }) => caller === Anyone)
+        .flatMap(({ name }) => routingFormsOf(name)),
+    );
+
+  const open = { tool: openOf(actions), event: openOf(events) };
 
   return (headers: Headers.Headers): boolean => {
-    if (open.size === 0) return true;
+    if (open.tool.size === 0 && open.event.size === 0) return true;
 
     // Why: The runtime checks the routing headers against the body of a stateless request alone.
     // A request of a session carries none it checks, so it authenticates whatever it names.
@@ -495,11 +599,13 @@ const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
 
     if (anonymousMethods.has(method)) return false;
 
-    if (method !== "tools/call") return true;
+    const named = namedMethods.get(method);
+
+    if (named === undefined) return true;
 
     const name = headers["mcp-name"];
 
-    return name === undefined || !open.has(name);
+    return name === undefined || !open[named].has(name);
   };
 };
 
@@ -524,7 +630,7 @@ const readsItsBody = <E, R>(route: Effect.Effect<HttpServerResponse.HttpServerRe
 // Why: Protected tools without a descriptor get `unknown`, leaving `RequiredAuthentication` to
 // demand theirs. `{ authentication?: undefined }` would intersect with that demand to `never`, and
 // the error would read as every option being wrong.
-type Inferring<D, A extends Action.Any> = [D] extends [undefined]
+type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [undefined]
   ? [Protected<A>] extends [never]
     ? { readonly authentication?: undefined }
     : unknown
@@ -536,8 +642,13 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * revision opens a session with `initialize`, which holds what it sent there and no identity,
  * and lasts until that client ends it with a DELETE, answered 204, or the process stops. Protected
  * tools need `authentication`; for a serverless host, see `requestScoped`. In a tool call, what
- * middleware provides per request wins over what the endpoint was built with.
- * Guide: `docs/ActionMcp.md` in this package; in an application: `examples/mcp-tools/`.
+ * middleware provides per request wins over what the endpoint was built with. The event
+ * types among `implementations`, or those `actions` lists, are served as SEP-3415 events,
+ * `events/list`, `events/poll` and `events/stream`: experimental, as that extension is a draft,
+ * pinned to its PR head
+ * 2ec39b9c49c583411b73cb460dea5f52b5c541a6.
+ * Guide: `docs/ActionMcp.md` in this package; in an application: `examples/mcp-tools/`, and
+ * `examples/build-events/` for events.
  *
  * **Gotchas**
  *
@@ -551,71 +662,103 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * - A 2025-11-25 or 2025-06-18 client gets `structuredContent` only for a success that is an object: any other success arrives as its text block alone, a string unquoted.
  * - A client asking for an earlier revision, such as 2025-03-26, is offered 2025-11-25, so a client speaking only that earlier one cannot connect.
  * - A request body is read whole, however large, and a 2025 session holds what its `initialize` sent until it ends, so an oversized `initialize` costs memory for that long: limit bodies as `ActionHttp.layer` says.
+ * - Events are 2026-07-28's alone: a 2025 session gets `-32601` for `events/*`, and its `initialize` advertises no events extension.
+ * - With `requestScoped`, an event fed by `emit` or with a `subscription` hook is refused at startup, and `events/stream` answers `-32026`: no server outlives a request to consume a stream, hold a lease or push; a published log source's log is the `Events`' own, under `Event.layerMemory` each instance's, whose cursors another reads as a gap.
+ * - A protected event with a `subscription` hook needs `principal` on `authentication`, or the endpoint is refused at startup: a poll's hook is held per principal between requests.
+ * - A push stream holds its request open while it is read, a heartbeat every 30 seconds: a host's request timeout ends it, and `client`'s `watch` reconnects from its cursor.
+ * - A poll's `maxEvents` caps a log source's page, at most 100, and is not honored for a check source, whose page is answered whole since only its last cursor resumes; `maxAgeMs` is accepted and not honored, a log source keeping what its `log.maxAge` and `log.maxEvents` say.
+ * - A push stream's failure that no refusal explains, such as an upstream's outage, is `notifications/events/error`, its cause logged and reported, and the stream resumes from where it reached after 5 seconds; a refusal ends it with `notifications/events/terminated`. One before `active`, or a poll's, is a JSON-RPC `-32603`, which `client`'s `watch` reconnects after, as after a 5xx.
  */
 export function layerHttp<
-  const Apps extends ServedActions,
-  const O extends Selection<ActionOf<Member<Apps>>> = {},
+  const Apps extends Served,
+  const O extends Selection<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> = {},
   E = never,
   R = never,
   const D extends Authentication | undefined = undefined,
 >(
   implementations: Apps,
-  options: LayerHttpOptions<E, R, ActionOf<Member<Apps>>> &
+  options: LayerHttpOptions<E, R, ActionOf<Member<Apps>> | EventOf<Member<Apps>>> &
     O &
-    NoInfer<Known<O, LayerHttpOptions<E, R, Action.Any>>> &
-    NoInfer<RequiredAuthentication<SelectedOf<O, Apps>>> &
-    Matching<NoInfer<SelectedOf<O, Apps>>, NoInfer<D>> &
-    Inferring<D, NoInfer<SelectedOf<O, Apps>>>,
+    NoInfer<Known<O, LayerHttpOptions<E, R>>> &
+    NoInfer<RequiredAuthentication<SelectedOf<O, Apps> | SelectedEventsOf<O, Apps>>> &
+    Matching<NoInfer<SelectedOf<O, Apps> | SelectedEventsOf<O, Apps>>, NoInfer<D>> &
+    Inferring<D, NoInfer<SelectedOf<O, Apps> | SelectedEventsOf<O, Apps>>>,
 ): Layer.Layer<
   never,
   | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | EventBuildError<
+      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
+      SelectedEventsOf<O, Apps>
+    >
   | Cause.IllegalArgumentError
   | E,
   | ServerBuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | EventBuildServices<
+      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
+      SelectedEventsOf<O, Apps>
+    >
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
-      HttpToolRequestContext<RemoteRequest<Member<Apps>, SelectedOf<O, Apps>>>
+      HttpToolRequestContext<
+        | RemoteRequest<Member<Apps>, SelectedOf<O, Apps>>
+        | EventServedRequest<Member<Apps>, SelectedEventsOf<O, Apps>>
+      >
     >
   | ProviderOf<D>
   | Features<R>
 >;
 export function layerHttp(
-  apps: ServedActions,
+  apps: Served,
   {
     actions,
     features,
     path = defaultPath,
     authentication,
     requestScoped,
-    allowSubscriptions = features !== undefined,
+    allowSubscriptions,
     ...options
   }: LayerHttpOptions<unknown, unknown>,
 ) {
-  const selected = select(toList(apps), actions);
+  const { apps: selected, events } = selectFrom(apps, actions);
   const served = selected.flatMap((app) => app.actions);
+  const listed = events.flatMap((app) => app.events);
   assertAuthentication(served, authentication);
+  assertAuthentication(listed, authentication, "event");
+
+  const serving = {
+    events,
+    schemas: eventSchemasOf(events),
+    authentication,
+    requestScoped: requestScoped === true,
+  };
 
   const transport = server(
     selected,
+    serving,
     requestScoped === true
-      ? McpServer.layerHttpRequestScoped({ ...options, path, protocols: [httpProtocol] })
+      ? McpServer.layerHttpRequestScoped({
+          ...options,
+          path,
+          protocols: servingEvents([httpProtocol], serving),
+        })
       : McpServer.layerHttp({
           ...options,
           path,
-          protocols,
+          protocols: servingEvents(protocols, serving),
           allowSessionTermination: true,
-          allowSubscriptions,
+          // Why: Effect's server hands an adapter its notification sender only where subscriptions
+          // are allowed, so an endpoint pushing events allows them, though no event list changes.
+          allowSubscriptions: allowSubscriptions ?? (features !== undefined || events.length > 0),
         }),
     features,
-    authentication,
   );
 
   if (authentication === undefined) {
     return transport.pipe(Layer.provide(HttpRouter.middleware(readsItsBody).layer));
   }
 
-  const required = requiresAuthentication(served);
+  const required = requiresAuthentication(served, listed);
 
   const middleware = HttpRouter.middleware(
     Effect.map(
@@ -664,8 +807,8 @@ const jsonLinesOnly = Layer.effect(
  * go to stderr, since stdout carries the protocol. The host supplies the `Stdio` service, and
  * provides the identity around `runStdio`; arguments are tool input only and never establish
  * request identity or authority, and each implementation's `authorize` runs for its protected
- * actions. Its tool results, and how it answers each revision and an earlier one asked for, are
- * `layerHttp`'s.
+ * actions and events. Its tool results, its events, and how it answers each revision and an
+ * earlier one asked for, are `layerHttp`'s.
  *
  * **Gotchas**
  *
@@ -673,30 +816,55 @@ const jsonLinesOnly = Layer.effect(
  * - The layers provided around it log to stdout, among the protocol's lines: apply `ActionCli.logToStderr` to the program, last, as its JSDoc says.
  */
 export function runStdio<
-  const Apps extends ServedActions,
-  const O extends Selection<ActionOf<Member<Apps>>> = {},
+  const Apps extends Served,
+  const O extends Selection<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> = {},
   E = never,
   R = never,
 >(
   implementations: Apps,
-  options: Options<E, R, ActionOf<Member<Apps>>> & O & NoInfer<Known<O, Options<E, R, Action.Any>>>,
+  options: Options<E, R, ActionOf<Member<Apps>> | EventOf<Member<Apps>>> &
+    O &
+    NoInfer<Known<O, Options<E, R>>>,
 ): Effect.Effect<
   void,
   | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | EventBuildError<
+      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
+      SelectedEventsOf<O, Apps>
+    >
   | Cause.IllegalArgumentError
   | E,
   | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | EventBuildServices<
+      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
+      SelectedEventsOf<O, Apps>
+    >
   | Stdio.Stdio
-  | ToolRequestContext<ServedRequest<Member<Apps>, SelectedOf<O, Apps>>>
+  | ToolRequestContext<
+      | ServedRequest<Member<Apps>, SelectedOf<O, Apps>>
+      | EventRequestOf<Member<Apps>, SelectedEventsOf<O, Apps>>
+    >
   | Features<R>
 >;
 export function runStdio(
-  apps: ServedActions,
+  apps: Served,
   { actions, features, ...options }: Options<unknown, unknown>,
 ) {
+  const { apps: selected, events } = selectFrom(apps, actions);
+
+  const serving = {
+    events,
+    schemas: eventSchemasOf(events),
+    authentication: undefined,
+    requestScoped: false,
+  };
+
   const transport = server(
-    select(toList(apps), actions),
-    McpServer.layerStdio({ ...options, protocols }).pipe(Layer.provide(jsonLinesOnly)),
+    selected,
+    serving,
+    McpServer.layerStdio({ ...options, protocols: servingEvents(protocols, serving) }).pipe(
+      Layer.provide(jsonLinesOnly),
+    ),
     features,
   );
 

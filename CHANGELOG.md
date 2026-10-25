@@ -34,6 +34,13 @@ with `NoReply`.
 
 - Migrate: a match over `reason` that names every member names `FrameTooLarge` too.
 
+**`ActionMcp.McpCallError` names its request as `method` and `name`, not `tool`**, since a
+watch's `events/poll` and `events/stream` fail with it too: `method` is `tools/call` or the
+`events/*` request, `name` the tool or event it named. Its `message` is unchanged for a call.
+
+- Migrate: read `error.name` where code read `error.tool`, and check `error.method` where it
+  must tell a call from a watch.
+
 ### Additions
 
 **Events (experimental).** A new module, `Event`, defines event types: something that happens, which
@@ -71,8 +78,8 @@ typed `Action.Watch`, a `Stream` of occurrences and gaps that polls or streams, 
 `eventId` among its last 1,000, and keeps its cursor in an `Event.CursorStore` under `resume`,
 across retries and restarts; `Event.isEvent` tells an event type from an action. Guide:
 `docs/Event.md`; example: `examples/build-events`, whose builds notify a check source and whose
-deploy requests are published to a log. The surfaces' projections follow MCP's draft events
-extension, SEP-3415.
+deploy requests are published to a log. The surfaces' projections follow, MCP's tracking the draft
+SEP-3415.
 
 **A current source for events whose occurrence is the whole value.** `Event.implement` takes
 `current`, beside `check` and `log`: the value as it is, for the subscription's input, such as a
@@ -86,6 +93,29 @@ attached or not, so a request-scoped server answers a change announced between r
 once its event has attached as a check source, whose subscribers never read it.
 build-events' `pipeline.status` is one.
 
+**MCP events (experimental).** `ActionMcp.layerHttp` and `runStdio` serve the event
+implementations among those they are given as SEP-3415 events, a draft pinned to its PR head
+2ec39b9c49c583411b73cb460dea5f52b5c541a6: 2026-07-28 discovery advertises the extension,
+`events/list` lists each event type with its schemas and delivery, `events/poll` answers a page
+from a cursor, at most `maxEvents` of a log source's, and `events/stream` pushes occurrences
+with a heartbeat every 30 seconds, reporting an upstream's failure as `notifications/events/error`
+and resuming, and ending with `notifications/events/terminated` when the source refuses the
+subscriber. A refusal is SEP-3415's `Forbidden`, or the endpoint's 401 or 403.
+`ActionMcp.client` given event types has `watch`, streaming, or polling with `mode: "poll"`, and
+reconnecting with a backoff after a transient failure, a silent stream or a request unanswered for
+60 seconds; `Event.WatchOptions`'
+`mode`, left out, streams where the surface can and polls where it serves events by poll alone,
+which a watch learns from `Event.SubscriptionError`'s reason `Unsupported` (`feature`, `value`).
+The client reads SEP-3415's codes: `-32602` as `InvalidInput`, `-32023` as the reason
+`NotServed`, `-32025` as `LimitReached`
+(`limit`, `max`), `-32026` as `Unsupported`, and `-32024` as the refusal its `data` carries,
+`Action.Forbidden` where it carries none, which a subscriber whose access is revoked also gets, with
+no reason of its own. A
+`requestScoped` endpoint serves events by poll alone, and refuses at startup a log source fed by
+`emit` or a `subscription` hook. `allowSubscriptions` now defaults to `true` where event
+implementations are given, as `events/stream` needs it; `false` serves events by poll alone.
+Guide: `docs/ActionMcp.md#serve-events`; example: `examples/build-events`.
+
 **HTTP events (experimental).** `ActionHttp.make` binds event types beside actions, and
 `ActionHttp.layer` serves their implementations, each at `POST <prefix>/events/<name>`: its body
 `{ input, cursor }`, a `cursor` omitted or `null` reading from now, it answers a page of JSON,
@@ -96,10 +126,9 @@ or 403 before the stream starts, and ends it later; a layer's `middleware` runs 
 authentication, so one reading the identity owes nothing on a layer serving protected actions and
 event types alone. The stream sends no `id:` and reads no
 `Last-Event-ID`: a cursor in the body resumes. The OpenAPI document lists both answers.
-`ActionHttp.client` and `fetchClient` of a binding listing event types have `watch`, streaming,
-or polling with `Event.WatchOptions`' `mode: "poll"`, and reconnecting with a backoff after a
-transient failure, a silent stream or a request unanswered for 60 seconds, and the new
-`ActionHttp.WatchError` types its failures. HTTP has no `requestScoped`: on a host with no lasting process, serve check sources
+`ActionHttp.client` and `fetchClient` of a binding listing event types have `watch`, streaming
+or polling and reconnecting as `ActionMcp.client`'s, and the new `ActionHttp.WatchError` types
+its failures. HTTP has no `requestScoped`: on a host with no lasting process, serve check sources
 alone, as `ActionHttp.layer` says. Guide:
 `docs/ActionHttp.md#serve-and-watch-events`; example: `examples/build-events`.
 
@@ -193,7 +222,7 @@ method streams that array again, so every client's call of such an action return
 Guide: `docs/Action-streams.md#answer-a-stream`; example: kitchen-sink's `exportIssues`.
 
 **`principal` on `Authentication.make`** says which subscriber an identity is, as a string,
-for what a surface holds between one subscriber's requests: HTTP keys a poll's
+for what a surface holds between one subscriber's requests: MCP and HTTP key a poll's
 `subscription` hook by it, and refuse to serve a protected event with such a hook without it.
 
 ### Other changes
@@ -212,8 +241,8 @@ for what a surface holds between one subscriber's requests: HTTP keys a poll's
   HTTP needs.
 - kitchen-sink uses `Event`: `issue.changed`, a log source fed by the issue store's
   changes, each keyed by its workspace and reaching that workspace's subscribers alone, shaped by
-  `transform`, served over HTTP, RPC and the CLI; and `exportIssues`, an action answering a stream of
-  issues with progress, under an export limit.
+  `transform`, served over HTTP, MCP, RPC and the CLI; and `exportIssues`, an action answering a
+  stream of issues with progress, under an export limit.
 
 ## 0.20.0
 

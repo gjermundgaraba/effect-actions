@@ -224,7 +224,7 @@ export interface QueueOptions extends Pick<PushOptions, "inOrder"> {
 }
 
 // Why: Started at once in the request's scope, which the surface closes as its response ends, so
-// a watch from now starts where it asked. The response's status is sent before the
+// a watch from now starts where it asked, as over MCP. The response's status is sent before the
 // first read, so a failure before the subscription is confirmed resumes as a later one does, as a
 // poll's 500 is retried; each element is encoded before it is queued, inside the read's boundary,
 // so the surface's own encoder, which would send a defect's details, never fails.

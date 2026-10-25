@@ -226,8 +226,7 @@ export const Http = ActionHttp.make(
 ```
 
 [build-events/src/routes.ts](../examples/build-events/src/routes.ts) serves the same
-implementations over HTTP and RPC, and their actions over MCP. A client of the binding has
-`watch(event, input, options)`, as
+implementations over HTTP, MCP and RPC. A client of the binding has `watch(event, input, options)`, as
 `Action.client`'s: [build-events/test/http.test.ts](../examples/build-events/test/http.test.ts)
 watches by stream and by poll. What a route answers is on `layer`; what a watch fails with is on
 `client`.

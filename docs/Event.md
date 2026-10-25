@@ -3,7 +3,8 @@
 `Event.make` defines an event type: something that happens, which subscribers receive as it
 happens, each subscription selecting with its own arguments. `Event.implement` binds it to the
 source its occurrences come from, behind an authorizer. Event implementations go in the same
-list as action implementations: `Action.client` watches them in process; HTTP routes
+list as action implementations: `Action.client` watches them in process; an MCP endpoint
+([ActionMcp.md](ActionMcp.md#serve-events)), HTTP routes
 ([ActionHttp.md](ActionHttp.md#serve-and-watch-events)) and rpcs
 ([ActionRpc-events.md](ActionRpc-events.md)) serve them; and a CLI watches them
 ([ActionCli.md](ActionCli.md#watch-events)). Events are experimental: their surfaces follow MCP's

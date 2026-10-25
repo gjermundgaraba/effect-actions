@@ -1,5 +1,5 @@
-import { Cause, Duration, Effect, Predicate, Schedule, Stream } from "effect";
-import type * as Event from "./Event.js";
+import { Cause, Duration, Effect, Predicate, Schedule, Schema, Stream } from "effect";
+import * as Event from "./Event.js";
 import { type Fed, type Page, paged } from "./pages.js";
 import { makeRecent } from "./recent.js";
 
@@ -19,6 +19,11 @@ export interface Transport<E, R> {
 const reconnectDelay = Duration.seconds(1);
 
 const maxReconnectDelay = Duration.seconds(30);
+
+const isSubscriptionError = Schema.is(Event.SubscriptionError);
+
+const pushRefused = ({ reason }: Event.SubscriptionError): boolean =>
+  Predicate.isTagged(reason, "Unsupported") && reason.feature === "deliveryMode";
 
 // Why: Duplicates arrive within a reconnect or a replay of the last page, so the ids of the last
 // thousand occurrences are enough, and a long watch holds no more.
@@ -115,12 +120,37 @@ export const watching = <E, R, SE>(
       return once.pipe(Stream.repeat(Schedule.spaced(reconnectDelay)), Stream.retry(afterFailures));
     };
 
+    const streamed = (
+      open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
+      cursor: string | null,
+    ): Stream.Stream<Fed, E, R> => {
+      let at = cursor;
+
+      const reopened = reconnecting(open, cursor).pipe(
+        Stream.tap((fed) =>
+          Effect.sync(() => {
+            at = fed.cursor ?? at;
+          }),
+        ),
+      );
+
+      // Why: One the server serves by poll alone, left to the watch's choice, polls instead.
+      return mode === "stream"
+        ? reopened
+        : reopened.pipe(
+            Stream.catchIf(
+              (error) => isSubscriptionError(error) && pushRefused(error),
+              () => Stream.suspend(() => polled(at)),
+            ),
+          );
+    };
+
     const polled = (cursor: string | null) =>
       reconnecting((at) => paged(transport.poll, at), cursor);
 
     return Stream.unwrap(
       Effect.map(start, (cursor) =>
-        mode === "poll" ? polled(cursor) : reconnecting(transport.stream, cursor),
+        mode === "poll" ? polled(cursor) : streamed(transport.stream, cursor),
       ),
     ).pipe(
       Stream.rechunk(1),

@@ -2,10 +2,9 @@
 
 A CI service whose events are watched by its members: `build.finished`, read from a store that
 can be asked what finished since a cursor, and `deploy.requested`, published by the action that
-requests a deploy, with no store to ask. Each member sees only the pipelines they may. It serves
-both, with the actions that cause them, as HTTP routes and as Effect RPC, the actions as MCP tools
-too, and watches them in process, over each surface, and from a command line. Two actions answer
-more than one value: `startBuild` reports progress as it runs, and `tailLog` answers a stream of a
+requests a deploy, with no store to ask. Each member sees only the pipelines they may. It serves both, with the actions that cause
+them, as an MCP endpoint, as HTTP routes and as Effect RPC, and watches them in process, over
+each surface, and from a command line. Two actions answer more than one value: `startBuild` reports progress as it runs, and `tailLog` answers a stream of a
 build's log lines.
 
 ## Run it
@@ -39,7 +38,7 @@ src/
 │   └── events.ts      Event.implement: deploy.requested, a log source with a subscription hook
 ├── Api.ts             the HTTP binding: the actions' routes and the events' routes
 ├── Rpc.ts             the RPC binding: the actions' rpcs and the events' stream rpcs
-├── routes.ts          the HTTP routes and the rpcs, from one list of implementations, and the MCP tools
+├── routes.ts          the MCP endpoint, the HTTP routes and the rpcs, from one list of implementations
 ├── server.ts          entrypoint: the stores, the events announced, a body limit and Node's HTTP server
 ├── commands.ts        ActionCli.remote: a command per action, and `watch` per event type
 └── cli.ts             entrypoint: the commands, calling the server over HTTP
@@ -47,6 +46,7 @@ test/
 ├── support/           as: the caller of a call or subscription; inMemory: what the routes need, in memory
 ├── builds/            watching build.finished in process, a progress report and a log's stream
 ├── deploys/           watching deploy.requested in process
+├── routes.test.ts     watching both over MCP, streamed and polled, in memory
 ├── http.test.ts       watching both over HTTP, as SSE and as JSON pages, in memory
 ├── rpc.test.ts        watching over Effect RPC, in memory
 └── commands.test.ts   `watch build.finished` printing lines of JSON, in memory
@@ -67,6 +67,8 @@ test/
 | Waking a check source's subscribers after a write       | `src/builds/handlers.ts`     |
 | Something set up upstream while a subscription lasts    | `src/deploys/events.ts`      |
 | Watching events in process, with an action causing them | `test/builds/events.test.ts` |
+| Serving events over MCP, and what it needs of `Login`   | `src/routes.ts`              |
+| Watching over MCP, by stream and by poll                | `test/routes.test.ts`        |
 | Binding events to HTTP routes beside the actions        | `src/Api.ts`                 |
 | Watching over HTTP, by SSE and by JSON pages            | `test/http.test.ts`          |
 | Serving events as stream rpcs, and their serialization  | `src/routes.ts`              |

@@ -29,11 +29,9 @@ import { resolveTenant } from "./workspaces/tenant.js";
 import { IssueChanged } from "./issues/Issues.js";
 import { GetStatus } from "./workspaces/Workspaces.js";
 
-// Every domain's implementation of the public port's actions, once, and of its event. Each
-// surface below takes one of these lists and serves what its binding or its `actions` names.
-const actionImplementations = [status, identity, issues, exports, attachments, assistant];
-
-const implementations = [...actionImplementations, issueEvents];
+// Every domain's implementation of the public port's actions and events, once. Each surface
+// below takes this one list and serves what its binding or its `actions` names.
+const implementations = [status, identity, issues, issueEvents, exports, attachments, assistant];
 
 // JSON routes at `/api/v1/<action>`, in two layers of one binding, each naming its `actions`,
 // an event among them: a layer given `actions` serves exactly what it names. The quota requires
@@ -47,15 +45,15 @@ const api = Layer.mergeAll(
 );
 
 // The same actions as MCP tools at `/mcp`: a mixed endpoint, serving the public `getStatus`
-// beside the members' tools. It serves no events, so it takes the action implementations alone.
+// beside the members' tools, and `issue.changed` as an MCP event, polled or streamed.
 const mcp = Layer.unwrap(
   Effect.map(allowedOrigins, (origins) =>
-    ActionMcp.layerHttp(actionImplementations, {
+    ActionMcp.layerHttp(implementations, {
       name: "tracker",
       version: "1.0.0",
       instructions: "Read an issue before commenting on it or closing it.",
       authentication: Login,
-      actions: Tools,
+      actions: [...Tools, IssueChanged],
       features,
       // The endpoint's own Origin allowlist, narrower than the request policy, which has
       // already refused a foreign Origin: that policy also lets through a page of any name

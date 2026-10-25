@@ -10,11 +10,15 @@ import {
   type ErasedMethod,
   type ErasedStreamMethod,
   sendingJson,
+  watchInput,
 } from "../contract/call.js";
 import { type BuiltIn, Refusal } from "../contract/errors.js";
+import type * as Event from "../contract/Event.js";
 import { type CallOptions, progressSink, type Reporting } from "../contract/progress.js";
+import { type WatchArgs, watching } from "../contract/watch.js";
 import { Anyone } from "../contract/caller.js";
 import { projectedErrors } from "../contract/declared.js";
+import { split } from "../contract/listed.js";
 import { assertOnce } from "../contract/names.js";
 import { type Answer, elementOf } from "../contract/stream.js";
 import { defaultPath, liftOf, unliftedFrom } from "./protocol.js";
@@ -30,6 +34,7 @@ import {
   UndeclaredError,
 } from "./reply.js";
 import { request } from "./request.js";
+import { transportOf } from "./watch.js";
 
 /**
  * Where `client` sends, through what client, and what the endpoint's authentication declares: the
@@ -68,22 +73,41 @@ type CallError<A extends Action.Any, D> =
   | HttpClientError.HttpClientError
   | McpCallError;
 
+/** What a watch of `W` may fail with, under the endpoint's descriptor `D`. */
+type WatchError<W extends Event.Any, D> =
+  | Event.SubscriptionError
+  | BuiltIn
+  | VerifierError<W, D>["Type"]
+  | Schema.SchemaError
+  | HttpClientError.HttpClientError
+  | McpCallError;
+
 /**
- * Every action of `Actions` as `client.<action>(input)`, calling its tool; one answering a stream
- * returns a `Stream` of the elements its tool collected. Each call also fails with `E` and
+ * Every action of `Contracts` as `client.<action>(input)`, calling its tool; one answering a
+ * stream returns a `Stream` of the elements its tool collected. Where it lists event types,
+ * `watch(event, input, options)` subscribes to one. Each call and watch also fails with `E` and
  * requires `R`, what its `transformClient` adds.
  */
 export type Client<
-  Actions extends ReadonlyArray<Action.Any>,
+  Contracts extends ReadonlyArray<Action.Any | Event.Any>,
   D = undefined,
   E = never,
   R = never,
 > = {
-  readonly [A in Actions[number] as A["name"]]: Call<
+  readonly [A in Extract<Contracts[number], Action.Any> as A["name"]]: Call<
     A,
     Answer<A["success"], CallError<A, D> | E, R>
   >;
-};
+} & Watching<Extract<Contracts[number], Event.Any>, D, E, R>;
+
+type Watching<Listed extends Event.Any, D, E, R> = [Listed] extends [never]
+  ? unknown
+  : {
+      readonly watch: <W extends Listed, SE = never>(
+        event: W,
+        ...args: WatchArgs<W, SE>
+      ) => Stream.Stream<Event.Received<W>, WatchError<W, D> | E | SE, R>;
+    };
 
 type Block = McpSchema.CallToolResult["content"][number];
 
@@ -145,14 +169,14 @@ const callTool = <S extends Action.Any["success"]>(
       ),
     );
 
-    const messages = yield* bodyOf(name, response, sink);
+    const messages = yield* bodyOf("tools/call", name, response, sink);
     const text = messages.join("\n");
 
     if (response.status !== 200) {
       return yield* failWith(
         refusedWith,
         text,
-        callError(name, new StatusError({ status: response.status, body: text })),
+        callError("tools/call", name, new StatusError({ status: response.status, body: text })),
       );
     }
 
@@ -161,11 +185,13 @@ const callTool = <S extends Action.Any["success"]>(
     );
 
     if (Option.isNone(reply)) {
-      return yield* Effect.fail(callError(name, new NoReply({ body: text })));
+      return yield* Effect.fail(callError("tools/call", name, new NoReply({ body: text })));
     }
 
     if ("error" in reply.value) {
-      return yield* Effect.fail(callError(name, new ProtocolError(reply.value.error)));
+      return yield* Effect.fail(
+        callError("tools/call", name, new ProtocolError(reply.value.error)),
+      );
     }
 
     const { result } = reply.value;
@@ -176,12 +202,14 @@ const callTool = <S extends Action.Any["success"]>(
       return yield* failWith(
         projectedErrors(action),
         error,
-        callError(name, new UndeclaredError({ text: error })),
+        callError("tools/call", name, new UndeclaredError({ text: error })),
       );
     }
 
     if (result.structuredContent === undefined && lift.rest !== undefined) {
-      return yield* Effect.fail(callError(name, new NoStructuredContent({ body: text })));
+      return yield* Effect.fail(
+        callError("tools/call", name, new NoStructuredContent({ body: text })),
+      );
     }
 
     return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(success))(
@@ -198,40 +226,47 @@ const callTool = <S extends Action.Any["success"]>(
  * every field is, from its blocks alone. A declared error the tool returns, the action's own
  * or a refusal, is its decoded value, and so is a refusal the endpoint's authentication answers
  * with: a test telling a 401 or 403 from a tool result asserts the status of a request `request`
- * builds. The argument may be omitted when `{}` is a valid input. Requires the native
- * `HttpClient`, such as the one `Testing.layer` provides.
+ * builds. The argument may be omitted when `{}` is a valid input. Where `contracts` lists event
+ * types, `watch` subscribes to one as `Action.client`'s does, holding `events/stream` open, or
+ * polling `events/poll` with `mode: "poll"` or where the endpoint cannot push. Requires the
+ * native `HttpClient`, such as the one `Testing.layer` provides.
  *
  * **Gotchas**
  *
  * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
  * - A call of an action answering a stream returns a `Stream` of the elements its tool collected, the first arriving once the whole stream has ended on the server.
+ * - A watch of an event the endpoint does not serve fails with `Event.SubscriptionError`, reason `NotServed`, as an endpoint serving events answers its first request; one serving none answers `events/*` with a 404, failing with `McpCallError`'s `StatusError`.
+ * - A watch reconnects after the transport fails, a status such as 503, or 60 seconds without an answer or a frame, a second later and doubling to 30 seconds, each reconnect logged as a warning; any other failure ends it.
  * - A call given `onProgress` sends a `progressToken` and reads each `notifications/progress` as its frame arrives; a call without one sends none, so the endpoint sends no progress.
  */
 export function client<
-  const Actions extends ReadonlyArray<Action.Any>,
+  const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
   D extends Authentication | undefined = undefined,
 >(
-  actions: Actions,
+  contracts: Contracts,
   options?: ClientOptions<D>,
-): Effect.Effect<Client<Actions, D>, never, HttpClient.HttpClient>;
+): Effect.Effect<Client<Contracts, D>, never, HttpClient.HttpClient>;
 export function client<
-  const Actions extends ReadonlyArray<Action.Any>,
+  const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
   E,
   R,
   D extends Authentication | undefined = undefined,
 >(
-  actions: Actions,
+  contracts: Contracts,
   options: ClientOptions<D, E, R>,
-): Effect.Effect<Client<Actions, D, E, R>, never, HttpClient.HttpClient>;
+): Effect.Effect<Client<Contracts, D, E, R>, never, HttpClient.HttpClient>;
 export function client(
-  actions: ReadonlyArray<Action.Any>,
+  contracts: ReadonlyArray<Action.Any | Event.Any>,
   {
     url = defaultPath,
     transformClient,
     authentication,
   }: ClientOptions | ClientOptions<Authentication | undefined, unknown, unknown> = {},
 ): Effect.Effect<unknown, never, HttpClient.HttpClient> {
+  const { actions, events } = split(contracts);
+
   assertOnce("action", actions);
+  assertOnce("event", events);
 
   const refusedWith = (contract: Pick<Action.Any, "caller">): Action.Errors => [
     ...Refusal.members,
@@ -241,47 +276,64 @@ export function client(
   return Effect.map(HttpClient.HttpClient, (native) => {
     const http = transformClient === undefined ? native : transformClient(native);
 
-    return Object.fromEntries(
-      actions.map(
-        (action): readonly [string, ErasedMethod<unknown> | ErasedStreamMethod<unknown>] => {
-          const call = <S extends Action.Any["success"]>(
-            success: S,
-            input: Schema.Json,
-            onProgress: CallOptions<unknown>["onProgress"],
-          ) =>
-            callTool(
-              http,
-              url,
-              action,
-              success,
-              refusedWith(action),
-              input,
-              decodedSink(action.progress, onProgress),
-            );
+    const watch = (
+      event: Event.Any,
+      input?: Event.Any["input"]["Type"],
+      options?: Event.WatchOptions<unknown>,
+    ) =>
+      Stream.unwrap(
+        Effect.map(watchInput(event, input), ({ json }) =>
+          watching(
+            transportOf({ http, url, event, refusedWith: refusedWith(event) }, json),
+            options,
+          ),
+        ),
+      );
 
-          const element = elementOf(action.success);
+    return {
+      ...Object.fromEntries(
+        actions.map(
+          (action): readonly [string, ErasedMethod<unknown> | ErasedStreamMethod<unknown>] => {
+            const call = <S extends Action.Any["success"]>(
+              success: S,
+              input: Schema.Json,
+              onProgress: CallOptions<unknown>["onProgress"],
+            ) =>
+              callTool(
+                http,
+                url,
+                action,
+                success,
+                refusedWith(action),
+                input,
+                decodedSink(action.progress, onProgress),
+              );
 
-          // Why: A tool answers one result, so a stream's tool answers its elements collected;
-          // the method streams them again, so every client's call of the action has one type.
-          if (element !== undefined) {
-            const elements = Schema.Array(element);
+            const element = elementOf(action.success);
+
+            // Why: A tool answers one result, so a stream's tool answers its elements collected;
+            // the method streams them again, so every client's call of the action has one type.
+            if (element !== undefined) {
+              const elements = Schema.Array(element);
+
+              return [
+                action.name,
+                checkedStream(action, sendingJson, (input, onProgress) =>
+                  Stream.fromIterableEffect(call(elements, input, onProgress)),
+                ),
+              ];
+            }
 
             return [
               action.name,
-              checkedStream(action, sendingJson, (input, onProgress) =>
-                Stream.fromIterableEffect(call(elements, input, onProgress)),
+              checked(action, sendingJson, (input, onProgress) =>
+                call(action.success, input, onProgress),
               ),
             ];
-          }
-
-          return [
-            action.name,
-            checked(action, sendingJson, (input, onProgress) =>
-              call(action.success, input, onProgress),
-            ),
-          ];
-        },
+          },
+        ),
       ),
-    );
+      ...(events.length === 0 ? {} : { watch }),
+    };
   });
 }

@@ -238,6 +238,7 @@ search for in the file.
 | `client`, decoding an image                      | `test/attachments/attachments.test.ts`                        |
 | `client`: `authentication`, a verifier's error   | `test/identity/identity.test.ts`                              |
 | `request`: `headers`, `url`                      | `test/attachments/attachments.test.ts`, `test/routes.test.ts` |
+| `layerHttp`: an event, polled or streamed        | `src/routes.ts` (`mcp`)                                       |
 
 ### ActionRpc
 

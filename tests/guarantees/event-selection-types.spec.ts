@@ -5,6 +5,7 @@ import type { HttpRouter } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
+import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Event from "../../src/contract/Event.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
@@ -51,6 +52,8 @@ const pong = Action.implement([Pong], Effect.as(Spare, { pong: () => Effect.succ
 
 const clock = Event.implement(Ticked, Effect.as(Feed, { check }));
 
+const changes = Event.implement(Changed, { check }, { authorize: Event.allowAll });
+
 type CommandServices<C> = C extends Command.Command<string, {}, {}, unknown, infer R> ? R : never;
 
 export const inProcess = () => {
@@ -94,6 +97,23 @@ export const overRpc = () => {
 
   const eventsAlone = ActionRpc.layer(Rpc, [ping, pong, clock], { actions: [Ticked] });
   expectTypeOf<Boot>().not.toExtend<Layer.Services<typeof eventsAlone>>();
+};
+
+export const overMcp = () => {
+  const endpoint = ActionMcp.layerHttp([ping, clock, changes], {
+    name: "t",
+    version: "0",
+    actions: [Ping],
+  });
+
+  expectTypeOf<Feed>().not.toExtend<Layer.Services<typeof endpoint>>();
+
+  // @ts-expect-error -- A protected event type is listed, and no authentication is given.
+  ActionMcp.layerHttp([ping, clock, changes], { name: "t", version: "0", actions: [Changed] });
+
+  const stdio = ActionMcp.runStdio([ping, clock], { name: "t", version: "0", actions: [Ticked] });
+  expectTypeOf<Boot>().not.toExtend<Effect.Services<typeof stdio>>();
+  expectTypeOf<Feed>().toExtend<Effect.Services<typeof stdio>>();
 };
 
 export const asCommands = () => {

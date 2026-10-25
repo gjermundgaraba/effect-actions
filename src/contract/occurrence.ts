@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema, Struct } from "effect";
 import type * as Event from "./Event.js";
 
 /**
@@ -49,3 +49,27 @@ export const AnyOccurrence = Schema.TaggedStruct(
 /** What a subscriber of `event` decodes: an occurrence, or a gap. */
 export const ReceivedOf = <E extends Event.Any>(event: E) =>
   Schema.Union([OccurrenceOf(event), Gap]);
+
+const untaggedOf = (event: Event.Any) =>
+  Schema.toCodecJson(OccurrenceOf(event).mapFields(Struct.omit(["_tag"])));
+
+/**
+ * How a subscriber of `event` decodes an occurrence sent as JSON without its tag, as MCP's
+ * notifications carry one.
+ */
+export const untaggedOccurrenceOf = (event: Event.Any) => {
+  const occurrence = OccurrenceOf(event);
+  const decode = Schema.decodeUnknownEffect(untaggedOf(event));
+
+  return (wire: { readonly [key: string]: Schema.Json }) =>
+    Effect.map(decode(wire), (fields) => occurrence.make(fields));
+};
+
+// Why: A feed checks each occurrence's data encodes before it is delivered, so a failure to encode
+// here is a defect.
+/** How a surface encodes an occurrence of `event` as JSON without its tag, its counterpart. */
+export const encodeUntaggedOf = (event: Event.Any) => {
+  const encode = Schema.encodeUnknownEffect(untaggedOf(event));
+
+  return (occurrence: Event.Occurrence<Event.Any>) => Effect.orDie(encode(occurrence));
+};

@@ -51,7 +51,10 @@ export interface Options {
    * arguments. Its rules are `Action.Options.input`'s.
    */
   readonly input?: Codec | Fields | undefined;
-  /** What each occurrence carries, a schema or struct fields. */
+  /**
+   * What each occurrence carries, a schema or struct fields: an object, since MCP sends it as an
+   * occurrence's `data`.
+   */
   readonly payload: Codec | Fields;
 }
 
@@ -328,12 +331,23 @@ export class Unsupported extends Schema.TaggedError<Unsupported>()("Unsupported"
   value: Schema.optional(Schema.String),
 }) {}
 
-const Reason = Schema.Union([NotServed, Unsupported]);
+/**
+ * The server refuses another subscription, at a limit of its own: `limit` names it, such as
+ * `subscriptions`, and `max` the ceiling where the server gives it.
+ */
+export class LimitReached extends Schema.TaggedError<LimitReached>()("LimitReached", {
+  limit: Schema.String,
+  max: Schema.optional(Schema.Number),
+}) {}
+
+const Reason = Schema.Union([NotServed, Unsupported, LimitReached]);
 
 const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
   NotServed: () => "is not served",
   Unsupported: ({ feature, value }) =>
     `is not served with this ${feature}${value === undefined ? "" : `: ${value}`}`,
+  LimitReached: ({ limit, max }) =>
+    `is refused at the server's limit of ${limit}${max === undefined ? "" : `: at most ${max}`}`,
 });
 
 /**
@@ -377,7 +391,10 @@ export interface CursorStore<E = never> {
 export interface WatchOptions<E = never> {
   /** Where to start: a cursor an occurrence or a gap carried; defaults to now. */
   readonly cursor?: string | null | undefined;
-  /** `"stream"`, the default, holds one subscription open; `"poll"` asks again and again. */
+  /**
+   * `"stream"` holds one subscription open and `"poll"` asks again and again; left out, a watch
+   * streams where its surface can and polls where the server serves the event by poll alone.
+   */
   readonly mode?: "stream" | "poll" | undefined;
   /**
    * Where to keep the cursor between watches, such as across restarts: it starts from the cursor

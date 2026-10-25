@@ -67,36 +67,49 @@ const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
 });
 
 /**
- * An answer a client method cannot read as the action's success or a declared error: `reason`
- * says which, with what the endpoint sent, so a caller branches on it with
- * `Effect.catchReason("McpCallError", "StatusError", ...)`. `message` names the tool and the
- * reason. Structured content that does not decode as the success is a `SchemaError` instead,
- * and a request that fails an `HttpClientError`.
+ * An answer a client cannot read as the contract's: `method` is the request, `tools/call` or an
+ * `events/*` one, `name` the tool or event it named, and `reason` says what was wrong, with what
+ * the endpoint sent, so a caller branches on it with
+ * `Effect.catchReason("McpCallError", "StatusError", ...)`. `message` names all three.
+ * Structured content that does not decode as the success is a `SchemaError` instead, and a
+ * request that fails an `HttpClientError`.
  *
  * **Gotchas**
  *
  * - `returned an error: Invalid parameters for tool …`, an `UndeclaredError`, from a call its types allowed: the endpoint serves another contract under that name; give `client` the served contract value.
  */
 export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallError", {
-  tool: Schema.String,
+  method: Schema.String,
+  name: Schema.String,
   reason: Reason,
   message: Schema.String,
 }) {}
 
-export const callError = (tool: string, reason: (typeof Reason)["Type"]): McpCallError =>
-  new McpCallError({ tool, reason, message: `MCP tools/call "${tool}" ${sentenceOf(reason)}` });
+export const callError = (
+  method: string,
+  name: string,
+  reason: (typeof Reason)["Type"],
+): McpCallError =>
+  new McpCallError({
+    method,
+    name,
+    reason,
+    message: `MCP ${method} "${name}" ${sentenceOf(reason)}`,
+  });
 
-const isEventStream = (response: HttpClientResponse.HttpClientResponse) =>
+export const isEventStream = (response: HttpClientResponse.HttpClientResponse) =>
   (response.headers["content-type"] ?? "").startsWith("text/event-stream");
 
 // Why: The parser fed by hand, not `Sse.decode`, which fails with `Retry` once it reads a
-// `retry:` directive and stops reading: one sent before the reply would lose the reply.
+// `retry:` directive and stops reading: one sent before a reply would lose the reply, and a watch,
+// which sets its own reconnect delay, would reconnect to it in a loop.
 /**
  * The data of each frame of the event stream `response` is, as it arrives: more than the parser
- * holds with no frame ending fails the call of `tool` with `FrameTooLarge`.
+ * holds with no frame ending fails `method` on `name` with `FrameTooLarge`.
  */
-const framesOf = (
-  tool: string,
+export const framesOf = (
+  method: string,
+  name: string,
   response: HttpClientResponse.HttpClientResponse,
 ): Stream.Stream<string, McpCallError | HttpClientError.HttpClientError> =>
   Stream.suspend(() => {
@@ -113,7 +126,11 @@ const framesOf = (
         return error === undefined
           ? Effect.succeed(data.splice(0))
           : Effect.fail(
-              callError(tool, new FrameTooLarge({ maxEventSize: error.reason.maxEventSize })),
+              callError(
+                method,
+                name,
+                new FrameTooLarge({ maxEventSize: error.reason.maxEventSize }),
+              ),
             );
       }),
       Stream.flattenIterable,
@@ -127,13 +144,14 @@ const framesOf = (
  * A stateless request's notifications are its own.
  */
 export const bodyOf = (
-  tool: string,
+  method: string,
+  name: string,
   response: HttpClientResponse.HttpClientResponse,
   sink?: Reporting,
 ): Effect.Effect<ReadonlyArray<string>, McpCallError | HttpClientError.HttpClientError> =>
   isEventStream(response)
     ? Stream.runCollect(
-        Stream.filterEffect(framesOf(tool, response), (data) =>
+        Stream.filterEffect(framesOf(method, name, response), (data) =>
           Option.match(progressOf(data), {
             onNone: () => Effect.succeed(true),
             onSome: (value) =>

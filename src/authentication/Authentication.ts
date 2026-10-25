@@ -332,7 +332,7 @@ export interface Options<A = unknown> {
   readonly error?: Errors | Errors[number];
   /**
    * The stable id of an identity, such as its user id: what tells subscribers apart where a
-   * surface keeps a subscription between requests, such as an HTTP poll subscription's lease.
+   * surface keeps a subscription between requests, such as an MCP poll subscription's lease.
    *
    * **Gotchas**
    *

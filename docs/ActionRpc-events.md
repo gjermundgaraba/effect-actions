@@ -14,8 +14,8 @@ search [ActionRpc-failures.md](ActionRpc-failures.md). For one symbol,
 
 List the event types in `ActionRpc.make` beside the actions, and their implementations in
 `ActionRpc.layer`'s list ([ActionRpc.md](ActionRpc.md#serve-the-rpcs)); live-rpc's binding
-holds `MessagePosted` beside its actions. The same implementations serve HTTP too:
-[build-events/src/routes.ts](../examples/build-events/src/routes.ts) serves them both ways,
+holds `MessagePosted` beside its actions. The same implementations serve HTTP and MCP too:
+[build-events/src/routes.ts](../examples/build-events/src/routes.ts) serves them all three ways,
 and says which serialization a watch needs over HTTP.
 
 ```ts example=build-events/src/Rpc.ts
@@ -122,8 +122,8 @@ so `browser.ts`'s `messages` sets them around the stream, and so on every reques
 after a drop ([live-rpc/src/browser.ts](../examples/live-rpc/src/browser.ts)).
 
 - **No poll.** An rpc client holds the stream open; a client that cannot, such as a serverless
-  function, watches over [HTTP](ActionHttp.md#serve-and-watch-events).
+  function, watches over [HTTP](ActionHttp.md#serve-and-watch-events) or MCP.
 - **Which deployment.** A notify wakes the watches its process holds, so the process serving the
   sockets is the one whose `Event.Events` the handlers notify; another process's watches read
   the post at their next read, 5 seconds on. A log source fed by `emit` and a `subscription` hook
-  need a server that outlives a request.
+  need a server that outlives a request, as over MCP.

@@ -3,6 +3,7 @@ import { type McpSchema, McpServer } from "effect/ai";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpRouter } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
+import * as Event from "../../src/contract/Event.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import { authorizing, Credentials, SignInRequired } from "../support/credentials.js";
@@ -206,6 +207,68 @@ export const transformErrorsAndServices = Effect.gen(function* () {
   // @ts-expect-error -- A call requires what the transform requires.
   const unprovided: Effect.Effect<void, unknown> = call;
   void unprovided;
+});
+
+const Watched = Event.make("account.watched", {
+  description: "",
+  payload: { by: Schema.String },
+  caller: Caller,
+});
+
+const watched = Event.implement(
+  Watched,
+  Effect.as(Store, {
+    check: () => Effect.as(Region, { cursor: "0", events: [] }),
+  }),
+  { authorize: Event.allowAll },
+);
+
+const PrincipalLogin = Authentication.make("mcp-types.PrincipalLogin", Caller, {
+  principal: (caller) => caller,
+});
+
+const verifyPrincipal = Authentication.layer(PrincipalLogin, () => Effect.succeed("c"));
+
+const served = ActionMcp.layerHttp([mixed, watched], {
+  ...options,
+  authentication: PrincipalLogin,
+});
+
+expectTypeOf<Layer.Services<typeof served>>().toEqualTypeOf<
+  | HttpRouter.HttpRouter
+  | Store
+  | HttpRouter.Request<"Requires", Region>
+  | Layer.Success<typeof verifyPrincipal>
+  | Event.Events
+>();
+
+expectTypeOf(ActionMcp.runStdio(watched, options)).toEqualTypeOf<
+  Effect.Effect<
+    void,
+    Cause.IllegalArgumentError,
+    Stdio.Stdio | Store | Caller | Region | Event.Events
+  >
+>();
+
+// @ts-expect-error -- A protected event is served only with authentication.
+ActionMcp.layerHttp(watched, options);
+
+export const watchOverMcp = Effect.gen(function* () {
+  const mcp = yield* ActionMcp.client([Open, Watched], { authentication: Login });
+  const watching = mcp.watch(Watched);
+
+  expectTypeOf<Stream.Success<typeof watching>>().toEqualTypeOf<Event.Received<typeof Watched>>();
+  expectTypeOf<Stream.Error<typeof watching>>().toEqualTypeOf<
+    | Event.SubscriptionError
+    | Action.BuiltIn
+    | Schema.SchemaError
+    | HttpClientError.HttpClientError
+    | ActionMcp.McpCallError
+  >();
+  expectTypeOf<Stream.Services<typeof watching>>().toBeNever();
+
+  // @ts-expect-error -- A client listing no event type has no `watch`.
+  void (yield* ActionMcp.client([Open])).watch;
 });
 
 const Tail = Action.make("tail", { ...read, success: Action.Stream(Schema.String) });

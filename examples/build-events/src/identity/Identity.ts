@@ -20,8 +20,8 @@ export class CurrentMember extends Context.Service<CurrentMember, Member>()(
 // How a remote caller proves it is a member: a bearer token. Clients import this descriptor
 // with the contracts; its verifier stays on the server. `principal` names a member as one
 // subscriber: a poll arrives as a request among others, and a surface keys what it holds
-// between polls, deploy.requested's standing by, by it. Without it, HTTP refuses to serve
-// that event.
+// between polls, deploy.requested's standing by, by it. Without it, MCP and HTTP refuse to
+// serve that event.
 export const Login = Authentication.make("build-events.Login", CurrentMember, {
   principal: (member) => member.id,
 });
