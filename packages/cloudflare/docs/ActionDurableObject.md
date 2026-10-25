@@ -282,8 +282,9 @@ export default defineConfig({
 ```
 
 From `cloudflare:test`, `evictDurableObject(stub)` evicts an instance as hibernation does,
-its sockets staying open, `runDurableObjectAlarm(stub)` runs a set alarm now, and
-`runInDurableObject(stub, fn)` reads or changes the object's storage directly. Call the Worker
+its sockets staying open, the runtime runs an alarm set in the past at once, which chat-rooms'
+`test/worker.test.ts` waits for, and `runInDurableObject(stub, fn)` reads or changes the object's
+storage directly. Call the Worker
 as a deployment would with `layerHttpClient(exports.default)`, and open a socket by upgrading
 through its `fetch`, handing `response.webSocket` to `Socket.fromWebSocket` under
 `RpcClient.layerProtocolSocket`

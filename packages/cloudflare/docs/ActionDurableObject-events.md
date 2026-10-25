@@ -73,9 +73,10 @@ The page reads, then watches from the last id it read: `messages` in
 socket's subscription in its storage while it hibernates and resumes it from the position it
 reached when it next wakes, on any event, authenticating it again from the headers it was
 made with: a token that expired meanwhile ends the watch with `Unauthenticated`. What a check,
-current and log source do in an object, and how to empty its storage, are on
-`ActionDurableObject.layerEvents` and `ActionDurableObject.wipe`; which calls the object keeps
-across hibernation, on `ActionDurableObject.layerWebSocket`.
+current and log source do in an object is on `ActionDurableObject.layerEvents`; which calls the
+object keeps across hibernation, on `ActionDurableObject.layerWebSocket`. To empty an object,
+`ctx.storage.deleteAll()` deletes its subscriptions, webhook subscriptions and alarm times with
+the rest: close its sockets as it does, so their pages connect again and watch anew.
 
 ## Announce a change another object makes
 

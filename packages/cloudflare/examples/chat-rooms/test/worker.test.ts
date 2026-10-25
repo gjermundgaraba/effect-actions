@@ -1,6 +1,6 @@
-import { evictDurableObject, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { Effect, Schedule, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { TestClock } from "effect/testing";
@@ -371,7 +371,6 @@ describe("the Worker and its rooms", () => {
       );
 
       const old = yield* json.postMessage({ room: "design", text: "From yesterday." });
-      const recent = yield* json.postMessage({ room: "design", text: "From today." });
 
       yield* Effect.promise(() =>
         runInDurableObject(stub, (_, state) => {
@@ -379,16 +378,21 @@ describe("the Worker and its rooms", () => {
         }),
       );
 
-      expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
+      // The next post sets the alarm for the day-old message's expiry, already past, so the
+      // runtime runs it at once: the test waits until it has set the next, for the recent one's.
+      const recent = yield* json.postMessage({ room: "design", text: "From today." });
 
-      const kept = yield* (yield* pageIn("design", "ada")).read(0);
-
-      const next = yield* Effect.promise(() =>
-        runInDurableObject(stub, (_, state) => state.storage.getAlarm()),
+      yield* Effect.promise(() =>
+        vi.waitUntil(
+          () =>
+            runInDurableObject(stub, async (_, state) => {
+              return (await state.storage.getAlarm()) === recent.at + day;
+            }),
+          { timeout: 5_000, interval: 10 },
+        ),
       );
 
-      expect(kept).toEqual([recent]);
-      expect(next).toBe(recent.at + day);
+      expect(yield* (yield* pageIn("design", "ada")).read(0)).toEqual([recent]);
     }).pipe(Effect.scoped, Effect.provide(worker)),
   );
 });
