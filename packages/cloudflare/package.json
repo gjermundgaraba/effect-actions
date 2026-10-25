@@ -50,6 +50,6 @@
   },
   "peerDependencies": {
     "@gjermundgaraba/effect-actions": "workspace:~",
-    "effect": "~4.0.4"
+    "effect": "~4.0.5"
   }
 }
