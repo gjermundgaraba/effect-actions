@@ -32,6 +32,8 @@ release. Add a tool name to select part of the graph. For example, run
 
 # effect-actions
 
+`@gjermundgaraba/effect-actions` at the root, and `@gjermundgaraba/effect-actions-cloudflare` in `packages/cloudflare`, a pnpm workspace package released with it.
+
 ## Working safely and validating
 
 These rules override the regenerated Vite+ block above; do not edit that block.
@@ -43,6 +45,7 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 
 ## Design
 
+- These rules hold for both packages. `packages/cloudflare` imports the core by its package name, its public modules alone, and its tests run on workerd through `@cloudflare/vitest-plugin`, as the root `vp test`'s second project.
 - Keep flat `src/<domain>/` folders: PascalCase public modules beside lowercase private files. Shared behavior belongs in `contract`, the shared kernel, which imports no other domain; name each of its private files for the one concept it holds (`caller`, `declared`, `status`), never a catch-all such as `rules` or `utils`. Each surface owns its projection and validates only names it serves. Public modules expose consumer types as `Options`, `<Function>Options` and `Any`, or a named options interface two functions share, or a named type a consumer writes, such as a method's parameter. Reach another domain through its public module; `vite.config.ts` names the few shared private files, and domains import without cycles.
 - Use native Effect servers, clients and composition; add no protocol runtime. Consult pinned `node_modules/effect` before inventing helpers or assuming APIs. Remove restrictions that obstruct useful native composition. Support the pinned TypeScript, without older-compiler workarounds.
 - Applications own verification, login, consent and authorization policy; the library enforces it. Operational limits belong in handlers with declared errors, record checks in data access. Separate startup dependencies from request requirements; never provide request identity at server startup.
@@ -59,6 +62,7 @@ The readers are coding agents, and they read two ways. Each fact has one home, c
 - **Looking up, by grepping one symbol or one message**: a rule about an option lives in that option's JSDoc; a wire fact in the JSDoc of the declaration that produces it, and in an example test that asserts it as sent; the fix for a failure the library throws in its message, one fix per check, chosen by the check and not by which claimant collided. A declaration's JSDoc is one paragraph saying what it is, then optional `**Gotchas**`: one line per trap, symptom and consequence on that line, since a grep returns one line. `<Module>-failures.md` holds only what is found by a fragment of a message the library does not own, a compiler diagnostic or Effect's own error, one line per entry; its reader arrives by the message, so an entry may repeat a gotcha's sentence.
 - `README.md` is the human pitch and quickstart, not a reference: its fences are plain snippets showing the shape of the code, no imports, exports or comments, and the whole files are the examples it links. Route readers through `docs/README.md`. Define a term where it is first used, and prefer Effect's and TypeScript's words to new ones.
 - Examples are independent, complete applications following `examples/README.md`, importing the package by name and no other example. Their domains declare services; a Layer reaching a technology (a file, a database, an upstream API) is an adapter in `src/platform/`, which no domain imports. Comments teach why; mark deployment shortcuts `DEMO ONLY`.
+- The Cloudflare package's pages and examples are its own, in `packages/cloudflare/docs/` and `packages/cloudflare/examples/`, and ship with it, under the same rules: its `ts` fences are whole files of its own examples, it links inside that package alone and names the core's pages in prose, and it defines its terms where first used.
 - Edit `docs/`, never generated `skills/effect-actions/`; run `vp run docs:sync` after docs changes.
 
 ## Tests
@@ -76,10 +80,10 @@ The readers are coding agents, and they read two ways. Each fact has one home, c
 
 ## Release
 
-- To release: bump `package.json`'s version, commit, tag `v<version>` and push the tag. `.github/workflows/npm.yml` publishes it.
-- After adding, renaming or removing public modules, run `vp run build` and include the generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
+- To release: bump the version in `package.json` and `packages/cloudflare/package.json`, which carry one, commit, tag `v<version>` and push the tag. `.github/workflows/npm.yml` publishes both, the core first, skipping a version npm already has. A new package's first version is published by hand, as the workflow's header says.
+- After adding, renaming or removing public modules, run `vp run -r build` and include each package's generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
 - `package.json`'s `engines` (`>=26`) is the floor stated to consumers. CI builds and tests on `.node-version`, inside that range; raising the floor is a breaking change.
-- Upgrade Effect development packages together and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
+- Upgrade Effect development packages together, in the catalog of `pnpm-workspace.yaml` both packages read, and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
 
 ## Effect
 

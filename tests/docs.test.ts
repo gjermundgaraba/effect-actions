@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "@effect/vitest";
+import cloudflareManifest from "../packages/cloudflare/package.json" with { type: "json" };
 import manifest from "../package.json" with { type: "json" };
 import { docsDirectory, examplesDirectory } from "../scripts/skill.ts";
 
@@ -14,9 +15,12 @@ const markdownIn = (directory: string) =>
     .filter((name) => name.endsWith(".md"))
     .map((name) => relative(root, join(directory, name)));
 
-const examples = readdirSync(examplesDirectory).filter((name) =>
-  statSync(join(examplesDirectory, name)).isDirectory(),
-);
+const directoriesIn = (directory: string) =>
+  readdirSync(directory).filter((name) => statSync(join(directory, name)).isDirectory());
+
+const examples = directoriesIn(examplesDirectory);
+
+const cloudflare = "packages/cloudflare";
 
 const docsPages = markdownIn(docsDirectory);
 
@@ -101,7 +105,7 @@ it.each(docsPages)("%s fences TypeScript only as a whole example file", (page) =
 
 it("gives every module page a -failures.md beside it, each entry one line", () => {
   for (const page of docsPages) {
-    if (page.endsWith("-failures.md") || page === "docs/README.md") continue;
+    if (page.endsWith("-failures.md") || page.endsWith("docs/README.md")) continue;
 
     const own = page.replace(/\.md$/, "-failures.md");
 
@@ -173,44 +177,49 @@ it("names, in the JSDoc that ships, only pages and example paths the package hol
   expect(named.filter(({ path }) => !existsSync(join(root, path)))).toEqual([]);
 });
 
-it("names, in the pages and READMEs, only symbols the public modules export", () => {
-  const sources = readdirSync(join(root, "src"), { recursive: true, encoding: "utf8" });
+const exportsOf = (pkg: string, paths: ReadonlyArray<string>) => {
+  const sources = readdirSync(join(root, pkg, "src"), { recursive: true, encoding: "utf8" });
 
-  const exported = new Map(
-    Object.keys(manifest.exports)
-      .filter((path) => path !== "./package.json")
-      .map((path) => {
-        const module = path.slice("./".length);
-        const file = sources.find((name) => name.endsWith(`/${module}.ts`));
+  return paths
+    .filter((path) => path !== "./package.json")
+    .map((path) => {
+      const module = path.slice("./".length);
+      const file = sources.find((name) => name.endsWith(`/${module}.ts`));
 
-        if (file === undefined) throw new Error(`No public module file for ${module}`);
+      if (file === undefined) throw new Error(`No public module file for ${pkg}${module}`);
 
-        const source = read(`src/${file}`);
+      const source = read(`${pkg}src/${file}`);
 
-        const declared = Array.from(
-          source.matchAll(/^export (?:declare )?(?:const|function|interface|type|class) (\w+)/gm),
-          ([, name = ""]) => name,
-        );
+      const declared = Array.from(
+        source.matchAll(/^export (?:declare )?(?:const|function|interface|type|class) (\w+)/gm),
+        ([, name = ""]) => name,
+      );
 
-        const listed = Array.from(
-          source.matchAll(/^export (?:type )?\{([^}]*)\}/gm),
-          ([, body = ""]) =>
-            body.split(",").flatMap((entry) => {
-              const name =
-                entry
-                  .trim()
-                  .replace(/^type /, "")
-                  .split(" as ")
-                  .at(-1)
-                  ?.trim() ?? "";
+      const listed = Array.from(
+        source.matchAll(/^export (?:type )?\{([^}]*)\}/gm),
+        ([, body = ""]) =>
+          body.split(",").flatMap((entry) => {
+            const name =
+              entry
+                .trim()
+                .replace(/^type /, "")
+                .split(" as ")
+                .at(-1)
+                ?.trim() ?? "";
 
-              return name === "" ? [] : [name];
-            }),
-        );
+            return name === "" ? [] : [name];
+          }),
+      );
 
-        return [module, new Set([...declared, ...listed.flat()])] as const;
-      }),
-  );
+      return [module, new Set([...declared, ...listed.flat()])] as const;
+    });
+};
+
+it("names, in the pages and READMEs, only symbols the public modules of both packages export", () => {
+  const exported = new Map([
+    ...exportsOf("", Object.keys(manifest.exports)),
+    ...exportsOf(`${cloudflare}/`, Object.keys(cloudflareManifest.exports)),
+  ]);
 
   const pointer = new RegExp(`\\x60(${Array.from(exported.keys()).join("|")})\\.(\\w+)`, "g");
 

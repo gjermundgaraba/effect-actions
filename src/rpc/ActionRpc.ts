@@ -858,9 +858,10 @@ const subscriptionHandlerOf = (
 
 /**
  * The key a protocol answering each call once sets to `true` on its `RpcServer.Protocol`
- * service, since Effect's protocol has no flag of its own for it: `layer` refuses to serve a
- * streaming action, an event type or a native stream rpc on it, where a stream is answered with
- * a defect at its first element and one with none waits for good.
+ * service, as the Cloudflare package's stub protocol does, since Effect's protocol has no flag of
+ * its own for it: `layer` refuses to serve a streaming action, an event type or a native stream
+ * rpc on it, where a stream is answered with a defect at its first element and one with none
+ * waits for good.
  */
 export const unaryProtocol: unique symbol = Symbol.for("effect-actions/ActionRpc/unary");
 

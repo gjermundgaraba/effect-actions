@@ -1,0 +1,55 @@
+{
+  "name": "@gjermundgaraba/effect-actions-cloudflare",
+  "version": "0.20.0",
+  "description": "Serve effect-actions from Cloudflare Durable Objects, with Effect RPC over hibernating WebSockets.",
+  "keywords": [
+    "cloudflare",
+    "durable-objects",
+    "effect",
+    "effect-ts",
+    "rpc",
+    "websocket",
+    "workers"
+  ],
+  "homepage": "https://github.com/gjermundgaraba/effect-actions/tree/main/packages/cloudflare#readme",
+  "bugs": {
+    "url": "https://github.com/gjermundgaraba/effect-actions/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gjermundgaraba/effect-actions.git",
+    "directory": "packages/cloudflare"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./ActionDurableObject": "./src/durable/ActionDurableObject.ts",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      "./ActionDurableObject": "./dist/ActionDurableObject.mjs",
+      "./package.json": "./package.json"
+    },
+    "access": "public"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "prepublishOnly": "vp run build"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "catalog:",
+    "@cloudflare/workers-types": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@gjermundgaraba/effect-actions": "workspace:*",
+    "effect": "catalog:"
+  },
+  "peerDependencies": {
+    "@gjermundgaraba/effect-actions": "workspace:~",
+    "effect": "~4.0.4"
+  }
+}

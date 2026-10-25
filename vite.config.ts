@@ -1,12 +1,5 @@
-import { globSync } from "node:fs";
-import { basename } from "node:path";
 import { defaultExclude, defineConfig } from "vite-plus";
-
-const publicModules = Object.fromEntries(
-  globSync("src/*/*.ts")
-    .map((path): [string, string] => [basename(path, ".ts"), path])
-    .filter(([module]) => /^[A-Z]/u.test(module)),
-);
+import { pack } from "./tools/pack.ts";
 
 const sourceOrLintProbe = (glob: string) => [
   `src/${glob}`,
@@ -31,18 +24,23 @@ export default defineConfig({
     "*": "vp check --fix",
   },
   test: {
-    include: ["tests/**/*.test.ts", "examples/**/*.test.ts", "tools/oxlint/tests/**/*.test.ts"],
-    exclude: [...defaultExclude, "tools/oxlint/tests/probe-*/**"],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "effect-actions",
+          include: [
+            "tests/**/*.test.ts",
+            "examples/**/*.test.ts",
+            "tools/oxlint/tests/**/*.test.ts",
+          ],
+          exclude: [...defaultExclude, "tools/oxlint/tests/probe-*/**"],
+        },
+      },
+      "packages/*",
+    ],
   },
-  pack: {
-    entry: publicModules,
-    unbundle: true,
-    deps: { resolveDepSubpath: true },
-    dts: {
-      generator: "tsgo",
-    },
-    exports: { devExports: true },
-  },
+  pack: pack(),
   fmt: {
     ignorePatterns: [
       ".agent/**",
@@ -134,11 +132,32 @@ export default defineConfig({
         },
       },
       {
-        files: sourceOrLintProbe("**"),
+        files: [...sourceOrLintProbe("**"), "packages/*/src/**"],
         rules: {
           "no-comments/no-prose-comments": ["error", { allowJsDoc: true, allowWhy: true }],
           "typescript/consistent-type-imports": "error",
           "typescript/no-import-type-side-effects": "error",
+        },
+      },
+      {
+        files: [
+          "vite.config.ts",
+          "packages/*/vite.config.ts",
+          "tools/oxlint/tests/probe-*/*/vite.config.ts",
+        ],
+        rules: { "no-comments/no-prose-comments": ["error", { allowWhy: true }] },
+      },
+      {
+        files: [
+          "tests/support/**",
+          "packages/*/tests/support/**",
+          "tools/oxlint/tests/probe-*/*/tests/support/**",
+        ],
+        rules: { "no-comments/no-prose-comments": ["error", { allowJsDoc: true }] },
+      },
+      {
+        files: sourceOrLintProbe("**"),
+        rules: {
           "no-restricted-imports": [
             "error",
             {
@@ -178,12 +197,22 @@ export default defineConfig({
         },
       },
       {
-        files: ["vite.config.ts", "tools/oxlint/tests/probe-*/*/vite.config.ts"],
-        rules: { "no-comments/no-prose-comments": ["error", { allowWhy: true }] },
-      },
-      {
-        files: ["tests/support/**", "tools/oxlint/tests/probe-*/*/tests/support/**"],
-        rules: { "no-comments/no-prose-comments": ["error", { allowJsDoc: true }] },
+        files: ["packages/*/src/**"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                {
+                  group: [...anyRelativeImport, "!./*.js", "!../[a-z]*/[A-Z]*.js"],
+                  caseSensitive: true,
+                  message:
+                    "A relative import is ./<file>.js or another domain's public ../<domain>/<Module>.js; the core is imported by its package name.",
+                },
+              ],
+            },
+          ],
+        },
       },
       {
         files: ["examples/**"],
