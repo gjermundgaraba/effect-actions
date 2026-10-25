@@ -11,7 +11,7 @@ import type {
   Serving,
 } from "../contract/implementation.js";
 import { type Refusal, Unauthenticated } from "../contract/errors.js";
-import type { EventOf } from "../contract/feed.js";
+import type { EventOf, ServingEvents } from "../contract/feed.js";
 
 /** One native security scheme: Bearer unless a descriptor names another. */
 export type Security = HttpApiSecurity.HttpApiSecurity;
@@ -175,6 +175,18 @@ export type Matching<A extends Pick<Action.Any, "caller">, D> =
 export type RemoteRequest<App, A extends Action.Any> =
   | ServedRequest<App, Extract<A, { readonly caller: typeof Anyone }>>
   | Exclude<ServedRequest<App, Protected<A>>, Identity<Protected<A>>>;
+
+/**
+ * The identity a remote layer's authentication provides every request, where `App` serves only
+ * protected actions of `A` and event types of `E`: its middleware reading it then owes nothing.
+ * None where one served is public, whose requests authenticate no one.
+ */
+export type LayerIdentity<App, A extends Action.Any, E extends Event.Any> = [
+  | Extract<Serving<App, A>, { readonly caller: typeof Anyone }>
+  | Extract<ServingEvents<App, E>, { readonly caller: typeof Anyone }>,
+] extends [never]
+  ? Identity<Protected<Serving<App, A>> | Protected<ServingEvents<App, E>>>
+  : never;
 
 // Why: The caller named among a server's startup requirements reads `Type 'CurrentUser' is not
 // assignable to type 'never'` where the server is launched, which says nothing of the builder that

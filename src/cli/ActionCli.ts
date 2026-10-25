@@ -4,7 +4,6 @@ import type { HttpClient } from "effect/http";
 import * as Action from "../contract/Action.js";
 import type * as Event from "../contract/Event.js";
 import type {
-  AnyEventImplementation,
   EventBuildError,
   EventBuildServices,
   EventOf,
@@ -319,28 +318,17 @@ type WatchServices<C, E extends Event.Any> = [E] extends [never]
     ? CR | Watched<M, E>["services"]
     : HttpClient.HttpClient;
 
-// Why: Each run builds the one implementation holding the event, as each run of an action's
-// command builds its own, and releases it as the watch ends.
-const watchedLocally = (app: AnyEventImplementation, event: Event.Any) =>
+/** The command watching `event` through the `watch` of each client `client` makes as it runs. */
+const watched = (
+  event: Event.Any,
+  client: Effect.Effect<Pick<Client<AnyHttp, unknown, unknown>, "watch">, unknown, unknown>,
+  errors: Action.Errors,
+) =>
   watchCommand(
     event,
     (input, cursor) =>
-      Stream.unwrap(
-        Effect.map(Action.client(app), (client) => client.watch(event, input, { cursor })),
-      ),
-    eventErrors(event, { error: [] }),
-  );
-
-const watchedOverHttp = (binding: AnyHttp, event: Event.Any, client: ErasedClient | undefined) =>
-  watchCommand(
-    event,
-    (input, cursor) =>
-      Stream.unwrap(
-        Effect.map(client ?? httpClient(binding), (methods) =>
-          methods.watch(event, input, { cursor }),
-        ),
-      ),
-    eventErrors(event, binding),
+      Stream.unwrap(Effect.map(client, (methods) => methods.watch(event, input, { cursor }))),
+    errors,
   );
 
 const aggregateCommand = (
@@ -608,7 +596,13 @@ export function make<
     commands,
     options.subcommands ?? [],
     (action, syntax) => inProcess(served, action, syntax),
-    events.flatMap((app) => app.events.map((event) => watchedLocally(app, event))),
+    // Why: Each run builds the one implementation holding the event, as each run of an action's
+    // command builds its own, and releases it as the watch ends.
+    events.flatMap((app) =>
+      app.events.map((event) =>
+        watched(event, Action.client(app), eventErrors(event, { error: [] })),
+      ),
+    ),
   );
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic subcommand list: each runs one action by its implementation, so the aggregate's channels are the unions of what `Local` states over them.
@@ -676,7 +670,9 @@ export function remote(
     (action, syntax) => overHttp(binding, action, syntax, options.client),
     binding.events
       .filter((event) => listed.events?.includes(event) ?? true)
-      .map((event) => watchedOverHttp(binding, event, options.client)),
+      .map((event) =>
+        watched(event, options.client ?? httpClient(binding), eventErrors(event, binding)),
+      ),
   );
 
   return group;

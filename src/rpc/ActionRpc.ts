@@ -55,7 +55,7 @@ import {
   type Any as Authentication,
   type Descriptor,
   type DescriptorOf,
-  type Identity,
+  type LayerIdentity,
   type Matching,
   providerOf,
   type ProviderOf,
@@ -89,11 +89,9 @@ import {
   type Known,
   type Member,
   type MiddlewareOf,
-  type Protected,
   type Selected,
   type SelectedEvents,
   type Served,
-  type Serving,
 } from "../contract/implementation.js";
 import { provideServed, servingOf } from "../contract/serving.js";
 import { type StreamMethod, transportOf } from "./watch.js";
@@ -449,12 +447,7 @@ type LayerRequest<App, A extends Action.Any, E extends Event.Any, M extends Midd
   Through<M, RemoteRequest<App, A> | EventServedRequest<App, E>>,
   | HttpServerRequest.HttpServerRequest
   | HttpServerRequest.ParsedSearchParams
-  | ([
-      | Extract<Serving<App, A>, { readonly caller: typeof Anyone }>
-      | Extract<ServingEvents<App, E>, { readonly caller: typeof Anyone }>,
-    ] extends [never]
-      ? Identity<Protected<Serving<App, A>> | Protected<ServingEvents<App, E>>>
-      : never)
+  | LayerIdentity<App, A, E>
 >;
 
 type RpcLayer<
@@ -617,27 +610,19 @@ const Declared = Schema.instanceOf(DeclaredFailure, {
 // sends and its declared failure, as JSON, encoding and decoding them by the contract's schemas
 // themselves: the protocol's codec never sees a contract's own schema, and a native rpc sharing
 // one keeps its own codec.
-const erasedOf = (actions: ReadonlyArray<Action.Any>, events: ReadonlyArray<Event.Any>) =>
-  RpcGroup.make(
+const erasedOf = (actions: ReadonlyArray<Action.Any>, events: ReadonlyArray<Event.Any>) => {
+  const streamOf = (name: string) =>
+    Rpc.make(name, { payload: Schema.Json, success: Schema.Json, error: Declared, stream: true });
+
+  return RpcGroup.make(
     ...actions.map((action) =>
       streams(action)
-        ? Rpc.make(action.name, {
-            payload: Schema.Json,
-            success: Schema.Json,
-            error: Declared,
-            stream: true,
-          })
+        ? streamOf(action.name)
         : Rpc.make(action.name, { payload: Schema.Json, success: Schema.Json, error: Declared }),
     ),
-    ...events.map((event) =>
-      Rpc.make(event.name, {
-        payload: Schema.Json,
-        success: Schema.Json,
-        error: Declared,
-        stream: true,
-      }),
-    ),
+    ...events.map((event) => streamOf(event.name)),
   );
+};
 
 const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
   const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(error));
@@ -843,17 +828,17 @@ const subscriptionHandlerOf = (
         payload,
         headers: Object.entries(options.headers),
         resumeFrom: (values) => {
-          const cursor = values
+          const reached = values
             .flatMap((value) => Option.toArray(decodeSent(value)))
             .map((pushed) =>
               Match.value(pushed).pipe(
                 Match.tag("Failed", () => null),
-                Match.orElse(({ cursor }) => cursor),
+                Match.orElse((positioned) => positioned.cursor),
               ),
             )
             .findLast(Predicate.isNotNull);
 
-          return cursor === undefined ? undefined : { input, cursor };
+          return reached === undefined ? undefined : { input, cursor: reached };
         },
       });
 

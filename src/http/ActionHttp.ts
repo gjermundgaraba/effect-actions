@@ -36,7 +36,7 @@ import {
 import {
   type Any as Authentication,
   type DescriptorOf,
-  type Identity,
+  type LayerIdentity,
   type Matching,
   providerOf,
   type PublicOnly,
@@ -46,7 +46,7 @@ import {
   type ServerBuildServices,
   type VerifierError,
 } from "../authentication/provider.js";
-import { Anyone } from "../contract/caller.js";
+import { Anyone, type Called } from "../contract/caller.js";
 import {
   type Certain,
   type ErrorsOf,
@@ -70,7 +70,6 @@ import {
 } from "./streamed.js";
 import { elementOf } from "../contract/stream.js";
 import {
-  type Protected,
   acquire,
   type BuildError,
   type ErasedHandler,
@@ -79,7 +78,6 @@ import {
   type Member,
   type MiddlewareOf,
   type Served,
-  type Serving,
   type Selected,
   type SelectedEvents,
   type Holding,
@@ -189,13 +187,7 @@ export interface LayerOptions<M extends Middleware = [], C extends Action.Any | 
 
 type LayerRequest<App, A extends Action.Any, E extends Event.Any, M extends Middleware> = Exclude<
   Through<M, RemoteRequest<App, A> | EventServedRequest<App, E>>,
-  | HttpRouter.Provided
-  | ([
-      | Extract<Serving<App, A>, { readonly caller: typeof Anyone }>
-      | Extract<ServingEvents<App, E>, { readonly caller: typeof Anyone }>,
-    ] extends [never]
-      ? Identity<Protected<Serving<App, A>> | Protected<ServingEvents<App, E>>>
-      : never)
+  HttpRouter.Provided | LayerIdentity<App, A, E>
 >;
 
 /** Contract-level configuration shared by servers and clients. */
@@ -364,6 +356,19 @@ const answerOf = (action: Action.Any, run: ErasedHandler<unknown>) => {
   return action.progress === undefined ? run : answeringWithProgress(action.success, run);
 };
 
+/** A route a binding declares, of an action or an event type: a POST taking its body alone. */
+type Route = HttpApiEndpoint.HttpApiEndpoint<
+  string,
+  "POST",
+  `/${string}`,
+  never,
+  never,
+  Schema.Top,
+  never,
+  Schema.Top,
+  Schema.Top
+>;
+
 const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middleware = []) =>
   middleware.reduce((inner, key) => inner.middleware(key), endpoint);
 
@@ -415,29 +420,30 @@ export function make(
   const mount = mountSegments(options.prefix);
   const security = bound.authentication?.["~middleware"];
 
+  const secured = (endpoint: Route, { caller }: Called) =>
+    security === undefined || caller === Anyone ? endpoint : endpoint.middleware(security);
+
   const endpoints = [
-    ...actions.map((action) => {
-      const endpoint = endpointOf(
+    ...actions.map((action) =>
+      secured(
+        endpointOf(
+          action,
+          absolutePath([...mount, action.name]),
+          bindingErrors(action, bound),
+        ).annotate(OpenApi.Description, action.description),
         action,
-        absolutePath([...mount, action.name]),
-        bindingErrors(action, bound),
-      ).annotate(OpenApi.Description, action.description);
-
-      return security === undefined || action.caller === Anyone
-        ? endpoint
-        : endpoint.middleware(security);
-    }),
-    ...events.map((event) => {
-      const endpoint = eventEndpointOf(
+      ),
+    ),
+    ...events.map((event) =>
+      secured(
+        eventEndpointOf(
+          event,
+          absolutePath([...mount, "events", event.name]),
+          eventErrors(event, bound),
+        ),
         event,
-        absolutePath([...mount, "events", event.name]),
-        eventErrors(event, bound),
-      );
-
-      return security === undefined || event.caller === Anyone
-        ? endpoint
-        : endpoint.middleware(security);
-    }),
+      ),
+    ),
   ];
 
   const api = apiOf(groupName(mount), endpoints);
@@ -558,42 +564,41 @@ export function layer(
   const mount = mountSegments(binding.prefix);
   const name = groupName(mount);
 
+  const routed = (endpoint: Route, { caller }: Called) => {
+    const within = withinLayerMiddleware(
+      endpoint.middleware(JsonContentType).middleware(SchemaErrors),
+      options.middleware,
+    );
+
+    return caller === Anyone || authentication === undefined
+      ? within
+      : within.middleware(StepUp).middleware(authentication["~middleware"]);
+  };
+
+  // Why: Without the verifier's errors, which `make` declares: the security middleware answers
+  // them itself, so a served route never fails with one.
   const api = apiOf(name, [
-    ...actions.map((action) => {
-      const endpoint = withinLayerMiddleware(
-        // Why: Without the verifier's errors, which `make` declares: the security middleware
-        // answers them itself, so a served route never fails with one.
+    ...actions.map((action) =>
+      routed(
         endpointOf(
           action,
           absolutePath([...mount, action.name]),
           projectedErrors(action, binding.error),
-        )
-          .middleware(JsonContentType)
-          .middleware(SchemaErrors),
-        options.middleware,
-      );
-
-      return action.caller === Anyone || authentication === undefined
-        ? endpoint
-        : endpoint.middleware(StepUp).middleware(authentication["~middleware"]);
-    }),
-    ...eventTypes.map((event) => {
-      const endpoint = withinLayerMiddleware(
+        ),
+        action,
+      ),
+    ),
+    ...eventTypes.map((event) =>
+      routed(
         eventEndpointOf(
           event,
           absolutePath([...mount, "events", event.name]),
           eventErrors(event, { error: binding.error }),
           servedSent,
-        )
-          .middleware(JsonContentType)
-          .middleware(SchemaErrors),
-        options.middleware,
-      );
-
-      return event.caller === Anyone || authentication === undefined
-        ? endpoint
-        : endpoint.middleware(StepUp).middleware(authentication["~middleware"]);
-    }),
+        ),
+        event,
+      ),
+    ),
   ]).annotate(HttpApi.PayloadParseOptions, inputParseOptions);
 
   const handlers = Layer.unwrap(
