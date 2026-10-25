@@ -35,6 +35,8 @@
       { "name": "VERSIONED", "class_name": "Versioned" },
       { "name": "WATCHING", "class_name": "Watching" },
       { "name": "HOOKING", "class_name": "Hooking" },
+      { "name": "SHELF", "class_name": "Shelf" },
+      { "name": "TASKED", "class_name": "Tasked" },
     ],
   },
   "migrations": [
@@ -68,6 +70,8 @@
         "Versioned",
         "Watching",
         "Hooking",
+        "Shelf",
+        "Tasked",
       ],
     },
   ],

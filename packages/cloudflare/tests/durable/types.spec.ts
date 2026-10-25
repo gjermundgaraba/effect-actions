@@ -7,6 +7,7 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import {
+  Actions,
   Builds,
   buildsRoutes,
   CurrentUser,
@@ -27,6 +28,7 @@ import {
   PluginStore,
   StreamRpcs,
 } from "../support/hosts.js";
+import { ShelfHttp } from "../support/placed.js";
 import type { Hosted, Plain, PluginHost } from "../worker.js";
 
 expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqualTypeOf<
@@ -132,6 +134,18 @@ ActionDurableObject.make({
     "/merged",
     Effect.as(Effect.service(Merged), HttpServerResponse.empty()),
   ).pipe(Layer.provideMerge(Layer.succeed(Merged, 1))),
+});
+
+ActionDurableObject.make({
+  routes: HttpRouter.add(
+    "POST",
+    "/tell",
+    Effect.as(
+      ActionDurableObject.Tasks.use((tasks) => tasks.run("tell")),
+      HttpServerResponse.empty(),
+    ),
+  ),
+  tasks: { tell: Effect.void },
 });
 
 export class WithCloseCode extends ActionDurableObject.make({
@@ -365,4 +379,39 @@ ActionDurableObject.make({
   // @ts-expect-error -- The services may require State and Alarm alone.
   services: () =>
     Reminders.layer.pipe(Layer.provideMerge(Layer.effectDiscard(Effect.service(Greeting)))),
+});
+
+expectTypeOf(
+  ActionDurableObject.placed(ShelfHttp, {
+    putBook: ({ onto }) => onto,
+    "shelf.changed": ({ shelf }) => shelf,
+  }),
+).toEqualTypeOf<ActionDurableObject.Placement<typeof ShelfHttp>>();
+
+// @ts-expect-error -- every contract of the binding has a key
+ActionDurableObject.placed(ShelfHttp, { putBook: ({ onto }) => onto });
+
+ActionDurableObject.placed(ShelfHttp, {
+  // @ts-expect-error -- each key reads its own contract's input
+  putBook: (input: { readonly shelf: string }) => input.shelf,
+  "shelf.changed": ({ shelf }) => shelf,
+});
+
+ActionDurableObject.placed(ShelfHttp, {
+  putBook: ({ onto }) => onto,
+  "shelf.changed": ({ shelf }) => shelf,
+  // @ts-expect-error -- a key names a contract of the binding
+  getBook: () => "",
+});
+
+ActionDurableObject.make({
+  services: () => startup,
+  tasks: { act: Effect.asVoid(Effect.service(Actions)) },
+});
+
+ActionDurableObject.make({
+  tasks: {
+    // @ts-expect-error -- a task requires only what the object's services build
+    act: Effect.asVoid(Effect.service(Actions)),
+  },
 });

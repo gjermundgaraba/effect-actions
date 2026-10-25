@@ -128,9 +128,24 @@ record's keys in another order are the same input. A defect, an interruption or 
 failure whose status a recovering server sends (408, 429, 500, 502, 503 or 504) is not kept, so a
 retry runs again. An implementation of such an action requires
 `Action.Idempotency`, the store of kept answers, at startup: `Action.layerIdempotency` keeps them
-in memory for 24 hours; a store of your own keeps
+in memory for 24 hours, and a Durable Object's `make` and `handlers` provide one over the
+object's storage, each deleted past its day as later answers are kept; a store of your own keeps
 `Action.Idempotency.Kept` for `Action.Idempotency.keptFor`. An action answering a stream takes no key. Guide:
 `docs/Action.md`.
+
+**A Durable Object's tasks.** `make`'s and `handlers`' `tasks` names Effects an object does at
+least once, such as telling another object of a change. `ActionDurableObject.Tasks`, a startup
+service, runs one by name, at once and again on the object's alarm until it succeeds:
+`run(name)`, or `runAfter(name, change)`, which marks the task before the change and runs it
+after, however the change ended. The rules are on `Tasks`.
+
+**Durable Objects reached by a key of the input.** `ActionDurableObject.placed(binding, keys)` says
+which object serves each call and subscription of an HTTP binding: the one its contract's key in
+`keys` names for its input, a key for each contract, by its name, typed by its own input
+(`PlacementKeys`). A Worker serves `ActionDurableObject.reaching(placement, () => env.ROOM)` on any surface,
+each call sent on with `ActionHttp.placed`; each object is given the placement as `make`'s or
+`handlers`' `placed`, and refuses `Forbidden`, on every surface, sockets and the stub included, an
+input whose key names another object.
 
 **MCP events (experimental).** `ActionMcp.layerHttp` and `runStdio` serve the event
 implementations among those they are given as SEP-3415 events, a draft pinned to its PR head

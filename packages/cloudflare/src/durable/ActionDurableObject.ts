@@ -8,15 +8,21 @@ import {
   type HttpServerRequest,
 } from "effect/http";
 import { type RpcMessage, RpcServer } from "effect/rpc";
+import type * as Action from "@gjermundgaraba/effect-actions/Action";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import { Alarm, alarmOf, applicationOwner, makeSchedule } from "./alarm.js";
 import { makeStubProtocol, type StubRequest } from "./calls.js";
 import { layerEvents } from "./events.js";
+import { layerIdempotency } from "./idempotency.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
+import { type AnyPlacement, layerInputCheck } from "./placed.js";
+import { makeTasks, taskOwner, Tasks } from "./tasks.js";
 import { clockOwner, makeWaits, Waits } from "./webhooks.js";
 
 export { Alarm } from "./alarm.js";
+
+export { Tasks } from "./tasks.js";
 
 export type { StubRequest } from "./calls.js";
 
@@ -35,11 +41,19 @@ export { client, layerStubClient, type Client, type Stub } from "./stub.js";
 
 export { layerHttpClient } from "./fetcher.js";
 
+export {
+  placed,
+  reaching,
+  type AnyPlacement,
+  type Placement,
+  type PlacementKeys,
+} from "./placed.js";
+
 type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
 
 // Why: each request is served in the context the routes are built in, so a handler reads the
 // object's own services as the routes' Layers do.
-type ObjectServices = State | Alarm | Event.Events | Sockets | Waits;
+type ObjectServices = State | Alarm | Tasks | Event.Events | Action.Idempotency | Sockets | Waits;
 
 type Allowed<A, S> =
   | ObjectServices
@@ -53,11 +67,18 @@ type Allowed<A, S> =
 
 // Why: the signatures consumers call write these unions out, since a diagnostic prints an
 // alias by its name, which tells no one what the option may require.
-type ServicesRequire = State | Alarm | Event.Events;
+type ServicesRequire = State | Alarm | Tasks | Event.Events | Action.Idempotency;
 
-type RunRequires<S> = S | State | Alarm | Event.Events | Scope.Scope;
+type RunRequires<S> = S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope;
 
-type CallsRequire<S> = RpcServer.Protocol | S | State | Alarm | Event.Events;
+type CallsRequire<S> =
+  | RpcServer.Protocol
+  | S
+  | State
+  | Alarm
+  | Tasks
+  | Event.Events
+  | Action.Idempotency;
 
 type ErasedOptions<S> = Options<
   S,
@@ -92,7 +113,9 @@ export interface Options<
    * instance, before the routes, again after every eviction, and never finalized. The routes,
    * every request, the alarm and `run` share that one build, and an implementation the services
    * build, such as an in-process `Action.client`'s, is the one the routes serve. They may
-   * require `State`, `Alarm` and `Event.Events` alone, so a store over the object's storage,
+   * require `State`, `Alarm`, `Tasks`, `Event.Events` and `Action.Idempotency`, which keeps the
+   * answers of calls given an idempotency key in the object's storage, alone, so a store over the
+   * object's storage,
    * what the object is, such as its name, a store scheduling its expiries, or a handler
    * announcing an event, is a Layer requiring them.
    *
@@ -105,9 +128,9 @@ export interface Options<
   readonly services?: Layer.Layer<S, SE, SR> | undefined;
   /**
    * What `fetch` serves: routes, as `HttpRouter.toWebHandler` serves them, such as
-   * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built after the services,
-   * again after every eviction, and never finalized. They may require `State`, `Alarm`,
-   * `Event.Events`, `Sockets`, `Waits` and the services, as Layers and as
+   * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built after the services, again
+   * after every eviction, and never finalized. They may require `State`, `Alarm`, `Tasks`,
+   * `Event.Events`, `Action.Idempotency`, `Sockets`, `Waits` and the services, as Layers and as
    * handlers; any other request-time requirement must be provided by their middleware or
    * authentication, or be a service they provide themselves. Without them, `fetch` answers 404, and
    * no protocol accepts a socket.
@@ -125,7 +148,7 @@ export interface Options<
    * as values Workers RPC's structured clone copies, each schema's plain form
    * (`Schema.toCodecIso`), never a JSON string. Built after the services, beside the routes,
    * again after every eviction, and never finalized. It may require the protocol, `State`,
-   * `Alarm`, `Event.Events` and the services; every call's own requirement must be provided by
+   * `Alarm`, `Event.Events`, `Action.Idempotency` and the services; every call's own requirement must be provided by
    * its middleware or be one of those. Without it, a call over the stub rejects once the object
    * is built, naming the option.
    *
@@ -157,6 +180,26 @@ export interface Options<
    * - It runs once per `Alarm.set`: setting a time again replaces it, so a store setting it for its next expiry sets the earliest, and the option sets its next one itself.
    */
   readonly alarm?: ((info: AlarmInvocationInfo) => Effect.Effect<void, AE, AR>) | undefined;
+  /**
+   * Work the object does at least once, by name, such as telling another object of a change:
+   * `Tasks.run(name)` runs it at once and marks it in the object's storage, and the alarm runs it
+   * again until it succeeds. Each may require what `alarm` may.
+   */
+  readonly tasks?:
+    | {
+        readonly [name: string]: Effect.Effect<
+          void,
+          unknown,
+          NoInfer<S> | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope
+        >;
+      }
+    | undefined;
+  /**
+   * The placement whose objects these are, `placed`'s answer, which the Worker serves: each call
+   * and subscription of one of its contracts, on every surface, sockets and the stub included, is
+   * refused `Forbidden` where its input's key names another object.
+   */
+  readonly placed?: AnyPlacement | undefined;
   /**
    * Whether to leave out the request logger `HttpRouter.toWebHandler` adds by default, which logs
    * every request the routes serve, a socket's upgrade included: Effect's default, kept.
@@ -213,7 +256,11 @@ export interface Handlers<S = never> {
    * - A Durable Object's public methods are callable over its stub, the `run` of a class `make` returns too, but it takes an Effect, which no stub can send: a caller over the stub gets a rejection, nothing more.
    */
   run<A, E>(
-    effect: Effect.Effect<A, E, S | State | Alarm | Event.Events | Scope.Scope>,
+    effect: Effect.Effect<
+      A,
+      E,
+      S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope
+    >,
   ): Promise<A>;
 }
 
@@ -239,7 +286,9 @@ const handlersOf = <S>(
         unknown,
         | State
         | Alarm
+        | Tasks
         | Event.Events
+        | Action.Idempotency
         | Sockets
         | Waits
         | HttpRouter.HttpRouter
@@ -254,6 +303,16 @@ const handlersOf = <S>(
   const schedule = makeSchedule(ctx);
 
   const { waits, wakeDue } = makeWaits(schedule);
+
+  const tasks = options.tasks;
+
+  // Why: a task runs with what the instance built, which the services do not hold as they build,
+  // so `Tasks` reads the instance as each task runs: one run as they build is only marked.
+  const tasksOf = makeTasks(schedule, new Set(Object.keys(tasks ?? {})), (name) => {
+    const task = tasks?.[name];
+
+    return instance === undefined || task === undefined ? undefined : provided(instance, task);
+  });
 
   const build = Effect.gen(function* () {
     // Why: an implementation of the core is shared through the memo map of the graph it is
@@ -272,11 +331,20 @@ const handlersOf = <S>(
             Layer.mergeAll(
               Layer.succeed(Alarm)(alarmOf(schedule)),
               Layer.succeed(Waits)(waits),
+              Layer.succeed(Tasks)(tasksOf.tasks),
               layerEvents,
+              layerIdempotency(ctx),
             ),
           ),
           Layer.provideMerge(state),
-          Layer.provideMerge(Layer.succeed(Scheduler.Scheduler)(scheduler)),
+          Layer.provideMerge(
+            Layer.merge(
+              Layer.succeed(Scheduler.Scheduler)(scheduler),
+              options.placed === undefined
+                ? Layer.empty
+                : layerInputCheck(options.placed, ctx.id.name),
+            ),
+          ),
         ),
         memoMap,
         scope,
@@ -466,6 +534,12 @@ const handlersOf = <S>(
         schedule.runDue({
           [applicationOwner]: (info) => options.alarm?.(info) ?? Effect.void,
           [clockOwner]: () => wakeDue,
+          ...Object.fromEntries(
+            Object.entries(tasks ?? {}).map(([name, task]) => [
+              taskOwner(name),
+              () => tasksOf.due(name, task),
+            ]),
+          ),
         }),
       ),
     run,
@@ -508,15 +582,16 @@ const handlersOf = <S>(
 export const handlers = <
   S = never,
   SE = never,
-  SR extends State | Alarm | Event.Events = never,
+  SR extends State | Alarm | Tasks | Event.Events | Action.Idempotency = never,
   A = never,
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Alarm | Event.Events | Scope.Scope = never,
+  AR extends S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State | Alarm | Event.Events = never,
+  CR extends RpcServer.Protocol | S | State | Alarm | Tasks | Event.Events | Action.Idempotency =
+    never,
 >(
   ctx: DurableObjectState,
   options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
@@ -539,15 +614,16 @@ export type Instance<S = never, Env = Cloudflare.Env> = Handlers<S> & DurableObj
 export function make<
   S,
   SE,
-  SR extends State | Alarm | Event.Events,
+  SR extends State | Alarm | Tasks | Event.Events | Action.Idempotency,
   A = never,
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Alarm | Event.Events | Scope.Scope = never,
+  AR extends S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State | Alarm | Event.Events = never,
+  CR extends RpcServer.Protocol | S | State | Alarm | Tasks | Event.Events | Action.Idempotency =
+    never,
   Env = Cloudflare.Env,
 >(
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
@@ -582,15 +658,16 @@ export function make<
 export function make<
   S = never,
   SE = never,
-  SR extends State | Alarm | Event.Events = never,
+  SR extends State | Alarm | Tasks | Event.Events | Action.Idempotency = never,
   A = never,
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Alarm | Event.Events | Scope.Scope = never,
+  AR extends S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State | Alarm | Event.Events = never,
+  CR extends RpcServer.Protocol | S | State | Alarm | Tasks | Event.Events | Action.Idempotency =
+    never,
 >(
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
     readonly services?: ((env: Cloudflare.Env) => Layer.Layer<S, SE, SR>) | undefined;

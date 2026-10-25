@@ -31,7 +31,8 @@ const keptFor = 24 * 60 * 60 * 1000;
  * Where the answers of calls given an idempotency key are kept, by the action's name and a
  * SHA-256 digest in hex of the key and its caller's principal, `<action>/<digest>`, for 24 hours
  * at least: what an implementation of an action naming `idempotencyKey` requires at startup.
- * `layerIdempotency` keeps them in memory; another store, shared by several servers, implements `get` and `set`, keeping
+ * `layerIdempotency` keeps them in memory; a Durable Object's `make` and `handlers` provide one
+ * over its storage; another store, shared by several servers, implements `get` and `set`, keeping
  * `Idempotency.Kept` at least `Idempotency.keptFor` milliseconds.
  *
  * **Gotchas**

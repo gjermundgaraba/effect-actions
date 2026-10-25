@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { Data, DateTime, Effect, Layer } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
+import { Data, DateTime, Effect, Layer, Schedule } from "effect";
+import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import * as ActionDurableObject from "../src/durable/ActionDurableObject.js";
 import {
   alarm,
@@ -28,6 +28,7 @@ import { nativeCalls } from "./support/native.js";
 import { heldBuild } from "./support/latch.js";
 import { builtOnSecondTry, racedCalls, yieldsPastTimer } from "./support/raced.js";
 import { versionedRoutes } from "./support/versioned.js";
+import { shelfCalls, shelfRoutes, shelves } from "./support/placed.js";
 
 export class Plain extends DurableObject {
   readonly web = HttpRouter.toWebHandler(
@@ -245,5 +246,79 @@ export class Hooking extends ActionDurableObject.make({
 }) {
   hook(text: string) {
     return this.run(hook(text));
+  }
+}
+
+export class Shelf extends ActionDurableObject.make({
+  placed: shelves,
+  routes: shelfRoutes,
+  calls: shelfCalls,
+}) {}
+
+const stored = (key: string) =>
+  Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
+    Effect.promise(() => storage.get<number | boolean>(key)),
+  );
+
+const changed = Effect.gen(function* () {
+  const { storage } = yield* ActionDurableObject.State;
+  const changes = Number((yield* stored("changes")) ?? 0);
+
+  yield* Effect.promise(() => storage.put("changes", changes + 1));
+  yield* ActionDurableObject.Tasks.use((tasks) => tasks.run("tell"));
+});
+
+export class Tasked extends ActionDurableObject.make({
+  routes: HttpRouter.add("POST", "/change", Effect.as(changed, HttpServerResponse.empty())),
+  tasks: {
+    tell: Effect.gen(function* () {
+      const { storage } = yield* ActionDurableObject.State;
+
+      if ((yield* stored("down")) === true) return yield* new Unreachable({ store: "listener" });
+
+      const changes = Number((yield* stored("changes")) ?? 0);
+
+      if ((yield* stored("held")) === true) {
+        yield* Effect.promise(() => storage.delete("held"));
+        yield* Effect.repeat(stored("released"), {
+          until: (released) => released === true,
+          schedule: Schedule.spaced("10 millis"),
+        });
+      }
+
+      yield* Effect.promise(() => storage.put("told", changes));
+    }),
+  },
+}) {
+  change() {
+    return this.run(changed);
+  }
+
+  hold() {
+    return this.run(
+      Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
+        Effect.promise(() => storage.put("held", true)),
+      ),
+    );
+  }
+
+  release() {
+    return this.run(
+      Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
+        Effect.promise(() => storage.put("released", true)),
+      ),
+    );
+  }
+
+  down(down: boolean) {
+    return this.run(
+      Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
+        Effect.promise(() => storage.put("down", down)),
+      ),
+    );
+  }
+
+  told() {
+    return this.run(Effect.map(stored("told"), (told) => Number(told ?? 0)));
   }
 }
