@@ -15,7 +15,7 @@ import type { ErasedRule } from "./authorizer.js";
 import { attachmentsOf, type Checking, Events } from "./hub.js";
 import type { Entry, Log, Logged, Read } from "./log.js";
 import { Anyone } from "./caller.js";
-import { canonical } from "./canonical.js";
+import { canonicalInput } from "./canonical.js";
 import { Unauthenticated } from "./errors.js";
 import {
   builderLayer,
@@ -144,16 +144,9 @@ const keyOf = (source: ErasedSource, input: ErasedValue) =>
     ? Effect.succeed<string | undefined>(undefined)
     : lifted(source.key(input));
 
-/** `input` of `event`, encoded and canonical, as a subscription's key holds it. */
-export const canonicalInput = (event: Event.Any, input: ErasedValue): Effect.Effect<string> =>
-  Effect.map(
-    Effect.orDie(Schema.encodeUnknownEffect(Schema.toCodecJson(event.input))(input)),
-    canonical,
-  );
-
 const leaseKey = (event: Event.Any, subscriber: string | undefined, input: ErasedValue) =>
   Effect.map(
-    canonicalInput(event, input),
+    canonicalInput(event.input, input),
     (encoded) => `${subscriber ?? ""}\u0000${event.name}\u0000${encoded}`,
   );
 
