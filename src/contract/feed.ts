@@ -47,6 +47,8 @@ export interface Feed {
   readonly emits: boolean;
   /** Whether its source has a `subscription` hook, held per subscriber. */
   readonly subscribes: boolean;
+  /** Releases the `subscription` hook `subscriber`'s polls of `input` hold, where it has one. */
+  readonly release?: ((input: ErasedValue, subscriber: string) => Effect.Effect<void>) | undefined;
   /** Authenticates and authorizes the subscriber, as `poll` and `stream` do first. */
   readonly admit: Effect.Effect<void, unknown, unknown>;
   readonly poll: (
@@ -366,6 +368,8 @@ const hooked = (
     Effect.flatMap(leaseKey(event, options.subscriber, input), (key) =>
       Effect.andThen(leases.hold(key, input), () => run.poll(input, cursor, options)),
     ),
+  release: (input, subscriber) =>
+    Effect.flatMap(leaseKey(event, subscriber, input), leases.release),
   stream: (input, cursor) =>
     Stream.unwrap(Effect.map(subscription(input), () => run.stream(input, cursor))),
 });
@@ -381,9 +385,9 @@ const runOf = (event: Event.Any, source: ErasedSource): Effect.Effect<Run, never
     const attach = yield* Effect.flatMap(Events, attachmentsOf);
 
     const run = isCheck(source)
-      ? checkRun(event, source, yield* attach.check(event))
+      ? checkRun(event, source, yield* attach.check(event, false))
       : isCurrent(source)
-        ? currentRun(event, source, yield* attach.check(event))
+        ? currentRun(event, source, yield* attach.check(event, true))
         : logRun(event, source, yield* attach.log(event, source.log, source.log.emit));
 
     if (source.subscription === undefined) return run;
@@ -589,6 +593,7 @@ const guarded = (event: Event.Any, run: Run, before: ErasedRule<Event.Any>): Fee
     event,
     emits: run.emits,
     subscribes: run.subscribes,
+    release: run.release,
     admit: admitted,
     poll: (input, cursor, options) =>
       Effect.andThen(admitted, () => run.poll(input, cursor, options)).pipe(

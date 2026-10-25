@@ -26,6 +26,8 @@ class Lease implements Equal.Equal {
  */
 export interface Leases {
   readonly hold: (key: string, input: Input) => Effect.Effect<void>;
+  /** Releases `key`'s lease now, rather than `ttl` after its last poll. */
+  readonly release: (key: string) => Effect.Effect<void>;
 }
 
 const defaultLease = Duration.minutes(5);
@@ -47,5 +49,6 @@ export const makeLeases = (
         Effect.flatMap(Effect.context<never>(), (context) =>
           Effect.scoped(RcMap.get(map, new Lease(key, input, context))),
         ),
+      release: (key) => RcMap.invalidate(map, new Lease(key, undefined, Context.empty())),
     }),
   );

@@ -178,7 +178,8 @@ interface Hooked<E extends Any, R> {
   /**
    * What a subscription needs set up upstream while it lasts, such as joining a channel: a scoped
    * Effect, whose finalizer tears it down, run as the subscriber. A stream's lasts as long as the
-   * stream, and a poll subscription's until `lease` after its last poll.
+   * stream, a poll subscription's until `lease` after its last poll, or, watched in process, until
+   * the watch ends.
    *
    * **Gotchas**
    *
@@ -256,7 +257,7 @@ export interface Current<E extends Any, R = never> extends Hooked<E, R> {
  *
  * - A cursor is only good where the log that minted it lives, for as long as it keeps its occurrences: after a restart, or once they are dropped, a subscriber resuming from it receives `truncated` and a fresh cursor.
  * - A subscriber reading slower than occurrences arrive falls behind the log like a resumed one: it receives `truncated`, never a backlog held for it alone.
- * - An `emit` stream is consumed from startup, in the server's scope, by one build at a time: a failure ends it and is reported, an end is logged, and the log then holds what was published.
+ * - An `emit` stream is consumed from startup, in the server's scope, by one build at a time, until it ends, even past its build's release: a failure ends it and is reported, an end is logged, and the next held build's stream, if any, takes over; the log then holds what was published.
  */
 export interface Log<E extends Any, R = never> extends Hooked<E, R> {
   /** What the log keeps, and the stream feeding it besides `Events.publish`; `{}` for none. */

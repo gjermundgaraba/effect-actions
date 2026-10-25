@@ -1,4 +1,4 @@
-import { Context, Effect, Fiber, Layer, Queue, type Scope, type Stream } from "effect";
+import { Context, Effect, Layer, Queue, type Scope, type Stream } from "effect";
 import type * as Event from "./Event.js";
 import {
   type Bounds,
@@ -36,7 +36,10 @@ export interface Checking {
   readonly wakes: Wakes;
   /** Whether a subscriber also reads again after each page's `nextPoll`. */
   readonly polls: boolean;
-  /** The revision a subscriber of `key` is at, as a cursor: `<epoch>:<count>`. */
+  /**
+   * The revision a subscriber of `key` is at, as a cursor: `<epoch>:<count>`, then `:<key>` for a
+   * key, so a cursor kept for another key is behind every revision of this one.
+   */
   readonly revision: (key: string | undefined) => Effect.Effect<string>;
 }
 
@@ -86,7 +89,7 @@ const ofKey = (event: Event.Any, key: string) => `${event.name}\u0000=${key}`;
  * **Gotchas**
  *
  * - The handlers announcing and the surfaces serving must share one, as they share a store: built separately, as a test building its handlers under a `provide` of their own does, each has its own, and an announcement reaches no subscriber of the other.
- * - An event no implementation attached here has no subscribers here: `publish` does nothing for it, and `notify` only moves its current source's revision, so one attached later answers the change.
+ * - An event no implementation attached here has no subscribers here: `publish` does nothing for it, and `notify` only moves its revision, so a current source attached later answers the change.
  * - `notify` of a log source and `publish` to a check source die naming the other: a check source reads your store, so write there and notify; a log source keeps what you publish.
  * - Implementations attach only to one `layerMemory` or `makeEvents` made: built over another, such as `Events.of` in a test, they die, naming both.
  */
@@ -107,10 +110,13 @@ export class Events extends Context.Service<
 /** How an implementation's sources attach to an `Events` as it builds. */
 interface Attachments {
   /** How a check or current source's subscribers are woken, for as long as the scope lasts. */
-  readonly check: (event: Event.Any) => Effect.Effect<Checking, never, Scope.Scope>;
+  readonly check: (
+    event: Event.Any,
+    current: boolean,
+  ) => Effect.Effect<Checking, never, Scope.Scope>;
   /**
    * `event`'s one log, kept as long as the `Events` is, made with `bounds` at the first
-   * attachment, and fed by `emit` where given while the scope lasts.
+   * attachment, and fed by `emit` where given, unless the scope ends before its turn.
    */
   readonly log: (
     event: Event.Any,
@@ -148,8 +154,8 @@ interface Held {
 
 interface Kept {
   readonly log: Log<ErasedEmitted>;
-  readonly emits: Array<Held>;
-  feeding: Fiber.Fiber<void> | undefined;
+  readonly waiting: Set<Held>;
+  feeding: boolean;
 }
 
 const reaches = (target: string | undefined, key: string | undefined) =>
@@ -211,7 +217,12 @@ export const makeEvents = (
     const emits = options.emits ?? true;
     const revisions = options.revisions ?? memoryRevisions();
     const scope = yield* Effect.scope;
-    const checks = new Map<Event.Any, { attached: Set<object>; waiters: Set<Waiter> }>();
+
+    const checks = new Map<
+      Event.Any,
+      { attached: Set<object>; waiters: Set<Waiter>; current?: boolean }
+    >();
+
     const logs = new Map<Event.Any, Kept>();
 
     const checkOf = (event: Event.Any) => {
@@ -227,57 +238,33 @@ export const makeEvents = (
 
     const isCheck = (event: Event.Any) => (checks.get(event)?.attached.size ?? 0) > 0;
 
-    // Why: one emit stream feeds a log at a time, the oldest held one's, so two builds of one
-    // source never append each occurrence twice; the next takes over as the feeding one ends or
-    // its build is released.
+    // Why: one emit stream feeds a log at a time, so two builds of one source never append each
+    // occurrence twice, until it ends or fails, its build released or not: interrupting it as its
+    // build is released would lose what a shared upstream sends before the next one subscribes.
+    // The next held one then takes over; one whose build is released before its turn never feeds.
     const feed = (kept: Kept): Effect.Effect<void> =>
       Effect.suspend(() => {
-        const next = kept.emits[0];
+        const [next] = kept.feeding ? [] : kept.waiting;
 
-        if (kept.feeding !== undefined || next === undefined) return Effect.void;
+        if (next === undefined) return Effect.void;
 
-        const fed = Effect.andThen(kept.log.feed(next.emit), ended(kept, next));
+        kept.waiting.delete(next);
+        kept.feeding = true;
 
-        return Effect.map(Effect.forkIn(fed, scope), (fiber) => {
-          kept.feeding = fiber;
-        });
-      });
+        const fed = Effect.andThen(
+          kept.log.feed(next.emit),
+          Effect.suspend(() => {
+            kept.feeding = false;
 
-    const ended = (kept: Kept, held: Held) =>
-      Effect.suspend(() => {
-        const index = kept.emits.indexOf(held);
+            return feed(kept);
+          }),
+        );
 
-        if (index === -1) return Effect.void;
-
-        kept.emits.splice(index, 1);
-        kept.feeding = undefined;
-
-        return feed(kept);
+        return Effect.asVoid(Effect.forkIn(fed, scope));
       });
 
     const fedBy = (kept: Kept, emit: Stream.Stream<ErasedEmitted>) =>
-      Effect.acquireRelease(
-        Effect.suspend(() => {
-          const held = { emit };
-
-          kept.emits.push(held);
-
-          return Effect.as(feed(kept), held);
-        }),
-        (held) =>
-          Effect.suspend(() => {
-            const index = kept.emits.indexOf(held);
-            const feeding = index === 0 ? kept.feeding : undefined;
-
-            if (index !== -1) kept.emits.splice(index, 1);
-
-            if (feeding === undefined) return Effect.void;
-
-            kept.feeding = undefined;
-
-            return Effect.andThen(Fiber.interrupt(feeding), feed(kept));
-          }),
-      );
+      Effect.tap(holding(kept.waiting, { emit }), () => feed(kept));
 
     const events = Events.of({
       notify: (event, options) =>
@@ -292,12 +279,18 @@ export const makeEvents = (
 
           const key = options?.key;
 
-          // Why: The revision moves at every notify, a current source attached or not, as a
-          // request-scoped server attaches one only while it serves a request: a change
-          // announced between requests is read at the next. It moves before a subscriber
-          // wakes, so the read it wakes to answers the value written before this notify.
+          // Why: The revision moves at every notify of an event not attached as a check source,
+          // whose subscribers never read it: a request-scoped server attaches a current source
+          // only while it serves a request, so a change announced between requests is read at
+          // the next. It moves before a subscriber wakes, so the read it wakes to answers the
+          // value written before this notify.
           return Effect.andThen(
-            revisions.bump([everyKey(event), key === undefined ? noKey(event) : ofKey(event, key)]),
+            checks.get(event)?.current === false
+              ? Effect.void
+              : revisions.bump([
+                  everyKey(event),
+                  key === undefined ? noKey(event) : ofKey(event, key),
+                ]),
             Effect.sync(() => {
               for (const waiter of checkOf(event).waiters) {
                 if (reaches(key, waiter.key)) Queue.offerUnsafe(waiter.woken, undefined);
@@ -322,24 +315,30 @@ export const makeEvents = (
     });
 
     attached.set(events, {
-      check: (event) =>
-        Effect.map(holding(checkOf(event).attached, {}), (): Checking => ({
-          polls,
-          wakes: (key) =>
-            Effect.flatMap(Queue.sliding<void>(1), (woken) =>
-              Effect.as(holding(checkOf(event).waiters, { key, woken }), Queue.take(woken)),
-            ),
-          revision: (key) =>
-            Effect.map(
-              key === undefined
-                ? revisions.get(everyKey(event))
-                : Effect.map(
-                    Effect.all([revisions.get(noKey(event)), revisions.get(ofKey(event, key))]),
-                    ([unkeyed, keyed]) => unkeyed + keyed,
-                  ),
-              (count) => `${revisions.epoch}:${count}`,
-            ),
-        })),
+      check: (event, current) =>
+        Effect.map(
+          holding(Object.assign(checkOf(event), { current }).attached, {}),
+          (): Checking => ({
+            polls,
+            wakes: (key) =>
+              Effect.flatMap(Queue.sliding<void>(1), (woken) =>
+                Effect.as(holding(checkOf(event).waiters, { key, woken }), Queue.take(woken)),
+              ),
+            revision: (key) =>
+              Effect.map(
+                key === undefined
+                  ? revisions.get(everyKey(event))
+                  : Effect.map(
+                      Effect.all([revisions.get(noKey(event)), revisions.get(ofKey(event, key))]),
+                      ([unkeyed, keyed]) => unkeyed + keyed,
+                    ),
+                (count) =>
+                  key === undefined
+                    ? `${revisions.epoch}:${count}`
+                    : `${revisions.epoch}:${count}:${key}`,
+              ),
+          }),
+        ),
       log: (event, bounds, emit) =>
         Effect.suspend(() => {
           if (emit !== undefined && !emits)
@@ -351,8 +350,8 @@ export const makeEvents = (
 
           const kept = logs.get(event) ?? {
             log: makeLog(makeLogStore(options.log(event), bounds)),
-            emits: [],
-            feeding: undefined,
+            waiting: new Set(),
+            feeding: false,
           };
 
           logs.set(event, kept);

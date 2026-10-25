@@ -1043,20 +1043,23 @@ describe("a subscription hook", () => {
     return { log, held, implementation };
   };
 
-  it.effect("sets up the hook for each poll subscriber in process, even of one input", () =>
-    Effect.gen(function* () {
-      const hooked = makeHooked();
-      const client = yield* Action.client(hooked.implementation);
-      const poll = client.watch(Posted, { channel: "a" }, { mode: "poll" });
+  it.effect(
+    "sets up the hook for each poll subscriber in process, even of one input, until its watch ends",
+    () =>
+      Effect.gen(function* () {
+        const hooked = makeHooked();
+        const client = yield* Action.client(hooked.implementation);
+        const poll = client.watch(Posted, { channel: "a" }, { mode: "poll" });
 
-      const fibers = yield* Effect.all([Stream.runDrain(poll), Stream.runDrain(poll)], {
-        concurrency: "unbounded",
-      }).pipe(Effect.forkChild);
+        const fibers = yield* Effect.all([Stream.runDrain(poll), Stream.runDrain(poll)], {
+          concurrency: "unbounded",
+        }).pipe(Effect.forkChild);
 
-      yield* settle;
-      expect(hooked.held).toEqual(["a", "a"]);
-      yield* Fiber.interrupt(fibers);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        yield* settle;
+        expect(hooked.held).toEqual(["a", "a"]);
+        yield* Fiber.interrupt(fibers);
+        expect(hooked.held).toEqual([]);
+      }).pipe(Effect.provide(Event.layerMemory)),
   );
 
   it.effect("holds what it set up while a stream is read, and tears it down when it ends", () =>
@@ -1073,26 +1076,6 @@ describe("a subscription hook", () => {
       hooked.log.post("a", "one");
       yield* TestClock.adjust("5 seconds");
       yield* Fiber.join(fiber);
-
-      expect(hooked.held).toEqual([]);
-    }).pipe(Effect.provide(Event.layerMemory)),
-  );
-
-  it.effect("holds one set-up for the polls of one input, until 5 minutes after the last", () =>
-    Effect.gen(function* () {
-      const hooked = makeHooked();
-      const client = yield* Action.client(hooked.implementation);
-
-      const fiber = yield* client
-        .watch(Posted, { channel: "a" }, { mode: "poll" })
-        .pipe(Stream.runDrain, Effect.forkChild);
-
-      yield* TestClock.adjust("1 minute");
-      expect(hooked.held).toEqual(["a"]);
-      yield* Fiber.interrupt(fiber);
-      yield* TestClock.adjust("4 minutes");
-      expect(hooked.held).toEqual(["a"]);
-      yield* TestClock.adjust("1 minute");
 
       expect(hooked.held).toEqual([]);
     }).pipe(Effect.provide(Event.layerMemory)),

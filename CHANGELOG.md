@@ -62,10 +62,12 @@ SEP-3415.
 `current`, beside `check` and `log`: the value as it is, for the subscription's input, such as a
 status or a list small enough to send whole. A subscriber is sent it first, then again after each
 `Event.Events.notify` reaching its key, never each change it missed one by one. The library keeps
-the revision that is the cursor and each occurrence's id, `<epoch>:<count>`, so the store keeps
+the revision that is the cursor and each occurrence's id, `<epoch>:<count>`, then `:<key>` for a
+subscriber of one key, so one resuming from another key's cursor is sent the value; the store keeps
 none: `makeEvents` takes `revisions`, where a host keeps them, and `Event.layerMemory` keeps them in
 memory, a new epoch with each build. Every `notify` moves its event's revision, a current source
-attached or not, so a request-scoped server answers a change announced between requests.
+attached or not, so a request-scoped server answers a change announced between requests, except
+once its event has attached as a check source, whose subscribers never read it.
 build-events' `pipeline.status` is one.
 
 **Native rpcs beside actions.** `ActionRpc.make` takes `rpcs`, a native `RpcGroup` served beside

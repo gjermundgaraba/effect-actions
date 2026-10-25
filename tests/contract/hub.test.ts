@@ -379,7 +379,7 @@ describe("Event.Events", () => {
   );
 
   it.effect(
-    "feeds a log from one implementation's emit at a time, the next taking over as it is released",
+    "feeds a log from one implementation's emit at a time, past its release, losing nothing published as it is released",
     () =>
       Effect.gen(function* () {
         const upstream = yield* PubSub.unbounded<Message>();
@@ -407,7 +407,6 @@ describe("Event.Events", () => {
         yield* PubSub.publish(upstream, { id: "m1", room: "general", text: "one" });
         yield* settle;
         yield* Scope.close(released, Exit.void);
-        yield* settle;
         yield* PubSub.publish(upstream, { id: "m2", room: "general", text: "two" });
 
         expect(texts(yield* Fiber.join(watching))).toEqual(["one", "two"]);
@@ -448,6 +447,42 @@ const recordingStorage = () => {
 };
 
 describe("Event.makeEvents", () => {
+  it.effect("moves the revision at a notify of a current source, and none of a check source", () =>
+    Effect.gen(function* () {
+      const bumped: Array<string> = [];
+
+      const Status = Event.make("status.changed", {
+        description: "A status changed.",
+        payload: { value: Schema.Int },
+        caller: Action.Anyone,
+      });
+
+      const layer = Layer.effect(Event.Events)(
+        Event.makeEvents({
+          log: () => recordingStorage().storage,
+          revisions: {
+            epoch: "epoch",
+            get: () => Effect.succeed(0),
+            bump: (names) => Effect.sync(() => bumped.push(...names)),
+          },
+        }),
+      );
+
+      yield* Effect.gen(function* () {
+        const events = yield* Event.Events;
+
+        yield* Action.client(makeCountedStore().implementation);
+        yield* Action.client(
+          Event.implement(Status, { current: () => Effect.succeed({ value: 0 }) }),
+        );
+        yield* events.notify(Posted);
+        expect(bumped).toEqual([]);
+        yield* events.notify(Status);
+        expect(bumped).toEqual(["status.changed", "status.changed\u0000"]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect(
     "keeps a log source's entries in the storage its log option makes, read back by its cursors",
     () =>

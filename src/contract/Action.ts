@@ -781,7 +781,8 @@ const watcherOf =
     return Elements.unwrap(
       Effect.map(watchInput(event, input), ({ value }) => {
         // Why: In process, no principal tells subscribers apart, so each watch is a subscriber
-        // of its own: a poll subscription's `subscription` hook runs as the one who polls.
+        // of its own: a poll subscription's `subscription` hook runs as the one who polls, and is
+        // released as the watch ends, its key never polled again.
         const subscriber = uniqueKey();
 
         return watching(
@@ -813,7 +814,7 @@ const watcherOf =
               ).pipe(readOn("In process", event.name), Elements.mapEffect(decoded)),
           },
           options,
-        );
+        ).pipe(Elements.ensuring(feed.release?.(value, subscriber) ?? Effect.void));
       }),
     );
   };
