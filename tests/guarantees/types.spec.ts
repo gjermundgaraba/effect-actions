@@ -389,9 +389,10 @@ export const builtInErrorTypes = () => {
   const bound = ActionHttp.make([Echo]);
 
   expectTypeOf<keyof typeof bound>().toEqualTypeOf<
-    "actions" | "error" | "prefix" | "api" | "authentication"
+    "actions" | "events" | "error" | "prefix" | "api" | "authentication"
   >();
   expectTypeOf(bound.authentication).toBeUndefined();
+  expectTypeOf(bound.events).toEqualTypeOf<readonly []>();
 
   const native = HttpApiClient.make(bound.api);
 

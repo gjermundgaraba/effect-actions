@@ -1,8 +1,9 @@
 import { createServer } from "node:http";
 import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Deferred, Effect, Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { connect } from "../src/page.js";
 import { MessageStore } from "../src/chat/store.js";
@@ -25,7 +26,7 @@ const listening = HttpRouter.serve(socket, { disableLogger: true, disableListenL
   Layer.provideMerge(
     NodeHttpServer.layer(createServer, { host: "127.0.0.1", port: 0, websocket: { maxPayload } }),
   ),
-  Layer.provide(MessageStore.layerMemory),
+  Layer.provide([MessageStore.layerMemory, Event.layerMemory]),
 );
 
 // The page's client, on Node's global `WebSocket`. Each test closes it with `Effect.scoped`,
@@ -54,6 +55,33 @@ describe("the chat, over a WebSocket", () => {
         access: "member",
         messages: [posted],
       });
+    }).pipe(Effect.scoped, Effect.provide(listening)),
+  );
+
+  it.effect("delivers a post to a page watching the room on the same socket, until it stops", () =>
+    Effect.gen(function* () {
+      const page = yield* chat;
+      const received = yield* Deferred.make<string>();
+      const stopped = yield* Deferred.make<string>();
+
+      // From the room's start, id 0, so the post reaches it however soon after the watch it is
+      // sent.
+      const stop = page.room("lobby", "grace").watch(
+        0,
+        (message) => {
+          if (message._tag === "Occurrence")
+            Deferred.doneUnsafe(received, Effect.succeed(message.data.text));
+        },
+        (why) => Deferred.doneUnsafe(stopped, Effect.succeed(why)),
+      );
+
+      yield* Effect.promise(() => page.room("lobby", "ada").post("Deploying at noon."));
+
+      expect(yield* Deferred.await(received)).toBe("Deploying at noon.");
+
+      stop();
+
+      expect(yield* Deferred.await(stopped)).toBe("stopped");
     }).pipe(Effect.scoped, Effect.provide(listening)),
   );
 

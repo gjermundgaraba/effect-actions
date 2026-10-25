@@ -1,10 +1,18 @@
 import { Effect, Layer, Queue, Schema } from "effect";
 import { RpcClient, type RpcMessage, type RpcSerialization, RpcServer } from "effect/rpc";
+import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 
 const valuesCodecFor = Schema.toCodecIso as RpcSerialization.CodecFor;
 
+export interface ValuesProtocolOptions {
+  readonly acknowledges?: boolean;
+  readonly keeper?: ActionRpc.SubscriptionKeeper;
+  readonly sent?: Array<RpcMessage.FromServerEncoded>;
+}
+
 export const inMemoryValuesProtocolTo = <E, R>(
   server: Layer.Layer<never, E, R>,
+  { acknowledges = false, keeper, sent }: ValuesProtocolOptions = {},
 ): Layer.Layer<RpcClient.Protocol, E, Exclude<R, RpcServer.Protocol>> =>
   Layer.unwrap(
     Effect.gen(function* () {
@@ -27,11 +35,15 @@ export const inMemoryValuesProtocolTo = <E, R>(
         return Effect.succeed({
           disconnects,
           send: (clientId, response) =>
-            Effect.suspend(() => toClient(clientId, structuredClone(response))),
+            Effect.suspend(() => {
+              sent?.push(response);
+
+              return toClient(clientId, structuredClone(response));
+            }),
           end: () => Effect.void,
           clientIds: Effect.sync(() => clientIds),
           initialMessage: Effect.succeedNone,
-          supportsAck: false,
+          supportsAck: acknowledges,
           supportsTransferables: false,
           supportsSpanPropagation: false,
           supportsNotifications: false,
@@ -49,15 +61,21 @@ export const inMemoryValuesProtocolTo = <E, R>(
 
               return toServer(clientId, structuredClone(message));
             }),
-          supportsAck: false,
+          supportsAck: acknowledges,
           supportsTransferables: false,
           codecFor: valuesCodecFor,
         });
       });
 
+      const keeping = { ...serverProtocol, [ActionRpc.subscriptionKeeper]: keeper };
+
       return Layer.merge(
         Layer.succeed(RpcClient.Protocol, clientProtocol),
-        server.pipe(Layer.provide(Layer.succeed(RpcServer.Protocol, serverProtocol))),
+        server.pipe(
+          Layer.provide(
+            Layer.succeed(RpcServer.Protocol, keeper === undefined ? serverProtocol : keeping),
+          ),
+        ),
       );
     }),
   );

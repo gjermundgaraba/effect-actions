@@ -1,4 +1,4 @@
-import { Context } from "effect";
+import { Context, Effect } from "effect";
 import type * as Action from "./Action.js";
 
 /**
@@ -13,17 +13,39 @@ export interface Proving {
   readonly identity: { readonly key: string };
 }
 
+/** What declares a caller: an action or an event. */
+export type Called = Pick<Action.Any, "name" | "caller">;
+
+/** What names one caller of a surface: its authentication's `principal`, where it has one. */
+export interface Keyed {
+  principal?(identity: Action.Any["input"]["Type"]): string;
+}
+
+/**
+ * The principal of the caller of `called`, as `keyed` names it: a poll's subscriber, for its
+ * `subscription` hook. None where `called` is public or `keyed` has no `principal`: every caller
+ * is then one.
+ */
+export const principalOf = (
+  called: Pick<Called, "caller">,
+  keyed: Keyed | undefined,
+): Effect.Effect<string | undefined, never, unknown> =>
+  keyed?.principal === undefined || called.caller === Anyone
+    ? Effect.succeed(undefined)
+    : Effect.map(Effect.service(called.caller), (identity) => keyed.principal?.(identity));
+
 export const assertAuthentication = (
-  actions: ReadonlyArray<Action.Any>,
+  contracts: ReadonlyArray<Called>,
   authentication: Proving | undefined,
+  noun: "action" | "event" = "action",
 ): void => {
-  for (const action of actions) {
+  for (const contract of contracts) {
     if (
-      action.caller !== Anyone &&
-      (authentication === undefined || action.caller.key !== authentication.identity.key)
+      contract.caller !== Anyone &&
+      (authentication === undefined || contract.caller.key !== authentication.identity.key)
     ) {
       throw new Error(
-        `Protected action '${action.name}' requires its matching authentication descriptor (give it the authentication whose identity the action's caller names)`,
+        `Protected ${noun} '${contract.name}' requires its matching authentication descriptor (give it the authentication whose identity the ${noun}'s caller names)`,
       );
     }
   }

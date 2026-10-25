@@ -308,8 +308,8 @@ const nonBearerChallengeOf = (security: Security, name: string): string | undefi
     Match.exhaustive,
   );
 
-/** What `make` takes besides the name and the identity. */
-export interface Options {
+/** What `make` takes besides the name and the identity `A`. */
+export interface Options<A = unknown> {
   /**
    * The one native scheme a caller proves the identity by, Bearer when left out: an API key in a
    * cookie, a header or the query, such as `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`,
@@ -330,7 +330,21 @@ export interface Options {
    * - A failure that is not the caller's, such as an issuer the verifier cannot reach, belongs here with `{ httpApiStatus: 503 }`: an `Unauthenticated` would have the caller sign in again.
    */
   readonly error?: Errors | Errors[number];
+  /**
+   * The stable id of an identity, such as its user id: what tells subscribers apart where a
+   * surface keeps a subscription between requests, such as an HTTP poll subscription's lease.
+   *
+   * **Gotchas**
+   *
+   * - A surface serving a protected event type whose source has a `subscription` hook refuses to start without it, its message naming this option.
+   * - Two identities with one principal share those subscriptions, so give each its own: a tenant's id alone merges its users.
+   */
+  readonly principal?: ((identity: A) => string) | undefined;
 }
+
+// Why: `principal` is checked apart from the inferred options, against the identity `make` was
+// given, which also types its parameter: inferred with them, it would take an `any` identity.
+type PrincipalOf<A> = NoInfer<Pick<Options<A>, "principal">>;
 
 type SecurityOf<O> = O extends { readonly security: infer S extends Security }
   ? S
@@ -345,13 +359,14 @@ type SecurityOf<O> = O extends { readonly security: infer S extends Security }
  * one name only for one declaration, whose values a server and a client may hold as `layer` says.
  * Guide: `docs/Authentication.md` in this package; in an application: `examples/notes-service/src/identity/`.
  */
-export const make = <const Name extends string, I, A, const O extends Options = {}>(
+export const make = <const Name extends string, I, A, const O extends Options<never> = {}>(
   name: Name,
   identity: Context.Key<I, A>,
-  ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>>>
+  ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>> & PrincipalOf<A>>
 ): Descriptor<I, A, SecurityOf<O>, Name, ErrorsOf<O>> => {
   const security: Security = options[0]?.security ?? HttpApiSecurity.bearer;
   const error = errorList(options[0]?.error);
+  const principal = options[0]?.principal;
 
   // Why: The name keys its scheme in the OpenAPI document as it is, so one that is no key throws.
   // Rejected: replacing other characters with `_`, which gives `app/Login` and `app:Login` one key,
@@ -381,6 +396,7 @@ export const make = <const Name extends string, I, A, const O extends Options = 
     security: security as SecurityOf<O>,
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A type read from the options: `ErrorsOf` is the list given, one schema as a list of one, or none.
     error: error as ErrorsOf<O>,
+    ...(principal === undefined ? {} : { principal }),
     "~provider": Context.Service<Provider<I, Name>, Runtime>(
       `effect-actions/Authentication/Provider/${name}`,
     ),

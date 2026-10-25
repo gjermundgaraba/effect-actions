@@ -20,6 +20,7 @@ import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
+import * as Event from "../../src/contract/Event.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { authenticate } from "../support/app/authentication.js";
 import { actors, CurrentActor } from "../support/app/authorization.js";
@@ -1004,6 +1005,56 @@ it("refuses a binding error with a built-in error's tag, on each binding", () =>
   expect(ActionHttp.make([identity], { error: [Action.Forbidden] }).error).toEqual([
     Action.Forbidden,
   ]);
+});
+
+it("refuses a binding error with a built-in error's tag where it binds an event type alone, on each binding", () => {
+  class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+
+  const Ticked = Event.make("clock.ticked", {
+    description: "",
+    payload: {},
+    caller: Action.Anyone,
+  });
+
+  const refusal = 'binding of event "clock.ticked": error _tag "Forbidden" names two error schemas';
+
+  expect(() => ActionHttp.make([Ticked], { error: [Forbidden] })).toThrow(`ActionHttp ${refusal}`);
+  expect(() => ActionRpc.make([Ticked], { error: [Forbidden] })).toThrow(`ActionRpc ${refusal}`);
+});
+
+it("refuses at serving a binding spread with another descriptor than its protected event type names, on each binding", () => {
+  class Stranger extends Context.Service<Stranger, { readonly id: string }>()(
+    "bindings/Stranger",
+  ) {}
+
+  const Changed = Event.make("user.changed", {
+    description: "",
+    payload: {},
+    caller: CurrentActor,
+  });
+
+  const Elsewhere = Authentication.make("bindings.Elsewhere", Stranger);
+
+  const changes = Event.implement(
+    Changed,
+    { check: () => Effect.succeed({ cursor: "0", events: [] }) },
+    { authorize: Event.allowAll },
+  );
+
+  const refusal = "Protected event 'user.changed' requires its matching authentication descriptor";
+
+  expect(() =>
+    ActionHttp.layer(
+      { ...ActionHttp.make([Changed], { authentication: Login }), authentication: Elsewhere },
+      changes,
+    ),
+  ).toThrow(refusal);
+  expect(() =>
+    ActionRpc.layer(
+      { ...ActionRpc.make([Changed], { authentication: Login }), authentication: Elsewhere },
+      changes,
+    ),
+  ).toThrow(refusal);
 });
 
 it("refuses a binding where a call's errors share a _tag across their sources, on each binding", () => {

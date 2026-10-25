@@ -9,7 +9,9 @@ import { Http } from "./Api.js";
 // Entrypoint: `node --import tsx examples/kitchen-sink/src/cli.ts list-issues`.
 // The members' CLI: a command per action of the binding, a flag per input field, each calling
 // the server over HTTP. It imports the binding alone and runs nothing locally: the server
-// authenticates and authorizes, as for any client.
+// authenticates and authorizes, as for any client. The binding's event adds `tracker watch
+// issue.changed --status open`, printing each change of the member's workspace as a line of
+// JSON as it happens; `--cursor` resumes from the last one's.
 const tracker = ActionCli.remote(Http, {
   name: "tracker",
   // Each command's options, keyed by its action's name and typed by that action.

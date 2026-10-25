@@ -1,9 +1,8 @@
 import { Predicate, Schema, SchemaAST, type Types } from "effect";
 import type * as Action from "./Action.js";
 import { literalValues, members } from "./ast.js";
-import { Anyone, assertAuthentication, type Proving } from "./caller.js";
+import { Anyone, assertAuthentication, type Called, type Proving } from "./caller.js";
 import { builtIns } from "./errors.js";
-import { assertOnce } from "./names.js";
 import { httpApiStatusOf } from "./status.js";
 
 export const errorList = (
@@ -133,27 +132,35 @@ export const assertDistinctTags = (what: string, errors: Action.Errors): void =>
 };
 
 /**
- * The checks `ActionHttp.make` and `ActionRpc.make` share: each action once, the descriptor every
- * protected action names, and each call's errors distinct by `_tag`. Returns the binding's `error`, as a list, and `authentication`.
+ * The checks `ActionHttp.make` and `ActionRpc.make` share: the descriptor every protected action
+ * and event type names, and each call's and each subscription's errors distinct by `_tag`.
+ * Returns the binding's `error`, as a list, and `authentication`.
  */
 export const bindingOf = <D extends Proving & { readonly error: Action.Errors }>(
   what: string,
   actions: ReadonlyArray<Action.Any>,
+  events: ReadonlyArray<Called>,
   options: {
     readonly error?: Action.Errors | Action.Errors[number] | undefined;
     readonly authentication?: D | undefined;
   },
 ) => {
-  assertOnce("action", actions);
-
   const error = errorList(options.error);
 
   const bound = { error, authentication: options.authentication };
 
   assertAuthentication(actions, bound.authentication);
+  assertAuthentication(events, bound.authentication, "event");
 
   for (const action of actions) {
     assertDistinctTags(`${what} of "${action.name}"`, bindingErrors(action, bound));
+  }
+
+  for (const event of events) {
+    assertDistinctTags(
+      `${what} of event "${event.name}"`,
+      bindingErrors({ error: [], caller: event.caller }, bound),
+    );
   }
 
   return bound;

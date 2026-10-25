@@ -1,7 +1,8 @@
 import { Effect, type Schema, Stream } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest } from "effect/http";
-import { type HttpApi, HttpApiClient, type HttpApiSchema } from "effect/http-api";
+import { type HttpApi, HttpApiClient } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
+import type * as Event from "../contract/Event.js";
 import type { Any as Authentication, VerifierError } from "../authentication/provider.js";
 import {
   type Call,
@@ -10,12 +11,16 @@ import {
   type ErasedMethod,
   type ErasedStreamMethod,
   sendingValue,
+  watchInput,
 } from "../contract/call.js";
 import type { BuiltIns } from "../contract/errors.js";
 import type { ErasedValue } from "../contract/implementation.js";
+import { type WatchArgs, watching } from "../contract/watch.js";
+import type { sentOf } from "./events.js";
 import { readElements, readWithProgress } from "./streamed.js";
 import { type Answer, elementOf, type StreamOf } from "../contract/stream.js";
 import type { Codec } from "../contract/codec.js";
+import { type PollMethod, type StreamMethod, transportOf } from "./watch.js";
 
 /**
  * The native `HttpApiClient.make` options except `transformResponse`, which may change a call's
@@ -49,16 +54,11 @@ type BindingError = Action.Errors[number];
 
 // Why: Named through the native client's stream, so the browser's client imports no encoding module.
 type SseFailure = Extract<
-  Stream.Error<
-    HttpApiClient.SuccessType<
-      HttpApiSchema.StreamSse<
-        Extract<HttpApiSchema.StreamSchema, { readonly mode: "sse" }>["events"],
-        typeof Schema.Never
-      >
-    >
-  >,
+  Stream.Error<HttpApiClient.SuccessType<ReturnType<typeof sentOf<Event.Any>>>>,
   { readonly _tag: "SseError" | "Retry" }
 >;
+
+type SseError = Extract<SseFailure, { readonly _tag: "SseError" }>;
 
 /**
  * What one call of `A` fails with: a declared error value (the action's own, one `E` of the
@@ -92,15 +92,40 @@ type Method<A extends Action.Any, E extends BindingError, CE, CR> = Call<
 export interface AnyHttp {
   readonly authentication?: Authentication | undefined;
   readonly actions: ReadonlyArray<Action.Any>;
+  readonly events: ReadonlyArray<Event.Any>;
   readonly error: ReadonlyArray<BindingError>;
   readonly prefix: `/${string}`;
   readonly api: HttpApi.Constraint;
 }
 
 /**
+ * What a watch of `W` over the binding `H` may fail with: what its route's first answer declares,
+ * a refusal ending it later, an `Event.SubscriptionError` where it is not served, a native
+ * `HttpClientError` that no reconnect outlasts, or a stream or an occurrence that does not decode.
+ */
+export type WatchError<W extends Event.Any, H extends AnyHttp> =
+  | Event.SubscriptionError
+  | BuiltIns["Type"]
+  | H["error"][number]["Type"]
+  | VerifierError<W, H["authentication"]>["Type"]
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError
+  | SseError;
+
+type Watching<H extends AnyHttp, E, R> = [H["events"][number]] extends [never]
+  ? unknown
+  : {
+      readonly watch: <W extends H["events"][number], SE = never>(
+        event: W,
+        ...args: WatchArgs<W, SE>
+      ) => Stream.Stream<Event.Received<W>, WatchError<W, H> | E | SE, R>;
+    };
+
+/**
  * Every action of the binding `H`, as `client.<action>(input)`: a protected one may also fail
- * with what its descriptor's verifier declares. Each call also fails with `E` and requires `R`,
- * what its `transformClient` adds.
+ * with what its descriptor's verifier declares. Where `H` lists event types, `watch(event, input,
+ * options)` subscribes to one. Each call and watch also fails with `E` and requires `R`, what its
+ * `transformClient` adds.
  */
 export type Client<H extends AnyHttp, E = never, R = never> = {
   readonly [A in H["actions"][number] as A["name"]]: Method<
@@ -109,7 +134,7 @@ export type Client<H extends AnyHttp, E = never, R = never> = {
     E,
     R
   >;
-};
+} & Watching<H, E, R>;
 
 type NativeMethod<R> = (request: {
   readonly payload: ErasedValue;
@@ -117,15 +142,23 @@ type NativeMethod<R> = (request: {
 
 type NativeClient<M> = { readonly [name: string]: M | undefined };
 
-/** A client's methods by name. */
-export type Methods<R> = { readonly [name: string]: ErasedMethod<R> | ErasedStreamMethod<R> };
+type ErasedWatch<R> = (
+  event: Event.Any,
+  input?: ErasedValue,
+  options?: Event.WatchOptions<unknown>,
+) => Stream.Stream<Event.Received<Event.Any>, unknown, R>;
 
-const methodOf = <M>(native: NativeClient<M>, name: string): M => {
+/** A client's methods by name, and `watch` where its binding lists event types. */
+export type Methods<R> = {
+  readonly [name: string]: ErasedMethod<R> | ErasedStreamMethod<R> | ErasedWatch<R>;
+};
+
+const methodOf = <M>(native: NativeClient<M>, name: string, what: "action" | "event"): M => {
   const method = native[name];
 
   if (method === undefined)
     throw new Error(
-      `No client method for ${name} (use the binding \`ActionHttp.make\` returned, whose group holds this action)`,
+      `No client method for ${name} (use the binding \`ActionHttp.make\` returned, whose group holds this ${what})`,
     );
 
   return method;
@@ -138,11 +171,19 @@ const acceptingStreams = HttpClient.mapRequest(
   HttpClientRequest.setHeader("accept", "application/json, text/event-stream"),
 );
 
+const nativeOf = <E, R>(
+  http: AnyHttp,
+  httpClient: HttpClient.HttpClient.With<E, R>,
+  baseUrl: Options["baseUrl"],
+) =>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
+  HttpApiClient.makeWith(http.api as HttpApi.HttpApi<string>, { baseUrl, httpClient });
+
 const actionMethodOf = <R>(
   action: Action.Any,
   native: NativeClient<NativeMethod<R>>,
 ): ErasedMethod<R> | ErasedStreamMethod<R> => {
-  const method = methodOf(native, action.name);
+  const method = methodOf(native, action.name, "action");
 
   if (elementOf(action.success) !== undefined)
     return checkedStream(action, sendingValue, (payload, onProgress) =>
@@ -162,20 +203,37 @@ const methodsWith = <E, R>(
   httpClient: HttpClient.HttpClient.With<E, R>,
   baseUrl: Options["baseUrl"],
 ): Effect.Effect<Methods<R>> =>
-  Effect.map(
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
-    HttpApiClient.makeWith(http.api as HttpApi.HttpApi<string>, {
-      baseUrl,
-      httpClient: acceptingStreams(httpClient),
-    }),
-    (client): Methods<R> => {
-      const native: NativeClient<NativeMethod<R>> = client;
+  Effect.gen(function* () {
+    const native = yield* nativeOf(http, acceptingStreams(httpClient), baseUrl);
 
-      return Object.fromEntries(
-        http.actions.map((action) => [action.name, actionMethodOf(action, native)]),
+    const actions: Methods<R> = Object.fromEntries(
+      http.actions.map((action) => [action.name, actionMethodOf<R>(action, native)]),
+    );
+
+    if (http.events.length === 0) return actions;
+
+    // Why: An event's route answers a page, or its stream where the request accepts one, so a
+    // poll asks with a client accepting JSON alone.
+    const polls: NativeClient<PollMethod<R>> = yield* nativeOf(http, httpClient, baseUrl);
+    const streams: NativeClient<StreamMethod<R>> = native;
+
+    const watch: ErasedWatch<R> = (event, input, options) =>
+      Stream.unwrap(
+        Effect.map(watchInput(event, input), ({ value }) =>
+          watching(
+            transportOf(
+              event,
+              methodOf(polls, event.name, "event"),
+              methodOf(streams, event.name, "event"),
+              value,
+            ),
+            options,
+          ),
+        ),
       );
-    },
-  );
+
+    return { ...actions, watch };
+  });
 
 export const methods = <E, R>(
   http: AnyHttp,

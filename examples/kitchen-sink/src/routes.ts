@@ -19,31 +19,38 @@ import { Login } from "./identity/Identity.js";
 import { HttpQuota, quota, RpcQuota } from "./identity/quota.js";
 import { layer as assistantTools } from "./issues/assistant.js";
 import { features } from "./issues/guide.js";
+import { issueEvents } from "./issues/events.js";
 import { exports } from "./issues/export.js";
 import { issues } from "./issues/handlers.js";
 import { cors, requestPolicy } from "./request-policy.js";
 import { Rpc } from "./Rpc.js";
 import { status } from "./workspaces/handlers.js";
 import { resolveTenant } from "./workspaces/tenant.js";
+import { IssueChanged } from "./issues/Issues.js";
 import { GetStatus } from "./workspaces/Workspaces.js";
 
-// Every domain's implementation of the public port's actions, once. Each surface below takes
-// this one list and serves the actions its binding or its `actions` names.
-const implementations = [status, identity, issues, exports, attachments, assistant];
+// Every domain's implementation of the public port's actions, once, and of its event. Each
+// surface below takes one of these lists and serves what its binding or its `actions` names.
+const actionImplementations = [status, identity, issues, exports, attachments, assistant];
 
-// JSON routes at `/api/v1/<action>`, in two layers of one binding, each naming its `actions`.
-// The quota requires the caller, and a public route has none, so `getStatus` is served by a
-// layer without it.
+const implementations = [...actionImplementations, issueEvents];
+
+// JSON routes at `/api/v1/<action>`, in two layers of one binding, each naming its `actions`,
+// an event among them: a layer given `actions` serves exactly what it names. The quota requires
+// the caller, and a public route has none, so `getStatus` is served by a layer without it.
 const api = Layer.mergeAll(
   ActionHttp.layer(Http, implementations, { actions: [GetStatus] }),
-  ActionHttp.layer(Http, implementations, { actions: MemberActions, middleware: [HttpQuota] }),
+  ActionHttp.layer(Http, implementations, {
+    actions: [...MemberActions, IssueChanged],
+    middleware: [HttpQuota],
+  }),
 );
 
 // The same actions as MCP tools at `/mcp`: a mixed endpoint, serving the public `getStatus`
-// beside the members' tools.
+// beside the members' tools. It serves no events, so it takes the action implementations alone.
 const mcp = Layer.unwrap(
   Effect.map(allowedOrigins, (origins) =>
-    ActionMcp.layerHttp(implementations, {
+    ActionMcp.layerHttp(actionImplementations, {
       name: "tracker",
       version: "1.0.0",
       instructions: "Read an issue before commenting on it or closing it.",
@@ -114,6 +121,7 @@ export const adminRoutes = Layer.mergeAll(
 // Every builder as one layer. The two ports are two layer graphs, and each would run the
 // builder of an implementation it serves: `status`, which both serve, twice, each port then
 // reporting an `instance` of its own. Provided above both, with the services, each builder
-// runs once for every surface of both ports. The assistant's and the export's are left out: the
-// public port alone serves them, and builds each once for its routes and its rpcs.
+// runs once for every surface of both ports. The assistant's, the export's and the event's are
+// left out: the public port alone serves them, and builds each once for its routes and its
+// rpcs.
 export const builders = Action.layer([status, identity, issues, attachments, admin]);

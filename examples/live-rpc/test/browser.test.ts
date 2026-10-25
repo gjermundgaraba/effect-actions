@@ -1,27 +1,29 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Fiber, Layer, Stream } from "effect";
+import { TestClock } from "effect/testing";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { openChat } from "../src/browser.js";
 import { chatOver } from "../src/page.js";
 import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
 
-// The page's client against the real rpcs, in memory, served as in routes.test.ts. `openChat`
-// needs a client protocol and does not care which: a page gives it `connection(url)`, a
-// WebSocket, and this test Effect's HTTP protocol.
+// The page's client against the real rpcs, in memory, served as in routes.test.ts, NDJSON
+// included. `openChat` needs a client protocol and does not care which: a page gives it
+// `connection(url)`, a WebSocket, and this test Effect's HTTP protocol.
 const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(RpcSerialization.layerNdjson),
   Layer.provide(
     Testing.layer(
       rpc.pipe(
         Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-        Layer.provide(RpcSerialization.layerJson),
+        Layer.provide(RpcSerialization.layerNdjson),
       ),
     ),
   ),
-  Layer.provide(MessageStore.layerMemory),
+  Layer.provide([MessageStore.layerMemory, Event.layerMemory]),
 );
 
 describe("the page's client", () => {
@@ -74,6 +76,47 @@ describe("the page's client", () => {
         access: "signed-out",
         messages: [],
       });
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("streams the posts after what the page read, one posted in between included", () =>
+    Effect.gen(function* () {
+      const chat = yield* openChat;
+      const lobby = chat.room("lobby", "grace");
+
+      yield* chat.room("lobby", "ada").post("Deploying at noon.");
+
+      const { messages } = yield* lobby.read(0);
+
+      // Posted after the page read and before it watches: the watch from the last id read
+      // still sends it.
+      yield* chat.room("lobby", "ada").post("Done.");
+
+      const watched = yield* lobby
+        .messages(messages.at(-1)?.id ?? 0)
+        .pipe(Stream.take(1), Stream.runCollect);
+
+      expect(watched).toMatchObject([{ _tag: "Occurrence", data: { id: 2, text: "Done." } }]);
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("sends a gap first for an id the room never gave, then the posts after its last", () =>
+    Effect.gen(function* () {
+      const chat = yield* openChat;
+
+      // As after a restart emptied the demo's memory store: the page holds id 7.
+      const watching = yield* chat
+        .room("lobby", "grace")
+        .messages(7)
+        .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+
+      yield* Effect.repeat(TestClock.adjust("0 millis"), { times: 10 });
+      yield* chat.room("lobby", "ada").post("Hello again.");
+
+      expect(yield* Fiber.join(watching)).toMatchObject([
+        { _tag: "Gap" },
+        { _tag: "Occurrence", data: { id: 1, text: "Hello again." } },
+      ]);
     }).pipe(Effect.provide(served)),
   );
 

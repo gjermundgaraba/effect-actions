@@ -68,6 +68,16 @@ export const declarationTypes = () => {
   // @ts-expect-error -- No scheme.
   Authentication.make("auth-types.None", Stranger, { security: {} });
 
+  Authentication.make("auth-types.Principal", Stranger, {
+    principal: (stranger) => {
+      expectTypeOf(stranger).toEqualTypeOf<string>();
+
+      return stranger;
+    },
+  });
+  // @ts-expect-error -- A principal is a string.
+  Authentication.make("auth-types.NumberPrincipal", Stranger, { principal: () => 1 });
+
   const Session = Authentication.make("auth-types.Session", Stranger, {
     security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
   });

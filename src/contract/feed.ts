@@ -605,6 +605,25 @@ const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>)
   };
 };
 
+/**
+ * Why `surface` cannot serve `feeds` unless its authentication is `keyed` by a principal: a
+ * protected event type whose `subscription` hook is held per subscriber between polls, which a
+ * principal names.
+ */
+export const unkeyedHook = (
+  surface: string,
+  feeds: ReadonlyArray<Feed>,
+  keyed: boolean,
+): string | undefined =>
+  !keyed
+    ? feeds
+        .filter(({ event, release }) => release !== undefined && event.caller !== Anyone)
+        .map(
+          ({ event }) =>
+            `${surface} event "${event.name}" is protected and has a subscription hook, so its authentication needs principal to tell poll subscribers apart (give Authentication.make a principal, such as (user) => user.id)`,
+        )[0]
+    : undefined;
+
 /** The event implementations among what a surface is given. */
 export const eventsOf = (served: Served): ReadonlyArray<AnyEventImplementation> =>
   Arr.ensure(served).filter((app): app is AnyEventImplementation =>
@@ -694,6 +713,32 @@ type ServesProtected<App, Listed extends Event.Any> = [
 ] extends [never]
   ? false
   : true;
+
+/**
+ * What a remote surface's requests owe the event implementations `App` per subscription where it
+ * serves their event types of `Listed`: their sources' services, and their authorizer's where a
+ * served one is protected; the identity is the endpoint's own to provide.
+ */
+export type EventServedRequest<App, Listed extends Event.Any = EventOf<App>> = App extends {
+  readonly "~eventRequest": infer R;
+  readonly "~eventAuthorizeRequest": infer RA;
+}
+  ? [ServingEvents<App, Listed>] extends [never]
+    ? never
+    :
+        | EndpointRequest<R, ServingEvents<App, Listed>>
+        | (ServesProtected<App, Listed> extends true
+            ? Exclude<RA, IdentityOf<Protected<ServingEvents<App, Listed>>["caller"]>>
+            : never)
+  : never;
+
+// Why: Each event type's identity is excluded from its own sources' services alone: a public
+// one's endpoint authenticates no one, so a source of it reading an identity still owes it.
+type EndpointRequest<R, E extends Event.Any> = E extends unknown
+  ? E["caller"] extends typeof Anyone
+    ? RequestOf<R, E["name"]>
+    : Exclude<RequestOf<R, E["name"]>, IdentityOf<E["caller"]>>
+  : never;
 
 /** What building the event implementations `App` fails with, where their event types of `Listed` are served. */
 export type EventBuildError<App, Listed extends Event.Any = EventOf<App>> = App extends {

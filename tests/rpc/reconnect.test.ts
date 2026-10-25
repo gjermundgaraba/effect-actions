@@ -1,7 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Ref } from "effect";
+import { Effect, Exit, Fiber, Layer, Ref, Schema, Stream } from "effect";
+import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import { TestClock } from "effect/testing";
+import * as Action from "../../src/contract/Action.js";
+import * as Event from "../../src/contract/Event.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 
 const closed = (code: number) =>
@@ -50,5 +53,47 @@ describe("reconnectUntil", () => {
         expect(attempts).toBe(2);
       }
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("ends a watch on a close with the code it stops at, its socket opened once", () =>
+    Effect.gen(function* () {
+      const Ticked = Event.make("clock.ticked", {
+        description: "The clock ticked.",
+        payload: { at: Schema.Int },
+        caller: Action.Anyone,
+      });
+
+      let opened = 0;
+
+      const refusing = Socket.make({
+        reader: Effect.sync(() => {
+          opened += 1;
+
+          return {
+            pull: Effect.andThen(Effect.sleep("1 millis"), Effect.fail(closed(4001))),
+            upgrade: () => Effect.void,
+          };
+        }),
+        writer: Effect.succeed({ write: () => Effect.void, writeAll: () => Effect.void }),
+      });
+
+      const protocol = RpcClient.layerProtocolSocket({
+        retryPolicy: ActionRpc.reconnectUntil(4001),
+      }).pipe(
+        Layer.provide(Layer.succeed(Socket.Socket, refusing)),
+        Layer.provide(RpcSerialization.layerJson),
+      );
+
+      const fiber = yield* Effect.flatMap(ActionRpc.client(ActionRpc.make([Ticked])), (client) =>
+        Effect.exit(Stream.runDrain(client.watch(Ticked, {}))),
+      ).pipe(Effect.scoped, Effect.provide(protocol), Effect.forkChild);
+
+      yield* TestClock.adjust("10 minutes");
+
+      const exit = yield* Fiber.join(fiber);
+
+      expect(Exit.isFailure(exit) && String(exit.cause)).toContain("4001");
+      expect(opened).toBe(1);
+    }),
   );
 });

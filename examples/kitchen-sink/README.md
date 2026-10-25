@@ -23,6 +23,7 @@ node --import tsx examples/kitchen-sink/src/cli.ts get-issue ACME-1
 echo "It crashes on an empty draft" | node --import tsx examples/kitchen-sink/src/cli.ts create-issue --title Crash
 node --import tsx examples/kitchen-sink/src/cli.ts ask-assistant --prompt "Close what is done."   # answers with a call to approve
 node --import tsx examples/kitchen-sink/src/cli.ts export-issues      # each issue as it arrives, with progress on stderr
+node --import tsx examples/kitchen-sink/src/cli.ts watch issue.changed   # each change, until stopped
 
 # The admin port takes an operator key, not a member's token.
 curl -s 127.0.0.1:3001/admin/suspendWorkspace -H 'Content-Type: application/json' \
@@ -217,6 +218,8 @@ search for in the file.
 | `client`: `baseUrl`, `transformClient`                         | `src/seed.ts`                                                               |
 | `fetchClient`                                                  | `src/sdk.ts`                                                                |
 | Declared errors handled by tag                                 | `src/seed.ts`, `src/sdk.ts`                                                 |
+| An event at `events/<name>`, polled or streamed                | `src/Api.ts`                                                                |
+| `layer`: an event given to one layer of a binding              | `src/routes.ts` (`events`, `api`)                                           |
 | A stream action's route and method, with `onProgress`          | `test/issues/export.test.ts`                                                |
 
 ### ActionMcp
@@ -245,6 +248,7 @@ search for in the file.
 | A WebSocket protocol              | `src/server.ts` (`socket`)                                    |
 | `client`, over a WebSocket        | `src/browser.ts`                                              |
 | A credential per message          | `test/identity/session.test.ts` (`as`)                        |
+| An event as a stream rpc          | `src/Rpc.ts`                                                  |
 | A stream action's method          | `test/issues/export.test.ts`                                  |
 
 ### ActionToolkit
@@ -269,6 +273,7 @@ search for in the file.
 | `make`, with a trusted identity the host supplies                             | `src/ops.ts`                               |
 | `logToStderr`                                                                 | `src/cli.ts`, `src/ops.ts`, `src/stdio.ts` |
 | `render` of each element of a stream action                                   | `src/cli.ts` (`exportIssues`)              |
+| `watch <event>`, derived from the binding                                     | `src/cli.ts`                               |
 
 ### Testing
 
@@ -310,7 +315,7 @@ Left out because this application has no honest place for them:
   `BuildServices`, `ActionHttp.Client`, `Authentication.Any`.
 - A handler sending MCP notifications through `McpServer.McpServer`, and one reading
   `McpSchema.McpRequestContext`.
-- An event's `check` source and `subscription`, and a watch's `resume`:
+- An event's `check` source and `subscription`, and a watch's `resume` and `mode`:
   [build-events](../build-events/) has them.
   No example sets a `subscription`'s `lease` or an occurrence's `timestamp`: the defaults (5
   minutes, and when the occurrence arrived) serve both.

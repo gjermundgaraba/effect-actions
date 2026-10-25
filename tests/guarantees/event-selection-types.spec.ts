@@ -1,7 +1,13 @@
-import { Context, Effect, Schema, type Scope } from "effect";
+import { Context, Effect, Layer, Schema, type Scope } from "effect";
 import { expectTypeOf } from "@effect/vitest";
+import { Command } from "effect/cli";
+import type { HttpRouter } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
+import * as ActionCli from "../../src/cli/ActionCli.js";
+import * as ActionHttp from "../../src/http/ActionHttp.js";
+import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Event from "../../src/contract/Event.js";
+import * as Authentication from "../../src/authentication/Authentication.js";
 
 class Actor extends Context.Service<Actor, { readonly id: string }>()("event-selection/Actor") {}
 
@@ -45,6 +51,8 @@ const pong = Action.implement([Pong], Effect.as(Spare, { pong: () => Effect.succ
 
 const clock = Event.implement(Ticked, Effect.as(Feed, { check }));
 
+type CommandServices<C> = C extends Command.Command<string, {}, {}, unknown, infer R> ? R : never;
+
 export const inProcess = () => {
   const watching = Action.client([ping, pong, clock], { actions: [Ticked] });
   expectTypeOf<Effect.Services<typeof watching>>().toEqualTypeOf<
@@ -64,4 +72,127 @@ export const inProcess = () => {
 
   // @ts-expect-error -- An event type none of the implementations holds.
   Action.client([ping, clock], { actions: [Changed] });
+};
+
+export const overHttp = () => {
+  const Http = ActionHttp.make([Ping, Pong, Ticked]);
+
+  const routes = ActionHttp.layer(Http, [ping, pong, clock], { actions: [Ping, Ticked] });
+  expectTypeOf<Boot | Feed>().toExtend<Layer.Services<typeof routes>>();
+  expectTypeOf<Spare>().not.toExtend<Layer.Services<typeof routes>>();
+
+  const actionsAlone = ActionHttp.layer(Http, [ping, pong, clock], { actions: [Ping] });
+  expectTypeOf<Feed>().not.toExtend<Layer.Services<typeof actionsAlone>>();
+};
+
+export const overRpc = () => {
+  const Rpc = ActionRpc.make([Ping, Pong, Ticked]);
+
+  const rpcs = ActionRpc.layer(Rpc, [ping, pong, clock], { actions: [Ping, Ticked] });
+  expectTypeOf<Boot | Feed>().toExtend<Layer.Services<typeof rpcs>>();
+  expectTypeOf<Spare>().not.toExtend<Layer.Services<typeof rpcs>>();
+
+  const eventsAlone = ActionRpc.layer(Rpc, [ping, pong, clock], { actions: [Ticked] });
+  expectTypeOf<Boot>().not.toExtend<Layer.Services<typeof eventsAlone>>();
+};
+
+export const asCommands = () => {
+  const local = ActionCli.make([ping, clock], { name: "t", actions: [Ping] });
+  expectTypeOf<Feed>().not.toExtend<CommandServices<typeof local>>();
+  expectTypeOf<Boot>().toExtend<CommandServices<typeof local>>();
+
+  const watching = ActionCli.make([ping, clock], {
+    name: "t",
+    actions: [Ticked],
+    // @ts-expect-error -- No command for an event type.
+    commands: { "clock.ticked": {} },
+  });
+
+  expectTypeOf(watching).not.toBeNever();
+};
+
+class Polls extends Context.Service<Polls, true>()("event-selection/Polls") {}
+
+class Reads extends Context.Service<Reads, true>()("event-selection/Reads") {}
+
+export const oneImplementation = () => {
+  const sources = {
+    "clock.ticked": { check: () => Effect.as(Polls, { cursor: "0", events: [] }) },
+    "user.changed": { check: () => Effect.as(Reads, { cursor: "0", events: [] }) },
+  };
+
+  const written = Event.implement([Ticked, Changed], sources, { authorize: Event.allowAll });
+
+  const built = Event.implement([Ticked, Changed], Effect.as(Boot, sources), {
+    authorize: Event.allowAll,
+  });
+
+  const Http = ActionHttp.make([Ticked]);
+
+  const routes = ActionHttp.layer(Http, [written], { actions: [Ticked] });
+  expectTypeOf<HttpRouter.Request<"Requires", Polls>>().toExtend<Layer.Services<typeof routes>>();
+  expectTypeOf<HttpRouter.Request<"Requires", Reads>>().not.toExtend<
+    Layer.Services<typeof routes>
+  >();
+  expectTypeOf<HttpRouter.Request<"Requires", Actor>>().not.toExtend<
+    Layer.Services<typeof routes>
+  >();
+
+  const builtRoutes = ActionHttp.layer(Http, [built], { actions: [Ticked] });
+  expectTypeOf<Boot | HttpRouter.Request<"Requires", Polls>>().toExtend<
+    Layer.Services<typeof builtRoutes>
+  >();
+  expectTypeOf<HttpRouter.Request<"Requires", Reads>>().not.toExtend<
+    Layer.Services<typeof builtRoutes>
+  >();
+};
+
+export const publicBesideProtected = () => {
+  const Login = Authentication.make("event-selection.Login", Actor);
+
+  const Open = Event.make("review.open", { description: "", payload: {}, caller: Action.Anyone });
+
+  const Private = Event.make("review.private", { description: "", payload: {}, caller: Actor });
+
+  const reviews = Event.implement(
+    [Open, Private],
+    {
+      "review.open": { check: () => Effect.as(Actor, { cursor: "0", events: [] }) },
+      "review.private": { check: () => Effect.succeed({ cursor: "0", events: [] }) },
+    },
+    { authorize: Event.allowAll },
+  );
+
+  const http = ActionHttp.layer(
+    ActionHttp.make([Open, Private], { authentication: Login }),
+    reviews,
+  );
+
+  expectTypeOf<HttpRouter.Request<"Requires", Actor>>().toExtend<Layer.Services<typeof http>>();
+
+  const rpc = ActionRpc.layer(ActionRpc.make([Open, Private], { authentication: Login }), reviews);
+  expectTypeOf<HttpRouter.Request<"Requires", Actor>>().toExtend<Layer.Services<typeof rpc>>();
+
+  const Job = Action.make("job", { description: "", readOnly: true, caller: Actor });
+  const job = Action.implement(Job, () => Effect.void, { authorize: Action.allowAll });
+
+  const opened = Event.implement(Open, {
+    check: () => Effect.as(Actor, { cursor: "0", events: [] }),
+  });
+
+  const beside = ActionHttp.layer(ActionHttp.make([Open, Job], { authentication: Login }), [
+    opened,
+    job,
+  ]);
+
+  expectTypeOf<HttpRouter.Request<"Requires", Actor>>().toExtend<Layer.Services<typeof beside>>();
+
+  const besideRpc = ActionRpc.layer(ActionRpc.make([Open, Job], { authentication: Login }), [
+    opened,
+    job,
+  ]);
+
+  expectTypeOf<HttpRouter.Request<"Requires", Actor>>().toExtend<
+    Layer.Services<typeof besideRpc>
+  >();
 };

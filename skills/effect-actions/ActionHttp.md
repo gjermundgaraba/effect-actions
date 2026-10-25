@@ -197,6 +197,47 @@ sends headers and handles errors by tag. `ActionMcp.client` takes the same `tran
   ([Testing.md](Testing.md#test-routes-in-memory),
   [notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts)).
 
+## Serve and watch events
+
+List [event types](Event.md) in the binding beside the actions, and their implementations in
+`layer`'s list, and in its `actions` where it is given: each is served at
+`POST <prefix>/events/<name>`, which answers a page of JSON, or
+an SSE stream to a request that accepts `text/event-stream`. Experimental, as [events](Event.md) are.
+
+```ts example=build-events/src/Api.ts
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import {
+  BuildFinished,
+  FinishBuild,
+  PipelineStatus,
+  StartBuild,
+  TailLog,
+} from "./builds/Builds.js";
+import { DeployRequested, RequestDeploy } from "./deploys/Deploys.js";
+import { Login } from "./identity/Identity.js";
+
+// The HTTP binding: each action at `POST /api/<name>`, and each event at
+// `POST /api/events/<name>`, which answers a page of JSON, or, asked for `text/event-stream`,
+// holds a stream open. It imports no server code, so a client imports it with the contracts.
+export const Http = ActionHttp.make(
+  [FinishBuild, StartBuild, TailLog, BuildFinished, PipelineStatus, RequestDeploy, DeployRequested],
+  { authentication: Login },
+);
+```
+
+[build-events/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/routes.ts) serves the same
+implementations over HTTP and RPC, and their actions over MCP. A client of the binding has
+`watch(event, input, options)`, as
+`Action.client`'s: [build-events/test/http.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/test/http.test.ts)
+watches by stream and by poll. What a route answers is on `layer`; what a watch fails with is on
+`client`.
+
+- **Not a browser `EventSource`.** It sends neither a JSON body nor a header credential, so a page
+  watches with `fetchClient`, whose `watch` reads the stream through `fetch`.
+
+- **Which deployment.** As over MCP, a log source and a `subscription` hook need one server that
+  outlives a request.
+
 ## Call the API from a browser
 
 Code outside an Effect builds the client once with `ActionHttp.fetchClient` and runs each call

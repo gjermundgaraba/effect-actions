@@ -41,29 +41,31 @@ per subscriber; a logged occurrence without an
 The authorizer `Event.allowAll` admits every subscriber the event's `caller` lets in. `Event.Events`
 announces occurrences as they happen: `notify` wakes a check source's subscribers to read now,
 rather than at their next poll every 5 seconds, and `publish` appends to a log source, delivering at
-once; a source's `key`, such as the pipeline a subscriber follows, lets an announcement given that key
+once; a source's `key`, such as the room a subscriber follows, lets an announcement given that key
 reach its subscribers alone. `notify` of a log source and `publish` to a check source die naming the
 other. A page's `nextPoll` over 5 minutes, `Duration.infinity` included, is read as 5 minutes, so a
 check source is read again at least that often where its host polls. `Event.layerMemory` keeps it in
-a process's memory, each log source's log included, beyond the builds attached to it: `Action.client`
-watching them needs one, provided once around the handlers that announce and the watches. `Event.makeEvents({ log, polls?, emits? })` builds one over
+a process's memory, each log source's log included, beyond the builds attached to it: every surface
+serving events, and `Action.client` watching them, need one, provided once around the handlers that
+announce and the surfaces that serve. `Event.makeEvents({ log, polls?, emits? })` builds one over
 log storage of a host's own, `Event.LogStorage` (its `position`, `put`, `list` from a sequence
 number and `delete`), the core keeping each log's cursors, bounds and expiry over it, and reads
 check sources when notified, and 5 seconds after a read fails, where `polls` is `false`, and refuses
 a log source fed by `emit` where `emits` is `false`. An occurrence whose data breaks its payload is
 reported and a gap sent in its place, and a read failing with no refusal is reported once and read
-again. A `subscription` hook sets something up upstream for as long
+again, in process as on every surface. A `subscription` hook sets something up upstream for as long
 as a subscription lasts, a poll's under a lease. A list of event types takes a record of sources by
-name, each reading services of its own, which a client owes only for the event types it watches.
-Event implementations go in the same list as action implementations, and `Action.client`'s
-`actions` option lists event types beside actions: a client given it has exactly what it lists, and
-one without it every one. `Action.client` given them has `watch(event, input, options)`,
+name, each reading services of its own, which a surface owes only for the event types it serves.
+Event implementations go in the same list as action implementations, and the `actions` option of
+every surface serving events lists event types beside actions: a surface given it serves exactly
+what it lists, its event types included, and one without it every one, so two layers of one binding
+given one list each serve their own. `Action.client` given them has `watch(event, input, options)`,
 typed `Action.Watch`, a `Stream` of occurrences and gaps that polls or streams, drops duplicates by
 `eventId` among its last 1,000, and keeps its cursor in an `Event.CursorStore` under `resume`,
 across retries and restarts; `Event.isEvent` tells an event type from an action. Guide:
 `docs/Event.md`; example: `examples/build-events`, whose builds notify a check source and whose
-deploy requests are published to a log. Events follow MCP's draft events extension,
-SEP-3415.
+deploy requests are published to a log. The surfaces' projections follow MCP's draft events
+extension, SEP-3415.
 
 **A current source for events whose occurrence is the whole value.** `Event.implement` takes
 `current`, beside `check` and `log`: the value as it is, for the subscription's input, such as a
@@ -77,35 +79,76 @@ attached or not, so a request-scoped server answers a change announced between r
 once its event has attached as a check source, whose subscribers never read it.
 build-events' `pipeline.status` is one.
 
+**HTTP events (experimental).** `ActionHttp.make` binds event types beside actions, and
+`ActionHttp.layer` serves their implementations, each at `POST <prefix>/events/<name>`: its body
+`{ input, cursor }`, it answers a page of JSON, or, to a request accepting `text/event-stream`,
+an SSE stream of the occurrences, a `Checked` with the position reached every 30 seconds, and a
+`Failed` where a source's failure is reported and reading resumes. A refusal is the route's 401
+or 403 before the stream starts, and ends it later. The stream sends no `id:` and reads no
+`Last-Event-ID`: a cursor in the body resumes. The OpenAPI document lists both answers.
+`ActionHttp.client` and `fetchClient` of a binding listing event types have `watch`, streaming,
+or polling with `Event.WatchOptions`' `mode: "poll"`, and reconnecting with a backoff after a
+transient failure, a silent stream or a request unanswered for 60 seconds, and the new
+`ActionHttp.WatchError` types its failures. HTTP has no `requestScoped`: on a host with no lasting process, serve check sources
+alone, as `ActionHttp.layer` says. Guide:
+`docs/ActionHttp.md#serve-and-watch-events`; example: `examples/build-events`.
+
+**RPC events (experimental).** `ActionRpc.make` binds event types beside actions, each a stream rpc
+named after it, taking `{ input, cursor }` and streaming the occurrences, a `Checked` every 30
+seconds and a `Failed` where a source's failure is reported and reading resumes; a refusal, when it
+starts or later, is its typed failure. Over `RpcServer.layerProtocolHttp` a watch needs
+`RpcSerialization.layerNdjson`: under `layerJson` a response is sent once its streams end.
+`ActionRpc.client` of such a binding has `watch`, streaming alone, a poll failing with
+`Event.SubscriptionError`'s `Unsupported`, and reconnecting after the protocol's transport fails or
+a response ends before its stream, as a server's restart ends it, or, over Effect's HTTP protocol,
+after 60 seconds without an element, a socket's own pings telling a dead one, and ending on a
+socket's close with an application's code, 4000 to 4999. A protocol keeping subscriptions across
+restarts of its server offers an
+`ActionRpc.SubscriptionKeeper` under `ActionRpc.subscriptionKeeper`: `layer` hands it each
+subscription once admitted (`KeptSubscription`: its request, headers and `resumeFrom`, the payload
+resuming it after a chunk sent) and sends every position the subscription reaches, with no
+heartbeat. The new `ActionRpc.WatchError` types its failures; headers set around its stream, with
+`Stream.updateService(RpcClient.CurrentHeaders, …)`, go with every request it sends again. Guide:
+`docs/ActionRpc-events.md`; examples: `examples/build-events`, `examples/live-rpc`.
+
 **Native rpcs beside actions.** `ActionRpc.make` takes `rpcs`, a native `RpcGroup` served beside
-the actions on the same protocol, with its own schemas, such as one that streams. Under the
-binding's `authentication`, each of their messages authenticates as a protected action's does, a
-refusal failing the call with `Unauthenticated`; the binding's `rpcs` holds them behind that
-middleware, and the host implements them with `Rpc.rpcs.toLayer(handlers)`, which
+the actions and event types on the same protocol, with its own schemas, such as one that streams.
+Under the binding's `authentication`, each of their messages authenticates as a protected action's
+does, a refusal failing the call with `Unauthenticated`; the binding's `rpcs` holds them behind
+that middleware, and the host implements them with `Rpc.rpcs.toLayer(handlers)`, which
 `ActionRpc.layer` requires. Native middleware in the group given runs inside the authentication,
 and added to the binding's `rpcs` after `make`, outside it; `layer` refuses a protected binding
 holding a native rpc without it, such as one added with `rpcs.add` after `make`.
-`ActionRpc.client` has their methods beside the actions'. A native rpc named after an action or
-`then` is refused as the binding is made. Guide: `docs/ActionRpc.md#serve-the-rpcs`.
+`ActionRpc.client` has their methods beside the actions'. A native rpc named after an action, an
+event type, `then` or `watch` is refused as the binding is made. Guide:
+`docs/ActionRpc.md#serve-the-rpcs`.
 
-**`ActionRpc` serves and calls actions under every serialization**, schema-binary's included, and
-over a protocol passing values, such as a Durable Object stub's: `layer` and `client` hand the
-protocol an action's input, answer and declared failure as their JSON, encoding and decoding them
-by the action's schemas, so native `rpcs` keep the protocol's own codec whatever schemas they
-share with actions. `layer` refused every codec but a JSON serialization's, with
+**`ActionRpc` serves and calls actions and event types under every serialization**, schema-binary's
+included, and over a protocol passing values, such as a Durable Object stub's: `layer` and `client`
+hand the protocol an action's input, answer and declared failure, and a subscription's input, what
+it sends and its declared failure, as their JSON, encoding and decoding them by the contract's
+schemas, so native `rpcs` keep the protocol's own codec whatever schemas they share with actions.
+`layer` refused every codec but a JSON serialization's, with
 `ActionRpc serves a protocol speaking JSON: …`. `client` calls the binding's `actions` without
 reading its `group`, so it no longer dies with `No client method for …` for a binding whose group
 lacks one; the native client of the group, `RpcClient.make(Rpc.group)`, decodes an action's
-answer by its own schemas, so it calls actions under a JSON serialization alone.
+answer and an event's occurrence by their own schemas, so it calls actions and watches events
+under a JSON serialization alone.
 
 **`ActionRpc.unaryProtocol`** is the key a protocol answering each call once sets to `true` on
-its `RpcServer.Protocol` service: `layer` then fails its build serving a streaming action or a
-native stream rpc, where one would be answered with a defect at its first element, or wait for
-good.
+its `RpcServer.Protocol` service: `layer` then fails its build serving a streaming action, an
+event type or a native stream rpc, where one would be answered with a defect at its first element,
+or wait for good.
 
 **`ActionRpc.reconnectUntil(...codes)`**, a socket client's `retryPolicy` that stops connecting
 again once the server closes the socket with one of `codes`, and is otherwise Effect's own
 default. Guide: `docs/ActionRpc.md#call-the-rpcs`.
+
+**CLI watch (experimental).** `ActionCli.make` takes event implementations beside action
+implementations, and `ActionCli.remote` a binding listing event types: each adds
+`watch <event>`, a flag per input field and `--cursor`, printing each occurrence as one line of
+JSON until it is stopped. Guide: `docs/ActionCli.md#watch-events`; example:
+`examples/build-events/src/commands.ts`.
 
 **Progress.** `Action.make` takes `progress`, a schema or struct fields: the handler reports
 values through its second argument, `{ progress }`, without waiting for the caller, and a
@@ -118,8 +161,8 @@ the values where the call gives no `onProgress`; over RPC such an action is a st
 `Final`; over MCP each value is `notifications/progress` on the call's `progressToken`, which
 `ActionMcp.client` sends when the call gives `onProgress`; a toolkit streams each as a preliminary
 result, `{ _tag: "Progress", value }`, its tool's success that or `success`; a command prints each value as
-a line of JSON on stderr. Guide: `docs/Action-streams.md#report-progress`; example: kitchen-sink's
-`exportIssues`.
+a line of JSON on stderr. Guide: `docs/Action-streams.md#report-progress`; example: build-events'
+`startBuild`.
 
 - An action declaring `progress` and no `success` answers an HTTP request without the stream with
   an empty 204, where one without `progress` answers an empty 200: `HttpApi` cannot stream at the
@@ -138,6 +181,10 @@ array once the stream ends, a stream that never ends never answering, and `Actio
 method streams that array again, so every client's call of such an action returns a `Stream`.
 Guide: `docs/Action-streams.md#answer-a-stream`; example: kitchen-sink's `exportIssues`.
 
+**`principal` on `Authentication.make`** says which subscriber an identity is, as a string,
+for what a surface holds between one subscriber's requests: HTTP keys a poll's
+`subscription` hook by it, and refuse to serve a protected event with such a hook without it.
+
 ### Other changes
 
 - **`ActionMcp` no longer records a tool call's arguments on its span**, only the tool's name,
@@ -148,9 +195,13 @@ Guide: `docs/Action-streams.md#answer-a-stream`; example: kitchen-sink's `export
   answers as before.
 - **An `ActionMcp.McpCallError`'s `body` from an event stream holds the data of its frames**, one
   per line, without their `data:` framing and without its `notifications/progress` frames.
+- live-rpc follows a room through an event: `MessagePosted`, read from the message store and
+  keyed by the room a watch's header names, notified by `postMessage`; the page's `messages`
+  watches it from the last id the page read, and `page.ts` gains `watch`. Its tests serialize with NDJSON, as a watch over
+  HTTP needs.
 - kitchen-sink uses `Event`: `issue.changed`, a log source fed by the issue store's
   changes, each keyed by its workspace and reaching that workspace's subscribers alone, shaped by
-  `transform`, watched in process; and `exportIssues`, an action answering a stream of
+  `transform`, served over HTTP, RPC and the CLI; and `exportIssues`, an action answering a stream of
   issues with progress, under an export limit.
 
 ## 0.20.0

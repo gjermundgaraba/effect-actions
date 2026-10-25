@@ -1,7 +1,7 @@
 # ActionRpc
 
-Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one rpc per action, and
-native rpcs of your own beside them.
+Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one rpc per action, a stream
+rpc per event type, and native rpcs of your own beside them.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionRpc-failures.md](ActionRpc-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
 
@@ -13,13 +13,16 @@ are on `ActionRpc.Options`. Call `ActionRpc.make` once and export the binding:
 
 ```ts example=live-rpc/src/Rpc.ts
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { ListRooms, Messages } from "./chat/Chat.js";
+import { ListRooms, MessagePosted, Messages } from "./chat/Chat.js";
 import { Login } from "./identity/Identity.js";
 
-// The RPC binding: one native rpc per action, named after it, the protected ones requiring
-// `Login`. It is plain data and imports no server code, so the server and a browser page both
-// import this one value. `Rpc.group` is the native `RpcGroup`, for Effect's own `RpcClient.make`.
-export const Rpc = ActionRpc.make([ListRooms, ...Messages], { authentication: Login });
+// The RPC binding: one native rpc per action, named after it, and a stream rpc for
+// `MessagePosted`, the protected ones requiring `Login`. It is plain data and imports no server
+// code, so the server and a browser page both import this one value. `Rpc.group` is the native
+// `RpcGroup`, for Effect's own `RpcClient.make`.
+export const Rpc = ActionRpc.make([ListRooms, ...Messages, MessagePosted], {
+  authentication: Login,
+});
 ```
 
 [kitchen-sink/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Rpc.ts) adds `error`, what its
@@ -35,6 +38,7 @@ provider ([Authentication.md](Authentication.md#verify-credentials)).
 ```ts example=live-rpc/src/routes.ts
 import { Layer } from "effect";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { messageEvents } from "./chat/events.js";
 import { messages, rooms } from "./chat/handlers.js";
 import { ResolveRoom, resolveRoom } from "./chat/room.js";
 import { authenticate } from "./identity/verifier.js";
@@ -43,17 +47,19 @@ import { Rpc } from "./Rpc.js";
 // The binding's rpcs on Effect's own RpcServer, the protected ones behind `Login`'s verifier;
 // `listRooms` needs no token.
 //
-// `ResolveRoom`, listed in `middleware`, provides `CurrentRoom`, which the handlers and
-// `authorize` read. Only something that runs per message can, since each message names its own
-// room: `Layer.succeed(CurrentRoom, "lobby")` provided here would leave the layer still
-// requiring it, in its type.
+// `ResolveRoom`, listed in `middleware`, provides `CurrentRoom`, which the handlers, the event's
+// source and `authorize` read; on a watch it runs as the watch starts, and each time it connects
+// again. Only something that runs per message can, since each message names its own room:
+// `Layer.succeed(CurrentRoom, "lobby")` provided here would leave the layer still requiring it,
+// in its type.
 //
-// It still requires three things, each chosen by whoever serves it. The protocol and its
+// It still requires four things, each chosen by whoever serves it. The protocol and its
 // serialization: server.ts gives it a WebSocket, and a test Effect's HTTP protocol, which
-// answers in memory. And `MessageStore`.
-export const rpc = ActionRpc.layer(Rpc, [rooms, messages], { middleware: [ResolveRoom] }).pipe(
-  Layer.provide([resolveRoom, authenticate]),
-);
+// answers in memory. `MessageStore`, and `Event.Events`, which `postMessage` notifies and the
+// watches wait on: one of each, provided around the whole server.
+export const rpc = ActionRpc.layer(Rpc, [rooms, messages, messageEvents], {
+  middleware: [ResolveRoom],
+}).pipe(Layer.provide([resolveRoom, authenticate]));
 ```
 
 The entrypoint serves the result with `HttpRouter.serve`; a test serves it in memory
@@ -63,6 +69,7 @@ The entrypoint serves the result with `HttpRouter.serve`; a test serves it in me
 import { createServer } from "node:http";
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Config, Effect, Layer } from "effect";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { MessageStore } from "./chat/store.js";
@@ -100,6 +107,10 @@ const server = Layer.unwrap(
       // DEMO ONLY: messages live in this process's memory; a deployment provides a store that
       // lasts.
       Layer.provide(MessageStore.layerMemory),
+      // The pages watching a room are this process's sockets, so what wakes them lives in its
+      // memory too: one for the whole server. Several processes behind a balancer would each
+      // wake only their own pages, the others reading a post at their next read, 5 seconds on.
+      Layer.provide(Event.layerMemory),
     );
   }),
 );
@@ -140,11 +151,12 @@ alone for it.
 `ActionRpc.MethodError`. A page's client module:
 
 ```ts example=live-rpc/src/browser.ts
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
+import { Headers } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { roomHeader } from "./chat/Chat.js";
+import { MessagePosted, roomHeader } from "./chat/Chat.js";
 import { Rpc } from "./Rpc.js";
 
 // Client module: what a web page imports. It holds the binding and nothing of the server, so a
@@ -172,11 +184,12 @@ export const openChat = Effect.gen(function* () {
     room: (name: string, token: string) => {
       // A browser WebSocket cannot set an `Authorization` header on its upgrade, so the token
       // travels on each message, and the room beside it. A refreshed token needs no new socket.
-      const here = RpcClient.withHeaders({ authorization: `Bearer ${token}`, [roomHeader]: name });
+      const headers = { authorization: `Bearer ${token}`, [roomHeader]: name };
+      const here = RpcClient.withHeaders(headers);
 
       return {
-        // Called again and again while the page is open, with the last id it holds. A token
-        // may expire while the page stays open, so each refusal becomes what the page shows.
+        // What the room holds after the last id the page has. A token may expire while the
+        // page stays open, so each refusal becomes what the page shows.
         read: (after: number) =>
           client.readMessages({ after }).pipe(
             here,
@@ -189,6 +202,24 @@ export const openChat = Effect.gen(function* () {
           ),
 
         post: (text: string) => client.postMessage({ text }).pipe(here),
+
+        // Each message posted to the room after the last id the page holds: a page opening a
+        // room reads it, then watches from the last id it read, so a post between the two is
+        // not lost; 0 sends the room's history first. `watch` connects again after a drop and
+        // resumes from the last message it delivered, so the page never subscribes by hand; a
+        // `Gap` says some were missed, or are another run's, so the page reads the room again
+        // with `read(0)`. The headers go with the
+        // stream, as `here` puts them on a call, and so with every request it sends again. A
+        // refusal ends it, as when it connects again with a token that has expired.
+        messages: (after: number) =>
+          client
+            .watch(MessagePosted, {}, { cursor: String(after) })
+            .pipe(
+              Stream.updateService(
+                RpcClient.CurrentHeaders,
+                Headers.merge(Headers.fromInput(headers)),
+              ),
+            ),
 
         // A declared error arrives as the contract's class. A message someone else already
         // removed is gone, which is what the page asked for.
@@ -215,6 +246,12 @@ not one Effect program. The client's traps are on `ActionRpc.client`.
   any close, backing off to every five seconds, for good. Give `RpcClient.layerProtocolSocket` the
   `retryPolicy` `ActionRpc.reconnectUntil(code)`, and a close with that code ends its calls
   instead.
+
+## Serve and watch events
+
+List [event types](Event.md) in the binding beside the actions: each is a stream rpc, which a
+client's `watch` holds open on its socket. How, with a room's messages over a WebSocket:
+[ActionRpc-events.md](ActionRpc-events.md).
 
 ## Send request context with a call
 

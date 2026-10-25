@@ -20,6 +20,7 @@ import {
   Rpc,
   RpcClient,
   type RpcClientError,
+  type RpcMessage,
   RpcGroup,
   RpcMiddleware,
   RpcSchema,
@@ -27,7 +28,21 @@ import {
 } from "effect/rpc";
 import type * as Action from "../contract/Action.js";
 import { Anyone } from "../contract/caller.js";
+import type * as Event from "../contract/Event.js";
+import {
+  acquireFeeds,
+  type EventBuildError,
+  type EventBuildServices,
+  type EventServedRequest,
+  type Feed,
+  feedBuilders,
+  type HoldingEvents,
+  type ServingEvents,
+} from "../contract/feed.js";
+import { listed, type Only } from "../contract/listed.js";
+import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import { concealed } from "../contract/reported.js";
+import { type WatchArgs, watching } from "../contract/watch.js";
 import { type Certain, type ErrorsOf, bindingErrors, bindingOf } from "../contract/declared.js";
 import {
   type Any as Authentication,
@@ -52,9 +67,11 @@ import {
   decodeInput,
   type ErasedMethod,
   type ErasedStreamMethod,
+  inputParseOptions,
   sendingJson,
+  watchInput,
 } from "../contract/call.js";
-import { type BuiltIn, type BuiltIns, Unauthenticated } from "../contract/errors.js";
+import { type BuiltIn, type BuiltIns, InvalidInput, Unauthenticated } from "../contract/errors.js";
 import {
   acquire,
   type BuildError,
@@ -66,12 +83,15 @@ import {
   type Member,
   type MiddlewareOf,
   type Protected,
-  provideHandlers,
+  Implementation,
+  provideBuilders,
   type Selected,
+  type SelectedEvents,
   type Served,
   type Serving,
 } from "../contract/implementation.js";
 import { servingOf } from "../contract/serving.js";
+import { type StreamMethod, transportOf } from "./watch.js";
 import type { Codec } from "../contract/codec.js";
 import { answerFrom, elementsFrom, Progressed, type Reporting } from "../contract/progress.js";
 import { type Answer, elementOf, type StreamOf } from "../contract/stream.js";
@@ -144,6 +164,17 @@ type RpcOf<A extends Action.Any, E extends Action.Errors, D> = A extends Action.
       : Rpc.Rpc<A["name"], A["input"], A["success"], ErrorOf<A, E, D>>
   : never;
 
+type EventRpcOf<V extends Event.Any, E extends Action.Errors, D> = V extends Event.Any
+  ? Rpc.Rpc<
+      V["name"],
+      ReturnType<typeof SubscriptionOf<V>>,
+      RpcSchema.Stream<
+        ReturnType<typeof PushedOf<V>>,
+        Schema.Union<ReadonlyArray<E[number] | VerifierError<V, D> | BuiltIns>>
+      >
+    >
+  : never;
+
 const authenticatedKey = "effect-actions/ActionRpc/Authenticated";
 
 type RefusalOf<E extends Action.Errors> = Schema.Union<
@@ -186,21 +217,24 @@ type NativeOf<N extends Rpc.Any, D> = [D] extends [Authentication]
   : N;
 
 /**
- * An RPC binding: actions, the errors every rpc declares, the descriptor authenticating its
- * protected ones, and the native rpcs it serves beside them. Plain data, so a copy of it, or one
- * made by another installed copy of this package, serves the same; `layer` serves it and
- * `client` calls it.
+ * An RPC binding: actions, event types, the errors every rpc declares, the descriptor
+ * authenticating its protected ones, and the native rpcs it serves beside them. Plain data, so a
+ * copy of it, or one made by another installed copy of this package, serves the same; `layer`
+ * serves it and `client` calls it.
  */
 export interface Binding<
   Actions extends ReadonlyArray<Action.Any>,
   E extends Action.Errors = [],
   D extends Authentication | undefined = undefined,
+  Events extends ReadonlyArray<Event.Any> = readonly [],
   N extends Rpc.Any = never,
 > {
   /** The descriptor authenticating its protected actions, or `undefined` when it names none. */
   readonly authentication: D;
   /** The exact actions bound to this binding. */
   readonly actions: Actions;
+  /** The exact event types bound to this binding, each a stream rpc named after it. */
+  readonly events: Events;
   /** The errors every rpc declares besides its action's own, as a list. */
   readonly error: E;
   /**
@@ -210,14 +244,17 @@ export interface Binding<
    */
   readonly rpcs: RpcGroup.RpcGroup<NativeOf<N, D>>;
   /**
-   * The native group of one rpc per action, named after it, and `rpcs`, as clients see it:
-   * `RpcClient.make(Rpc.group)` is the native client.
+   * The native group of one rpc per action, named after it, one stream rpc per event type,
+   * taking `{ input, cursor }`, and `rpcs`, as clients see it: `RpcClient.make(Rpc.group)` is
+   * the native client.
    *
    * **Gotchas**
    *
-   * - `layer` hands the protocol an action's values as their JSON, the native `rpcs`' as they are: under a codec other than a JSON serialization's, such as schema-binary's or a protocol passing values, `RpcClient.make(Rpc.group)` decodes an action's answer by its own schema and fails; call actions through `client`, which hands them over as JSON too.
+   * - `layer` hands the protocol an action's and an event type's values as their JSON, the native `rpcs`' as they are: under a codec other than a JSON serialization's, such as schema-binary's or a protocol passing values, `RpcClient.make(Rpc.group)` decodes an action's answer or an event's occurrence by its own schema and fails; call actions and watch events through `client`, which hands them over as JSON too.
    */
-  readonly group: RpcGroup.RpcGroup<RpcOf<Actions[number], E, D> | NativeOf<N, D>>;
+  readonly group: RpcGroup.RpcGroup<
+    RpcOf<Actions[number], E, D> | EventRpcOf<Events[number], E, D> | NativeOf<N, D>
+  >;
 }
 
 /**
@@ -227,6 +264,7 @@ export interface Binding<
 export interface Any {
   readonly authentication?: Authentication | undefined;
   readonly actions: ReadonlyArray<Action.Any>;
+  readonly events: ReadonlyArray<Event.Any>;
   readonly error: Action.Errors;
   readonly rpcs: RpcGroup.Any;
   readonly group: RpcGroup.Any;
@@ -245,19 +283,19 @@ export interface Options<E extends Action.Errors = Action.Errors> {
    */
   readonly authentication?: Authentication;
   /**
-   * Native rpcs the binding serves beside its actions, with their own schemas and handlers:
-   * `RpcGroup.make(Upload)`. Under an `authentication`, each of their messages authenticates as
-   * a protected action's does: its handler reads the identity, and a refusal fails the call with
-   * `Unauthenticated`.
+   * Native rpcs the binding serves beside its actions and event types, with their own schemas
+   * and handlers: `RpcGroup.make(Upload)`. Under an `authentication`, each of their messages
+   * authenticates as a protected action's does: its handler reads the identity, and a refusal
+   * fails the call with `Unauthenticated`.
    *
    * **Gotchas**
    *
    * - `layer` requires their handlers, which the host provides from the binding's own `rpcs`: `Rpc.rpcs.toLayer(handlers)`, whose types then leave the identity unowed.
    * - A native rpc runs no implementation's `authorize`: its handler authorizes the identity itself, as an action's `authorize` would, or every authenticated caller is served.
-   * - The layer's `middleware` runs on actions alone: a native rpc runs the native middleware its group adds, inside its authentication.
+   * - The layer's `middleware` runs on actions and event types alone: a native rpc runs the native middleware its group adds, inside its authentication.
    * - Native middleware added to the binding's `rpcs` after `make` runs outside the authentication, before the identity exists; added to the group given here, inside it.
    * - `layer` refuses a protected binding holding a native rpc without its authentication, such as one added with `rpcs.add` after `make`: add rpcs to the group given here.
-   * - A native rpc named after an action or a name the client keeps, `then` or `watch`, is refused as the binding is made.
+   * - A native rpc named after an action, an event type or a name the client keeps, `then` or `watch`, its method of events, is refused as the binding is made.
    */
   readonly rpcs?: RpcGroup.Any;
 }
@@ -283,33 +321,48 @@ const authenticatedIn = (rpc: Rpc.AnyWithProps) =>
 // Why: The same three overloads as `ActionHttp.make`, for the reasons stated there.
 /**
  * Bind actions once, for servers and clients alike, each as an rpc named after it, taking
- * its action's input and answering its success. Every rpc declares its action's errors, the
- * binding's `error`, and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so
- * clients decode each as a typed failure; a protected one also declares what its descriptor's
- * verifier fails with. `rpcs` adds native ones beside them. Browser-safe, as an HTTP binding is.
+ * its action's input and answering its success, and event types, each a stream rpc named after
+ * it, taking `{ input, cursor }`. Every rpc declares its action's errors, the binding's `error`,
+ * and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode each as
+ * a typed failure; a protected one also declares what its descriptor's verifier fails with.
+ * `rpcs` adds native ones beside them. Browser-safe, as an HTTP binding is.
  * Guide: `docs/ActionRpc.md` in this package; in an application: `examples/live-rpc/`.
  *
  * **Gotchas**
  *
- * - An action and a native rpc of one name throw when `make` is called: they would share a client's method.
+ * - An action, an event type and a native rpc of one name throw when `make` is called: they would share a client's method.
  * - An action declaring `progress` is a stream rpc taking its input, streaming `{ _tag: "Progress", value }` for each value its handler reports, then one `{ _tag: "Final", value }` holding its answer: the native client's method of it returns a `Stream`.
  * - An action answering a stream, `Action.Stream`, is a stream rpc taking its input, streaming `{ _tag: "Element", value }` for each element, beside `{ _tag: "Progress", value }` for each value where it declares `progress`; `client`'s method returns a `Stream` of the elements.
  */
 export function make<
-  const Actions extends ReadonlyArray<Action.Any & { readonly caller: typeof Anyone }>,
->(actions: Actions): Binding<Actions, [], undefined>;
-export function make<const Actions extends ReadonlyArray<Action.Any>, const O extends Options = {}>(
-  actions: Actions,
+  const Contracts extends ReadonlyArray<
+    (Action.Any | Event.Any) & { readonly caller: typeof Anyone }
+  >,
+>(
+  contracts: Contracts,
+): Binding<Only<Contracts, Action.Any>, [], undefined, Only<Contracts, Event.Any>>;
+export function make<
+  const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
+  const O extends Options = {},
+>(
+  contracts: Contracts,
   options: O &
-    RequiredAuthentication<Actions[number]> &
-    Matching<Actions[number], NoInfer<DescriptorOf<O>>> &
+    RequiredAuthentication<Contracts[number]> &
+    Matching<Contracts[number], NoInfer<DescriptorOf<O>>> &
     NoInfer<Known<O, Options>>,
-): Binding<Actions, ErrorsOf<O>, DescriptorOf<O>, RpcsOf<O>>;
-export function make<const Actions extends ReadonlyArray<Action.Any>>(
-  actions: Actions & PublicOnly<Actions>,
-): Binding<Actions, [], undefined>;
-export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): Any {
-  const bound = bindingOf("ActionRpc binding", actions, options);
+): Binding<
+  Only<Contracts, Action.Any>,
+  ErrorsOf<O>,
+  DescriptorOf<O>,
+  Only<Contracts, Event.Any>,
+  RpcsOf<O>
+>;
+export function make<const Contracts extends ReadonlyArray<Action.Any | Event.Any>>(
+  contracts: Contracts & PublicOnly<Contracts>,
+): Binding<Only<Contracts, Action.Any>, [], undefined, Only<Contracts, Event.Any>>;
+export function make(contracts: ReadonlyArray<Action.Any | Event.Any>, options: Options = {}): Any {
+  const { actions, events } = listed(contracts);
+  const bound = bindingOf("ActionRpc binding", actions, events, options);
 
   const rpcOf = (action: Action.Any) =>
     Rpc.make(action.name, {
@@ -322,9 +375,9 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   const given = options.rpcs === undefined ? RpcGroup.make() : nativeOf(options.rpcs);
 
   for (const tag of given.requests.keys()) {
-    if (reservedNames.includes(tag) || actions.some((action) => action.name === tag)) {
+    if (reservedNames.includes(tag) || contracts.some((contract) => contract.name === tag)) {
       throw new Error(
-        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action or a name the client keeps, ${reservedList} (rename it)`,
+        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action, an event type or a name the client keeps, ${reservedList} (rename it)`,
       );
     }
   }
@@ -334,9 +387,19 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
       ? given
       : given.middleware(authenticatedOf(bound.authentication));
 
-  const group = RpcGroup.make(...actions.map(rpcOf)).merge(rpcs);
+  const group = RpcGroup.make(
+    ...actions.map(rpcOf),
+    ...events.map((event) =>
+      Rpc.make(event.name, {
+        payload: SubscriptionOf(event),
+        success: PushedOf(event),
+        error: Schema.Union(bindingErrors({ error: [], caller: event.caller }, bound)),
+        stream: true,
+      }),
+    ),
+  ).merge(rpcs);
 
-  return { actions, ...bound, rpcs, group };
+  return { actions, events, ...bound, rpcs, group };
 }
 
 type Middleware = ReadonlyArray<RpcMiddleware.AnyService>;
@@ -372,16 +435,19 @@ type ServerOnly<M extends Middleware, E extends Action.Errors> = [
       readonly "Layer middleware fails only with the binding's errors and needs no client": never;
     };
 
-// Why: every call of an action runs with the request `withRequestOf` makes of its message's
-// headers, on every protocol, so the request and its search params are never owed; a route's
-// `RouteContext` exists only over a router-mounted protocol, where `HttpRouter.serve` provides
-// it, so unlike `ActionHttp`'s, this keeps it owed, and a handler reading one leaves it owed on
-// stdio, a socket or a worker.
-type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
-  Through<M, RemoteRequest<App, A>>,
+// Why: every call of an action or an event type runs with the request `withRequestOf` makes of
+// its message's headers, on every protocol, so the request and its search params are never owed;
+// a route's `RouteContext` exists only over a router-mounted protocol, where `HttpRouter.serve`
+// provides it, so unlike `ActionHttp`'s, this keeps it owed, and a handler reading one leaves it
+// owed on stdio, a socket or a worker.
+type LayerRequest<App, A extends Action.Any, E extends Event.Any, M extends Middleware> = Exclude<
+  Through<M, RemoteRequest<App, A> | EventServedRequest<App, E>>,
   | HttpServerRequest.HttpServerRequest
   | HttpServerRequest.ParsedSearchParams
-  | ([Extract<Serving<App, A>, { readonly caller: typeof Anyone }>] extends [never]
+  | ([
+      | Extract<Serving<App, A>, { readonly caller: typeof Anyone }>
+      | Extract<ServingEvents<App, E>, { readonly caller: typeof Anyone }>,
+    ] extends [never]
       ? Identity<Protected<Serving<App, A>>>
       : never)
 >;
@@ -391,13 +457,20 @@ type RpcLayer<
   Apps extends Served,
   M extends Middleware,
   A extends Action.Any = B["actions"][number],
+  E extends Event.Any = B["events"][number],
 > = Layer.Layer<
   never,
-  BuildError<Holding<Member<Apps>, A>, A>,
+  BuildError<Holding<Member<Apps>, A>, A> | EventBuildError<HoldingEvents<Member<Apps>, E>, E>,
   | ServerBuildServices<Holding<Member<Apps>, A>, A>
+  | EventBuildServices<HoldingEvents<Member<Apps>, E>, E>
   | RpcServer.Protocol
-  | HttpRouter.Request.From<"Requires", LayerRequest<Member<Apps>, A, M>>
-  | ServedProvider<Member<Apps>, A, B extends { readonly authentication: infer D } ? D : never>
+  | HttpRouter.Request.From<"Requires", LayerRequest<Member<Apps>, A, E, M>>
+  | ServedProvider<
+      Member<Apps>,
+      A,
+      B extends { readonly authentication: infer D } ? D : never,
+      ServingEvents<Member<Apps>, E>
+    >
   | IdOf<M[number]>
   | NativeServer<
       RpcGroup.Rpcs<B["rpcs"]>,
@@ -417,12 +490,16 @@ type NativeServer<N extends Rpc.Any, D> = [N] extends [never]
       | ProviderOf<D>;
 
 /** `ActionRpc.layer`'s options. */
-export interface LayerOptions<M extends Middleware = [], A extends Action.Any = never> {
+export interface LayerOptions<M extends Middleware = [], C extends Action.Any | Event.Any = never> {
   /**
-   * The actions it serves, among the binding's actions the implementations hold: `[GetUser]`.
-   * Defaults to every one of them.
+   * The actions and event types it serves, among the binding's the implementations hold:
+   * `[GetUser, UserRenamed]`, exactly those. Defaults to every one of them.
+   *
+   * **Gotchas**
+   *
+   * - A list naming actions alone serves no event type: a client's watch fails with `Unknown request tag` until the event types are listed beside them.
    */
-  readonly actions?: ReadonlyArray<A> | undefined;
+  readonly actions?: ReadonlyArray<C> | undefined;
   /**
    * Native rpc middleware every served rpc runs on each message, the first innermost: inside
    * the authentication of a protected rpc, so none provides what a verifier reads, and outside
@@ -434,6 +511,7 @@ export interface LayerOptions<M extends Middleware = [], A extends Action.Any = 
    * - A middleware requiring the identity leaves it owed on a layer serving a public action: bind the protected actions apart, or read the identity with `Effect.serviceOption`, which a public rpc's call lacks.
    * - A middleware provides a service only to those listed before it and the handlers, and only in a list written in place as a tuple: listed earlier, or in an array-typed list, it leaves the service owed.
    * - Router middleware around the layer runs once per WebSocket, at its upgrade, so its value holds for the whole connection: what differs per message needs a listed middleware.
+   * - On an event's stream rpc, a middleware and the authentication run once, around the subscription's admission, not its stream: one timing the call or releasing something as it ends sees it end as the stream starts, and never sees a later refusal; what it provides lasts the stream.
    * - On the stream rpc of an action declaring `progress` or answering a stream they run around its start alike, before its handler runs: one timing it sees it end before the handler does, and never sees its failure; what it provides lasts the handler.
    */
   readonly middleware?: M;
@@ -529,11 +607,12 @@ const Declared = Schema.instanceOf(DeclaredFailure, {
   toCodecIso: asJson,
 });
 
-// Why: an action is a JSON contract on every surface, so both ends hand the protocol its input,
-// answer and declared failure as JSON, encoding and decoding them by the action's schemas
-// themselves: the protocol's codec never sees an action's own schema, and a native rpc sharing
+// Why: an action and an event type are JSON contracts on every surface, so both ends hand the
+// protocol an action's input, answer and declared failure, and a subscription's input, what it
+// sends and its declared failure, as JSON, encoding and decoding them by the contract's schemas
+// themselves: the protocol's codec never sees a contract's own schema, and a native rpc sharing
 // one keeps its own codec.
-const erasedOf = (actions: ReadonlyArray<Action.Any>) =>
+const erasedOf = (actions: ReadonlyArray<Action.Any>, events: ReadonlyArray<Event.Any>) =>
   RpcGroup.make(
     ...actions.map((action) =>
       streams(action)
@@ -544,6 +623,14 @@ const erasedOf = (actions: ReadonlyArray<Action.Any>) =>
             stream: true,
           })
         : Rpc.make(action.name, { payload: Schema.Json, success: Schema.Json, error: Declared }),
+    ),
+    ...events.map((event) =>
+      Rpc.make(event.name, {
+        payload: Schema.Json,
+        success: Schema.Json,
+        error: Declared,
+        stream: true,
+      }),
     ),
   );
 
@@ -669,11 +756,124 @@ const sendingElements = (element: Codec, run: ErasedHandler<unknown>): Sending =
     );
 };
 
+// Why: The envelope decodes apart from the event's input, so an `InvalidInput`'s issue paths are
+// relative to the input, as an action call's are.
+const Subscription = Schema.Struct({
+  input: Schema.Json,
+  cursor: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+/**
+ * One event subscription a `SubscriptionKeeper` keeps, as it arrived: the request a keeper writes
+ * to the server again, once restarted, with the payload `resumeFrom` gave for the last value sent.
+ */
+export interface KeptSubscription {
+  readonly clientId: number;
+  readonly requestId: string | number;
+  readonly tag: string;
+  /** The subscription's payload, an object of its `input` and the `cursor` it resumes from. */
+  readonly payload: Schema.Json;
+  /** The headers the request was authenticated with, which a resumed one is authenticated with again. */
+  readonly headers: ReadonlyArray<readonly [string, string]>;
+  /**
+   * The payload that resumes the subscription after `values`, a chunk sent for it, or
+   * `undefined` where they reach no position.
+   */
+  readonly resumeFrom: (
+    values: RpcMessage.ResponseChunkEncoded["values"],
+  ) => Schema.Json | undefined;
+}
+
+/**
+ * What a protocol keeping event subscriptions across restarts of its server offers under
+ * `subscriptionKeeper`: `layer` hands it each
+ * subscription once admitted, and sends every position the subscription reaches, with no
+ * 30-second heartbeat, whose timer would keep such a host awake.
+ */
+export interface SubscriptionKeeper {
+  readonly keep: (subscription: KeptSubscription) => Effect.Effect<void>;
+}
+
+/** The key a protocol sets to its `SubscriptionKeeper` on its `RpcServer.Protocol` service. */
+export const subscriptionKeeper: unique symbol = Symbol.for(
+  "effect-actions/ActionRpc/subscriptionKeeper",
+);
+
+const keeperOf = (protocol: RpcServer.Protocol["Service"]): SubscriptionKeeper | undefined =>
+  Predicate.hasProperty(protocol, subscriptionKeeper)
+    ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A protocol's own declaration under the library's own key, which only a `SubscriptionKeeper` is set to.
+      (protocol[subscriptionKeeper] as SubscriptionKeeper)
+    : undefined;
+
+/**
+ * The handler of one event type's stream rpc: the subscription's request authenticates and is
+ * admitted before its stream starts, so a refusal fails the call; the feed is then read from the
+ * call, in its scope, into a bounded queue, each element encoded, and read on through a source's
+ * failure, before its first `Checked` too. A later refusal ends the stream as a declared failure.
+ * Over a protocol with a `keeper`, the admitted subscription is kept, and every position sent.
+ */
+const subscriptionHandlerOf = (
+  feed: Feed,
+  steps: ReadonlyArray<Step>,
+  error: Schema.Union<Action.Errors>,
+  keeper: SubscriptionKeeper | undefined,
+) => {
+  const decode = Schema.decodeUnknownEffect(Subscription, inputParseOptions);
+  const decodeEventInput = decodeInput(feed.event);
+
+  const encode = Schema.encodeEffect(Schema.toCodecJson(PushedOf(feed.event)));
+  const boundary = callBoundaryOf(error);
+
+  return (payload: Schema.Json, options: Omit<CallOptions, "payload">) => {
+    const call = Effect.gen(function* () {
+      const { input, cursor = null } = yield* Effect.mapError(
+        decode(payload),
+        InvalidInput.fromSchemaError,
+      );
+
+      const open = yield* feed.stream(yield* decodeEventInput(input));
+
+      if (keeper === undefined)
+        return yield* queuedPush(open, cursor, encode, { ending: boundary });
+
+      yield* keeper.keep({
+        clientId: options.client.id,
+        requestId: options.requestId,
+        tag: feed.event.name,
+        payload,
+        headers: Object.entries(options.headers),
+        resumeFrom: (values) => {
+          const cursor = values
+            .map((value) =>
+              Predicate.hasProperty(value, "cursor") && Predicate.isString(value.cursor)
+                ? value.cursor
+                : undefined,
+            )
+            .findLast((found) => found !== undefined);
+
+          return cursor === undefined ? undefined : { input, cursor };
+        },
+      });
+
+      return yield* queuedPush(open, cursor, encode, { ending: boundary, inOrder: true });
+    });
+
+    const wrapped = throughSteps(steps, call, { ...options, payload });
+
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased call boundary: the steps pass the subscription's queue through, or fail; the boundary fails with a declared failure in its wrapper alone, or an interruption.
+    return boundary(wrapped) as Effect.Effect<
+      Queue.Dequeue<Schema.Json, DeclaredFailure | Cause.Done>,
+      DeclaredFailure,
+      Scope.Scope
+    >;
+  };
+};
+
 /**
  * The key a protocol answering each call once sets to `true` on its `RpcServer.Protocol`
  * service, since Effect's protocol has no flag of its own for it: `layer` refuses to serve a
- * streaming action or a native stream rpc on it, where a stream is answered with a defect at its
- * first element and one with none waits for good.
+ * streaming action, an event type or a native stream rpc on it, where a stream is answered with
+ * a defect at its first element and one with none waits for good.
  */
 export const unaryProtocol: unique symbol = Symbol.for("effect-actions/ActionRpc/unary");
 
@@ -681,14 +881,14 @@ const isUnary = (protocol: RpcServer.Protocol["Service"]) =>
   Predicate.hasProperty(protocol, unaryProtocol) && protocol[unaryProtocol] === true;
 
 /**
- * Serve the binding's actions among `implementations` with Effect's own `RpcServer`, or those
- * its `actions` lists, as `ActionHttp.layer` selects them, under the protocol and serialization
- * the host provides. Each message of a protected rpc authenticates from its own headers with
- * the binding's descriptor; then the listed `middleware` runs, the input decodes,
- * and the implementation's `authorize` and the handler run, as on every surface. The layer
- * fails as the builders do and needs at startup what they need; per request it owes, as router
- * request markers, what the authorizers and handlers read until its `middleware` provides it,
- * or, over a router-mounted protocol, the route's request context.
+ * Serve the binding's actions and event types among `implementations` with Effect's own
+ * `RpcServer`, or those its `actions` lists, as `ActionHttp.layer` selects them, under the
+ * protocol and serialization the host provides. Each message of a protected rpc authenticates
+ * from its own headers with the binding's descriptor; then the listed `middleware` runs, the
+ * input decodes, and the implementation's `authorize` and the handler run, as on every surface.
+ * The layer fails as the builders do and needs at startup what they need; per request it owes,
+ * as router request markers, what the authorizers and handlers read until its `middleware`
+ * provides it, or, over a router-mounted protocol, the route's request context.
  * A protected action's identity comes from its authentication alone.
  *
  * **Gotchas**
@@ -700,10 +900,13 @@ const isUnary = (protocol: RpcServer.Protocol["Service"]) =>
  * - An `ErrorReporter` is given only what ends a call with `Internal server error`, never a declared failure, a refusal or `InvalidInput`, unlike `ActionHttp.layer`'s `Info`: an alert counting declared failures counts none from rpcs.
  * - An rpc's credential is read from its headers alone: an API key `in: "query"` never reaches authentication.
  * - Over a protocol with no router, such as `RpcServer.layerProtocolSocketServer` or `layerProtocolStdio`, there is no route: a provider publishing a `protectedResource` leaves `HttpRouter` owed; the request a handler or a verifier reads is, on every protocol, one holding the message's headers, at `/`, with no query or body.
+ * - An event's stream rpc takes `{ input, cursor }` and streams `Checked`, `Occurrence`, `Gap` and `Failed`, a `Checked` every 30 seconds; over `RpcServer.layerProtocolHttp` serialize with `RpcSerialization.layerNdjson`: under `layerJson` a response is sent once its streams end, so a watch never answers.
+ * - A subscription refused when it starts or later ends its stream rpc with the refusal as the typed failure; a source's failure no refusal explains is logged and reported once, sent as a bare `Failed`, and read again from where it reached after 5 seconds.
+ * - A stream is read only as fast as its client reads it: a slow reader of a log source falls behind its log, and receives a `Gap`.
  * - An action declaring `progress` streams it to every call, a client's call without `onProgress` too, its values handed on one at a time, so a slow reader drops the oldest; under `RpcSerialization.layerJson` over HTTP they arrive with the answer, at the end.
  * - A failure after an action's progress or its first element ends its stream rpc as it ends any call: a declared failure as the typed failure, a defect as `Internal server error`.
  * - The binding's native `rpcs` are served on the same protocol with their own schemas, every one, whatever `actions` lists, and their handlers are owed until provided: `Rpc.rpcs.toLayer(handlers)`; a native rpc's defect or undeclared failure is answered as Effect's server answers it, never `Internal server error`, and only its verifier's defect is.
- * - On a protocol answering each call once, one setting `unaryProtocol`, such as a Durable Object stub's, the build fails while it would serve a streaming action or a native stream rpc.
+ * - On a protocol answering each call once, one setting `unaryProtocol`, such as a Durable Object stub's, the build fails while it would serve a streaming action, an event type or a native stream rpc.
  */
 export function layer<const B extends Any, const Apps extends Served>(
   binding: B,
@@ -712,25 +915,32 @@ export function layer<const B extends Any, const Apps extends Served>(
 export function layer<
   const B extends Any,
   const Apps extends Served,
-  const O extends LayerOptions<Middleware, B["actions"][number]>,
+  const O extends LayerOptions<Middleware, B["actions"][number] | B["events"][number]>,
 >(
   binding: B,
   implementations: Apps,
   options: O &
     ServerOnly<MiddlewareOf<O, Middleware>, B["error"]> &
     NoInfer<Known<O, LayerOptions<Middleware>>>,
-): RpcLayer<B, Apps, MiddlewareOf<O, Middleware>, Selected<O, B["actions"][number]>>;
+): RpcLayer<
+  B,
+  Apps,
+  MiddlewareOf<O, Middleware>,
+  Selected<O, B["actions"][number]>,
+  SelectedEvents<O, B["events"][number]>
+>;
 export function layer(
   binding: Any,
   served: Served,
   options: LayerOptions<Middleware> = {},
 ): Layer.Layer<never, unknown, unknown> {
   const selected = servingOf("RPC binding", binding, served, options);
-  const { apps, actions } = selected;
+  const { apps, actions, events } = selected;
+  const eventTypes = events.flatMap((app) => app.events);
 
   const middleware = options.middleware ?? [];
 
-  const jsonGroup = erasedOf(actions);
+  const jsonGroup = erasedOf(actions, eventTypes);
 
   const natives = [...nativeOf(binding.rpcs).requests.values()];
 
@@ -754,9 +964,10 @@ export function layer(
       }
 
       const protocol = yield* RpcServer.Protocol;
+      const keeper = keeperOf(protocol);
 
       if (isUnary(protocol)) {
-        const streamed = actions.filter(streams).map(({ name }) => name);
+        const streamed = [...actions.filter(streams), ...eventTypes].map(({ name }) => name);
 
         const nativeStreams = natives
           .filter((rpc) => RpcSchema.isStreamSchema(rpc.successSchema))
@@ -779,6 +990,7 @@ export function layer(
         authentication === undefined ? undefined : yield* authenticatingOf(authentication);
 
       const bound = yield* acquire(apps);
+      const feeds = yield* acquireFeeds(events);
 
       const requested: Step = (effect, { headers }) => withRequestOf(headers)(effect);
 
@@ -803,20 +1015,36 @@ export function layer(
           : streamingHandlerOf(action, sendingAnswer(action.success, run), steps, error);
       };
 
-      const byName = Object.fromEntries(
-        bound.map(
-          ([action, run]) =>
-            [
-              action.name,
-              handlerFor(
-                action,
-                run,
-                stepsOf(action.caller),
-                Schema.Union(bindingErrors(action, binding)),
-              ),
-            ] as const,
+      const byName = {
+        ...Object.fromEntries(
+          bound.map(
+            ([action, run]) =>
+              [
+                action.name,
+                handlerFor(
+                  action,
+                  run,
+                  stepsOf(action.caller),
+                  Schema.Union(bindingErrors(action, binding)),
+                ),
+              ] as const,
+          ),
         ),
-      );
+        ...Object.fromEntries(
+          feeds.map(
+            (feed) =>
+              [
+                feed.event.name,
+                subscriptionHandlerOf(
+                  feed,
+                  stepsOf(feed.event.caller),
+                  Schema.Union(bindingErrors({ error: [], caller: feed.event.caller }, binding)),
+                  keeper,
+                ),
+              ] as const,
+          ),
+        ),
+      };
 
       const servedActions = jsonGroup.toLayer(byName);
 
@@ -847,7 +1075,9 @@ export function layer(
 
       return Layer.merge(servedActions, Layer.succeed(authenticated)(authenticate));
     }),
-  ).pipe(provideHandlers(apps));
+  ).pipe(
+    provideBuilders([...apps.map((app) => Implementation.layerOf(app)), ...feedBuilders(events)]),
+  );
 
   return RpcServer.layer(jsonGroup.merge(binding.rpcs), { disableFatalDefects: true }).pipe(
     Layer.provide(handlers),
@@ -871,16 +1101,39 @@ type Method<A extends Action.Any, E extends BindingError> = Call<
 >;
 
 /**
+ * What a watch of `W` over the binding `B` may fail with: a refusal, when it starts or later,
+ * `InvalidInput`, the binding's errors, an `Event.SubscriptionError` (`Unsupported` for
+ * `mode: "poll"`, which rpcs do not serve), or Effect's own `RpcClientError` that no reconnect
+ * outlasts. An element that does not decode is a defect, as for a call.
+ */
+export type WatchError<W extends Event.Any, B extends Any> =
+  | Event.SubscriptionError
+  | BuiltIns["Type"]
+  | B["error"][number]["Type"]
+  | VerifierError<W, B["authentication"]>["Type"]
+  | RpcClientError.RpcClientError;
+
+type Watching<B extends Any> = [B["events"][number]] extends [never]
+  ? unknown
+  : {
+      readonly watch: <W extends B["events"][number], SE = never>(
+        event: W,
+        ...args: WatchArgs<W, SE>
+      ) => Stream.Stream<Event.Received<W>, WatchError<W, B> | SE>;
+    };
+
+/**
  * Every action of the binding `B`, as `client.<action>(input)`: a protected one may also fail
- * with what its descriptor's verifier declares; each native rpc of its `rpcs` is the native
- * client's method.
+ * with what its descriptor's verifier declares. Where `B` lists event types, `watch(event, input,
+ * options)` streams one; each native rpc of its `rpcs` is the native client's method.
  */
 export type Client<B extends Any> = {
   readonly [A in B["actions"][number] as A["name"]]: Method<
     A,
     B["error"][number] | VerifierError<A, B["authentication"]>
   >;
-} & RpcClient.RpcClient<RpcGroup.Rpcs<B["rpcs"]>, RpcClientError.RpcClientError>;
+} & Watching<B> &
+  RpcClient.RpcClient<RpcGroup.Rpcs<B["rpcs"]>, RpcClientError.RpcClientError>;
 
 /**
  * The native `RpcClient.make` options `client` takes: `spanPrefix`, `spanAttributes`,
@@ -898,6 +1151,14 @@ type JsonStreamMethod = (payload: Schema.Json) => Stream.Stream<Schema.Json, Fai
 const isDeclared = (failure: Failed): failure is DeclaredFailure =>
   failure instanceof DeclaredFailure;
 
+/** Fail with the declared failure a wrapper holds, decoded by `error`, or die where it does not. */
+const failedOf = (error: Schema.Union<Action.Errors>) => {
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(error));
+
+  return (failure: DeclaredFailure) =>
+    Effect.flatMap(Effect.orDie(decode(failure.json)), Effect.fail);
+};
+
 /**
  * A client's method of `action`, calling `method`, its rpc of `erasedOf`, with its input's JSON:
  * what the server sends, its answer or each element it streams, and its declared failure, decoded
@@ -909,15 +1170,9 @@ const actionMethodOf = (
   method: JsonMethod | JsonStreamMethod,
 ): ErasedMethod | ErasedStreamMethod => {
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(sentOf(action)));
-
-  const decodeFailure = Schema.decodeUnknownEffect(
-    Schema.toCodecJson(Schema.Union(bindingErrors(action, binding))),
-  );
+  const failed = failedOf(Schema.Union(bindingErrors(action, binding)));
 
   const sent = (json: Schema.Json) => Effect.orDie(decode(json));
-
-  const failed = (failure: DeclaredFailure) =>
-    Effect.flatMap(Effect.orDie(decodeFailure(failure.json)), Effect.fail);
 
   if (!streams(action)) {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The native client's method of an rpc of `erasedOf` that does not stream: it takes and answers JSON, failing with the declared failure's wrapper.
@@ -945,6 +1200,35 @@ const actionMethodOf = (
       );
 };
 
+/** A subscription's stream of an event type, from its input's JSON. */
+type EventMethod = (input: Schema.Json) => StreamMethod;
+
+/**
+ * A client's subscription to `event`, calling `method`, its stream rpc of `erasedOf`, with its
+ * input's JSON and the cursor it resumes from: what the server sends, and its declared failure,
+ * decoded by the event's schemas; one that does not decode is a defect, as for an action.
+ */
+const eventMethodOf = (
+  event: Event.Any,
+  binding: Any,
+  method: JsonMethod | JsonStreamMethod,
+): EventMethod => {
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(PushedOf(event)));
+
+  const failed = failedOf(
+    Schema.Union(bindingErrors({ error: [], caller: event.caller }, binding)),
+  );
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The native client's method of an event type's stream rpc of `erasedOf`: it streams JSON, failing with the declared failure's wrapper.
+  const call = method as JsonStreamMethod;
+
+  return (input) => (cursor) =>
+    call({ input, cursor }).pipe(
+      Stream.catchIf(isDeclared, (failure) => Stream.fromEffect(failed(failure))),
+      Stream.mapEffect((json) => Effect.orDie(decode(json))),
+    );
+};
+
 /**
  * Effect's native `RpcClient` for a binding, one method per action taking the action's input
  * directly: `client.greet({ name })`, as `ActionHttp.client`'s, the argument omitted when `{}`
@@ -958,6 +1242,8 @@ const actionMethodOf = (
  * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
  * - A browser WebSocket cannot set an `Authorization` header on its upgrade, so under Bearer a protected call without its own token fails with `Unauthenticated`, `A bearer token is required.`: send the token on each call with `RpcClient.withHeaders`.
  * - The socket belongs to the Layer providing the protocol, not to the `Scope` around the client: provided around one call, it opens a socket for that call alone.
+ * - `watch(event, input, options)` holds the event's stream rpc open, as `Action.client`'s does; `mode: "poll"` fails with `Event.SubscriptionError`, reason `Unsupported`, since rpcs serve no poll, and an event the server does not serve ends with `Unknown request tag`, as an action's call does.
+ * - A watch reconnects after the protocol's socket or HTTP transport fails, a response ends before its stream does, as a server's restart ends it, a status a server sends while it recovers, or, over Effect's HTTP protocol, 60 seconds without an element, a socket's own pings telling a dead one, a second later and doubling to 30 seconds, each reconnect logged as a warning; a declared error, a refusal included, or a socket's close with an application's code, 4000 to 4999, ends it.
  * - A native rpc of the binding's `rpcs` is the native client's method: a stream rpc's is a `Stream`, its headers given as its options' `headers`, since `RpcClient.withHeaders` wraps an Effect.
  */
 export function client<const B extends Any>(
@@ -972,19 +1258,69 @@ export function client(
   binding: Any,
   options?: ClientOptions,
 ): Effect.Effect<object, never, RpcClient.Protocol | Scope.Scope> {
-  const byName = new Map(binding.actions.map((action) => [action.name, action]));
+  const actions = new Map(binding.actions.map((action) => [action.name, action]));
+  const events = new Map(binding.events.map((event) => [event.name, event]));
 
-  return Effect.map(
-    RpcClient.make(erasedOf(binding.actions).merge(nativeOf(binding.rpcs)), options),
-    (native) =>
-      Object.fromEntries(
-        Object.entries(native).map(([tag, method]) => {
-          const action = byName.get(tag);
+  const clients = Effect.all([
+    RpcClient.make(
+      erasedOf(binding.actions, binding.events).merge(nativeOf(binding.rpcs)),
+      options,
+    ),
+    // Why: a protocol acknowledging chunks, such as Effect's socket protocol, holds a connection
+    // whose liveness it checks itself, by ping; of the protocols that serve a watch, Effect's HTTP
+    // one alone does not, and it reads a response a proxy may hold open without passing frames
+    // on, which only a watch's silence rule tells apart (a stub's protocol serves no watch). Over
+    // a socket the rule would end every quiet watch, and a Durable Object, which sends no
+    // heartbeat, would be woken by its reconnects every minute.
+    Effect.map(Effect.service(RpcClient.Protocol), ({ supportsAck }) => !supportsAck),
+  ]);
+
+  return Effect.map(clients, ([native, silenceEnds]) => {
+    const rpcs = Object.entries(native);
+
+    const methods = Object.fromEntries(
+      rpcs
+        .filter(([tag]) => !events.has(tag))
+        .map(([tag, method]) => {
+          const action = actions.get(tag);
 
           return [tag, action === undefined ? method : actionMethodOf(action, binding, method)];
         }),
-      ),
-  );
+    );
+
+    if (events.size === 0) return methods;
+
+    const feeds = new Map(
+      rpcs.flatMap(([tag, method]) => {
+        const event = events.get(tag);
+
+        return event === undefined ? [] : [[tag, eventMethodOf(event, binding, method)] as const];
+      }),
+    );
+
+    const watch = (
+      event: Event.Any,
+      input?: ErasedValue,
+      options?: Event.WatchOptions<unknown>,
+    ): Stream.Stream<Event.Received<Event.Any>, unknown> => {
+      const feed = feeds.get(event.name);
+
+      if (feed === undefined)
+        return Stream.die(
+          new Error(
+            `ActionRpc.client: the binding holds no event type ${event.name} (watch one the binding ActionRpc.make returned lists)`,
+          ),
+        );
+
+      return Stream.unwrap(
+        Effect.map(watchInput(event, input), ({ json }) =>
+          watching(transportOf(event, feed(json), silenceEnds), options),
+        ),
+      );
+    };
+
+    return { ...methods, watch };
+  });
 }
 
 /**

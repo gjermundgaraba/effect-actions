@@ -2,6 +2,7 @@ import { type Context, Effect, Option } from "effect";
 import type { HttpRouter, HttpServerResponse } from "effect/http";
 import type { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import type * as Action from "../contract/Action.js";
+import type * as Event from "../contract/Event.js";
 import type { Anyone } from "../contract/caller.js";
 import type {
   BuildServices,
@@ -10,6 +11,7 @@ import type {
   Serving,
 } from "../contract/implementation.js";
 import { type Refusal, Unauthenticated } from "../contract/errors.js";
+import type { EventOf } from "../contract/feed.js";
 
 /** One native security scheme: Bearer unless a descriptor names another. */
 export type Security = HttpApiSecurity.HttpApiSecurity;
@@ -101,6 +103,8 @@ export interface Descriptor<
   readonly security: S;
   /** `Options.error` of `make`, as a list. */
   readonly error: E;
+  /** `Options.principal` of `make`, the stable id of an identity, where given. */
+  principal?(identity: A): string;
   readonly "~provider": Context.Key<Provider<I, Name>, Runtime>;
   readonly "~middleware": Context.Key<SecurityMiddleware<I, Name>, unknown>;
   /** An MCP request's verified identity, which a protected tool's call promotes. */
@@ -211,11 +215,11 @@ export type VerifierError<
 
 /**
  * The provider a surface's startup reads under the descriptor `D`, where the implementations
- * `App` serve a protected action of `A`.
+ * `App` serve a protected action of `A` or a protected event type of `E`.
  */
-export type ServedProvider<App, A extends Action.Any, D> = [Protected<Serving<App, A>>] extends [
-  never,
-]
+export type ServedProvider<App, A extends Action.Any, D, E extends Event.Any = EventOf<App>> = [
+  Protected<Serving<App, A>> | Protected<E>,
+] extends [never]
   ? never
   : ProviderOf<D>;
 

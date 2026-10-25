@@ -166,8 +166,8 @@ serves JSON routes and rpcs in one `Testing.layer`.
 
 ## Test events
 
-Watch an event with the client of the implementations, giving each test its own
-`Event.layerMemory`:
+Watch an event with the client of the implementations, as here, or of the routes under
+`Testing.layer`, giving each test its own `Event.layerMemory`:
 
 ```ts example=build-events/test/builds/events.test.ts
 import { expect, it } from "@effect/vitest";

@@ -21,6 +21,7 @@ import { recorder } from "../support/reporter.js";
 import { overHttp } from "../support/rpc.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
+import * as Event from "../../src/contract/Event.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 
 const Countdown = Rpc.make("countdown", {
@@ -347,10 +348,70 @@ describe("ActionRpc native rpcs", () => {
       }),
   );
 
-  it("refuses a native rpc named after an action, then or the client's watch", () => {
-    for (const tag of ["status", "then", "watch"]) {
-      expect(() => ActionRpc.make([Status], { rpcs: RpcGroup.make(Rpc.make(tag)) })).toThrow(
-        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action or a name the client keeps, "then" or "watch" (rename it)`,
+  it.effect(
+    "serves native rpcs beside event types, the client watching and calling on one protocol",
+    () =>
+      Effect.gen(function* () {
+        const Ticked = Event.make("clock.ticked", {
+          description: "The clock ticked.",
+          payload: { at: Schema.Int },
+          caller: Action.Anyone,
+        });
+
+        const ticks: Array<number> = [];
+
+        const ticked = Event.implement(Ticked, {
+          check: (_input, cursor) =>
+            Effect.sync(() => ({
+              cursor: String(ticks.length),
+              events: ticks
+                .slice(cursor === null ? ticks.length : Number(cursor))
+                .map((at) => ({ eventId: String(at), data: { at } })),
+            })),
+        });
+
+        const Mixed = ActionRpc.make([Status, Ticked], { rpcs: RpcGroup.make(Countdown) });
+
+        const server = ActionRpc.layer(Mixed, [status, ticked]).pipe(
+          Layer.provide(
+            Mixed.rpcs.toLayer({
+              countdown: (payload) => countdown(payload, Effect.succeed("mixed")),
+            }),
+          ),
+        );
+
+        ticks.push(1);
+
+        const [chunks, received] = yield* Effect.flatMap(ActionRpc.client(Mixed), (client) =>
+          Effect.all([
+            Stream.runCollect(client.countdown({ from: 2 })),
+            client.watch(Ticked, {}, { cursor: "0" }).pipe(Stream.take(1), Stream.runCollect),
+          ]),
+        ).pipe(
+          Effect.scoped,
+          Effect.provide(overHttp(server)),
+          Effect.provide([Users.layerMemory, Event.layerMemory]),
+        );
+
+        expect(chunks).toEqual(["mixed:2", "mixed:1"]);
+        expect(
+          received.map((item) => (item._tag === "Occurrence" ? item.data.at : item._tag)),
+        ).toEqual([1]);
+      }),
+  );
+
+  it("refuses a native rpc named after an action, an event type, then or the client's watch", () => {
+    const Ticked = Event.make("clock.ticked", {
+      description: "The clock ticked.",
+      payload: { at: Schema.Int },
+      caller: Action.Anyone,
+    });
+
+    for (const tag of ["status", "clock.ticked", "then", "watch"]) {
+      expect(() =>
+        ActionRpc.make([Status, Ticked], { rpcs: RpcGroup.make(Rpc.make(tag)) }),
+      ).toThrow(
+        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action, an event type or a name the client keeps, "then" or "watch" (rename it)`,
       );
     }
   });

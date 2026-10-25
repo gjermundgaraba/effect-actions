@@ -57,6 +57,11 @@ Name it in every binding and MCP endpoint that serves a protected action: an HTT
 `Authentication.make`, the scheme's on `Authentication.Options.security`; a second credential
 for one identity is in
 [kitchen-sink/src/identity/Identity.ts](../examples/kitchen-sink/src/identity/Identity.ts).
+A descriptor of protected [events](Event.md) may also say which subscriber an identity is, its
+`principal`, for what a surface holds between one subscriber's requests:
+[build-events/src/identity/Identity.ts](../examples/build-events/src/identity/Identity.ts). When
+it is required is on `Authentication.Options.principal`; its `schema`, which keeps an identity
+past a restart, on `Authentication.Options.schema`.
 
 - **Protecting an action that tests already call breaks them**, at compile time
   ([Testing-failures.md](Testing-failures.md),

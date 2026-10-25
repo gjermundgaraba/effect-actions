@@ -3,8 +3,11 @@
 `Event.make` defines an event type: something that happens, which subscribers receive as it
 happens, each subscription selecting with its own arguments. `Event.implement` binds it to the
 source its occurrences come from, behind an authorizer. Event implementations go in the same
-list as action implementations, and `Action.client` watches them in process. Events are
-experimental: they follow MCP's events extension, SEP-3415, a draft, and may change with it.
+list as action implementations: `Action.client` watches them in process; HTTP routes
+([ActionHttp.md](ActionHttp.md#serve-and-watch-events)) and rpcs
+([ActionRpc-events.md](ActionRpc-events.md)) serve them; and a CLI watches them
+([ActionCli.md](ActionCli.md#watch-events)). Events are experimental: their surfaces follow MCP's
+events extension, SEP-3415, a draft, and may change with it.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error,
 search [Event-failures.md](Event-failures.md). For one symbol,
@@ -69,7 +72,7 @@ export class BuildNotFound extends Schema.TaggedError<BuildNotFound>()(
 
 // An action answering a stream: its handler returns a `Stream` of lines, and every client's
 // call returns one, each line arriving as the server sends it. HTTP, RPC and a command carry a
-// stream; an MCP tool cannot, so an MCP endpoint leaves it out.
+// stream; an MCP tool cannot, so the MCP endpoint in `routes.ts` leaves it out.
 export const TailLog = Action.make("tailLog", {
   description: "Stream a build's log, line by line.",
   input: {
@@ -275,14 +278,12 @@ Effect, whose finalizer tears it down, run as the subscriber. How long it lasts 
 
 `Event.Events` is where occurrences are announced as they happen: `notify` for a check source,
 `publish` for a log source. Domain code yields it as it yields a store, and the entrypoint
-provides one, `Event.layerMemory`, around both the handlers that announce and the watches, as
-[build-events/test/builds/events.test.ts](../examples/build-events/test/builds/events.test.ts)
-does; a host
+provides one, `Event.layerMemory`, around both the handlers that announce and the surfaces that
+serve, as [build-events/src/server.ts](../examples/build-events/src/server.ts) does; a host
 keeping logs elsewhere builds its own with `Event.makeEvents`. A source's
-`key`, such as the pipeline a subscriber follows, lets an announcement given that key reach that
-pipeline's subscribers alone, as
-[build-events/src/builds/status.ts](../examples/build-events/src/builds/status.ts) keys its
-status by pipeline. The rules are on `Event.Events`.
+`key`, such as the room a subscriber follows, lets an announcement given that key reach that
+room's subscribers alone, as [live-rpc/src/chat/events.ts](../examples/live-rpc/src/chat/events.ts)
+keys its messages by room. The rules are on `Event.Events`.
 
 ## Watch in process
 

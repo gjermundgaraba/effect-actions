@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { Config, Effect, Layer } from "effect";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
 import { MessageStore } from "./chat/store.js";
@@ -38,6 +39,10 @@ const server = Layer.unwrap(
       // DEMO ONLY: messages live in this process's memory; a deployment provides a store that
       // lasts.
       Layer.provide(MessageStore.layerMemory),
+      // The pages watching a room are this process's sockets, so what wakes them lives in its
+      // memory too: one for the whole server. Several processes behind a balancer would each
+      // wake only their own pages, the others reading a post at their next read, 5 seconds on.
+      Layer.provide(Event.layerMemory),
     );
   }),
 );

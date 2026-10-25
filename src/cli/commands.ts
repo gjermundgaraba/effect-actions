@@ -19,8 +19,10 @@ import { withStderrConsole } from "../stdio/console.js";
 import { InvalidInput } from "../contract/errors.js";
 import { decodeInput } from "../contract/call.js";
 import type { CallOptions } from "../contract/progress.js";
+import * as Event from "../contract/Event.js";
 import { type ErasedValue, elementsOf } from "../contract/implementation.js";
 import { type Each, elementOf } from "../contract/stream.js";
+import { ReceivedOf } from "../contract/occurrence.js";
 import { errorSchemas } from "../contract/declared.js";
 
 type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
@@ -607,14 +609,14 @@ const stdinTextOf = (field: string) =>
     return text.replace(/[\r\n]+$/, "");
   });
 
-interface InputConfig<A extends Action.Any> {
+interface InputConfig<A extends Pick<Action.Any, "input">> {
   readonly flags: Readonly<Record<string, Param.Param<Kind, Option.Option<unknown>>>>;
   readonly positional: ReadonlyArray<FieldParam>;
   readonly decode: (parsed: Parsed) => Effect.Effect<A["input"]["Type"], InvalidInput>;
   readonly stdinHelp: string | undefined;
 }
 
-const inputConfig = <A extends Action.Any>(
+const inputConfig = <A extends Pick<Action.Any, "input">>(
   action: A,
   positional: ReadonlyArray<string>,
   aliases: Readonly<Record<string, string | undefined>>,
@@ -836,4 +838,57 @@ export const command = <A extends Action.Any, E, R>(
         Command.withDescription(`${description}\n\n${stdinHelp}`),
         Command.withShortDescription(description),
       );
+};
+
+/**
+ * The command watching `event`, named after it, with one flag per field of its input as an
+ * action's command has, and `--cursor` to resume from: it prints each occurrence and gap `watch`
+ * yields as one line of compact JSON on stdout, until it is interrupted or the watch fails.
+ */
+export const watchCommand = <E, R>(
+  event: Event.Any,
+  watch: (
+    input: ErasedValue,
+    cursor: string | undefined,
+  ) => Stream.Stream<Event.Received<Event.Any>, E, R>,
+  errors: Action.Errors,
+) => {
+  const { flags, decode } = inputConfig(event, [], {}, undefined);
+  const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.toCodecJson(ReceivedOf(event))));
+  const failing = failingAsDerived([...errors, Event.SubscriptionError]);
+
+  assertDistinct(
+    "flag",
+    [
+      ...Object.keys(flags).map((field) => [kebab(field), `field ${field}`] as const),
+      ["cursor", "--cursor"] as const,
+    ],
+    ([key]) => key,
+    {
+      labelOf: ([key]) => `--${key}`,
+      claimantOf: ([, claimant]) => claimant,
+      fix: "rename the field",
+    },
+  );
+
+  const cursor = Flag.String("cursor").pipe(
+    Flag.withDescription("Where to resume: a cursor an earlier line carried; omitted, from now"),
+    Flag.optional,
+  );
+
+  return Command.make(event.name, { input: flags, cursor }, ({ input, cursor: from }) =>
+    Console.consoleWith((stdout) =>
+      decode(input).pipe(
+        Effect.flatMap((value) =>
+          Stream.runForEach(watch(value, Option.getOrUndefined(from)), (received) =>
+            Effect.flatMap(Effect.orDie(encode(received)), (line) =>
+              Effect.sync(() => stdout.log(line)),
+            ),
+          ),
+        ),
+        failing,
+        withStderrConsole,
+      ),
+    ),
+  ).pipe(Command.withDescription(event.description));
 };

@@ -1,8 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber, Schema, Stream } from "effect";
+import { Effect, Fiber, Match, Schema, Stream } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { settle } from "../support/events.js";
 
 const Key = Schema.Literals(["a", "b"]);
@@ -27,7 +30,122 @@ const makeStatuses = () => {
   return { values, implementation };
 };
 
+const Polled = Schema.fromJsonString(
+  Schema.Struct({
+    cursor: Schema.String,
+    events: Schema.Array(Schema.Struct({ eventId: Schema.String, data: Status.payload })),
+  }),
+);
+
+const poll = (key: Key | undefined, cursor: string | null) =>
+  HttpClient.execute(
+    HttpClientRequest.post("/api/events/status.changed").pipe(
+      HttpClientRequest.bodyJsonUnsafe({ input: key === undefined ? {} : { key }, cursor }),
+    ),
+  ).pipe(
+    Effect.flatMap((response) => response.text),
+    Effect.flatMap(Schema.decodeUnknownEffect(Polled)),
+    Effect.orDie,
+  );
+
+const Subscriber = Schema.UndefinedOr(Key);
+
+interface Minted {
+  readonly cursor: string;
+  readonly key: Key | undefined;
+  readonly at: number;
+}
+
+const Command = Schema.Union([
+  Schema.TaggedStruct("Set", { key: Subscriber, value: Schema.Int }),
+  Schema.TaggedStruct("Read", {
+    key: Subscriber,
+    from: Schema.Union([
+      Schema.Literals(["start", "foreign"]),
+      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 30 })),
+    ]),
+  }),
+]);
+
+const Commands = Schema.Array(Command).check(Schema.isMinLength(1), Schema.isMaxLength(40));
+
 describe("Event current source", () => {
+  it.effect.prop(
+    "answers a cursor behind the notifies reaching its key with the value as it is, under an id never given before, and its own cursor with nothing",
+    { steps: Commands },
+    ({ steps }) =>
+      Effect.gen(function* () {
+        const statuses = makeStatuses();
+        const events = yield* Event.Events;
+        const reached = new Map<Key | undefined, number>();
+        const minted: Array<Minted> = [];
+        const ids = new Map<string, number>();
+        let latest = 0;
+
+        const reachedOf = (key: Key | undefined) => reached.get(key) ?? 0;
+
+        for (const step of steps) {
+          if (step._tag === "Set") {
+            const { key, value } = step;
+
+            latest = value;
+
+            if (key === undefined) {
+              statuses.values.set("a", value);
+              statuses.values.set("b", value);
+              reached.set("a", reachedOf("a") + 1);
+              reached.set("b", reachedOf("b") + 1);
+            } else {
+              statuses.values.set(key, value);
+              reached.set(key, reachedOf(key) + 1);
+            }
+
+            statuses.values.set(undefined, latest);
+            reached.set(undefined, reachedOf(undefined) + 1);
+            yield* events.notify(Status, key === undefined ? undefined : { key });
+            continue;
+          }
+
+          const { key } = step;
+
+          const resumed = Match.value(step.from).pipe(
+            Match.when("start", () => ({ cursor: null, current: false })),
+            Match.when("foreign", () => ({ cursor: "another:0", current: false })),
+            Match.orElse((index) => {
+              const own = minted.filter((each) => each.key === key);
+              const held = own[index % Math.max(own.length, 1)];
+
+              return held === undefined
+                ? { cursor: null, current: false }
+                : { cursor: held.cursor, current: held.at === reachedOf(key) };
+            }),
+          );
+
+          const page = yield* poll(key, resumed.cursor).pipe(
+            Effect.provide(
+              Testing.layer(ActionHttp.layer(ActionHttp.make([Status]), statuses.implementation)),
+            ),
+          );
+
+          const answered = page.events.map(({ data }) => data);
+
+          expect(answered).toEqual(
+            resumed.current ? [] : [{ value: statuses.values.get(key) ?? 0 }],
+          );
+
+          const at = reachedOf(key);
+          const seen = `${String(key)}\u0000${page.cursor}`;
+
+          expect(ids.get(seen) ?? at).toBe(at);
+          ids.set(seen, at);
+
+          for (const occurrence of page.events) expect(occurrence.eventId).toBe(page.cursor);
+
+          minted.push({ cursor: page.cursor, key, at });
+        }
+      }).pipe(Effect.provide(Event.layerMemory)),
+  );
+
   it.effect(
     "sends a watcher the value first, then after each notify, a value set again included",
     () =>

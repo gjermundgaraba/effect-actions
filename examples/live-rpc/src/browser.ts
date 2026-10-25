@@ -1,8 +1,9 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
+import { Headers } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { roomHeader } from "./chat/Chat.js";
+import { MessagePosted, roomHeader } from "./chat/Chat.js";
 import { Rpc } from "./Rpc.js";
 
 // Client module: what a web page imports. It holds the binding and nothing of the server, so a
@@ -30,11 +31,12 @@ export const openChat = Effect.gen(function* () {
     room: (name: string, token: string) => {
       // A browser WebSocket cannot set an `Authorization` header on its upgrade, so the token
       // travels on each message, and the room beside it. A refreshed token needs no new socket.
-      const here = RpcClient.withHeaders({ authorization: `Bearer ${token}`, [roomHeader]: name });
+      const headers = { authorization: `Bearer ${token}`, [roomHeader]: name };
+      const here = RpcClient.withHeaders(headers);
 
       return {
-        // Called again and again while the page is open, with the last id it holds. A token
-        // may expire while the page stays open, so each refusal becomes what the page shows.
+        // What the room holds after the last id the page has. A token may expire while the
+        // page stays open, so each refusal becomes what the page shows.
         read: (after: number) =>
           client.readMessages({ after }).pipe(
             here,
@@ -47,6 +49,24 @@ export const openChat = Effect.gen(function* () {
           ),
 
         post: (text: string) => client.postMessage({ text }).pipe(here),
+
+        // Each message posted to the room after the last id the page holds: a page opening a
+        // room reads it, then watches from the last id it read, so a post between the two is
+        // not lost; 0 sends the room's history first. `watch` connects again after a drop and
+        // resumes from the last message it delivered, so the page never subscribes by hand; a
+        // `Gap` says some were missed, or are another run's, so the page reads the room again
+        // with `read(0)`. The headers go with the
+        // stream, as `here` puts them on a call, and so with every request it sends again. A
+        // refusal ends it, as when it connects again with a token that has expired.
+        messages: (after: number) =>
+          client
+            .watch(MessagePosted, {}, { cursor: String(after) })
+            .pipe(
+              Stream.updateService(
+                RpcClient.CurrentHeaders,
+                Headers.merge(Headers.fromInput(headers)),
+              ),
+            ),
 
         // A declared error arrives as the contract's class. A message someone else already
         // removed is gone, which is what the page asked for.

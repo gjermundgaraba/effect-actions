@@ -2,7 +2,7 @@ import { Cause, Duration, Effect, Latch, Match, Queue, Schema, Stream } from "ef
 import { reported } from "./reported.js";
 import { Refusal } from "./errors.js";
 import { defaultNextPoll } from "./feed.js";
-import { Checked, type Gap } from "./occurrence.js";
+import { Checked, Gap, OccurrenceOf } from "./occurrence.js";
 import type { Fed, Page } from "./pages.js";
 import type * as Event from "./Event.js";
 
@@ -21,6 +21,19 @@ export type Failed = typeof Failed.Type;
  * failed and resumes.
  */
 export type Pushed = Event.Occurrence<Event.Any> | Gap | Checked | Failed;
+
+/** What a push subscription of `event` sends, as each surface's stream encodes it. */
+export const PushedOf = <E extends Event.Any>(event: E) =>
+  Schema.Union([OccurrenceOf(event), Gap, Checked, Failed]);
+
+/** What a subscription's request carries: the event's input, and the cursor it resumes from. */
+export const SubscriptionOf = <E extends Event.Any>(event: E) =>
+  Schema.Struct({
+    input: event.input,
+    cursor: Schema.optional(Schema.NullOr(Schema.String)).annotate({
+      description: "Where to resume: a cursor an occurrence or a page carried; omitted, from now.",
+    }),
+  });
 
 // Why: A few elements, so a reader slower than the feed stalls its read: a log source's
 // subscriber then falls behind its log into a `Gap`, rather than a surface's queue growing.
