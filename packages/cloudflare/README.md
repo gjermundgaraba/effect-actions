@@ -10,7 +10,7 @@ object, with events followed over its sockets, over MCP or by webhook across its
 released with `@gjermundgaraba/effect-actions`, at the same version, and requires it.
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflare effect@~4.0.4
+pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflare effect@~4.0.5
 ```
 
 Its declarations name the Workers runtime's types, such as `Fetcher`: generate them with
