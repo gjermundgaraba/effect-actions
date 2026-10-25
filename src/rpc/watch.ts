@@ -1,4 +1,4 @@
-import { Cause, Effect, Match, Predicate, Schema, type Stream } from "effect";
+import { Cause, Effect, Match, Predicate, Schema, Stream } from "effect";
 import { HttpClientError } from "effect/http";
 import { RpcClientError } from "effect/rpc";
 import * as Event from "../contract/Event.js";
@@ -49,26 +49,49 @@ export const isRpcTransient = Predicate.or(
     ),
 );
 
+// Why: Effect's server answers a tag no layer serves with a defect its message alone names, as
+// its own `Unknown request tag: <tag>`; tests/rpc/events.test.ts watches an unserved event, so a
+// change to the message fails it.
+const isUnknownTag = (tag: string) => {
+  const message = `Unknown request tag: ${tag}`;
+
+  return (cause: Cause.Cause<unknown>): boolean =>
+    cause.reasons.some(
+      (reason) =>
+        Cause.isDieReason(reason) &&
+        (Predicate.hasProperty(reason.defect, "message")
+          ? reason.defect.message === message
+          : reason.defect === message),
+    );
+};
+
 /**
  * The transport of one subscription to `event` over its stream rpc: the stream alone, since an
- * rpc serves no poll, failing once it goes silent where `silenceEnds`.
+ * rpc serves no poll, failing as `NotServed` where the server serves no such rpc, and once it goes
+ * silent where `silenceEnds`.
  */
 export const transportOf = (
   event: Event.Any,
   stream: StreamMethod,
   silenceEnds: boolean,
-): Transport<unknown, never> => ({
-  name: event.name,
-  poll: () =>
-    Effect.fail(
-      Event.SubscriptionError.of(
-        event.name,
-        new Event.Unsupported({ feature: "deliveryMode", value: "poll" }),
+): Transport<unknown, never> => {
+  const notServed = Stream.fail(Event.SubscriptionError.of(event.name, new Event.NotServed()));
+  const unknownTag = isUnknownTag(event.name);
+
+  return {
+    name: event.name,
+    poll: () =>
+      Effect.fail(
+        Event.SubscriptionError.of(
+          event.name,
+          new Event.Unsupported({ feature: "deliveryMode", value: "poll" }),
+        ),
       ),
-    ),
-  stream: (cursor) =>
-    silenceEnds
-      ? receivedFrom("RPC", event.name)(stream(cursor))
-      : readOn("RPC", event.name)(stream(cursor)),
-  transient: isRpcTransient,
-});
+    stream: (cursor) =>
+      stream(cursor).pipe(
+        Stream.catchCauseIf(unknownTag, () => notServed),
+        silenceEnds ? receivedFrom("RPC", event.name) : readOn("RPC", event.name),
+      ),
+    transient: isRpcTransient,
+  };
+};

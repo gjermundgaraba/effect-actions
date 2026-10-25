@@ -2,7 +2,7 @@ import { Schema, Stream } from "effect";
 import { Sse } from "effect/encoding";
 import { type Headers, HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 
-const Json = Schema.fromJsonString(Schema.Json);
+export const Json = Schema.fromJsonString(Schema.Json);
 
 export const failureEvent = "effect/http-api/stream/failure";
 
@@ -18,7 +18,11 @@ export const call = (
     ),
   );
 
-export const framesOf = (response: HttpClientResponse.HttpClientResponse) =>
+/** A response's SSE frames, each `data` decoded as JSON: every one, or the first `count`. */
+export const framesOf = (
+  response: HttpClientResponse.HttpClientResponse,
+  count = Number.POSITIVE_INFINITY,
+) =>
   response.stream.pipe(
     Stream.decodeText,
     Stream.pipeThroughChannel(Sse.decode()),
@@ -26,5 +30,6 @@ export const framesOf = (response: HttpClientResponse.HttpClientResponse) =>
       event: frame.event,
       data: Schema.decodeUnknownSync(Json)(frame.data),
     })),
+    Stream.take(count),
     Stream.runCollect,
   );

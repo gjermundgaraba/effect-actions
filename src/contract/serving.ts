@@ -1,11 +1,14 @@
 import type * as Action from "./Action.js";
 import type * as Event from "./Event.js";
 import { Anyone, assertAuthentication, type Proving } from "./caller.js";
-import { type AnyEventImplementation, eventsOf, selectEvents } from "./feed.js";
+import { type AnyEventImplementation, eventsOf, feedBuilders, selectEvents } from "./feed.js";
 import {
+  type AnyImplementation,
   assertHeld,
+  Implementation,
   markingOthers,
   notHeld,
+  provideBuilders,
   select,
   type Served,
   servedBy,
@@ -67,11 +70,25 @@ export const servingOf = <D extends Proving>(
     apps,
     actions,
     events,
+    eventTypes,
     authentication: [...actions, ...eventTypes].some((contract) => contract.caller !== Anyone)
       ? binding.authentication
       : undefined,
   };
 };
+
+/**
+ * Provide the builders of what `servingOf` selects, the action implementations' and the event
+ * implementations', to a surface's layer.
+ */
+export const provideServed = (served: {
+  readonly apps: ReadonlyArray<AnyImplementation>;
+  readonly events: ReadonlyArray<AnyEventImplementation>;
+}) =>
+  provideBuilders([
+    ...served.apps.map((app) => Implementation.layerOf(app)),
+    ...feedBuilders(served.events),
+  ]);
 
 /**
  * The event implementations among `served` a binding of `bound` serves, each holding the served

@@ -604,38 +604,50 @@ describe("a check source, watched in process", () => {
       }),
   );
 
-  it.effect("sends a Gap in place of an occurrence breaking its schema, and reads on", () =>
-    Effect.gen(function* () {
-      const Counted = Event.make("counter.counted", {
-        description: "A counter counted.",
-        payload: { n: Schema.Int },
-        caller: Action.Anyone,
-      });
+  it.effect(
+    "sends a Gap in place of an occurrence breaking its schema, reports it once, and reads on",
+    () =>
+      Effect.gen(function* () {
+        const Counted = Event.make("counter.counted", {
+          description: "A counter counted.",
+          payload: { n: Schema.Int },
+          caller: Action.Anyone,
+        });
 
-      const breakingBeforeValid = Event.implement(Counted, {
-        check: (_input, cursor) =>
-          Effect.succeed({
-            cursor: "2",
-            events:
-              cursor === "2"
-                ? []
-                : [
-                    { eventId: "c1", data: { n: 1.5 } },
-                    { eventId: "c2", data: { n: 2 } },
-                  ],
-          }),
-      });
+        const breakingBeforeValid = Event.implement(Counted, {
+          check: (_input, cursor) =>
+            Effect.succeed({
+              cursor: "2",
+              events:
+                cursor === "2"
+                  ? []
+                  : [
+                      { eventId: "c1", data: { n: 1.5 } },
+                      { eventId: "c2", data: { n: 2 } },
+                    ],
+            }),
+        });
 
-      const client = yield* Action.client(breakingBeforeValid);
+        const client = yield* Action.client(breakingBeforeValid);
 
-      for (const mode of ["stream", "poll"] as const) {
-        const received = yield* client
-          .watch(Counted, {}, { cursor: "0", mode })
-          .pipe(Stream.take(2), Stream.runCollect);
+        for (const mode of ["stream", "poll"] as const) {
+          const reported: Array<string> = [];
 
-        expect(received).toMatchObject([{ _tag: "Gap" }, { _tag: "Occurrence", eventId: "c2" }]);
-      }
-    }).pipe(Effect.provide(Event.layerMemory)),
+          const received = yield* client
+            .watch(Counted, {}, { cursor: "0", mode })
+            .pipe(
+              Stream.take(2),
+              Stream.runCollect,
+              Effect.provide(ErrorReporter.layer([recorder(reported)])),
+            );
+
+          expect([mode, received, reported.length]).toMatchObject([
+            mode,
+            [{ _tag: "Gap" }, { _tag: "Occurrence", eventId: "c2" }],
+            1,
+          ]);
+        }
+      }).pipe(Effect.provide(Event.layerMemory)),
   );
 
   it.effect("drops an occurrence whose eventId it already delivered", () =>

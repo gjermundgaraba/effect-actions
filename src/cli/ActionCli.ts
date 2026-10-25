@@ -14,7 +14,12 @@ import type {
 import { selection } from "../contract/listed.js";
 import { selectFrom } from "../contract/serving.js";
 import type { WatchArgs } from "../contract/watch.js";
-import { projectedErrors, bindingErrors, type Declaring } from "../contract/declared.js";
+import {
+  projectedErrors,
+  bindingErrors,
+  type Declaring,
+  eventErrors,
+} from "../contract/declared.js";
 import { assertDistinct, assertKnown } from "../contract/names.js";
 import { type CallOptions, progressSink } from "../contract/progress.js";
 import {
@@ -323,7 +328,7 @@ const watchedLocally = (app: AnyEventImplementation, event: Event.Any) =>
       Stream.unwrap(
         Effect.map(Action.client(app), (client) => client.watch(event, input, { cursor })),
       ),
-    projectedErrors({ error: [] }),
+    eventErrors(event, { error: [] }),
   );
 
 const watchedOverHttp = (binding: AnyHttp, event: Event.Any, client: ErasedClient | undefined) =>
@@ -335,7 +340,7 @@ const watchedOverHttp = (binding: AnyHttp, event: Event.Any, client: ErasedClien
           methods.watch(event, input, { cursor }),
         ),
       ),
-    bindingErrors({ error: [], caller: event.caller }, binding),
+    eventErrors(event, binding),
   );
 
 const aggregateCommand = (

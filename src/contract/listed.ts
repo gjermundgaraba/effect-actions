@@ -18,12 +18,9 @@ export const split = (contracts: ReadonlyArray<Action.Any | Event.Any>) => ({
 // Why: An action and an event type share a binding's client, one method each by name.
 /** A binding's list split into its actions and its event types, each name used once. */
 export const listed = (contracts: ReadonlyArray<Action.Any | Event.Any>) => {
-  const each = split(contracts);
-
-  assertOnce("action", each.actions);
   assertOnce("action or event", contracts);
 
-  return each;
+  return split(contracts);
 };
 
 /**

@@ -1,50 +1,29 @@
-import { Context, Effect, type Layer, Schema, Stream } from "effect";
+import { Effect, type Layer, Stream } from "effect";
 import { expectTypeOf } from "@effect/vitest";
 import type { HttpRouter } from "effect/http";
 import { type RpcClientError, RpcMiddleware } from "effect/rpc";
 import * as Action from "../../src/contract/Action.js";
-import * as Authentication from "../../src/authentication/Authentication.js";
+import type * as Authentication from "../../src/authentication/Authentication.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-
-class Caller extends Context.Service<Caller, string>()("rpc-events-types/Caller") {}
-
-class Store extends Context.Service<Store, string>()("rpc-events-types/Store") {}
-
-class Region extends Context.Service<Region, string>()("rpc-events-types/Region") {}
-
-class Quota extends Schema.TaggedError<Quota>()("Quota", {}) {}
-
-const Login = Authentication.make("rpc-events-types.Login", Caller);
-
-const Watched = Event.make("account.watched", {
-  description: "",
-  input: { id: Schema.String },
-  payload: { by: Schema.String },
-  caller: Caller,
-});
-
-const Ticked = Event.make("clock.ticked", {
-  description: "",
-  payload: { at: Schema.Finite },
-  caller: Action.Anyone,
-});
-
-const Open = Action.make("open", { description: "", readOnly: true, caller: Action.Anyone });
-
-const watched = Event.implement(
+import {
+  type Caller,
+  Login,
+  Open,
+  opened,
+  type Quota,
+  Quota as QuotaError,
+  readingBoth,
+  type Region,
+  type Store,
+  Ticked,
+  ticks,
   Watched,
-  Effect.as(Store, {
-    check: () => Effect.as(Region, { cursor: "0", events: [] }),
-  }),
-  { authorize: Event.allowAll },
-);
+  watched,
+  watchedPlainly,
+} from "../support/event-types.js";
 
-const ticks = Event.implement(Ticked, { log: { emit: Stream.never } });
-
-const opened = Action.implement(Open, () => Effect.void);
-
-const Rpc = ActionRpc.make([Open, Watched, Ticked], { authentication: Login, error: [Quota] });
+const Rpc = ActionRpc.make([Open, Watched, Ticked], { authentication: Login, error: [QuotaError] });
 
 expectTypeOf(Rpc.actions).toEqualTypeOf<ReadonlyArray<typeof Open>>();
 
@@ -59,7 +38,7 @@ expectTypeOf<
   HttpRouter.Request.Only<"Requires", Layer.Services<typeof served>>
 >().toEqualTypeOf<Region>();
 
-expectTypeOf<Store | Authentication.Provider<Caller, "rpc-events-types.Login">>().toExtend<
+expectTypeOf<Store | Authentication.Provider<Caller, "events-types.Login">>().toExtend<
   Layer.Services<typeof served>
 >();
 
@@ -91,19 +70,26 @@ class ResolveRegion extends RpcMiddleware.Service<ResolveRegion, { provides: Reg
   "rpc-events-types/ResolveRegion",
 ) {}
 
-const readingBoth = Event.implement(
-  Watched,
-  {
-    check: () => Effect.flatMap(Caller, () => Effect.as(Region, { cursor: "0", events: [] })),
-    key: () => Region,
-  },
-  { authorize: Event.allowAll },
-);
-
 const servedThroughMiddleware = ActionRpc.layer(Rpc, [opened, readingBoth], {
   middleware: [ResolveRegion],
 });
 
 expectTypeOf<
   HttpRouter.Request.Only<"Requires", Layer.Services<typeof servedThroughMiddleware>>
+>().toBeNever();
+
+class NeedsCaller extends RpcMiddleware.Service<NeedsCaller, { requires: Caller }>()(
+  "rpc-events-types/NeedsCaller",
+) {}
+
+const protectedEventsThroughIdentityMiddleware = ActionRpc.layer(Rpc, [watchedPlainly], {
+  actions: [Watched],
+  middleware: [NeedsCaller],
+});
+
+expectTypeOf<
+  HttpRouter.Request.Only<
+    "Requires",
+    Layer.Services<typeof protectedEventsThroughIdentityMiddleware>
+  >
 >().toBeNever();

@@ -18,9 +18,9 @@ import { Rpc } from "./Rpc.js";
 const implementations = [builds, logs, buildEvents, statusEvents, deploys, deployEvents];
 
 // The actions as MCP tools, at `/mcp`, each call needing a member's token. A tool answers one
-// result, so `tailLog`, which answers a stream, is left out: an endpoint given every action
-// implementation serves every other action.
-const mcp = ActionMcp.layerHttp([builds, logs, deploys], {
+// result, so `tailLog` would collect a whole log before answering, all of it in a model's
+// context: its implementation, `logs`, is left out, and the endpoint serves every other action.
+const mcp = ActionMcp.layerHttp([builds, deploys], {
   name: "build-events",
   version: "1.0.0",
   authentication: Login,

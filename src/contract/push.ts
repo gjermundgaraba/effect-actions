@@ -26,14 +26,30 @@ export type Pushed = Event.Occurrence<Event.Any> | Gap | Checked | Failed;
 export const PushedOf = <E extends Event.Any>(event: E) =>
   Schema.Union([OccurrenceOf(event), Gap, Checked, Failed]);
 
-/** What a subscription's request carries: the event's input, and the cursor it resumes from. */
-export const SubscriptionOf = <E extends Event.Any>(event: E) =>
+const subscriptionWith = <I extends Schema.Top>(input: I) =>
   Schema.Struct({
-    input: event.input,
-    cursor: Schema.optional(Schema.NullOr(Schema.String)).annotate({
-      description: "Where to resume: a cursor an occurrence or a page carried; omitted, from now.",
-    }),
+    input,
+    cursor: Schema.NullOr(Schema.String)
+      .annotate({
+        description:
+          "Where to resume: a cursor an occurrence or a page carried; null or omitted, from now.",
+      })
+      .pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   });
+
+/**
+ * What a subscription's request carries: the event's input, and the cursor it resumes from,
+ * `null` where it is omitted.
+ */
+export const SubscriptionOf = <E extends Event.Any>(event: E) => subscriptionWith(event.input);
+
+// Why: A surface decoding the envelope apart from the event's input reports an `InvalidInput`
+// whose issue paths are relative to the input, as an action call's are.
+/** A subscription's request, its input left as JSON for its event's schema to decode. */
+export const Subscription = subscriptionWith(Schema.Json);
+
+/** A subscription's request, its input decoded, as a surface reads it whatever its event. */
+export type AnySubscription = ReturnType<typeof SubscriptionOf<Event.Any>>["Type"];
 
 // Why: A few elements, so a reader slower than the feed stalls its read: a log source's
 // subscriber then falls behind its log into a `Gap`, rather than a surface's queue growing.

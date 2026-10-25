@@ -23,13 +23,12 @@ import type * as Action from "../contract/Action.js";
 import type * as Event from "../contract/Event.js";
 import { listed, type Only } from "../contract/listed.js";
 import type { SubscriptionOf } from "../contract/push.js";
-import { answering, eventEndpointOf, type pageOf, type sentOf } from "./events.js";
+import { answering, eventEndpointOf, type pageOf, type sentOf, servedSent } from "./events.js";
 import {
   acquireFeeds,
   type EventBuildError,
   type EventBuildServices,
   type EventServedRequest,
-  feedBuilders,
   type HoldingEvents,
   type ServingEvents,
   unkeyedHook,
@@ -54,6 +53,7 @@ import {
   projectedErrors,
   bindingErrors,
   bindingOf,
+  eventErrors,
 } from "../contract/declared.js";
 import { declared } from "../contract/status.js";
 import { inputParseOptions } from "../contract/call.js";
@@ -78,15 +78,13 @@ import {
   type Known,
   type Member,
   type MiddlewareOf,
-  Implementation,
-  provideBuilders,
   type Served,
   type Serving,
   type Selected,
   type SelectedEvents,
   type Holding,
 } from "../contract/implementation.js";
-import { servingOf } from "../contract/serving.js";
+import { provideServed, servingOf } from "../contract/serving.js";
 
 export type { Client } from "./client.js";
 
@@ -183,7 +181,7 @@ export interface LayerOptions<M extends Middleware = [], C extends Action.Any | 
    *
    * **Gotchas**
    *
-   * - A middleware requiring the identity needs a layer serving only protected actions: serve the public ones from a second layer without it.
+   * - A middleware requiring the identity needs a layer serving only protected actions and event types: serve the public ones from a second layer without it.
    * - On a stream answering an action declaring `progress`, or one answering a stream, a middleware sees the call end at its first event, while its handler runs on, and never sees a later failure; what it provides lasts the handler.
    */
   readonly middleware?: M;
@@ -196,7 +194,7 @@ type LayerRequest<App, A extends Action.Any, E extends Event.Any, M extends Midd
       | Extract<Serving<App, A>, { readonly caller: typeof Anyone }>
       | Extract<ServingEvents<App, E>, { readonly caller: typeof Anyone }>,
     ] extends [never]
-      ? Identity<Protected<Serving<App, A>>>
+      ? Identity<Protected<Serving<App, A>> | Protected<ServingEvents<App, E>>>
       : never)
 >;
 
@@ -429,15 +427,16 @@ export function make(
         ? endpoint
         : endpoint.middleware(security);
     }),
-    ...events.flatMap((event) => {
-      const path = absolutePath([...mount, "events", event.name]);
-      const errors = bindingErrors({ error: [], caller: event.caller }, bound);
-
-      return [eventEndpointOf(event, path, errors)].map((endpoint) =>
-        security === undefined || event.caller === Anyone
-          ? endpoint
-          : endpoint.middleware(security),
+    ...events.map((event) => {
+      const endpoint = eventEndpointOf(
+        event,
+        absolutePath([...mount, "events", event.name]),
+        eventErrors(event, bound),
       );
+
+      return security === undefined || event.caller === Anyone
+        ? endpoint
+        : endpoint.middleware(security);
     }),
   ];
 
@@ -520,7 +519,7 @@ const jsonContentType = () =>
  * - `HttpRouter.provideRequest(layer)` builds its layer once, at startup, so it never provides an identity or a tenant.
  * - A request body is read whole, however large, unless the host provides `HttpServerRequest.MaxBodySize` to `HttpRouter.serve`, limiting every route that reads its body whole, MCP endpoints included; a body a route reads as a stream is not limited. On Node a request over it is an empty 413 from Effect 4.0.6, and before it gets no response, its connection closed; `HttpRouter.toWebHandler` ignores it, so limit bodies in the platform serving the handler.
  * - An `ErrorReporter` the server runs with is given, as `Info`, a handler's declared failure and an input that does not decode, never a refusal or a refused credential: give an error class `override readonly [ErrorReporter.ignore] = true` to keep it out, and drop `Info` for a built-in error, which takes no mark.
- * - An event's route takes `{ input, cursor }` and answers a page, `{ events, cursor, truncated, hasMore, nextPollMs }`, or, to a request accepting `text/event-stream`, an SSE stream of `Checked`, `Occurrence`, `Gap` and `Failed` data, a `Checked` every 30 seconds; the stream carries no `id:`, so `Last-Event-ID` resumes nothing: resume from a cursor in the body.
+ * - An event's route takes `{ input, cursor }`, a `cursor` omitted or `null` reading from now, and answers a page, `{ events, cursor, truncated, hasMore, nextPollMs }`, or, to a request accepting `text/event-stream`, an SSE stream of `Checked`, `Occurrence`, `Gap` and `Failed` data, a `Checked` every 30 seconds; the stream carries no `id:`, so `Last-Event-ID` resumes nothing: resume from a cursor in the body.
  * - A subscription is refused as an action's call is, before its stream starts, with the route's 401 or 403; a refusal later ends the stream with Effect's `effect/http-api/stream/failure` event.
  * - A source's failure no refusal explains is logged and reported once, sent as a bare `Failed`, and read again from where it reached after 5 seconds, before the stream's first `Checked` too; a poll's is a 500, which `client`'s `watch` reconnects after.
  * - A stream is read only as fast as its client reads it: a slow reader of a log source falls behind its log, and receives a `Gap`.
@@ -553,14 +552,8 @@ export function layer(
   served: Served,
   options: LayerOptions<Middleware> = {},
 ): Layer.Layer<never, unknown, unknown> {
-  const { apps, actions, events, authentication } = servingOf(
-    "HTTP binding",
-    binding,
-    served,
-    options,
-  );
-
-  const eventTypes = events.flatMap((app) => app.events);
+  const selected = servingOf("HTTP binding", binding, served, options);
+  const { apps, actions, events, eventTypes, authentication } = selected;
 
   const mount = mountSegments(binding.prefix);
   const name = groupName(mount);
@@ -584,20 +577,22 @@ export function layer(
         ? endpoint
         : endpoint.middleware(StepUp).middleware(authentication["~middleware"]);
     }),
-    ...eventTypes.flatMap((event) => {
-      const path = absolutePath([...mount, "events", event.name]);
-      const errors = projectedErrors({ error: [] }, binding.error);
+    ...eventTypes.map((event) => {
+      const endpoint = withinLayerMiddleware(
+        eventEndpointOf(
+          event,
+          absolutePath([...mount, "events", event.name]),
+          eventErrors(event, { error: binding.error }),
+          servedSent,
+        )
+          .middleware(JsonContentType)
+          .middleware(SchemaErrors),
+        options.middleware,
+      );
 
-      return [eventEndpointOf(event, path, errors)].map((declared) => {
-        const endpoint = withinLayerMiddleware(
-          declared.middleware(JsonContentType).middleware(SchemaErrors),
-          options.middleware,
-        );
-
-        return event.caller === Anyone || authentication === undefined
-          ? endpoint
-          : endpoint.middleware(StepUp).middleware(authentication["~middleware"]);
-      });
+      return event.caller === Anyone || authentication === undefined
+        ? endpoint
+        : endpoint.middleware(StepUp).middleware(authentication["~middleware"]);
     }),
   ]).annotate(HttpApi.PayloadParseOptions, inputParseOptions);
 
@@ -646,9 +641,7 @@ export function layer(
         buildInEmptyContext,
       );
     }),
-  ).pipe(
-    provideBuilders([...apps.map((app) => Implementation.layerOf(app)), ...feedBuilders(events)]),
-  );
+  ).pipe(provideServed(selected));
 
   return HttpApiBuilder.layer(api).pipe(
     Layer.provide(handlers),

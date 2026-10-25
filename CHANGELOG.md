@@ -10,6 +10,13 @@ client watches events through a method of that name, beside one per action:
 
 - Migrate: rename an action called `watch`, and update code matching the old message.
 
+**`ActionHttp.make` and `ActionRpc.make` refuse a name listed twice with
+`Duplicate action or event: <name> (list it once, or rename one)`**, an action's as an event
+type's, since an action and an event type share a client's methods by name; an action listed twice
+threw `Duplicate action: <name>`.
+
+- Migrate: update code matching the old message.
+
 **A verifier or a handler reading `HttpServerRequest` over `ActionRpc` reads one holding the
 message's headers**, a socket's upgrade headers before its own, at `/`, with no query or body, on
 every protocol, and `ActionRpc.layer` no longer owes it. A protocol that gives a call no request, a
@@ -81,10 +88,13 @@ build-events' `pipeline.status` is one.
 
 **HTTP events (experimental).** `ActionHttp.make` binds event types beside actions, and
 `ActionHttp.layer` serves their implementations, each at `POST <prefix>/events/<name>`: its body
-`{ input, cursor }`, it answers a page of JSON, or, to a request accepting `text/event-stream`,
+`{ input, cursor }`, a `cursor` omitted or `null` reading from now, it answers a page of JSON,
+`{ events, cursor, truncated, hasMore, nextPollMs }`, or, to a request accepting `text/event-stream`,
 an SSE stream of the occurrences, a `Checked` with the position reached every 30 seconds, and a
 `Failed` where a source's failure is reported and reading resumes. A refusal is the route's 401
-or 403 before the stream starts, and ends it later. The stream sends no `id:` and reads no
+or 403 before the stream starts, and ends it later; a layer's `middleware` runs inside that
+authentication, so one reading the identity owes nothing on a layer serving protected actions and
+event types alone. The stream sends no `id:` and reads no
 `Last-Event-ID`: a cursor in the body resumes. The OpenAPI document lists both answers.
 `ActionHttp.client` and `fetchClient` of a binding listing event types have `watch`, streaming,
 or polling with `Event.WatchOptions`' `mode: "poll"`, and reconnecting with a backoff after a
@@ -99,7 +109,8 @@ seconds and a `Failed` where a source's failure is reported and reading resumes;
 starts or later, is its typed failure. Over `RpcServer.layerProtocolHttp` a watch needs
 `RpcSerialization.layerNdjson`: under `layerJson` a response is sent once its streams end.
 `ActionRpc.client` of such a binding has `watch`, streaming alone, a poll failing with
-`Event.SubscriptionError`'s `Unsupported`, and reconnecting after the protocol's transport fails or
+`Event.SubscriptionError`'s `Unsupported` and a watch of an event type the server does not serve
+with its `NotServed`, as over HTTP, and reconnecting after the protocol's transport fails or
 a response ends before its stream, as a server's restart ends it, or, over Effect's HTTP protocol,
 after 60 seconds without an element, a socket's own pings telling a dead one, and ending on a
 socket's close with an application's code, 4000 to 4999. A protocol keeping subscriptions across

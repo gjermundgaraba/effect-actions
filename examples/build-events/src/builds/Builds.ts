@@ -49,7 +49,8 @@ export class BuildNotFound extends Schema.TaggedError<BuildNotFound>()(
 
 // An action answering a stream: its handler returns a `Stream` of lines, and every client's
 // call returns one, each line arriving as the server sends it. HTTP, RPC and a command carry a
-// stream; an MCP tool cannot, so the MCP endpoint in `routes.ts` leaves it out.
+// stream; an MCP tool answers one result, the lines collected once the stream ends, so the MCP
+// endpoint in `routes.ts` leaves it out rather than put a whole log in a model's context.
 export const TailLog = Action.make("tailLog", {
   description: "Stream a build's log, line by line.",
   input: {

@@ -1,49 +1,25 @@
-import { Context, Effect, type Layer, Schema, Stream } from "effect";
+import { Effect, type Layer, Stream } from "effect";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpRouter } from "effect/http";
+import { HttpApiMiddleware } from "effect/http-api";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
-import * as Authentication from "../../src/authentication/Authentication.js";
+import type * as Authentication from "../../src/authentication/Authentication.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
-
-class Caller extends Context.Service<Caller, string>()("http-events-types/Caller") {}
-
-class Store extends Context.Service<Store, string>()("http-events-types/Store") {}
-
-class Region extends Context.Service<Region, string>()("http-events-types/Region") {}
-
-class Quota extends Schema.TaggedError<Quota>()("Quota", {}, { httpApiStatus: 429 }) {}
-
-const Login = Authentication.make("http-events-types.Login", Caller, {
-  principal: (caller) => caller,
-});
-
-const Watched = Event.make("account.watched", {
-  description: "",
-  input: { id: Schema.String },
-  payload: { by: Schema.String },
-  caller: Caller,
-});
-
-const Ticked = Event.make("clock.ticked", {
-  description: "",
-  payload: { at: Schema.Finite },
-  caller: Action.Anyone,
-});
-
-const Open = Action.make("open", { description: "", readOnly: true, caller: Action.Anyone });
-
-const watched = Event.implement(
+import {
+  type Caller,
+  Login,
+  Open,
+  opened,
+  Quota,
+  Region,
+  type Store,
+  Ticked,
+  ticks,
   Watched,
-  Effect.as(Store, {
-    check: () => Effect.as(Region, { cursor: "0", events: [] }),
-  }),
-  { authorize: Event.allowAll },
-);
-
-const ticks = Event.implement(Ticked, { log: { emit: Stream.never } });
-
-const opened = Action.implement(Open, () => Effect.void);
+  watched,
+  watchedPlainly,
+} from "../support/event-types.js";
 
 const Http = ActionHttp.make([Open, Watched, Ticked], { authentication: Login, error: [Quota] });
 
@@ -60,7 +36,7 @@ expectTypeOf<
   HttpRouter.Request.Only<"Requires", Layer.Services<typeof served>>
 >().toEqualTypeOf<Region>();
 
-expectTypeOf<Store | Authentication.Provider<Caller, "http-events-types.Login">>().toExtend<
+expectTypeOf<Store | Authentication.Provider<Caller, "events-types.Login">>().toExtend<
   Layer.Services<typeof served>
 >();
 
@@ -69,6 +45,22 @@ const inline = ActionHttp.layer(ActionHttp.make([Ticked]), [
 ]);
 
 expectTypeOf<HttpRouter.Request.Only<"Requires", Layer.Services<typeof inline>>>().toBeNever();
+
+class NeedsCaller extends HttpApiMiddleware.Service<NeedsCaller, { requires: Caller }>()(
+  "http-events-types/NeedsCaller",
+) {}
+
+const protectedEventsThroughIdentityMiddleware = ActionHttp.layer(Http, [watchedPlainly], {
+  actions: [Watched],
+  middleware: [NeedsCaller],
+});
+
+expectTypeOf<
+  HttpRouter.Request.Only<
+    "Requires",
+    Layer.Services<typeof protectedEventsThroughIdentityMiddleware>
+  >
+>().toBeNever();
 
 export const watchOverHttp = Effect.gen(function* () {
   const http = yield* ActionHttp.client(Http);

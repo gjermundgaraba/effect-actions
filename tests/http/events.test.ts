@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Duration, Effect, ErrorReporter, Exit, Fiber, Layer, Schema, Stream } from "effect";
-import { Sse } from "effect/encoding";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import { TestClock } from "effect/testing";
@@ -11,15 +10,10 @@ import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
+import { makeMessages, Posted, settle } from "../support/events.js";
 import { recorder } from "../support/reporter.js";
+import { call, framesOf, Json } from "../support/sse.js";
 import { memoryStorage } from "../../src/contract/log.js";
-
-const Posted = Event.make("message.posted", {
-  description: "A message was posted.",
-  input: { channel: Schema.optional(Schema.String) },
-  payload: { id: Schema.String, channel: Schema.String, text: Schema.String },
-  caller: Action.Anyone,
-});
 
 const Changed = Event.make("user.changed", {
   description: "A user of your tenant changed.",
@@ -72,24 +66,6 @@ const Login = Authentication.make("events.Login", CurrentActor, {
 
 const authenticate = Authentication.layer(Login, verify);
 
-const makeLog = () => {
-  const messages: Array<typeof Posted.payload.Type> = [];
-
-  const post = (channel: string, text: string) =>
-    Effect.sync(() => messages.push({ id: `m${messages.length + 1}`, channel, text }));
-
-  const check = ({ channel }: typeof Posted.input.Type, cursor: string | null) =>
-    Effect.sync(() => ({
-      cursor: String(messages.length),
-      events: messages
-        .slice(cursor === null ? messages.length : Number(cursor))
-        .filter((message) => channel === undefined || message.channel === channel)
-        .map((data) => ({ eventId: data.id, data })),
-    }));
-
-  return { post, posted: Event.implement(Posted, { check }) };
-};
-
 const changes = Event.implement(
   Changed,
   {
@@ -113,22 +89,15 @@ const Http = ActionHttp.make([Posted, Changed], { authentication: Login });
 
 const Public = ActionHttp.make([Posted]);
 
-const Json = Schema.fromJsonString(Schema.Json);
-
 const subscribe = (
   name: string,
   body: Schema.Json,
   { token, stream = false }: { readonly token?: string; readonly stream?: boolean } = {},
 ) =>
-  HttpClient.execute(
-    HttpClientRequest.post(`/api/events/${name}`).pipe(
-      HttpClientRequest.bodyJsonUnsafe(body),
-      HttpClientRequest.setHeaders({
-        ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
-        ...(stream ? { accept: "text/event-stream" } : {}),
-      }),
-    ),
-  );
+  call(`events/${name}`, body, {
+    ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+    ...(stream ? { accept: "text/event-stream" } : {}),
+  });
 
 const answerOf = (response: HttpClientResponse.HttpClientResponse) =>
   Effect.map(response.text, (body) => ({
@@ -136,19 +105,10 @@ const answerOf = (response: HttpClientResponse.HttpClientResponse) =>
     body: Schema.decodeUnknownSync(Json)(body),
   }));
 
-const framesOf = (response: HttpClientResponse.HttpClientResponse, count: number) =>
-  response.stream.pipe(
-    Stream.decodeText,
-    Stream.pipeThroughChannel(Sse.decode()),
-    Stream.map((frame) => ({ event: frame.event, data: frame.data })),
-    Stream.take(count),
-    Stream.runCollect,
+const served = (log = makeMessages()) =>
+  Testing.layer(
+    ActionHttp.layer(Http, [log.implementation, changes]).pipe(Layer.provide(authenticate)),
   );
-
-const settle = TestClock.adjust("0 millis");
-
-const served = (log = makeLog()) =>
-  Testing.layer(ActionHttp.layer(Http, [log.posted, changes]).pipe(Layer.provide(authenticate)));
 
 describe("HTTP events", () => {
   it.effect(
@@ -243,15 +203,17 @@ describe("HTTP events", () => {
         ),
       );
 
-      expect(answered.map(({ status, body }) => [status, body])).toMatchObject(
-        waits.map((wait) => [200, { nextPollMs: Math.min(Duration.toMillis(wait), 5 * 60_000) }]),
-      );
+      expect(answered.map(({ status, body }) => [status, body])).toMatchObject([
+        [200, { nextPollMs: 300_000 }],
+        [200, { nextPollMs: 300_000 }],
+        [200, { nextPollMs: 30_000 }],
+      ]);
     }).pipe(Effect.provide(Event.layerMemory)),
   );
 
   it.effect("polls from now as JSON, then answers what happened since with its cursor", () =>
     Effect.gen(function* () {
-      const log = makeLog();
+      const log = makeMessages();
 
       const answers = yield* Effect.gen(function* () {
         const first = yield* Effect.flatMap(
@@ -259,7 +221,7 @@ describe("HTTP events", () => {
           answerOf,
         );
 
-        yield* log.post("general", "hello");
+        log.post("general", "hello");
 
         const second = yield* Effect.flatMap(
           subscribe("message.posted", { input: { channel: "general" }, cursor: "0" }),
@@ -267,7 +229,7 @@ describe("HTTP events", () => {
         );
 
         return [first, second];
-      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Public, log.posted))));
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Public, log.implementation))));
 
       expect(answers).toEqual([
         {
@@ -301,7 +263,7 @@ describe("HTTP events", () => {
     "streams a confirmation, each occurrence and a heartbeat every 30 seconds, as SSE",
     () =>
       Effect.gen(function* () {
-        const log = makeLog();
+        const log = makeMessages();
 
         const reading = yield* Effect.gen(function* () {
           const response = yield* subscribe("message.posted", { input: {} }, { stream: true });
@@ -309,21 +271,21 @@ describe("HTTP events", () => {
           const frames = yield* Effect.forkChild(framesOf(response, 3));
 
           yield* settle;
-          yield* log.post("general", "hello");
+          log.post("general", "hello");
           yield* TestClock.adjust("5 seconds");
           yield* TestClock.adjust("25 seconds");
 
           return { type: response.headers["content-type"], frames: yield* Fiber.join(frames) };
         }).pipe(
           Effect.scoped,
-          Effect.provide(Testing.layer(ActionHttp.layer(Public, log.posted))),
+          Effect.provide(Testing.layer(ActionHttp.layer(Public, log.implementation))),
           Effect.forkChild,
         );
 
         const { type, frames } = yield* Fiber.join(reading);
 
         expect(type).toContain("text/event-stream");
-        expect(frames.map(({ data }) => Schema.decodeUnknownSync(Json)(data))).toMatchObject([
+        expect(frames.map(({ data }) => data)).toMatchObject([
           { _tag: "Checked", cursor: "0" },
           { _tag: "Occurrence", eventId: "m1", data: { text: "hello" }, cursor: "1" },
           { _tag: "Checked", cursor: "1" },
@@ -355,12 +317,11 @@ describe("HTTP events", () => {
   );
 
   it.effect(
-    "reports a source's failure once, sends Failed without its cause, and reads on, before and after confirming",
+    "sends a source's failure as Failed without its cause, and reads on, before and after confirming",
     () =>
       Effect.gen(function* () {
         let pages = 0;
         const data = { id: "m1", channel: "general", text: "after the outage" };
-        const reported: Array<string> = [];
 
         const flaky = Event.implement(Posted, {
           check: () =>
@@ -381,13 +342,7 @@ describe("HTTP events", () => {
           (response) => framesOf(response, 4),
         ).pipe(
           Effect.scoped,
-          Effect.provide(
-            Testing.layer(
-              ActionHttp.layer(Public, flaky).pipe(
-                Layer.provide(ErrorReporter.layer([recorder(reported)])),
-              ),
-            ),
-          ),
+          Effect.provide(Testing.layer(ActionHttp.layer(Public, flaky))),
           Effect.forkChild,
         );
 
@@ -398,34 +353,27 @@ describe("HTTP events", () => {
 
         const frames = yield* Fiber.join(reading);
 
-        expect(frames.map(({ data }) => Schema.decodeUnknownSync(Json)(data))).toEqual([
+        expect(frames.map(({ data }) => data)).toEqual([
           { _tag: "Failed" },
           { _tag: "Checked", cursor: "2" },
           { _tag: "Failed" },
           expect.objectContaining({ _tag: "Occurrence", eventId: "m1", cursor: "4" }),
         ]);
         expect(JSON.stringify(frames)).not.toContain("503");
-        expect(reported).toHaveLength(2);
       }).pipe(Effect.provide(Event.layerMemory)),
   );
 
   it.effect(
-    "reports an occurrence its payload schema refuses, sends a Gap in its place, and reads on to the rest of its page",
+    "sends a Gap with its cursor in place of an occurrence its payload schema refuses, nothing of its value, and reads on",
     () =>
       Effect.gen(function* () {
-        const reported: Array<string> = [];
-
         const reading = yield* Effect.flatMap(
           subscribe("counter.counted", { input: {} }, { stream: true }),
           (response) => framesOf(response, 3),
         ).pipe(
           Effect.scoped,
           Effect.provide(
-            Testing.layer(
-              ActionHttp.layer(ActionHttp.make([Counted]), breakingBeforeValid).pipe(
-                Layer.provide(ErrorReporter.layer([recorder(reported)])),
-              ),
-            ),
+            Testing.layer(ActionHttp.layer(ActionHttp.make([Counted]), breakingBeforeValid)),
           ),
           Effect.forkChild,
         );
@@ -436,13 +384,12 @@ describe("HTTP events", () => {
 
         const frames = yield* Fiber.join(reading);
 
-        expect(frames.map(({ data }) => Schema.decodeUnknownSync(Json)(data))).toEqual([
+        expect(frames.map(({ data }) => data)).toEqual([
           { _tag: "Checked", cursor: "0" },
           { _tag: "Gap", cursor: "0" },
           expect.objectContaining({ _tag: "Occurrence", eventId: "c2", cursor: "2" }),
         ]);
         expect(JSON.stringify(frames)).not.toContain("integer");
-        expect(reported).toHaveLength(1);
       }).pipe(Effect.provide(Event.layerMemory)),
   );
 
@@ -472,7 +419,7 @@ describe("HTTP events", () => {
       yield* TestClock.adjust("5 seconds");
 
       expect(yield* Fiber.join(reading)).toMatchObject([
-        { event: "message", data: JSON.stringify({ _tag: "Checked", cursor: "1" }) },
+        { event: "message", data: { _tag: "Checked", cursor: "1" } },
         { event: "effect/http-api/stream/failure" },
       ]);
     }).pipe(Effect.provide(Event.layerMemory)),
@@ -596,7 +543,7 @@ describe("HTTP events", () => {
 
         const implementations = [
           Action.implement(Ping, () => Effect.succeed("pong")),
-          makeLog().posted,
+          makeMessages().implementation,
         ];
 
         const read = Effect.all([
@@ -630,13 +577,15 @@ describe("HTTP events", () => {
     expect(() => ActionHttp.layer(Public, [changes])).toThrow(
       "No event of these implementations is in this HTTP binding: user.changed (pass an implementation of a bound event, or bind one of these)",
     );
-    expect(() => ActionHttp.layer(Public, [makeLog().posted, changes])).not.toThrow();
+    expect(() => ActionHttp.layer(Public, [makeMessages().implementation, changes])).not.toThrow();
   });
 
   it("refuses a listed event type its binding lacks", () => {
     expect(() =>
-      // @ts-expect-error -- The failure under test: an event type the binding does not hold.
-      ActionHttp.layer(Public, [makeLog().posted, changes], { actions: [Posted, Changed] }),
+      ActionHttp.layer(Public, [makeMessages().implementation, changes], {
+        // @ts-expect-error -- The failure under test: an event type the binding does not hold.
+        actions: [Posted, Changed],
+      }),
     ).toThrow(
       "Listed in actions, but the binding does not hold it: user.changed (add it to the binding's actions)",
     );
@@ -693,12 +642,15 @@ describe("HTTP events", () => {
 });
 
 describe("ActionHttp.client's watch", () => {
-  const watchedBy = <A, E>(watch: Effect.Effect<A, E, HttpClient.HttpClient>, log = makeLog()) =>
+  const watchedBy = <A, E>(
+    watch: Effect.Effect<A, E, HttpClient.HttpClient>,
+    log = makeMessages(),
+  ) =>
     Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(watch);
 
       yield* settle;
-      yield* log.post("general", "hello");
+      log.post("general", "hello");
       yield* TestClock.adjust("5 seconds");
 
       return yield* Fiber.join(fiber);
@@ -877,9 +829,9 @@ describe("ActionHttp.client's watch", () => {
     Effect.gen(function* () {
       let requests = 0;
       let frames = 0;
-      const log = makeLog();
+      const log = makeMessages();
 
-      yield* log.post("general", "hello");
+      log.post("general", "hello");
 
       const watched = yield* Effect.gen(function* () {
         const client = yield* ActionHttp.client(Http, {
@@ -932,7 +884,9 @@ describe("ActionHttp.client's watch", () => {
         const client = yield* ActionHttp.client(Http);
 
         return yield* Effect.flip(Stream.runDrain(client.watch(Changed)));
-      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Public, makeLog().posted))));
+      }).pipe(
+        Effect.provide(Testing.layer(ActionHttp.layer(Public, makeMessages().implementation))),
+      );
 
       expect(error).toMatchObject({
         _tag: "SubscriptionError",

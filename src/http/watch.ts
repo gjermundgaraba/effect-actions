@@ -1,9 +1,9 @@
-import { Duration, Effect, Predicate, Stream } from "effect";
+import { Effect, Predicate, Stream } from "effect";
 import { HttpClientError } from "effect/http";
 import * as Event from "../contract/Event.js";
 import type { ErasedValue } from "../contract/implementation.js";
 import { type Fed, fedOf, type Page } from "../contract/pages.js";
-import type { Pushed } from "../contract/push.js";
+import type { AnySubscription, Pushed } from "../contract/push.js";
 import {
   answeredStatus,
   failingWhenUnanswered,
@@ -12,22 +12,17 @@ import {
 } from "../contract/transient.js";
 import type { Transport } from "../contract/watch.js";
 
-/** One poll's answer as the native client decodes it, its wait in milliseconds. */
-export interface WirePage extends Omit<Page, "nextPoll"> {
-  readonly nextPollMs: number;
-}
-
 interface Subscription {
-  readonly payload: { readonly input: ErasedValue; readonly cursor: string | null };
+  readonly payload: AnySubscription;
 }
 
 /** The native client's method of one event's route, asked for a page. */
-export type PollMethod<R> = (request: Subscription) => Effect.Effect<WirePage, unknown, R>;
+export type PollMethod<R> = (request: Subscription) => Effect.Effect<Page, unknown, R>;
 
 /** The same method through a client asking for `text/event-stream`, which a server streams. */
 export type StreamMethod<R> = (
   request: Subscription,
-) => Effect.Effect<WirePage | Stream.Stream<Pushed, unknown>, unknown, R>;
+) => Effect.Effect<Page | Stream.Stream<Pushed, unknown>, unknown, R>;
 
 const isNotFound = Predicate.compose(
   HttpClientError.isHttpClientError,
@@ -61,10 +56,6 @@ export const transportOf = <R>(
       poll({ payload: { input, cursor } }).pipe(
         failingWhenUnanswered,
         Effect.catchIf(isNotFound, () => notServed),
-        Effect.map(({ nextPollMs, ...page }) => ({
-          ...page,
-          nextPoll: Duration.millis(nextPollMs),
-        })),
       ),
     // Why: A page answering a stream's request, from a proxy dropping its `Accept`, is read as a
     // stream that ends, so the watch asks again a second later.

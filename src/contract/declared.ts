@@ -97,6 +97,13 @@ export const bindingErrors = (
       : [...binding.error, ...binding.authentication.error],
   );
 
+/**
+ * Every error a binding's subscription to `event` declares: the built-in ones, the binding's and,
+ * where `event` is protected, its authentication's. An event type declares none of its own.
+ */
+export const eventErrors = (event: Pick<Called, "caller">, binding: Declaring): Action.Errors =>
+  bindingErrors({ error: [], caller: event.caller }, binding);
+
 const encodedTags = (ast: SchemaAST.AST): ReadonlyArray<string> =>
   members(SchemaAST.toEncoded(ast)).flatMap((member) => {
     const tag = SchemaAST.isObjects(member)
@@ -157,10 +164,7 @@ export const bindingOf = <D extends Proving & { readonly error: Action.Errors }>
   }
 
   for (const event of events) {
-    assertDistinctTags(
-      `${what} of event "${event.name}"`,
-      bindingErrors({ error: [], caller: event.caller }, bound),
-    );
+    assertDistinctTags(`${what} of event "${event.name}"`, eventErrors(event, bound));
   }
 
   return bound;
