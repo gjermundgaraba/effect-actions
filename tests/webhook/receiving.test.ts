@@ -30,7 +30,7 @@ import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
 import { actors, CurrentActor } from "../support/app/authorization.js";
-import { turn } from "../support/webhook.js";
+import { counting, passed, until } from "../support/webhook.js";
 
 const Changed = Event.make("user.changed", {
   description: "A user changed.",
@@ -82,11 +82,6 @@ const implementationOf = (world: World) =>
             : Effect.void,
         ),
     },
-  );
-
-const settled = (done: () => boolean) =>
-  Effect.flatMap(Effect.repeat(turn, { until: done, times: 200 }), () =>
-    done() ? Effect.void : Effect.die(new Error("The watch did not settle")),
   );
 
 type Watching = (http: HttpClient.HttpClient) => Stream.Stream<Received, unknown>;
@@ -142,7 +137,7 @@ const served = (...watchings: ReadonlyArray<Watching>) =>
 
     const server = routesOf(world).pipe(
       Layer.provide(Webhook.layer()),
-      Layer.provide([Testing.layer(Layer.mergeAll(receiver, captured)), publicName]),
+      Layer.provide([counting(Testing.layer(Layer.mergeAll(receiver, captured))), publicName]),
     );
 
     const started = Effect.gen(function* () {
@@ -169,7 +164,7 @@ const served = (...watchings: ReadonlyArray<Watching>) =>
         ),
       );
 
-      yield* settled(() => world.checks >= watchings.length);
+      yield* until(() => world.checks >= watchings.length);
     });
 
     return {
@@ -178,7 +173,7 @@ const served = (...watchings: ReadonlyArray<Watching>) =>
       seens,
       ended,
       callbacks,
-      server: Testing.layer(server),
+      server: counting(Testing.layer(server)),
       started,
     };
   });
@@ -262,10 +257,7 @@ describe("watching by webhook", () => {
       yield* Effect.gen(function* () {
         yield* started;
 
-        for (let step = 0; step < 20; step++) {
-          yield* TestClock.adjust("30 seconds");
-          yield* Effect.repeat(turn, { times: 20 });
-        }
+        yield* passed(10 * 60);
 
         world.changes.push({ id: "late" });
 

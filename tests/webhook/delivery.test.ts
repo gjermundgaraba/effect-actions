@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Clock,
@@ -33,8 +33,9 @@ import {
   secretOf,
   sent,
   signedBy,
+  passed,
+  settled,
   subscribed,
-  turn,
   until,
   url,
 } from "../support/webhook.js";
@@ -121,6 +122,20 @@ describe("webhook delivery over HTTP", () => {
     }).pipe(Effect.provide(server));
   });
 
+  it.effect("delivers to a callback allowedCallbacks trusts, at an address not global", () => {
+    const { world, server } = makeWorld({ allowedCallbacks: ["https://10.0.0.5/"] });
+
+    return Effect.gen(function* () {
+      yield* subscribed(secretOf(1), undefined, { callback: "https://10.0.0.5/hook" });
+
+      world.changes.push({ id: "c1", by: "bob" });
+
+      yield* until(() => events(world.received).length >= 1);
+
+      expect(events(world.received)).toMatchObject([{ eventId: "c1" }]);
+    }).pipe(Effect.provide(server));
+  });
+
   it.effect(
     "with resolveCallbacks false, checks a literal address alone, leaving a name to the platform",
     () => {
@@ -188,7 +203,7 @@ describe("webhook delivery over HTTP", () => {
 
       world.changes.push({ id: "c1", by: "bob" });
 
-      yield* until(() => false);
+      yield* passed();
 
       expect([gone.status, again.status]).toEqual([204, 409]);
       expect(events(world.received)).toEqual([]);
@@ -278,7 +293,7 @@ describe("webhook delivery over HTTP", () => {
           body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
         world.changes.push({ id: "c1", by: "bob" });
 
-        yield* until(() => false);
+        yield* passed();
 
         const attempts = events(world.received).length;
 
@@ -317,14 +332,14 @@ describe("webhook delivery over HTTP", () => {
             : new Response(null, { status: 410 });
         world.changes.push({ id: "c1", by: "bob" });
 
-        yield* until(() => false);
+        yield* passed();
         yield* TestClock.adjust("2 hours");
 
         world.answer = (body) =>
           body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
         world.changes.push({ id: "c2", by: "bob" });
 
-        yield* until(() => false);
+        yield* passed();
 
         const retried = events(world.received).filter(({ eventId }) => eventId === "c2").length;
 
@@ -343,7 +358,7 @@ describe("webhook delivery over HTTP", () => {
         body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
       world.changes.push({ id: "c1", by: "bob" });
 
-      yield* until(() => false);
+      yield* passed();
 
       const suspendedAt = events(world.received).length;
 
@@ -363,32 +378,11 @@ describe("webhook delivery over HTTP", () => {
     return Effect.gen(function* () {
       yield* subscribed(secretOf(1), 3 * 60 * 60 * 1000);
 
-      let signed = 0;
-      const sign = crypto.subtle.sign.bind(crypto.subtle);
-
-      yield* Effect.acquireRelease(
-        Effect.sync(() =>
-          vi.spyOn(crypto.subtle, "sign").mockImplementation((...args) => {
-            signed += 1;
-
-            return sign(...args);
-          }),
-        ),
-        (spied) => Effect.sync(() => spied.mockRestore()),
-      );
-
-      world.answered = 0;
-
-      const attempted = Effect.andThen(
-        Effect.repeat(turn, { until: () => world.answered >= signed }),
-        turn,
-      );
-
       world.answer = (body) =>
         body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
       world.changes.push({ id: "c1", by: "bob" });
 
-      yield* Effect.repeat(Effect.andThen(TestClock.adjust("5 seconds"), attempted), {
+      yield* Effect.repeat(Effect.andThen(TestClock.adjust("5 seconds"), settled), {
         times: (2 * 60 * 60) / 5,
       });
 
@@ -403,7 +397,7 @@ describe("webhook delivery over HTTP", () => {
       expect(Math.max(...apart)).toBeLessThan(330);
       expect(span).toBeGreaterThan(3600);
       expect(span).toBeLessThan(3600 + 330);
-    }).pipe(Effect.scoped, Effect.provide(server));
+    }).pipe(Effect.provide(server));
   });
 
   it.effect(
@@ -432,7 +426,7 @@ describe("webhook delivery over HTTP", () => {
         );
 
         yield* until(() => events(world.received).some(({ eventId }) => eventId === "kept"));
-        yield* until(() => false);
+        yield* passed();
 
         expect(
           world.received
@@ -501,7 +495,7 @@ describe("webhook delivery over HTTP", () => {
 
         world.changes.push({ id: "c1", by: "bob" });
 
-        yield* until(() => false);
+        yield* passed();
 
         expect(grants).toEqual([60_000, 3_600_000, 3_600_000]);
         expect(events(world.received)).toEqual([]);
@@ -557,7 +551,7 @@ describe("webhook delivery over HTTP", () => {
 
       world.changes.push({ id: "c1", by: "bob" });
 
-      yield* until(() => false);
+      yield* passed();
 
       expect(gone.status).toBe(409);
       expect(events(world.received)).toEqual([]);
@@ -575,7 +569,7 @@ describe("webhook delivery over HTTP", () => {
       world.revoked.add("alice");
       world.changes.push({ id: "c1", by: "bob" });
 
-      yield* until(() => false);
+      yield* passed();
       yield* TestClock.adjust("1 hour");
 
       expect(world.received.map(bodyOf).filter(({ type }) => type === "terminated")).toHaveLength(
@@ -722,7 +716,7 @@ describe("webhook delivery over HTTP", () => {
       );
 
       yield* until(() => events(world.received).length >= 1);
-      yield* until(() => false);
+      yield* passed();
 
       expect(events(world.received).map(({ eventId }) => eventId)).toEqual(["other"]);
     }).pipe(Effect.provide(server));
@@ -753,7 +747,7 @@ describe("webhook delivery over HTTP", () => {
   );
 
   it.effect(
-    "gives up an occurrence whose admission fails with no refusal, a gap told once, and reads on",
+    "reads again from before an occurrence whose admission fails with no refusal, reported once",
     () => {
       const { world, server } = makeWorld();
       const reported: Array<string> = [];
@@ -764,11 +758,11 @@ describe("webhook delivery over HTTP", () => {
         world.authorizerDown = 1;
         world.changes.push({ id: "c1", by: "bob" });
 
-        yield* until(() => false);
+        yield* passed();
 
         world.changes.push({ id: "c2", by: "bob" });
 
-        yield* until(() => events(world.received).length >= 1);
+        yield* until(() => events(world.received).length >= 2);
 
         expect(
           world.received
@@ -776,7 +770,7 @@ describe("webhook delivery over HTTP", () => {
             .filter(({ type }) => type !== "verification")
             .map(({ type, eventId, cursor }) => [type ?? eventId, cursor]),
         ).toEqual([
-          ["gap", "1"],
+          ["c1", "1"],
           ["c2", "2"],
         ]);
         expect(reported).toHaveLength(1);
@@ -801,7 +795,7 @@ describe("webhook delivery over HTTP", () => {
 
         world.changes.push({ id: "c1", by: "bob" });
 
-        yield* until(() => false);
+        yield* passed();
 
         world.known.set("alice", actors.alice);
 
@@ -935,7 +929,7 @@ describe("Webhook.layer", () => {
 
           const subscribing = yield* Effect.forkChild(subscribed());
 
-          yield* until(() => hooks.length >= 3);
+          yield* passed();
 
           const meanwhile = [...hooks];
 

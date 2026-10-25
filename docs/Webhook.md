@@ -83,8 +83,9 @@ The layer needs an `HttpClient` to POST, `Dns` to check where each callback reso
 `resolveCallbacks` is `false`, and, with `persist`, a `KeyValueStore`: the entrypoint,
 [build-events/src/server.ts](../examples/build-events/src/server.ts), provides all three.
 
-Its options, how long a subscription is granted, which callbacks skip the handshake and how long
-a failing delivery is retried, are `Webhook.Options`; what each POST holds is on `layer`.
+Its options, how long a subscription is granted, which callbacks skip the handshake and the
+address check, and how long a failing delivery is retried, are `Webhook.Options`; what each POST
+holds is on `layer`.
 
 - **Which deployment.** Subscriptions are delivered from the server's memory, so a long-lived
   process serves them and a serverless host cannot. A restart drops them until each subscriber's

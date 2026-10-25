@@ -1,7 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { Clock, Effect, Match, Schema } from "effect";
 import { TestClock } from "effect/testing";
-import { events, makeWorld, secretOf, sent, subscribed, until, url } from "../support/webhook.js";
+import { events, makeWorld, passed, secretOf, sent, subscribed, url } from "../support/webhook.js";
 
 const Minutes = (maximum: number) => Schema.Int.check(Schema.isBetween({ minimum: 0, maximum }));
 
@@ -67,7 +67,7 @@ it.effect.prop(
 
                 if (now < expiresAt) expected.push(id);
 
-                yield* until(() => false);
+                yield* passed();
               }),
             Advance: ({ minutes }) => TestClock.adjust(minutes * minute),
           }),

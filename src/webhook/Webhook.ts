@@ -18,9 +18,10 @@ export interface Options {
    */
   readonly maxTtl?: Duration.Input | undefined;
   /**
-   * Callbacks trusted without the verification handshake, each an https URL whose origin a
-   * callback has exactly and whose path it starts with, segment by segment:
-   * `["https://hooks.example.com/"]`. Each delivery's address check still runs.
+   * Callbacks trusted without the verification handshake or the address check, each an https
+   * URL whose origin a callback has exactly and whose path it starts with, segment by segment:
+   * `["https://hooks.example.com/"]`. A callback on a private network is delivered to only when
+   * one of them trusts it.
    */
   readonly allowedCallbacks?: ReadonlyArray<string> | undefined;
   /**
@@ -41,7 +42,7 @@ export interface Options {
    * **Gotchas**
    *
    * - Each subscriber's identity is kept by its authentication's `schema`, encoded at each grant: a surface offering a protected event by webhook refuses to start without it, or where two authentications with different schemas serve one event.
-   * - A restored delivery runs in the layer's context and that identity alone, until the subscriber's next refresh: an authorizer or a source reading a service middleware or the surface's layer provides fails, each occurrence a reported `gap`, or each read reported and retried every 5 seconds.
+   * - A restored delivery runs in the layer's context and that identity alone, until the subscriber's next refresh: an authorizer or a source reading a service middleware or the surface's layer provides fails, each read reported and retried every 5 seconds.
    * - A subscriber refused as its subscription is restored is POSTed `terminated`; an authorizer or a source failing its first read with no refusal is retried, as later.
    * - A subscription suspended stays suspended when restored, until its subscriber's refresh delivers again.
    * - Secrets and identities are kept as JSON, as given, so give the layer a store only the server reads.
@@ -104,14 +105,14 @@ const maxTtlOf = (input: Duration.Input): Duration.Duration => {
  *
  * - Only a protected event whose descriptor has `principal` is offered webhook delivery: elsewhere `events/list` lists no `webhook`, and a subscribe is `Unsupported`.
  * - A `requestScoped` MCP endpoint offers it too, its subscriptions built once with the endpoint: on a host with no lasting process, leave this layer out, as `ActionHttp.layer` says, since each instance keeps its own subscriptions, lost as it ends.
- * - A callback resolving to an address that is not globally reachable, a loopback or a private one included, is never POSTed to: a local receiver needs a public name, or a test's `Dns.layerStatic`; an IPv6-only server behind NAT64 cannot deliver to an IPv4-only callback.
+ * - A callback resolving to an address that is not globally reachable, a loopback or a private one included, is never POSTed to unless `allowedCallbacks` trusts it: a local receiver needs a public name, a trusted URL, or a test's `Dns.layerStatic`; an IPv6-only server behind NAT64 cannot deliver to an IPv4-only callback.
  * - Each POST is checked against the address it resolves to, but fetch connects to the name again, so a name rebinding between the check and the connection is not caught: front the server with an egress proxy that refuses private addresses where that matters.
  * - Deliveries run with fetch's `redirect: "manual"`, and a 3xx answer is a failed attempt; an `HttpClient` that is not fetch's follows redirects as it does.
  * - A failed attempt's category is `connection_refused` for any transport failure, never `tls_error`, which no platform client reports apart.
  * - A delivery's 2xx answer is a success, its body never read; a verification's answer is read as far as 4 KiB, and one longer fails its challenge.
  * - A callback verified for a subscriber is not challenged again for that subscriber's other subscriptions to it while one is granted, as SEP-3415's soft state allows.
  * - Deliveries are one at a time, in order: one failing holds back those after it, for `retryFor`, then the subscription suspends until a refresh, which delivers it again.
- * - An occurrence given up, before its POST, its admission failing with no refusal or its body over 256 KiB, or by a `410` or `413`, is POSTed as a `gap` at its cursor.
+ * - An occurrence given up, its body over 256 KiB or its POST answered `410` or `413`, is POSTed as a `gap` at its cursor; one whose admission fails with no refusal is reported and read again, from before it, every 5 seconds.
  * - A refresh restarts its subscription's reading under the refreshed subscriber, from where delivery reached: the subscription hook set up again once the old one is released, and a delivery in flight sent again, which the subscriber drops by its `eventId`.
  * - A refresh its authorizer refuses ends the subscription it names, POSTing `terminated`, though each delivery, admitted as the subscriber of the last grant, would still pass.
  * - A refresh with a new secret signs each POST with both secrets for 5 minutes, `webhook-signature` holding two, so a receiver may switch over; after that, with the new one alone.

@@ -335,8 +335,8 @@ export class Unsupported extends Schema.TaggedError<Unsupported>()("Unsupported"
 
 /**
  * Why a webhook's callback endpoint failed, in SEP-3415's categories: it refused the connection
- * or was unreachable, timed out, failed TLS, answered a 4xx or a 5xx, or did not echo the
- * verification challenge.
+ * or was unreachable, timed out, failed TLS, answered a status from 300 to 499 (`http_4xx`, as
+ * the categories name no 3xx) or a 5xx, or did not echo the verification challenge.
  */
 export const CallbackCategory = Schema.Literals([
   "connection_refused",

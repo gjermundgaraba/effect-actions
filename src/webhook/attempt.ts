@@ -1,5 +1,4 @@
 import { Clock, Data, Duration, Effect, Option, Schema, Stream } from "effect";
-import type { Dns } from "effect/net";
 import {
   FetchHttpClient,
   HttpClient,
@@ -7,7 +6,6 @@ import {
   type HttpClientResponse,
 } from "effect/http";
 import type { CallbackCategory } from "../contract/Event.js";
-import { checkedHost } from "./address.js";
 import { signature } from "./signing.js";
 
 /**
@@ -53,7 +51,7 @@ const outbound = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 // delivery's, is cancelled as the attempt ends rather than left to the garbage collector.
 const sent = <A>(
   { url, subscriptionId, webhookId, body, keys }: Posting,
-  dns: Dns.Dns["Service"] | undefined,
+  checked: Effect.Effect<void, void>,
   answer: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A>,
 ): Effect.Effect<A, AttemptFailed, HttpClient.HttpClient> =>
   Effect.gen(function* () {
@@ -86,7 +84,7 @@ const sent = <A>(
     );
 
     return yield* Effect.andThen(
-      Effect.mapError(checkedHost(url, dns), () => unreached),
+      Effect.mapError(checked, () => unreached),
       outbound(answered),
     ).pipe(
       Effect.timeoutOrElse({
@@ -98,15 +96,15 @@ const sent = <A>(
   });
 
 /**
- * POSTs `body` to the callback, signed with a fresh timestamp, after checking its host resolves
- * to globally reachable addresses alone, through `dns` where given, and succeeds at a 2xx without
- * reading its body. The timeout bounds the address check and the POST together.
+ * POSTs `body` to the callback, signed with a fresh timestamp, once `checked`, its address check,
+ * passes, and succeeds at a 2xx without reading its body. The timeout bounds the check and the
+ * POST together.
  */
 export const attempt = (
   posting: Posting,
-  dns: Dns.Dns["Service"] | undefined,
+  checked: Effect.Effect<void, void>,
 ): Effect.Effect<void, AttemptFailed, HttpClient.HttpClient> =>
-  sent(posting, dns, () => Effect.void);
+  sent(posting, checked, () => Effect.void);
 
 const Challenged = Schema.fromJsonString(Schema.Struct({ challenge: Schema.String }));
 
@@ -146,9 +144,9 @@ const textOf = (response: HttpClientResponse.HttpClientResponse) =>
  */
 export const challenged = (
   posting: Posting,
-  dns: Dns.Dns["Service"] | undefined,
+  checked: Effect.Effect<void, void>,
 ): Effect.Effect<string | undefined, AttemptFailed, HttpClient.HttpClient> =>
-  sent(posting, dns, (response) =>
+  sent(posting, checked, (response) =>
     Effect.map(textOf(response), (text) =>
       Option.getOrUndefined(
         Option.map(

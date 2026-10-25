@@ -1,3 +1,4 @@
+import { vi } from "@effect/vitest";
 import { Effect, Layer, Option, type Queue, Redacted, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpServerRequest } from "effect/http";
 import { Dns } from "effect/net";
@@ -101,7 +102,6 @@ export const makeWorld = (
     failures: 0,
     authorizerDown: 0,
     answer: acknowledging,
-    answered: 0,
   };
 
   const verify = (token: Redacted.Redacted<string>) =>
@@ -205,19 +205,7 @@ export const makeWorld = (
     Layer.provide(webhooks),
     Layer.provide([
       Event.layerMemory,
-      Layer.effect(HttpClient.HttpClient)(
-        Effect.map(
-          HttpClient.HttpClient,
-          HttpClient.transform((response) =>
-            Effect.ensuring(
-              response,
-              Effect.sync(() => {
-                world.answered += 1;
-              }),
-            ),
-          ),
-        ),
-      ).pipe(Layer.provide(Testing.layer(receiver))),
+      counting(Testing.layer(receiver)),
       Dns.layerStatic({
         hosts: {
           "hooks.example.com": ["93.184.216.34"],
@@ -272,10 +260,72 @@ export const subscribed = (
     (response) => Effect.flatMap(response.json, Schema.decodeUnknownEffect(Granted)),
   );
 
-export const turn = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+let inFlight = 0;
 
-export const until = (done: () => boolean) =>
-  Effect.repeat(Effect.andThen(TestClock.adjust("1 second"), turn), { until: done, times: 60 });
+const counted = <A>(work: Promise<A>): Promise<A> => {
+  inFlight += 1;
+
+  return work.finally(() => {
+    inFlight -= 1;
+  });
+};
+
+const importKey = crypto.subtle.importKey.bind(crypto.subtle);
+
+const sign = crypto.subtle.sign.bind(crypto.subtle);
+
+const digest = crypto.subtle.digest.bind(crypto.subtle);
+
+vi.spyOn(crypto.subtle, "importKey").mockImplementation((...args) => counted(importKey(...args)));
+
+vi.spyOn(crypto.subtle, "sign").mockImplementation((...args) => counted(sign(...args)));
+
+vi.spyOn(crypto.subtle, "digest").mockImplementation((...args) => counted(digest(...args)));
+
+export const counting = <E, R>(client: Layer.Layer<HttpClient.HttpClient, E, R>) =>
+  Layer.effect(HttpClient.HttpClient)(
+    Effect.map(
+      HttpClient.HttpClient,
+      HttpClient.transform((response) =>
+        Effect.suspend(() => {
+          inFlight += 1;
+
+          return Effect.ensuring(
+            response,
+            Effect.sync(() => {
+              inFlight -= 1;
+            }),
+          );
+        }),
+      ),
+    ),
+  ).pipe(Layer.provide(client));
+
+const turn = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+
+const quietTurns = 3;
+
+const quietFor = (turns: number): Effect.Effect<void> =>
+  turns === 0
+    ? Effect.void
+    : Effect.flatMap(turn, () => quietFor(inFlight === 0 ? turns - 1 : quietTurns));
+
+/**
+ * Waits, in real time, until no signing or in-process POST has been in flight for three scheduler
+ * turns: the test clock cannot see that work, and moved during it would let an attempt's 5-second
+ * timeout or a retry's wait elapse in time the work never took.
+ */
+export const settled = quietFor(quietTurns);
+
+/** Steps the clock a second at a time, each step once `settled`, until `done` or `seconds` pass. */
+export const until = (done: () => boolean, seconds = Infinity): Effect.Effect<void> =>
+  Effect.flatMap(settled, () =>
+    done() || seconds <= 0
+      ? Effect.void
+      : Effect.andThen(TestClock.adjust("1 second"), until(done, seconds - 1)),
+  );
+
+export const passed = (seconds = 60) => until(() => false, seconds);
 
 export const events = (received: ReadonlyArray<Delivery>) =>
   received.map(bodyOf).filter(({ type }) => type === undefined);

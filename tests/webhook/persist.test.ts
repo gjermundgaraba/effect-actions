@@ -19,6 +19,7 @@ import {
   bodyOf,
   events,
   makeWorld,
+  passed,
   secretOf,
   sent,
   signedBy,
@@ -110,7 +111,7 @@ describe("webhook subscriptions kept by persist", () => {
 
         after.world.changes.push({ id: "c1", by: "bob" });
 
-        yield* until(() => false).pipe(Effect.provide(after.server));
+        yield* passed().pipe(Effect.provide(after.server));
 
         expect(keptBetween).toHaveLength(1);
         expect(events(after.world.received)).toEqual([]);
@@ -192,7 +193,7 @@ describe("webhook subscriptions kept by persist", () => {
             body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
           world.changes.push({ id: "c1", by: "bob" });
 
-          yield* until(() => false);
+          yield* passed();
 
           const kept = yield* store.get(`${index}/${grant.id}`);
 
@@ -204,7 +205,7 @@ describe("webhook subscriptions kept by persist", () => {
           ];
 
           yield* TestClock.adjust("1 hour");
-          yield* until(() => false);
+          yield* passed();
 
           return [grant, suspended] as const;
         }).pipe(Effect.provide(server));
@@ -371,7 +372,7 @@ describe("webhook subscriptions kept by persist", () => {
 
         const after = makeWorld({}, undefined, failingReads);
 
-        yield* until(() => false).pipe(
+        yield* passed().pipe(
           Effect.provide(after.server),
           Effect.provide(ErrorReporter.layer([recorder(reported)])),
         );
@@ -398,14 +399,14 @@ describe("webhook subscriptions kept by persist", () => {
           before.world.answer = failing;
           before.world.changes.push({ id: "c1", by: "bob" });
 
-          yield* until(() => false);
+          yield* passed();
         }).pipe(Effect.provide(before.server));
 
         after.world.answer = failing;
         after.world.changes.push({ id: "c1", by: "bob" });
 
         const refreshed = yield* Effect.gen(function* () {
-          yield* until(() => false);
+          yield* passed();
 
           return yield* subscribed(secretOf(1));
         }).pipe(Effect.provide(after.server));
@@ -428,13 +429,13 @@ describe("webhook subscriptions kept by persist", () => {
           body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
         before.world.changes.push({ id: "c1", by: "bob" });
 
-        yield* until(() => false);
+        yield* passed();
       }).pipe(Effect.provide(before.server));
 
       after.world.changes.push({ id: "c1", by: "bob" });
 
       const [restored, refreshed] = yield* Effect.gen(function* () {
-        yield* until(() => false);
+        yield* passed();
 
         const restored = events(after.world.received).length;
         const refresh = yield* subscribed(secretOf(1));
@@ -464,7 +465,7 @@ describe("webhook subscriptions kept by persist", () => {
             body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
           before.world.changes.push({ id: "c1", by: "bob" });
 
-          yield* until(() => false);
+          yield* passed();
         }).pipe(Effect.provide(before.server));
 
         after.world.changes.push({ id: "c1", by: "bob" }, { id: "c2", by: "bob" });
@@ -540,7 +541,7 @@ describe("webhook subscriptions kept by persist", () => {
 
       yield* Effect.gen(function* () {
         yield* until(() => events(after.world.received).length > 0);
-        yield* until(() => false);
+        yield* passed();
       }).pipe(Effect.provide(after.server));
 
       expect(events(after.world.received)).toMatchObject([{ eventId: "c1" }]);

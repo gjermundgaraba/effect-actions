@@ -36,6 +36,7 @@ import {
   terminationError,
   type Webhooks,
 } from "../contract/webhooks.js";
+import { checkedHost } from "./address.js";
 import { type AttemptFailed, attempt, challenged, type Posting } from "./attempt.js";
 import { constantTimeEqual, randomToken, subscriptionId } from "./signing.js";
 import type { Storage, Stored } from "./stored.js";
@@ -220,7 +221,18 @@ export const makeWebhooks = (
     const asSubscriber = <A, E>(subscription: Held, effect: Effect.Effect<A, E, unknown>) =>
       Effect.updateContext<A, E, unknown, never>(effect, () => subscription.context);
 
-    const posted = (posting: Posting) => Effect.provideContext(attempt(posting, policy.dns), built);
+    // Why: A callback `allowedCallbacks` trusts skips the address check too, as SEP-3415 lets a
+    // server configured to allow it deliver to an address not globally reachable.
+    const posted = (posting: Posting) =>
+      Effect.provideContext(
+        attempt(
+          posting,
+          trusted(posting.url, policy.allowedCallbacks)
+            ? Effect.void
+            : checkedHost(posting.url, policy.dns),
+        ),
+        built,
+      );
 
     const post = (subscription: Held, webhookId: string, body: string) =>
       Effect.flatMap(Clock.currentTimeMillis, (now) =>
@@ -304,9 +316,9 @@ export const makeWebhooks = (
     // Why: Deliveries are serial, each acknowledged or abandoned before the next is read, so the
     // position a delivery or a refresh carries is safe to resume from with no bookkeeping of
     // deliveries in flight: `pushed` sends positions in order with the occurrences before them.
-    // An occurrence given up before its POST, its admission failing with no refusal or its body
-    // over 256 KiB, is reported, and a gap the subscriber is told of once: the worker reads on
-    // past it, as a refusal alone ends it.
+    // An admission failing with no refusal fails the read, which `pushed` reports and resumes
+    // from before that occurrence, as it does a source's failure; one whose body is over 256 KiB
+    // is given up, a gap the subscriber is told of once, and the worker reads on past it.
     const deliverTo = (subscription: Held, confirmation: Deferred.Deferred<Confirmed, unknown>) => {
       const encode = encodeUntaggedOf(subscription.feed.event);
 
@@ -336,14 +348,7 @@ export const makeWebhooks = (
             Effect.gen(function* () {
               const body = yield* asSubscriber(subscription, subscription.feed.admit).pipe(
                 Effect.andThen(Effect.map(encode(occurrence), JSON.stringify)),
-                Effect.catchCause((cause) =>
-                  refusalIn(cause) === undefined && !Cause.hasInterruptsOnly(cause)
-                    ? Effect.as(reported(cause), undefined)
-                    : Effect.failCause(cause),
-                ),
               );
-
-              if (body === undefined) return yield* skipped(occurrence.cursor);
 
               if (encoder.encode(body).length > maxBody) {
                 yield* Effect.logWarning(
@@ -479,7 +484,7 @@ export const makeWebhooks = (
               body: JSON.stringify({ type: "verification", challenge }),
               keys: [key],
             },
-            policy.dns,
+            checkedHost(url, policy.dns),
           ),
           built,
         ).pipe(Effect.mapError(({ category }) => failedCallback(feed, category)));

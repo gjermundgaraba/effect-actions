@@ -211,12 +211,13 @@ subscriber may see, signed as Standard Webhooks signs, one at a time, running it
 before each, and retrying a failed POST, each wait as long as the subscription has been failing,
 from 1 second to 5 minutes, for `retryFor` from its first failure, after which the subscription
 suspends until the next refresh, which delivers it again with a fresh `retryFor`; an occurrence given up,
-before its POST or by a `410` or `413`, is a `gap`. A subscription lasts the TTL it is granted,
+its body over 256 KiB or by a `410` or `413`, is a `gap`, and one whose admission fails with no
+refusal is reported and read again from before it. A subscription lasts the TTL it is granted,
 at most `maxTtl`, and subscribing again refreshes it, shortening or lengthening it, rotating its
 secret, signing with both secrets for 5 minutes, answering its `deliveryStatus`, and reading on
 as the refreshed subscriber; a refusal, of a delivery or of a refresh, ends it with a
 `terminated` envelope, and any other failure is reported and read on from. A callback resolving to an
-address not globally reachable is never POSTed to, no redirect is followed by fetch's client, and no trace header
+address not globally reachable is never POSTed to, unless `allowedCallbacks` trusts it, no redirect is followed by fetch's client, and no trace header
 is sent. One layer holds the subscriptions of every surface it is provided to.
 A subscribe or unsubscribe fails with `Event.SubscriptionError`'s reasons `CallbackFailed`
 (`category`) and `NotSubscribed`, a 409 over HTTP. The layer needs an `HttpClient` and `Dns`, unless
