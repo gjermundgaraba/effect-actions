@@ -22,9 +22,10 @@ with `NoReply`.
 - Migrate: a match over `reason` that names every member names `FrameTooLarge` too.
 
 **`ActionRpc.layer` and `ActionRpc.client` refuse a codec that does not keep a JSON value as it
-is**, such as schema-binary's: `client` now refuses one too, as it is made, and both give the
-protocol JSON's codec, so a protocol passing values, such as a Durable Object stub's, which `layer`
-refused before, works. The message, the same for both, is
+is**, such as schema-binary's: `client` now refuses one too, as it is made, and both carry the
+binding's actions and event types as JSON under any other codec, so a protocol passing values, such
+as a Durable Object stub's, which `layer` refused before, works; native `rpcs` keep the protocol's
+own codec. The message, the same for both, is
 `ActionRpc puts JSON in a protocol's messages, which this protocol's codec does not keep as it is (…)`,
 naming the codecs to provide; `layer`'s was `ActionRpc serves a protocol speaking JSON: …`.
 

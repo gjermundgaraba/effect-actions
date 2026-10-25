@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Context,
-  DateTime,
   Effect,
   ErrorReporter,
   Exit,
@@ -1032,30 +1031,32 @@ describe("ActionRpc over a protocol passing values", () => {
     ),
   );
 
-  it.effect("answers a native rpc beside the actions through ActionRpc.client, as its JSON", () =>
-    Effect.gen(function* () {
-      const Clocked = ActionRpc.make([Status], {
-        rpcs: RpcGroup.make(NativeRpc.make("startedAt", { success: Schema.DateTimeUtc })),
-      });
+  it.effect(
+    "answers a native rpc beside the actions through ActionRpc.client, under the protocol's own codec",
+    () =>
+      Effect.gen(function* () {
+        const Clocked = ActionRpc.make([Status], {
+          rpcs: RpcGroup.make(NativeRpc.make("startedAt", { success: Schema.instanceOf(Date) })),
+        });
 
-      const startedAt = DateTime.makeUnsafe(0);
+        const startedAt = new Date(0);
 
-      const answered = yield* Effect.flatMap(ActionRpc.client(Clocked), (client) =>
-        client.startedAt(),
-      ).pipe(
-        Effect.scoped,
-        Effect.provide(
-          inMemoryValuesProtocolTo(
-            ActionRpc.layer(Clocked, status).pipe(
-              Layer.provide(Clocked.rpcs.toLayer({ startedAt: () => Effect.succeed(startedAt) })),
+        const answered = yield* Effect.flatMap(ActionRpc.client(Clocked), (client) =>
+          client.startedAt(),
+        ).pipe(
+          Effect.scoped,
+          Effect.provide(
+            inMemoryValuesProtocolTo(
+              ActionRpc.layer(Clocked, status).pipe(
+                Layer.provide(Clocked.rpcs.toLayer({ startedAt: () => Effect.succeed(startedAt) })),
+              ),
             ),
           ),
-        ),
-        Effect.provide(Users.layerMemory),
-      );
+          Effect.provide(Users.layerMemory),
+        );
 
-      expect(answered).toEqual(startedAt);
-    }),
+        expect(answered).toEqual(startedAt);
+      }),
   );
 
   it.effect("answers a defect as its request's generic failure", () =>

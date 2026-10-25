@@ -204,7 +204,7 @@ export interface Binding<
    *
    * **Gotchas**
    *
-   * - `layer` carries every rpc's values as JSON, the native `rpcs`' included, whatever the protocol's codec: over a protocol passing values, such as a Durable Object stub's, `RpcClient.make(Rpc.group)` decodes their plain form and fails, `Expected null`; call them through `client`, which carries them as JSON too.
+   * - `layer` carries an action's and an event type's values as JSON whatever the protocol's codec, the native `rpcs`' under the protocol's own: over a protocol passing values, such as a Durable Object stub's, `RpcClient.make(Rpc.group)` decodes an action's plain form and fails, `Expected null`; call actions through `client`, which carries them as JSON too.
    */
   readonly group: RpcGroup.RpcGroup<RpcOf<Actions[number], E, D> | NativeOf<N, D>>;
 }
@@ -371,11 +371,11 @@ type ServerOnly<M extends Middleware, E extends Action.Errors> = [
       readonly "Layer middleware fails only with the binding's errors and needs no client": never;
     };
 
-// Why: every call runs with the request `withRequestOf` makes of its message's headers, on every
-// protocol, so the request and its search params are never owed; a route's `RouteContext` exists
-// only over a router-mounted protocol, where `HttpRouter.serve` provides it, so unlike
-// `ActionHttp`'s, this keeps it owed, and a handler reading one leaves it owed on stdio, a socket
-// or a worker.
+// Why: every call of an action or an event type runs with the request `withRequestOf` makes of
+// its message's headers, on every protocol, so the request and its search params are never owed;
+// a route's `RouteContext` exists only over a router-mounted protocol, where `HttpRouter.serve`
+// provides it, so unlike `ActionHttp`'s, this keeps it owed, and a handler reading one leaves it
+// owed on stdio, a socket or a worker.
 type LayerRequest<App, A extends Action.Any, M extends Middleware> = Exclude<
   Through<M, RemoteRequest<App, A>>,
   | HttpServerRequest.HttpServerRequest
@@ -478,11 +478,10 @@ const throughSteps = (
 const authenticatorOf = (authentication: Authentication) =>
   Effect.map(providerOf(authentication), (provider) => ({
     authentication,
-    verify: (headers: Headers.Headers) =>
-      Effect.flatMap(
-        HttpApiBuilder.securityDecode(authentication.security),
-        provider.authenticate,
-      ).pipe(withRequestOf(headers)),
+    verify: Effect.flatMap(
+      HttpApiBuilder.securityDecode(authentication.security),
+      provider.authenticate,
+    ),
   }));
 
 // Why: A declared failure is the caller's answer, which no error reporter is given. The mark
@@ -636,24 +635,46 @@ const sendingElements = (element: Codec, run: ErasedHandler<unknown>): Sending =
 
 const jsonProbe: Schema.Json = { probe: [1, "a", null, true] };
 
-// Why: an action is a JSON contract on every surface, so its values cross as JSON whatever the
-// protocol's own codec: a protocol passing values, such as a Durable Object stub's, carries them
-// as they are, unencoded twice, and one whose codec encodes JSON otherwise, as schema-binary's
-// makes bytes the framing would not hold, is refused.
-const carryingJson = <P extends { readonly codecFor: RpcSerialization.CodecFor }>(protocol: P) =>
-  Effect.try(() => Schema.encodeSync(protocol.codecFor(Schema.Json))(jsonProbe)).pipe(
-    Effect.map((encoded) => JSON.stringify(encoded) === JSON.stringify(jsonProbe)),
-    Effect.orElseSucceed(() => false),
-    Effect.flatMap((carries) =>
-      carries
-        ? Effect.succeed({ ...protocol, codecFor: RpcSerialization.json.codecFor })
-        : Effect.die(
-            new Error(
-              "ActionRpc puts JSON in a protocol's messages, which this protocol's codec does not keep as it is (provide RpcSerialization.layerJson, layerNdjson, layerJsonRpc or layerNdJsonRpc, or a protocol passing values)",
-            ),
-          ),
-    ),
+// Why: an action is a JSON contract on every surface, so the answers of the binding's own rpcs,
+// a declared failure's wrapper included, cross as JSON whatever the protocol's codec, which a
+// protocol passing values, such as a Durable Object stub's, would pass as they are; native rpcs
+// keep the protocol's codec. One whose codec does not keep JSON as it is, as schema-binary's makes
+// bytes the framing would not hold, is refused.
+const carryingJson = (ours: ReadonlyArray<Rpc.AnyWithProps>) => {
+  const schemas = new Set<unknown>(
+    ours.flatMap((rpc) => [
+      rpc.payloadSchema,
+      Rpc.exitSchema(rpc),
+      RpcSchema.isStreamSchema(rpc.successSchema) ? rpc.successSchema.success : rpc.successSchema,
+    ]),
   );
+
+  // Why: Effect makes a stream's chunks a `NonEmptyArray` of its elements as it takes their
+  // codec, so a chunk is the binding's by the elements it holds.
+  const isOurs = (schema: Schema.Top) =>
+    schemas.has(schema) || (Predicate.hasProperty(schema, "value") && schemas.has(schema.value));
+
+  return <P extends { readonly codecFor: RpcSerialization.CodecFor }>(protocol: P) =>
+    Effect.try(() => Schema.encodeSync(protocol.codecFor(Schema.Json))(jsonProbe)).pipe(
+      Effect.map((encoded) => JSON.stringify(encoded) === JSON.stringify(jsonProbe)),
+      Effect.orElseSucceed(() => false),
+      Effect.flatMap((carries) =>
+        carries
+          ? Effect.succeed({
+              ...protocol,
+              codecFor: ((schema) =>
+                isOurs(schema)
+                  ? RpcSerialization.json.codecFor(schema)
+                  : protocol.codecFor(schema)) satisfies RpcSerialization.CodecFor,
+            })
+          : Effect.die(
+              new Error(
+                "ActionRpc puts JSON in a protocol's messages, which this protocol's codec does not keep as it is (provide RpcSerialization.layerJson, layerNdjson, layerJsonRpc or layerNdJsonRpc, or a protocol passing values)",
+              ),
+            ),
+      ),
+    );
+};
 
 /**
  * The key a protocol answering each call once sets to `true` on its `RpcServer.Protocol`
@@ -789,8 +810,8 @@ export function layer(
           ? [...listedMiddleware, requested]
           : [
               ...listedMiddleware,
-              (effect, { headers }) =>
-                Effect.flatMap(authenticator.verify(headers), (actor) =>
+              (effect) =>
+                Effect.flatMap(authenticator.verify, (actor) =>
                   Effect.provideService(effect, authenticator.authentication.identity, actor),
                 ),
               requested,
@@ -836,7 +857,7 @@ export function layer(
       // cause, and the authentication step is the library's, not the host's handler.
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased middleware: the step passes the call's success through, or fails with a refusal or the verifier's error, which the middleware declares, and provides the identity it declares.
       const authenticated = ((effect, { headers }) =>
-        Effect.suspend(() => authenticator.verify(headers)).pipe(
+        withRequestOf(headers)(authenticator.verify).pipe(
           Effect.catchCause((cause) =>
             Cause.hasDies(cause) ? concealed(cause) : Effect.failCause(cause),
           ),
@@ -855,7 +876,9 @@ export function layer(
   return RpcServer.layer(jsonGroup.merge(binding.rpcs), { disableFatalDefects: true }).pipe(
     Layer.provide(handlers),
     Layer.provide(
-      Layer.effect(RpcServer.Protocol)(Effect.flatMap(RpcServer.Protocol, carryingJson)),
+      Layer.effect(RpcServer.Protocol)(
+        Effect.flatMap(RpcServer.Protocol, carryingJson([...jsonGroup.requests.values()])),
+      ),
     ),
   );
 }
@@ -953,7 +976,14 @@ export function client(
   const made = RpcClient.make(group, options).pipe(
     Effect.provideServiceEffect(
       RpcClient.Protocol,
-      Effect.flatMap(Effect.service(RpcClient.Protocol), carryingJson),
+      Effect.flatMap(
+        Effect.service(RpcClient.Protocol),
+        carryingJson(
+          Array.from(group.requests.values()).filter(
+            ({ _tag }) => !nativeOf(binding.rpcs).requests.has(_tag),
+          ),
+        ),
+      ),
     ),
   );
 
