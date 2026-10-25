@@ -185,7 +185,7 @@ with its `NotServed`, as over HTTP, and reconnecting after the protocol's transp
 a response ends before its stream, as a server's restart ends it, or, over Effect's HTTP protocol,
 after 60 seconds without an element, a socket's own pings telling a dead one, and ending on a
 socket's close with an application's code, 4000 to 4999. A protocol keeping subscriptions across
-restarts of its server offers an
+restarts of its server, as the Cloudflare package's `layerWebSocket` does, offers an
 `ActionRpc.SubscriptionKeeper` under `ActionRpc.subscriptionKeeper`: `layer` hands it each
 subscription once admitted (`KeptSubscription`: its request, headers and `resumeFrom`, the payload
 resuming it after a chunk sent) and sends every position the subscription reaches, with no
@@ -330,10 +330,14 @@ released with this package at the same version and requiring it at `~` that vers
 `ActionDurableObject` makes a Durable Object class, `make`, or the handlers a class of your own
 delegates to, `handlers`, building the object's startup `services`, its `routes` on `fetch`, its
 `calls` over the stub and its `alarm` once per instance. `layerWebSocket` serves `ActionRpc.layer`
-and Effect rpcs over hibernating WebSockets, `layerStubClient` and `client` call an object's rpcs
-over its stub, `layerHttpClient` calls its routes, and `State`, `name` and `Alarm` are what the
-object is and when its `alarm` runs. Each option's and declaration's rules are in its JSDoc.
-Guide: `packages/cloudflare/docs/README.md`.
+and Effect rpcs over hibernating WebSockets, keeping each `ActionRpc` event subscription in the
+object's storage and resuming it when the object next wakes; `layerEvents`, which `handlers` and
+`make` provide, is the object's `Event.Events`, its logs kept in its storage, and `layerWebhooks`
+the core's `Webhook.layer` in an object, its subscriptions kept in its storage and its long waits
+ended by the object's alarm. `layerStubClient` and `client` call an object's rpcs over its stub,
+`layerHttpClient` calls its routes, `wipe` empties the object, and `State`, `name` and `Alarm` are
+what the object is and when its `alarm` runs. Each option's and declaration's rules are in its
+JSDoc. Guide: `packages/cloudflare/docs/README.md`.
 
 ### Other changes
 

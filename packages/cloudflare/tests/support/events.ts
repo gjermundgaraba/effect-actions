@@ -1,0 +1,123 @@
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
+import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import { CurrentUser, Login } from "./app.js";
+
+export const Noted = Event.make("note.added", {
+  description: "A note was added to the object.",
+  payload: { n: Schema.Int, text: Schema.String },
+  caller: CurrentUser,
+});
+
+export const Said = Event.make("thing.said", {
+  description: "Something was said in the object.",
+  payload: { text: Schema.String },
+  caller: CurrentUser,
+});
+
+export const Statused = Event.make("status.set", {
+  description: "The object's status, whole.",
+  payload: { text: Schema.String },
+  caller: CurrentUser,
+});
+
+export const Watched = ActionRpc.make([Noted, Said, Statused], { authentication: Login });
+
+const statusKey = "status";
+
+const statusOf = Schema.decodeUnknownOption(Schema.String);
+
+const notesKey = "notes";
+
+export const revokedKey = (token: string) => `revoked:${token}`;
+
+const Notes = Schema.Array(Schema.String);
+
+const notesOf = Schema.decodeUnknownOption(Notes);
+
+const notesIn = (storage: DurableObjectStorage) =>
+  Effect.map(
+    Effect.promise(() => storage.get(notesKey)),
+    (stored) => Option.getOrElse(notesOf(stored), (): ReadonlyArray<string> => []),
+  );
+
+const noted = Event.implement(
+  Noted,
+  Effect.map(ActionDurableObject.State, ({ storage }) => ({
+    check: (_input: typeof Noted.input.Type, cursor: string | null) =>
+      Effect.map(notesIn(storage), (notes) => {
+        const seen = cursor === null ? notes.length : Number(cursor);
+
+        return {
+          cursor: String(notes.length),
+          events: notes.slice(seen).map((text, index) => ({
+            eventId: `n${seen + index + 1}`,
+            data: { n: seen + index + 1, text },
+          })),
+        };
+      }),
+  })),
+  { authorize: Event.allowAll },
+);
+
+const said = Event.implement(
+  Said,
+  { log: {}, match: (_input, data) => data.text.length > 0 },
+  { authorize: Event.allowAll },
+);
+
+const statused = Event.implement(
+  Statused,
+  Effect.map(ActionDurableObject.State, ({ storage }) => ({
+    current: () =>
+      Effect.map(
+        Effect.promise(() => storage.get(statusKey)),
+        (stored) => ({ text: Option.getOrElse(statusOf(stored), () => "idle") }),
+      ),
+  })),
+  { authorize: Event.allowAll },
+);
+
+export const setStatus = (text: string) =>
+  Effect.gen(function* () {
+    const { storage } = yield* ActionDurableObject.State;
+
+    yield* Effect.promise(() => storage.put(statusKey, text));
+    yield* Event.Events.use((events) => events.notify(Statused));
+  });
+
+export const note = (text: string) =>
+  Effect.gen(function* () {
+    const { storage } = yield* ActionDurableObject.State;
+    const notes = yield* notesIn(storage);
+
+    yield* Effect.promise(() => storage.put(notesKey, [...notes, text]));
+    yield* Event.Events.use((events) => events.notify(Noted));
+  });
+
+export const say = (text: string) =>
+  Event.Events.use((events) => events.publish(Said, { data: { text } }));
+
+const revocable = Authentication.layer(
+  Login,
+  Effect.map(
+    ActionDurableObject.State,
+    ({ storage }) =>
+      (token: Redacted.Redacted<string>) =>
+        Effect.flatMap(
+          Effect.promise(() => storage.get(revokedKey(Redacted.value(token)))),
+          (revoked) =>
+            revoked === true
+              ? Effect.fail(new Action.Unauthenticated({ message: "Revoked test token." }))
+              : Effect.succeed(Redacted.value(token)),
+        ),
+  ),
+);
+
+export const watchedRoutes = ActionRpc.layer(Watched, [noted, said, statused]).pipe(
+  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+  Layer.provide(revocable),
+);

@@ -8,6 +8,9 @@ const socketPrefix = "effect-actions/socket#";
 /** The tag a socket carries for its id, unique among the object's sockets. */
 export const socketTag = (id: number) => `${socketPrefix}${id}`;
 
+/** Where the object keeps the id its next socket is given, so no id is given twice. */
+export const nextSocketKey = "effect-actions/socket/next";
+
 /** The id a socket's tags give it, or 0, which no socket is given, for one no protocol accepted. */
 export const socketIdOf = (tags: ReadonlyArray<string>) => {
   const tag = tags.find((found) => found.startsWith(socketPrefix));

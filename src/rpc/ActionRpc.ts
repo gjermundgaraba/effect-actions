@@ -769,7 +769,7 @@ export interface KeptSubscription {
 
 /**
  * What a protocol keeping event subscriptions across restarts of its server offers under
- * `subscriptionKeeper`: `layer` hands it each
+ * `subscriptionKeeper`, as the Cloudflare package's `layerWebSocket` does: `layer` hands it each
  * subscription once admitted, and sends every position the subscription reaches, with no
  * 30-second heartbeat, whose timer would keep such a host awake.
  */

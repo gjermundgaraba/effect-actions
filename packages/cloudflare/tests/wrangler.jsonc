@@ -33,6 +33,8 @@
       { "name": "DELEGATING", "class_name": "Delegating" },
       { "name": "FAILING", "class_name": "Failing" },
       { "name": "VERSIONED", "class_name": "Versioned" },
+      { "name": "WATCHING", "class_name": "Watching" },
+      { "name": "HOOKING", "class_name": "Hooking" },
     ],
   },
   "migrations": [
@@ -64,6 +66,8 @@
         "Delegating",
         "Failing",
         "Versioned",
+        "Watching",
+        "Hooking",
       ],
     },
   ],

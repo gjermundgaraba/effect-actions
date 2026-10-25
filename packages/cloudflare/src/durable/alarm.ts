@@ -19,7 +19,7 @@ const keptOf = Schema.decodeUnknownOption(Kept);
 // later, doubling, six times. The runtime cannot do it for one owner among several, and a
 // handler that re-arms the alarm as it fails replaces the runtime's retry with its own time.
 // Past those six, the runtime drops a plain object's alarm; an owner's time is kept instead,
-// retried hourly, as the work it stands for is lost with it.
+// retried hourly, as the work it stands for, a webhook's delivery among them, is lost with it.
 const backoffRetries = 6;
 
 const hour = 60 * 60 * 1000;
@@ -29,7 +29,7 @@ const retryDelay = (failures: number) =>
 
 /**
  * What runs at the object's one alarm, by owner, given its retry count: the application's
- * `alarm` option, when its time has come.
+ * `alarm` option, and the package's own work, each when its time has come.
  */
 type Owners<R> = Readonly<
   Record<string, (info: AlarmInvocationInfo) => Effect.Effect<void, unknown, R>>
@@ -210,7 +210,7 @@ export const applicationOwner = "application";
  * When the object's `alarm` option runs: `set(at)` schedules it, replacing an earlier time, and
  * `clear` cancels it. A startup service of the object's services, routes, calls and `run`, as
  * `State` is. The object's one runtime alarm is the package's, set for the earliest of the
- * times it keeps, so an application never sets it itself.
+ * times it keeps, the package's own work among them, so an application never sets it itself.
  *
  * **Gotchas**
  *

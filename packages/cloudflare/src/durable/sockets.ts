@@ -1,9 +1,11 @@
-import { Context, Effect, Exit, Layer, Match, Predicate, Queue, Schema } from "effect";
+import { Context, Effect, Exit, Layer, Match, Option, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import {
   closeQuietly,
   groupTag,
+  nextSocketKey,
   parser,
   RequestId,
   sendFrame,
@@ -11,6 +13,7 @@ import {
   socketTag,
 } from "./frames.js";
 import { State } from "./state.js";
+import { makeSubscriptions } from "./subscriptions.js";
 
 /** What a protocol does with the events of the sockets carrying its tag. */
 interface Receiver {
@@ -19,6 +22,8 @@ interface Receiver {
   /** Tells the protocol the socket closed or failed. */
   readonly close: (socket: WebSocket) => Effect.Effect<void>;
 }
+
+const storedIdOf = Schema.decodeUnknownOption(Schema.Int);
 
 /**
  * The object's dispatcher for the sockets the protocols of its routes accept, such as
@@ -31,6 +36,7 @@ interface Receiver {
  * **Gotchas**
  *
  * - A socket accepted by an earlier version of the routes at another `path` carries a tag no protocol holds now, and is answered `false`: close it, or serve that `path` again.
+ * - The socket-id counter is kept in the object's storage, under `effect-actions/socket/next`, beside the application's data.
  */
 export class Sockets extends Context.Service<
   Sockets,
@@ -60,10 +66,28 @@ export class Sockets extends Context.Service<
       const state = yield* State;
       const receivers = new Map<string, Receiver>();
 
+      // Why: a socket's id keys its event subscriptions in storage, so an id is never given
+      // twice, even after an eviction: a subscription a path kept while it was not served, such
+      // as across a deployment that dropped it, would otherwise resume, authenticated with its
+      // first caller's headers, on the socket of whoever was given that id since. The next one
+      // is kept in storage, one write per upgrade.
+      const stored = yield* Effect.promise(() => state.storage.get(nextSocketKey));
+
       let next = Math.max(
-        1,
+        Option.getOrElse(storedIdOf(stored), () => 1),
         ...state.getWebSockets().map((socket) => socketIdOf(state.getTags(socket)) + 1),
       );
+
+      // Why: stored as each id is given, before its socket is accepted, so no eviction, however
+      // soon, lets a later instance give that id again: an upgrade costs one storage write.
+      const allocate = Effect.suspend(() => {
+        const id = next++;
+
+        return Effect.as(
+          Effect.promise(() => state.storage.put(nextSocketKey, next)),
+          id,
+        );
+      });
 
       const dispatch = (socket: WebSocket, event: (receiver: Receiver) => Effect.Effect<void>) =>
         Effect.suspend(() => {
@@ -90,7 +114,7 @@ export class Sockets extends Context.Service<
 
           return true;
         },
-        allocate: Effect.sync(() => next++),
+        allocate,
       });
     }),
   );
@@ -208,21 +232,25 @@ const makeProtocol = (
     );
 
     const disconnects = yield* Queue.make<number>();
+    const subscriptions = makeSubscriptions(state, path);
 
     // Why: every frame the object sends, a defect it answers a message with included, settles the
     // calls it answers, so a socket keeps no call pending that its client has already failed.
     const send = (clientId: number, response: RpcMessage.FromServerEncoded) =>
       Effect.andThen(
         sendFrame(state, clientId, response),
-        Effect.sync(() => {
-          const settled = settledBy(response);
+        Effect.andThen(
+          Effect.sync(() => {
+            const settled = settledBy(response);
 
-          if (settled === undefined) return;
+            if (settled === undefined) return;
 
-          for (const socket of state.getWebSockets(socketTag(clientId))) {
-            tracked(socket, settled);
-          }
-        }),
+            for (const socket of state.getWebSockets(socketTag(clientId))) {
+              tracked(socket, settled);
+            }
+          }),
+          subscriptions.sent(clientId, response),
+        ),
       );
 
     const protocol = yield* RpcServer.Protocol.make((write) => {
@@ -277,7 +305,11 @@ const makeProtocol = (
             Effect.provideContext(context),
           );
         },
-        close: (socket) => Effect.asVoid(Queue.offer(disconnects, idOf(socket))),
+        close: (socket) =>
+          Effect.andThen(
+            subscriptions.closed(idOf(socket)),
+            Effect.asVoid(Queue.offer(disconnects, idOf(socket))),
+          ),
       });
 
       // Why: the router does not tell a protocol the prefix it is mounted under, so two protocols
@@ -290,17 +322,34 @@ const makeProtocol = (
         );
       }
 
+      // Why: written as the protocol is made, the server buffering them until it runs, so the
+      // subscriptions of the sockets kept open across hibernation resume before any message of
+      // the event that woke the object, each authenticated again from its own headers.
       // Why: a call the instance before was answering when an eviction, a deploy or a crash cut
       // it off is never answered, and its client would wait on an open socket for good, since the
       // runtime answers its pings: its socket is closed with 1012, a restart, so the client fails
-      // the call and connects again.
-      const reset = Effect.sync(() => {
-        for (const socket of state.getWebSockets(group)) {
-          if (pendingOf(socket).length > 0) closeQuietly(socket, 1012, lostCalls);
-        }
-      });
+      // the call and connects again. A kept subscription among them resumes instead.
+      const reset = Effect.forEach(
+        state.getWebSockets(group),
+        (socket) => {
+          const pending = pendingOf(socket);
+          const id = idOf(socket);
 
-      return Effect.as(reset, {
+          return pending.length === 0
+            ? Effect.void
+            : Effect.flatMap(subscriptions.allKept(id, pending), (kept) =>
+                kept
+                  ? Effect.void
+                  : Effect.andThen(
+                      subscriptions.closed(id),
+                      Effect.sync(() => closeQuietly(socket, 1012, lostCalls)),
+                    ),
+              );
+        },
+        { discard: true },
+      );
+
+      return Effect.as(Effect.andThen(reset, subscriptions.resumed(write)), {
         disconnects,
         send,
         end: (clientId) =>
@@ -359,7 +408,7 @@ const makeProtocol = (
       }),
     );
 
-    return protocol;
+    return { ...protocol, [ActionRpc.subscriptionKeeper]: subscriptions.keeper };
   });
 
 const closeReasonBytes = 123;
@@ -468,13 +517,19 @@ export interface LayerWebSocketOptions {
  * the object hibernates, speaking JSON, the client's `RpcSerialization.layerJson` over
  * `RpcClient.layerProtocolSocket`. A socket keeps its upgrade request's headers, as Effect's own
  * socket protocol does, its credential included, and each message is authenticated with those
- * under its own, its own winning. It registers with the instance's `Sockets`, which hands it their events,
+ * under its own, its own winning. It keeps each event subscription `ActionRpc.layer` admits
+ * across hibernation. It registers with the instance's `Sockets`, which hands it their events,
  * and requires it.
  *
  * **Gotchas**
  *
  * - An idle object is evicted while its sockets stay open: a message constructs a new instance, which builds the routes and then answers it.
  * - A message's event ends once the message is handed to the server: a call doing I/O or waiting on a timer keeps the object from hibernating, billed as long, and one waiting only on in-memory state, such as a `Deferred`, is lost if the object hibernates. A call an eviction, a deploy or a crash cut off closes its socket with 1012 as the next instance builds, so its client fails it with a `SocketCloseError` and connects again; on celld 0.6.2, which drops attachments, it waits for good.
+ * - An `ActionRpc` event subscription is kept in the object's storage, under `effect-actions/subscription/`, its headers, tokens and cookies included, with it, and resumed from the position it reached when the object next wakes, on any event, authenticated again from those headers: a token that expired meanwhile ends it with `Unauthenticated`.
+ * - A kept subscription that cannot be resumed, such as one a later version of this package stores in another shape, closes its socket with 1000, logged, so the page's client connects again and its `watch` subscribes anew.
+ * - A native stream rpc or a streaming action is not kept: waiting on in-memory state, it is lost if the object hibernates, its socket closed with 1012 as the next instance builds; serve what a page follows as an event.
+ * - Each chunk that moves a kept subscription's position is one small storage write, and it is sent with no heartbeat: Effect's socket client tells a dead socket by its pings.
+ * - `storage.deleteAll()` deletes the kept subscriptions too, so a watch hears nothing more once the object hibernates: empty the object with `wipe`.
  * - A client's close frame is answered with its own code and reason, as the closing handshake asks, whatever the `compatibility_date`: where the runtime already replied, under `web_socket_auto_reply_to_close`, the second reply is ignored; a socket the class accepted itself is the class's to answer.
  * - An upgrade whose headers, cookies included, exceed the runtime's 16 KiB attachment is answered 431, and a call whose id would take the attachment past it fails at once with a defect naming it, never run; a request to `path` that is no upgrade is answered 426.
  * - workerd keeps a socket's headers across hibernation; celld 0.6.2 drops them when it evicts an idle object, so a message relying on the upgrade's token is refused as unauthenticated: send a token on each message.

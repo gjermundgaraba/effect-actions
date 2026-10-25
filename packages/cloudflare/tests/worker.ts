@@ -21,6 +21,8 @@ import {
   startup,
   stubCalls,
 } from "./support/app.js";
+import { note, revokedKey, say, setStatus, watchedRoutes } from "./support/events.js";
+import { hook, hookedRoutes } from "./support/webhooks.js";
 import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./support/hosts.js";
 import { nativeCalls } from "./support/native.js";
 import { heldBuild } from "./support/latch.js";
@@ -214,3 +216,39 @@ export class Failing extends ActionDurableObject.make({
 }
 
 export class Versioned extends ActionDurableObject.make({ routes: versionedRoutes }) {}
+
+export class Watching extends ActionDurableObject.make({ routes: watchedRoutes }) {
+  note(text: string) {
+    return this.run(note(text));
+  }
+
+  say(text: string) {
+    return this.run(say(text));
+  }
+
+  status(text: string) {
+    return this.run(setStatus(text));
+  }
+
+  revoke(token: string) {
+    return this.run(
+      Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
+        Effect.promise(() => storage.put(revokedKey(token), true)),
+      ),
+    );
+  }
+
+  wipe() {
+    return this.run(ActionDurableObject.wipe);
+  }
+}
+
+export class Hooking extends ActionDurableObject.make({ routes: hookedRoutes }) {
+  hook(text: string) {
+    return this.run(hook(text));
+  }
+
+  wipe() {
+    return this.run(ActionDurableObject.wipe);
+  }
+}
