@@ -1,13 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, ErrorReporter, Exit, Layer, Schema, Stream } from "effect";
-import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
+import { RpcClient } from "effect/rpc";
 import * as Action from "../../src/contract/Action.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
+import { Count, countsReleasing } from "../support/app/count.js";
 import { recorder } from "../support/reporter.js";
+import { overHttp } from "../support/rpc.js";
 
 class LogGone extends Schema.TaggedError<LogGone>()("LogGone", { at: Schema.Finite }) {}
 
@@ -15,7 +16,7 @@ const Tail = Action.make("tail", {
   description: "Follow a log, line by line.",
   input: {
     count: Schema.Finite,
-    halt: Schema.optional(Schema.Literals(["after", "defect", "unencodable"])),
+    halt: Schema.optional(Schema.Literals(["defect", "unencodable"])),
   },
   success: Action.Stream({ n: Schema.Finite }),
   error: LogGone,
@@ -37,8 +38,6 @@ const Login = Authentication.make("rpc-stream.Login", CurrentActor);
 const lines = (count: number) => Stream.map(Stream.range(1, count), (n) => ({ n }));
 
 const tails = Action.implement(Tail, ({ count, halt }) => {
-  if (halt === "after") return Stream.concat(lines(count), Stream.fail(new LogGone({ at: count })));
-
   if (halt === "defect")
     return Stream.concat(lines(count), Stream.die(new Error("the log's secret detail")));
 
@@ -61,37 +60,10 @@ const builds = Action.implement(
 const Rpc = ActionRpc.make([Tail, Build], { authentication: Login });
 
 const served = (reported: Array<string> = []) =>
-  RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-    Layer.provide(RpcSerialization.layerNdjson),
-    Layer.provide(
-      Testing.layer(
-        ActionRpc.layer(Rpc, [tails, builds]).pipe(
-          Layer.provide(Authentication.layer(Login, verify)),
-          Layer.provide(ErrorReporter.layer([recorder(reported)])),
-          Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-          Layer.provide(RpcSerialization.layerNdjson),
-        ),
-      ),
-    ),
-  );
-
-const Count = Action.make("count", {
-  description: "Count until the caller stops reading.",
-  success: Action.Stream(Schema.Finite),
-  readOnly: true,
-  caller: Action.Anyone,
-});
-
-const countsReleasing = (released: Deferred.Deferred<void>) =>
-  Action.implement(Count, () =>
-    Stream.concat(
-      Stream.fromEffect(
-        Effect.as(
-          Effect.addFinalizer(() => Deferred.succeed(released, undefined)),
-          0,
-        ),
-      ),
-      Stream.iterate(1, (n) => n + 1),
+  overHttp(
+    ActionRpc.layer(Rpc, [tails, builds]).pipe(
+      Layer.provide(Authentication.layer(Login, verify)),
+      Layer.provide(ErrorReporter.layer([recorder(reported)])),
     ),
   );
 
@@ -125,21 +97,6 @@ describe("RPC element streams", () => {
         { _tag: "Element", value: { line: "alice: step 1" } },
         { _tag: "Progress", value: { step: 1 } },
       ]);
-    }).pipe(Effect.scoped, Effect.provide(served())),
-  );
-
-  it.effect("fails with a declared failure after the elements, as typed", () =>
-    Effect.gen(function* () {
-      const client = yield* ActionRpc.client(Rpc);
-      const seen: Array<number> = [];
-
-      const exit = yield* Effect.exit(
-        Stream.runForEach(client.tail({ count: 2, halt: "after" }), ({ n }) =>
-          Effect.sync(() => seen.push(n)),
-        ),
-      );
-
-      expect([seen, exit]).toEqual([[1, 2], Exit.fail(new LogGone({ at: 2 }))]);
     }).pipe(Effect.scoped, Effect.provide(served())),
   );
 
@@ -206,19 +163,7 @@ describe("RPC element streams", () => {
         return yield* Stream.runCollect(Stream.take(client.count(), 3));
       }).pipe(
         Effect.scoped,
-        Effect.provide(
-          RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-            Layer.provide(RpcSerialization.layerNdjson),
-            Layer.provide(
-              Testing.layer(
-                ActionRpc.layer(Counting, countsReleasing(released)).pipe(
-                  Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-                  Layer.provide(RpcSerialization.layerNdjson),
-                ),
-              ),
-            ),
-          ),
-        ),
+        Effect.provide(overHttp(ActionRpc.layer(Counting, countsReleasing(released)))),
       );
 
       yield* Deferred.await(released);

@@ -199,7 +199,7 @@ describe("ActionMcp.client's onProgress", () => {
       }).pipe(Effect.provide(Testing.layer(replying)));
 
       expect(seen).toEqual([1, 2]);
-      expect(failed).toMatchObject({ reason: { _tag: "NoReply", body: "data: not a reply\n\n" } });
+      expect(failed).toMatchObject({ reason: { _tag: "NoReply", body: "not a reply" } });
     }),
   );
 

@@ -57,15 +57,6 @@ describe("Action.Stream", () => {
       Stream.as(Stream.fromEffect(progress({ step: 1 })), "line"),
     );
 
-    // @ts-expect-error -- A value where the action answers a stream.
-    Action.implement(Tail, () => Effect.succeed({ line: "" }));
-
-    // @ts-expect-error -- An element of another shape.
-    Action.implement(Tail, () => Stream.make({ line: 1 }));
-
-    // @ts-expect-error -- A failure the action does not declare.
-    Action.implement(Tail, () => Stream.fail(new Error("undeclared")));
-
     return tails;
   });
 

@@ -70,9 +70,11 @@ export const exports = Action.implement(
 );
 ```
 
-How each surface carries it is on `ActionHttp.layer`, `ActionRpc.make` and `ActionCli.command`.
+How each surface carries it is on `ActionHttp.layer`, `ActionRpc.make`, `ActionMcp.layerHttp`,
+`ActionToolkit.make` and `ActionCli.command`.
 
-- **MCP and a toolkit leave it out.** A tool answers one result, so an endpoint and a toolkit
-  given implementations whole serve every other action, as
-  [kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts) serves `exports`, and
-  refuse one their `actions` list names; `ActionMcp.client` gives such an action no method.
+- **A tool collects it whole.** A tool answers one result, so an MCP endpoint and a toolkit answer
+  the elements as one array once the stream ends, and `ActionMcp.client`'s method streams that
+  array again: a stream that never ends never answers a tool, and a long one fills a model's
+  context, so [kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts) leaves
+  `exportIssues` out of its tools.

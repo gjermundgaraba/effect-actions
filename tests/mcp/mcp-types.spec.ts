@@ -208,22 +208,11 @@ export const transformErrorsAndServices = Effect.gen(function* () {
   void unprovided;
 });
 
-const PrivateTail = Action.make("private_tail", {
-  ...read,
-  caller: Caller,
-  success: Action.Stream(Schema.String),
+const Tail = Action.make("tail", { ...read, success: Action.Stream(Schema.String) });
+
+export const streamedFromCollected = Effect.gen(function* () {
+  const tailed = (yield* ActionMcp.client([Tail])).tail();
+
+  expectTypeOf<Stream.Success<typeof tailed>>().toEqualTypeOf<string>();
+  expectTypeOf<Stream.Error<typeof tailed>>().toEqualTypeOf<CallFailure>();
 });
-
-const tailing = Action.implement(
-  [Open, PrivateTail],
-  { open: done, private_tail: () => Stream.empty },
-  { authorize: () => Effect.asVoid(Region) },
-);
-
-expectTypeOf(ActionMcp.layerHttp(tailing, options)).toEqualTypeOf<
-  Layer.Layer<never, Cause.IllegalArgumentError, HttpRouter.HttpRouter>
->();
-
-expectTypeOf(ActionMcp.runStdio(tailing, options)).toEqualTypeOf<
-  Effect.Effect<void, Cause.IllegalArgumentError, Stdio.Stdio>
->();

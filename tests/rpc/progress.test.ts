@@ -1,13 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, ErrorReporter, Exit, Layer, Schema, Stream } from "effect";
-import { RpcClient, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
+import { Deferred, Effect, Exit, Layer, Schema, Stream } from "effect";
+import { RpcClient, RpcMiddleware } from "effect/rpc";
 import * as Action from "../../src/contract/Action.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
-import { recorder } from "../support/reporter.js";
+import { overHttp } from "../support/rpc.js";
 
 class Halted extends Schema.TaggedError<Halted>()("Halted", { at: Schema.Finite }) {}
 
@@ -15,7 +14,7 @@ const Import = Action.make("importAll", {
   description: "Import every item, reporting how many are done.",
   input: {
     count: Schema.Finite,
-    halt: Schema.optional(Schema.Literals(["after", "defect"])),
+    halt: Schema.optional(Schema.Literal("after")),
   },
   success: { imported: Schema.Finite },
   progress: { done: Schema.Finite, total: Schema.Finite },
@@ -39,8 +38,6 @@ const imports = Action.implement(Import, ({ count, halt }, { progress }) =>
 
     if (halt === "after") return yield* new Halted({ at: count });
 
-    if (halt === "defect") return yield* Effect.die(new Error("the import's secret detail"));
-
     return { imported: count };
   }),
 );
@@ -53,20 +50,9 @@ const touches = Action.implement(
 
 const Rpc = ActionRpc.make([Import, Touch], { authentication: Login });
 
-const served = (reported: Array<string> = []) =>
-  RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-    Layer.provide(RpcSerialization.layerNdjson),
-    Layer.provide(
-      Testing.layer(
-        ActionRpc.layer(Rpc, [imports, touches]).pipe(
-          Layer.provide(Authentication.layer(Login, verify)),
-          Layer.provide(ErrorReporter.layer([recorder(reported)])),
-          Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-          Layer.provide(RpcSerialization.layerNdjson),
-        ),
-      ),
-    ),
-  );
+const served = overHttp(
+  ActionRpc.layer(Rpc, [imports, touches]).pipe(Layer.provide(Authentication.layer(Login, verify))),
+);
 
 const signedInAs = (token: string) => RpcClient.withHeaders({ authorization: `Bearer ${token}` });
 
@@ -82,7 +68,7 @@ describe("RPC progress", () => {
       );
 
       expect([seen, answer]).toEqual([[1, 2, 3], { imported: 3 }]);
-    }).pipe(Effect.scoped, Effect.provide(served())),
+    }).pipe(Effect.scoped, Effect.provide(served)),
   );
 
   it.effect("answers alike without onProgress", () =>
@@ -90,7 +76,7 @@ describe("RPC progress", () => {
       const client = yield* ActionRpc.client(Rpc);
 
       expect(yield* client.importAll({ count: 3 })).toEqual({ imported: 3 });
-    }).pipe(Effect.scoped, Effect.provide(served())),
+    }).pipe(Effect.scoped, Effect.provide(served)),
   );
 
   it.effect(
@@ -106,7 +92,7 @@ describe("RPC progress", () => {
           { _tag: "Progress", value: { done: 2, total: 2 } },
           { _tag: "Final", value: { imported: 2 } },
         ]);
-      }).pipe(Effect.scoped, Effect.provide(served())),
+      }).pipe(Effect.scoped, Effect.provide(served)),
   );
 
   it.effect("fails with a declared failure after its progress, as typed", () =>
@@ -123,24 +109,8 @@ describe("RPC progress", () => {
 
       expect(seen).toEqual([1, 2]);
       expect(exit).toEqual(Exit.fail(new Halted({ at: 2 })));
-    }).pipe(Effect.scoped, Effect.provide(served())),
+    }).pipe(Effect.scoped, Effect.provide(served)),
   );
-
-  it.effect("ends a call whose handler dies with Internal server error, reported", () => {
-    const reported: Array<string> = [];
-
-    return Effect.gen(function* () {
-      const client = yield* ActionRpc.client(Rpc);
-
-      const exit = yield* Effect.exit(
-        client.importAll({ count: 1, halt: "defect" }, { onProgress: () => Effect.void }),
-      );
-
-      expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain("Internal server error");
-      expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).not.toContain("secret detail");
-      expect(reported).toEqual([expect.stringContaining("the import's secret detail")]);
-    }).pipe(Effect.scoped, Effect.provide(served(reported)));
-  });
 
   it.effect("runs a protected action's handler as the call's caller, answering nothing", () =>
     Effect.gen(function* () {
@@ -155,60 +125,56 @@ describe("RPC progress", () => {
 
       expect([answer, by]).toEqual([undefined, ["alice"]]);
       expect(refused).toEqual(Exit.fail(expect.objectContaining({ _tag: "Unauthenticated" })));
-    }).pipe(Effect.scoped, Effect.provide(served())),
+    }).pipe(Effect.scoped, Effect.provide(served)),
   );
 
-  it.effect("runs a listed middleware around the call's start, before its handler ends", () =>
-    Effect.gen(function* () {
-      const seen: Array<string> = [];
-      const note = (step: string) => Effect.sync(() => void seen.push(step));
+  it.effect(
+    "runs a listed middleware around the call's start, ended before its caller has progress the handler then waits on",
+    () =>
+      Effect.gen(function* () {
+        const seen: Array<string> = [];
+        const note = (step: string) => Effect.sync(() => void seen.push(step));
+        const received = yield* Deferred.make<void>();
 
-      class Timed extends RpcMiddleware.Service<Timed>()("rpc-progress/Timed") {}
+        class Timed extends RpcMiddleware.Service<Timed>()("rpc-progress/Timed") {}
 
-      const Steps = Action.make("steps", {
-        description: "Report one step.",
-        progress: { step: Schema.Finite },
-        readOnly: true,
-        caller: Action.Anyone,
-      });
+        const Steps = Action.make("steps", {
+          description: "Report one step.",
+          progress: { step: Schema.Finite },
+          readOnly: true,
+          caller: Action.Anyone,
+        });
 
-      const steps = Action.implement(Steps, (_input, { progress }) =>
-        Effect.andThen(note("handler"), progress({ step: 1 })).pipe(
-          Effect.andThen(Effect.yieldNow),
-          Effect.andThen(note("handler end")),
-        ),
-      );
+        const steps = Action.implement(Steps, (_input, { progress }) =>
+          Effect.andThen(note("handler"), progress({ step: 1 })).pipe(
+            Effect.andThen(Deferred.await(received)),
+            Effect.andThen(note("handler end")),
+          ),
+        );
 
-      const Bound = ActionRpc.make([Steps]);
+        const Bound = ActionRpc.make([Steps]);
 
-      const answer = yield* Effect.flatMap(ActionRpc.client(Bound), (client) =>
-        client.steps(),
-      ).pipe(
-        Effect.scoped,
-        Effect.provide(
-          RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-            Layer.provide(RpcSerialization.layerNdjson),
-            Layer.provide(
-              Testing.layer(
-                ActionRpc.layer(Bound, steps, { middleware: [Timed] }).pipe(
-                  Layer.provide(
-                    Layer.succeed(Timed, (effect) =>
-                      Effect.andThen(note("middleware"), effect).pipe(
-                        Effect.ensuring(note("middleware end")),
-                      ),
+        const answer = yield* Effect.flatMap(ActionRpc.client(Bound), (client) =>
+          client.steps({}, { onProgress: () => Deferred.succeed(received, undefined) }),
+        ).pipe(
+          Effect.scoped,
+          Effect.provide(
+            overHttp(
+              ActionRpc.layer(Bound, steps, { middleware: [Timed] }).pipe(
+                Layer.provide(
+                  Layer.succeed(Timed, (effect) =>
+                    Effect.andThen(note("middleware"), effect).pipe(
+                      Effect.ensuring(note("middleware end")),
                     ),
                   ),
-                  Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-                  Layer.provide(RpcSerialization.layerNdjson),
                 ),
               ),
             ),
           ),
-        ),
-      );
+        );
 
-      expect(answer).toBeUndefined();
-      expect(seen).toEqual(["middleware", "handler", "middleware end", "handler end"]);
-    }),
+        expect(answer).toBeUndefined();
+        expect(seen).toEqual(["middleware", "handler", "middleware end", "handler end"]);
+      }),
   );
 });

@@ -20,7 +20,7 @@ export const MemberActions = [
 /**
  * The MCP tools, for the HTTP endpoint and the stdio server alike. `attachImage` is left out:
  * listing it throws, since MCP takes no image as input. So is the assistant: it is a model
- * itself, and its tools are already here. `exportIssues` answers a stream, which no tool can, so
- * a list naming it would be refused.
+ * itself, and its tools are already here. So is `exportIssues`: a tool collects its stream
+ * whole before answering, every issue of the workspace at once in a model's context.
  */
 export const Tools = [GetStatus, WhoAmI, ...Issues, GetAttachment] as const;

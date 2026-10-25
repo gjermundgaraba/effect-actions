@@ -27,8 +27,9 @@ describe("Action.make's progress", () => {
     // @ts-expect-error -- A value of another shape than the progress schema's.
     Action.implement(Reporting, (_input, { progress }) => progress({ done: "1" }));
 
-    // @ts-expect-error -- No second argument where no progress is declared.
-    Action.implement(Silent, (_input, _reporting: { readonly progress: never }) => Effect.void);
+    expectTypeOf<Parameters<Action.Handler<typeof Silent>>>().toEqualTypeOf<
+      [typeof Silent.input.Type]
+    >();
   });
 
   it("takes onProgress after the input where the action declares progress", () =>

@@ -113,7 +113,8 @@ export const Issues = [ListIssues, GetIssue, CreateIssue, CommentOnIssue, CloseI
 // An action answering a stream: its handler returns a `Stream` of issues, and every client's
 // call returns one, each issue read as the server sends it. It reports how far it is, too.
 // `Issues` leaves it out, so MCP's `Tools` and the assistant's tools do: a tool answers one
-// result, and MCP refuses a stream action it is given. HTTP, RPC and the CLI serve it.
+// result, so it would collect the whole export before answering, every issue at once in a
+// model's context. HTTP, RPC and the CLI serve it.
 export const ExportIssues = Action.make("exportIssues", {
   description: "Stream every issue of your workspace, oldest first, with bodies and comments.",
   input: {

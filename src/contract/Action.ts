@@ -151,7 +151,7 @@ export interface Options {
    * - A value breaking the schema is the call's defect, as an answer breaking `success` is.
    * - A caller's `onProgress` that fails or dies is logged as a warning, and the call goes on and answers: the handler is never interrupted for it.
    * - In process, `Action.client`, the toolkit and a local command hand `onProgress` each value as reported, checked by the schema and never encoded: a value with no JSON form reaches them, and is the call's defect on a surface sending JSON.
-   * - A value the caller's `progress` schema cannot decode, where client and server differ, is logged and dropped by MCP's client; RPC's client decodes it with the response, so the call fails with a `SchemaError`, `onProgress` given or not, and HTTP's where `onProgress` is given, asking for no progress otherwise.
+   * - A value the caller's `progress` schema cannot decode, where client and server differ, is logged and dropped by MCP's client; RPC's and HTTP's clients decode it with the response, so the call fails with a `SchemaError`, `onProgress` given or not.
    */
   readonly progress?: Codec | Fields | undefined;
   /**

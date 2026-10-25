@@ -193,9 +193,6 @@ export const answeringElements = (
     );
 };
 
-// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: a route's stream schema decodes each element as one `Sent`.
-const sentOf = (answer: ErasedValue) => answer as Stream.Stream<Sent, unknown>;
-
 const progressedOf = ({ event, data }: Sent): Progressed => {
   if (event === "progress") return Progressed.Progress({ value: data });
 
@@ -204,18 +201,27 @@ const progressedOf = ({ event, data }: Sent): Progressed => {
     : Progressed.Element({ value: data });
 };
 
+// Why: Every request `ActionHttp.client` sends accepts an event stream, which such a route always
+// answers with; only a server breaking the binding answers otherwise.
+const answeredWithout = new Error(
+  "A route of an action declaring progress or answering a stream answered without its event stream",
+);
+
+/** The events of a route's answer, as one stream of `Progressed`. */
+const sentFrom = (answer: ErasedValue): Stream.Stream<Progressed, unknown> =>
+  Stream.isStream(answer)
+    ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: a route's stream schema decodes each element as one `Sent`.
+      Stream.map(answer as Stream.Stream<Sent, unknown>, progressedOf)
+    : Stream.die(answeredWithout);
+
 /**
- * A client's answer from a route of an action declaring `progress`, asked for its stream: each
- * `progress` event handed to `onProgress`, then the `final` event's answer. An answer that is not
- * a stream, from a server that answered without one, is the answer.
+ * A client's answer from a route of an action declaring `progress`: each `progress` event handed
+ * to `onProgress`, where the call gave one, then the `final` event's answer.
  */
 export const readWithProgress = (
   answer: ErasedValue,
   onProgress: CallOptions<unknown>["onProgress"],
-): Effect.Effect<ErasedValue, unknown> =>
-  Stream.isStream(answer)
-    ? answerFrom(Stream.map(sentOf(answer), progressedOf), onProgress)
-    : Effect.succeed(answer);
+): Effect.Effect<ErasedValue, unknown> => answerFrom(sentFrom(answer), onProgress);
 
 /**
  * A client's elements from a route of an action answering a stream: each `element` event's
@@ -224,7 +230,4 @@ export const readWithProgress = (
 export const readElements = (
   answer: ErasedValue,
   onProgress: CallOptions<unknown>["onProgress"],
-): Stream.Stream<ErasedValue, unknown> =>
-  Stream.isStream(answer)
-    ? elementsFrom(Stream.map(sentOf(answer), progressedOf), onProgress)
-    : Stream.die(new Error("A route of an action answering a stream answered without one"));
+): Stream.Stream<ErasedValue, unknown> => elementsFrom(sentFrom(answer), onProgress);

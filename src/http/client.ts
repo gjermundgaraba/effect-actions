@@ -64,7 +64,7 @@ type SseFailure = Extract<
  * binding's, or a built-in `InvalidInput`, `Unauthenticated` or `Forbidden`), a native
  * `HttpClientError` for a failed request or an undeclared answer, or a `SchemaError` when
  * the success does not decode. A call reading an event stream, of an action answering a stream or
- * one given `onProgress`, also fails with Effect's `Sse.SseError` or `Sse.Retry`.
+ * declaring `progress`, also fails with Effect's `Sse.SseError` or `Sse.Retry`.
  */
 export type MethodError<A extends Action.Any, E extends BindingError = never> =
   | A["error"][number]["Type"]
@@ -119,91 +119,60 @@ type NativeClient<M> = { readonly [name: string]: M | undefined };
 /** A client's methods by name. */
 export type Methods<R> = { readonly [name: string]: ErasedMethod<R> | ErasedStreamMethod<R> };
 
-const methodOf = <M>(native: NativeClient<M>, name: string, what: string): M => {
+const methodOf = <M>(native: NativeClient<M>, name: string): M => {
   const method = native[name];
 
   if (method === undefined)
     throw new Error(
-      `No client method for ${name} (use the binding \`ActionHttp.make\` returned, whose group holds this ${what})`,
+      `No client method for ${name} (use the binding \`ActionHttp.make\` returned, whose group holds this action)`,
     );
 
   return method;
 };
 
-const nativeOf = <E, R>(
-  http: AnyHttp,
-  httpClient: HttpClient.HttpClient.With<E, R>,
-  baseUrl: Options["baseUrl"],
-) =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
-  HttpApiClient.makeWith(http.api as HttpApi.HttpApi<string>, { baseUrl, httpClient });
-
-const asksForStream = HttpClient.mapRequest(
-  HttpClientRequest.setHeader("accept", "text/event-stream"),
+// Why: Every request accepts an event stream, so the route of an action declaring `progress`
+// always answers its stream to this client, and a call reads its answer one way, from the
+// `final` event; every other route answers as it would.
+const acceptingStreams = HttpClient.mapRequest(
+  HttpClientRequest.setHeader("accept", "application/json, text/event-stream"),
 );
-
-/** Whether a call of `action` may read an event stream: its success streams, or it reports progress. */
-const readsStream = (action: Action.Any) =>
-  action.progress !== undefined || elementOf(action.success) !== undefined;
-
-const nativesWith = <E, R>(
-  http: AnyHttp,
-  httpClient: HttpClient.HttpClient.With<E, R>,
-  baseUrl: Options["baseUrl"],
-) =>
-  Effect.gen(function* () {
-    const client = yield* nativeOf(http, httpClient, baseUrl);
-
-    const streaming = !http.actions.some(readsStream)
-      ? {}
-      : yield* nativeOf(http, asksForStream(httpClient), baseUrl);
-
-    return { client, streaming };
-  });
 
 const actionMethodOf = <R>(
   action: Action.Any,
   native: NativeClient<NativeMethod<R>>,
-  nativeStreamed: NativeClient<NativeMethod<R>>,
 ): ErasedMethod<R> | ErasedStreamMethod<R> => {
-  const method = methodOf(native, action.name, "action");
+  const method = methodOf(native, action.name);
 
   if (elementOf(action.success) !== undefined)
     return checkedStream(action, (payload, onProgress) =>
-      Stream.unwrap(
-        Effect.map(methodOf(nativeStreamed, action.name, "action")({ payload }), (answer) =>
-          readElements(answer, onProgress),
-        ),
-      ),
+      Stream.unwrap(Effect.map(method({ payload }), (answer) => readElements(answer, onProgress))),
     );
 
   if (action.progress === undefined) return checked(action, (payload) => method({ payload }));
 
-  const streamed = methodOf(nativeStreamed, action.name, "action");
-
   return checked(action, (payload, onProgress) =>
-    onProgress === undefined
-      ? method({ payload })
-      : Effect.flatMap(streamed({ payload }), (answer) => readWithProgress(answer, onProgress)),
+    Effect.flatMap(method({ payload }), (answer) => readWithProgress(answer, onProgress)),
   );
 };
-
-const actionsOf = <R>(
-  http: AnyHttp,
-  native: NativeClient<NativeMethod<R>>,
-  nativeStreamed: NativeClient<NativeMethod<R>>,
-): Methods<R> =>
-  Object.fromEntries(
-    http.actions.map((action) => [action.name, actionMethodOf(action, native, nativeStreamed)]),
-  );
 
 const methodsWith = <E, R>(
   http: AnyHttp,
   httpClient: HttpClient.HttpClient.With<E, R>,
   baseUrl: Options["baseUrl"],
 ): Effect.Effect<Methods<R>> =>
-  Effect.map(nativesWith(http, httpClient, baseUrl), ({ client, streaming }) =>
-    actionsOf<R>(http, client, streaming),
+  Effect.map(
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
+    HttpApiClient.makeWith(http.api as HttpApi.HttpApi<string>, {
+      baseUrl,
+      httpClient: acceptingStreams(httpClient),
+    }),
+    (client): Methods<R> => {
+      const native: NativeClient<NativeMethod<R>> = client;
+
+      return Object.fromEntries(
+        http.actions.map((action) => [action.name, actionMethodOf(action, native)]),
+      );
+    },
   );
 
 export const methods = <E, R>(

@@ -7,10 +7,11 @@ import { hintsOf } from "../contract/hints.js";
 import type { Codec } from "../contract/codec.js";
 import { progressSink } from "../contract/progress.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
-import { assertNoStream, type ToolAction } from "../contract/stream.js";
+import { type ToolSuccess, toolSuccessOf } from "../contract/stream.js";
 import {
   acquire,
   type ActionOf,
+  answeringWhole,
   type AnyImplementation,
   type BuildServices,
   type BuildError,
@@ -25,7 +26,6 @@ import {
   select,
   type Served,
   toList,
-  toolsOf,
   type SelectedOf,
   type Serving,
   type ErasedValue,
@@ -36,8 +36,10 @@ type NativeTool<A extends Action.Any, R> = Tool.Tool<
   {
     readonly parameters: Schema.toCodecJson<A["input"]>;
     readonly success: A["progress"] extends Codec
-      ? Schema.toCodecJson<Schema.Union<readonly [ProgressOf<A["progress"]>, A["success"]]>>
-      : Schema.toCodecJson<A["success"]>;
+      ? Schema.toCodecJson<
+          Schema.Union<readonly [ProgressOf<A["progress"]>, ToolSuccess<A["success"]>]>
+        >
+      : Schema.toCodecJson<ToolSuccess<A["success"]>>;
     readonly failure: Schema.toCodecJson<
       Schema.Union<ReadonlyArray<A["error"][number] | BuiltIns>>
     >;
@@ -47,7 +49,7 @@ type NativeTool<A extends Action.Any, R> = Tool.Tool<
 >;
 
 type ToolFor<App, Listed extends Action.Any> = App extends unknown
-  ? Serving<App, ToolAction<Listed>> extends infer A extends Action.Any
+  ? Serving<App, Listed> extends infer A extends Action.Any
     ? A extends Action.Any
       ? NativeTool<A, RequestOf<App, A>>
       : never
@@ -183,18 +185,21 @@ type ProgressOf<P> = P extends Codec
     >
   : never;
 
-const jsonToolOf = (action: Action.Any) =>
-  Tool.make(action.name, {
+const jsonToolOf = (action: Action.Any) => {
+  const success = toolSuccessOf(action.success);
+
+  return Tool.make(action.name, {
     description: action.description,
     parameters: Schema.toCodecJson(action.input),
     success: Schema.toCodecJson(
       action.progress === undefined
-        ? action.success
-        : Schema.Union([ProgressOf(action.progress), action.success]),
+        ? success
+        : Schema.Union([ProgressOf(action.progress), success]),
     ),
     failure: Schema.toCodecJson(Schema.Union(projectedErrors(action))),
     failureMode: "return",
   });
+};
 
 type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
 
@@ -208,6 +213,7 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
  *
  * **Gotchas**
  *
+ * - An action answering a stream, `Action.Stream`, answers its elements collected into one array once the stream ends, its tool's success that array.
  * - An action declaring `progress` streams each value as a result with `preliminary: true` before its success, its `result` `{ _tag: "Progress", value }`, so its tool's success schema is that or `success`; a model reads the success alone.
  * - A success is a result with `isFailure: false`, `result` the value and `encodedResult` its JSON; a declared error a result with `isFailure: true` and `result` the error, which the model reads, never a raised failure; a refusal as `Action.Unauthenticated` and `Action.Forbidden` say.
  * - Arguments that do not decode are a result with `isFailure: true` whose `result` is an `AiError` with `reason` a `ToolParameterValidationError`, never `InvalidInput`, and neither `authorize` nor the handler runs; undeclared arguments are dropped and the call runs.
@@ -215,28 +221,22 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
  */
 export function make<
   const Apps extends Served,
-  const O extends Options<ToolAction<ActionOf<Member<Apps>>>> = {},
+  const O extends Options<ActionOf<Member<Apps>>> = {},
 >(
   implementations: Apps,
   ...options: OptionalUnless<
     O,
-    Options<ToolAction<ActionOf<Member<Apps>>>> & O & NoInfer<Known<O, Options<Action.Any>>>
+    Options<ActionOf<Member<Apps>>> & O & NoInfer<Known<O, Options<Action.Any>>>
   >
 ): Tools<
   {
     readonly [T in ToolFor<Member<Apps>, Offered<O, ActionOf<Member<Apps>>>> as T["name"]]: T;
   },
-  BuildError<
-    Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
-    ToolAction<SelectedOf<O, Apps>>
-  >,
-  BuildServices<
-    Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
-    ToolAction<SelectedOf<O, Apps>>
-  >
+  BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>,
+  BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
 >;
 export function make(apps: Served, options?: ErasedOptions): ErasedTools {
-  const served = toolsOf(select(toList(apps), options?.actions), options?.actions);
+  const served = select(toList(apps), options?.actions);
 
   const needsApproval = options?.needsApproval;
 
@@ -245,7 +245,6 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
     served.flatMap((app) => app.actions),
     heldOnce,
   );
-  assertNoStream(served.flatMap((app) => app.actions));
 
   // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id carries
   // its implementation's key. A key per `make` call separates nothing its implementation does not,
@@ -276,18 +275,22 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   const layer = toolkit.toLayer(
     Effect.map(acquire(served), (bound) =>
       Object.fromEntries(
-        bound.map(([action, run]) => [
-          action.name,
-          (input: ErasedValue, { preliminary }: Toolkit.HandlerContext<Tool.Any>) =>
-            run(
-              input,
-              progressSink(
-                action.progress === undefined
-                  ? undefined
-                  : (value) => preliminary(new Reported(value)),
+        bound.map(([action, handler]) => {
+          const run = answeringWhole(action, handler);
+
+          return [
+            action.name,
+            (input: ErasedValue, { preliminary }: Toolkit.HandlerContext<Tool.Any>) =>
+              run(
+                input,
+                progressSink(
+                  action.progress === undefined
+                    ? undefined
+                    : (value) => preliminary(new Reported(value)),
+                ),
               ),
-            ),
-        ]),
+          ];
+        }),
       ),
     ),
   );

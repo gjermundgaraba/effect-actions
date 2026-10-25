@@ -68,35 +68,26 @@ describe("an action reporting progress, in process", () => {
   );
 
   it.effect(
-    "drops the oldest values a slow caller falls behind on, never the last one or the answer",
+    "drops the oldest values a caller falls behind on: the earliest it took, then the newest, never the answer",
     () =>
       Effect.gen(function* () {
         const client = yield* Action.client(imports);
-        const gate = yield* Deferred.make<void>();
         const seen: Array<number> = [];
 
-        const call = yield* Effect.forkChild(
-          client.importAll(
-            { count: 100 },
-            {
-              onProgress: ({ done }) =>
-                Effect.andThen(
-                  Effect.sync(() => seen.push(done)),
-                  Deferred.await(gate),
-                ),
-            },
-          ),
+        const answer = yield* client.importAll(
+          { count: 100 },
+          { onProgress: ({ done }) => Effect.sync(() => seen.push(done)) },
         );
 
-        yield* Effect.repeat(Effect.yieldNow, { times: 20 });
-        yield* Deferred.succeed(gate, undefined);
-
-        const answer = yield* Fiber.join(call);
+        const tookFirst = seen.findIndex((done, index) => done !== index + 1);
+        const newest = tookFirst === -1 ? [] : seen.slice(tookFirst);
 
         expect(answer).toEqual({ imported: 100 });
         expect(seen.length).toBeLessThan(100);
         expect(seen.at(-1)).toBe(100);
-        expect(seen).toEqual([...seen].sort((left, right) => left - right));
+        expect(newest).toEqual(
+          Array.from({ length: newest.length }, (_, index) => 101 - newest.length + index),
+        );
       }),
   );
 
@@ -142,9 +133,7 @@ describe("an action reporting progress, in process", () => {
       );
 
       expect(answers).toEqual([{ imported: 2 }, { imported: 2 }]);
-      expect(
-        logged.filter((line) => line.includes("onProgress failed")).length,
-      ).toBeGreaterThanOrEqual(2);
+      expect(logged.filter((line) => line.includes("onProgress failed"))).toHaveLength(2 * 2);
     }),
   );
 

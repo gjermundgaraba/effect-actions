@@ -89,6 +89,8 @@ export const callError = (tool: string, reason: (typeof Reason)["Type"]): McpCal
 const isEventStream = (response: HttpClientResponse.HttpClientResponse) =>
   (response.headers["content-type"] ?? "").startsWith("text/event-stream");
 
+// Why: The parser fed by hand, not `Sse.decode`, which fails with `Retry` once it reads a
+// `retry:` directive and stops reading: one sent before the reply would lose the reply.
 /**
  * The data of each frame of the event stream `response` is, as it arrives: more than the parser
  * holds with no frame ending fails the call of `tool` with `FrameTooLarge`.
@@ -119,50 +121,27 @@ const framesOf = (
   });
 
 /**
- * A stateless request's body: its text, and the data of its frames where it is an event stream.
- */
-export interface Body {
-  readonly text: string;
-  readonly frames?: ReadonlyArray<string> | undefined;
-}
-
-const framed = (data: string) => `${data.replaceAll(/^/gmu, "data: ")}\n\n`;
-
-/**
- * The body of `response`, read as it arrives: of an event stream, each `notifications/progress`
- * frame hands its value to `sink` and is left out, so a long call holds the frames its reply is
- * read from, not every value it reported. A stateless request's notifications are its own.
+ * The messages of `response`, read as it arrives: the data of each frame of an event stream, or
+ * the body itself as one. Each `notifications/progress` frame hands its value to `sink` and is
+ * left out, so a long call holds the frames its reply is read from, not every value it reported.
+ * A stateless request's notifications are its own.
  */
 export const bodyOf = (
   tool: string,
   response: HttpClientResponse.HttpClientResponse,
   sink?: Reporting,
-): Effect.Effect<Body, McpCallError | HttpClientError.HttpClientError> =>
+): Effect.Effect<ReadonlyArray<string>, McpCallError | HttpClientError.HttpClientError> =>
   isEventStream(response)
-    ? Effect.map(
-        Stream.runCollect(
-          Stream.filterEffect(framesOf(tool, response), (data) =>
-            Option.match(progressOf(data), {
-              onNone: () => Effect.succeed(true),
-              onSome: (value) =>
-                sink === undefined ? Effect.succeed(false) : Effect.as(sink.progress(value), false),
-            }),
-          ),
+    ? Stream.runCollect(
+        Stream.filterEffect(framesOf(tool, response), (data) =>
+          Option.match(progressOf(data), {
+            onNone: () => Effect.succeed(true),
+            onSome: (value) =>
+              sink === undefined ? Effect.succeed(false) : Effect.as(sink.progress(value), false),
+          }),
         ),
-        (frames) => ({ text: frames.map(framed).join(""), frames }),
       )
-    : Effect.map(response.text, (text) => ({ text }));
-
-/**
- * The JSON-RPC reply of a stateless request's body, decoded by `decode`: the body itself, or the
- * last frame `decode` reads of an event stream.
- */
-export const replyOf =
-  <A>(decode: (data: string) => Option.Option<A>) =>
-  ({ text, frames }: Body): Option.Option<A> =>
-    frames === undefined
-      ? decode(text)
-      : Option.fromNullishOr(frames.flatMap((frame) => Option.toArray(decode(frame))).at(-1));
+    : Effect.map(response.text, (text) => [text]);
 
 /** Fails with the error of `errors` that `text` decodes as, or with `otherwise`. */
 export const failWith = (errors: Action.Errors, text: string, otherwise: McpCallError) =>

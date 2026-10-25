@@ -541,7 +541,7 @@ export function layer(
  *
  * - An input that does not encode fails with `InvalidInput`, and nothing is sent; undeclared input fields, which TypeScript lets through on a wider value, are dropped as it encodes, since the server would refuse them.
  * - It interprets no status and retries nothing: a failed write may have happened, and only a declared error says what the server did.
- * - A call given `onProgress` asks for the route's event stream and reads its answer from the `final` event; a call without one asks for the answer alone, so the server sends no progress.
+ * - A call of an action declaring `progress` reads the route's event stream, as every request accepts it, and its answer from the `final` event; the server sends the values whether or not the call gave `onProgress`, and without one they are dropped.
  * - A call of an action answering a stream returns a `Stream` of its elements, failing as the route's stream fails, with `Sse.SseError` or `Sse.Retry` too; its `onProgress` gets each `progress` event, which the server sends whether or not the call gave one.
  */
 export function client<const H extends AnyHttp>(

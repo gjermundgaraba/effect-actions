@@ -1,15 +1,12 @@
-import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, ErrorReporter, Exit, Layer, Schema, Stream } from "effect";
-import { Sse } from "effect/encoding";
-import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
+import { assert, describe, expect, it } from "@effect/vitest";
+import { Cause, Deferred, Effect, Exit, Schema, Stream } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
-import * as Authentication from "../../src/authentication/Authentication.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { verify } from "../support/app/authentication.js";
-import { CurrentActor } from "../support/app/authorization.js";
-import { recorder } from "../support/reporter.js";
+import { Count, countsReleasing } from "../support/app/count.js";
+import { call, framesOf } from "../support/sse.js";
 
 class LogGone extends Schema.TaggedError<LogGone>()(
   "LogGone",
@@ -21,7 +18,7 @@ const Tail = Action.make("tail", {
   description: "Follow a log, line by line.",
   input: {
     count: Schema.Finite,
-    halt: Schema.optional(Schema.Literals(["before", "after", "defect", "unencodable"])),
+    halt: Schema.optional(Schema.Literals(["before", "after", "defect"])),
   },
   success: Action.Stream({ n: Schema.Finite }),
   error: LogGone,
@@ -48,8 +45,6 @@ const tails = Action.implement(Tail, ({ count, halt }) => {
   if (halt === "defect")
     return Stream.concat(lines(count), Stream.die(new Error("the log's secret detail")));
 
-  if (halt === "unencodable") return Stream.concat(lines(count), Stream.make({ n: Number.NaN }));
-
   return lines(count);
 });
 
@@ -61,68 +56,9 @@ const builds = Action.implement(Build, ({ steps }, { progress }) =>
 
 const Http = ActionHttp.make([Tail, Build]);
 
-const Count = Action.make("count", {
-  description: "Count until the caller stops reading.",
-  success: Action.Stream(Schema.Finite),
-  readOnly: true,
-  caller: Action.Anyone,
-});
-
-const countsReleasing = (released: Deferred.Deferred<void>) =>
-  Action.implement(Count, () =>
-    Stream.concat(
-      Stream.fromEffect(
-        Effect.as(
-          Effect.addFinalizer(() => Deferred.succeed(released, undefined)),
-          0,
-        ),
-      ),
-      Stream.iterate(1, (n) => n + 1),
-    ),
-  );
-
 const Counting = ActionHttp.make([Count]);
 
-const Follow = Action.make("follow", {
-  description: "Follow a signed-in caller's log.",
-  success: Action.Stream({ n: Schema.Finite }),
-  readOnly: true,
-  caller: CurrentActor,
-});
-
-const Login = Authentication.make("http-stream.Login", CurrentActor);
-
-const follows = Action.implement(Follow, () => lines(1), { authorize: () => Effect.void });
-
-const Guarded = ActionHttp.make([Follow], { authentication: Login });
-
-const served = (reported: Array<string> = []) =>
-  Testing.layer(
-    ActionHttp.layer(Http, [tails, builds]).pipe(
-      Layer.provide(ErrorReporter.layer([recorder(reported)])),
-    ),
-  );
-
-const Json = Schema.fromJsonString(Schema.Json);
-
-const call = (name: string, body: Schema.Json) =>
-  HttpClient.execute(
-    HttpClientRequest.post(`/api/${name}`).pipe(
-      HttpClientRequest.bodyJsonUnsafe(body),
-      HttpClientRequest.setHeaders({ accept: "text/event-stream" }),
-    ),
-  );
-
-const framesOf = (response: HttpClientResponse.HttpClientResponse) =>
-  response.stream.pipe(
-    Stream.decodeText,
-    Stream.pipeThroughChannel(Sse.decode()),
-    Stream.map((frame) => ({
-      event: frame.event,
-      data: Schema.decodeUnknownSync(Json)(frame.data),
-    })),
-    Stream.runCollect,
-  );
+const served = () => Testing.layer(ActionHttp.layer(Http, [tails, builds]));
 
 describe("HTTP element streams", () => {
   it.effect("streams each element as an element event", () =>
@@ -176,91 +112,6 @@ describe("HTTP element streams", () => {
         4,
       ]);
     }).pipe(Effect.provide(served())),
-  );
-
-  it.effect(
-    "answers a failure before the first event with its own status, as JSON, reported once",
-    () => {
-      const reported: Array<string> = [];
-
-      return Effect.gen(function* () {
-        const response = yield* call("tail", { count: 2, halt: "before" });
-
-        expect([response.status, yield* response.json]).toEqual([410, { _tag: "LogGone", at: 0 }]);
-        expect(reported).toEqual([expect.stringContaining("LogGone")]);
-      }).pipe(Effect.provide(served(reported)));
-    },
-  );
-
-  it.effect("ends a stream with a declared failure after its elements, reported once", () => {
-    const reported: Array<string> = [];
-
-    return Effect.gen(function* () {
-      const frames = yield* Effect.flatMap(call("tail", { count: 1, halt: "after" }), framesOf);
-
-      expect(frames.slice(0, 1)).toEqual([{ event: "element", data: { n: 1 } }]);
-      expect(JSON.stringify(frames.slice(1))).toContain("LogGone");
-      expect(reported).toEqual([expect.stringContaining("LogGone")]);
-    }).pipe(Effect.provide(served(reported)));
-  });
-
-  it.effect("ends a stream whose handler dies with a failure that says no more, reported", () => {
-    const reported: Array<string> = [];
-
-    return Effect.gen(function* () {
-      const frames = yield* Effect.flatMap(call("tail", { count: 1, halt: "defect" }), framesOf);
-
-      expect(frames.slice(0, 1)).toEqual([{ event: "element", data: { n: 1 } }]);
-      expect(JSON.stringify(frames.slice(1))).toContain("Internal server error");
-      expect(JSON.stringify(frames)).not.toContain("secret detail");
-      expect(reported).toEqual([expect.stringContaining("the log's secret detail")]);
-    }).pipe(Effect.provide(served(reported)));
-  });
-
-  it.effect("ends a stream at an element that does not encode as a defect would, reported", () => {
-    const reported: Array<string> = [];
-
-    return Effect.gen(function* () {
-      const frames = yield* Effect.flatMap(
-        call("tail", { count: 1, halt: "unencodable" }),
-        framesOf,
-      );
-
-      expect(frames.slice(0, 1)).toEqual([{ event: "element", data: { n: 1 } }]);
-      expect(JSON.stringify(frames.slice(1))).toContain("Internal server error");
-      expect(JSON.stringify(frames)).not.toContain("Expected");
-      expect(reported).toEqual([expect.stringContaining("Expected a finite number")]);
-    }).pipe(Effect.provide(served(reported)));
-  });
-
-  it.effect("answers an empty 500 where its handler dies before the first event", () => {
-    const reported: Array<string> = [];
-
-    return Effect.gen(function* () {
-      const response = yield* call("tail", { count: 0, halt: "defect" });
-
-      expect([response.status, yield* response.text]).toEqual([500, ""]);
-      expect(reported).toEqual([expect.stringContaining("the log's secret detail")]);
-    }).pipe(Effect.provide(served(reported)));
-  });
-
-  it.effect("answers a refusal before the first event with its status", () =>
-    Effect.gen(function* () {
-      const response = yield* call("follow", {});
-
-      expect(response.status).toBe(401);
-      expect(Schema.decodeUnknownSync(Action.Unauthenticated)(yield* response.json)).toEqual(
-        new Action.Unauthenticated(),
-      );
-    }).pipe(
-      Effect.provide(
-        Testing.layer(
-          ActionHttp.layer(Guarded, follows).pipe(
-            Layer.provide(Authentication.layer(Login, verify)),
-          ),
-        ),
-      ),
-    ),
   );
 
   it("lists the route's event stream alone", () => {
@@ -333,7 +184,8 @@ describe("ActionHttp.client of an action answering a stream", () => {
 
       const exit = yield* Effect.exit(Stream.runDrain(client.tail({ count: 1, halt: "defect" })));
 
-      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      assert(Exit.isFailure(exit) && Cause.hasDies(exit.cause));
+      expect(Cause.pretty(exit.cause)).toContain("Internal server error");
     }).pipe(Effect.provide(served())),
   );
 

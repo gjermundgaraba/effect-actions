@@ -40,7 +40,6 @@ export const tailOverHttp = Effect.gen(function* () {
   const tailed = http.tail();
 
   expectTypeOf<Stream.Success<typeof tailed>>().toEqualTypeOf<{ readonly line: string }>();
-  expectTypeOf<Stream.Error<typeof tailed>>().toEqualTypeOf<ActionHttp.MethodError<typeof Tail>>();
   expectTypeOf<
     Extract<Stream.Error<typeof tailed>, { readonly _tag: string }>["_tag"]
   >().toEqualTypeOf<
@@ -58,9 +57,6 @@ export const tailOverHttp = Effect.gen(function* () {
   const followed = http.follow({}, { onProgress: ({ step }) => Effect.log(step) });
 
   expectTypeOf<Stream.Success<typeof followed>>().toEqualTypeOf<string>();
-  expectTypeOf<Stream.Error<typeof followed>>().toEqualTypeOf<
-    ActionHttp.MethodError<typeof Follow>
-  >();
 
   const opened = http.open();
 

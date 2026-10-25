@@ -431,90 +431,83 @@ const handlerOf = (
   };
 };
 
+/** What the stream rpc of an action sends for one call, what its handler reports included. */
+type Sending = (
+  input: ErasedValue,
+  reporting: Reporting,
+  send: (sent: Progressed) => Effect.Effect<void>,
+) => Effect.Effect<void, unknown, unknown>;
+
 /**
  * The handler of the stream rpc of an action declaring `progress` or answering a stream: its call
- * authenticates before its stream starts, then runs in the call's scope, what `answer` sends sent
+ * authenticates before its stream starts, then runs in the call's scope, what `sending` sends sent
  * one at a time, so a caller reading slowly holds up the call, whose progress then drops the
  * oldest values. A failure ends the stream as a call's ends it.
  */
-const streamingHandlerOf =
-  (
-    answer: (
-      action: Action.Any,
-    ) => (
-      input: ErasedValue,
-      run: ErasedHandler<unknown>,
-      reporting: Reporting,
-      send: (sent: Progressed) => Effect.Effect<void>,
-    ) => Effect.Effect<void, unknown, unknown>,
-  ) =>
-  (
-    action: Action.Any,
-    run: ErasedHandler<unknown>,
-    steps: ReadonlyArray<Step>,
-    error: Schema.Union<Action.Errors>,
-  ) => {
-    const decode = decodeInput(action);
-    const answered = answer(action);
-    const boundary = callBoundaryOf(error);
+const streamingHandlerOf = (
+  action: Action.Any,
+  sending: Sending,
+  steps: ReadonlyArray<Step>,
+  error: Schema.Union<Action.Errors>,
+) => {
+  const decode = decodeInput(action);
+  const boundary = callBoundaryOf(error);
 
-    const encodeProgress = Schema.encodeUnknownEffect(
-      Schema.toCodecJson(action.progress ?? Schema.Never),
-    );
+  const encodeProgress = Schema.encodeUnknownEffect(
+    Schema.toCodecJson(action.progress ?? Schema.Never),
+  );
 
-    return (payload: Schema.Json, options: Omit<CallOptions, "payload">) => {
-      const call = Effect.gen(function* () {
-        const input = yield* decode(payload);
-        const sent = yield* Queue.bounded<Progressed, unknown>(1);
-        const send = (each: Progressed) => Effect.asVoid(Queue.offer(sent, each));
+  return (payload: Schema.Json, options: Omit<CallOptions, "payload">) => {
+    const call = Effect.gen(function* () {
+      const input = yield* decode(payload);
+      const sent = yield* Queue.bounded<Progressed, unknown>(1);
+      const send = (each: Progressed) => Effect.asVoid(Queue.offer(sent, each));
 
-        yield* answered(
-          input,
-          run,
-          {
-            progress: (value) =>
-              Effect.flatMap(Effect.orDie(encodeProgress(value)), (json) =>
-                send(Progressed.Progress({ value: json })),
-              ),
-          },
-          send,
-        ).pipe(boundary, Queue.into(sent), Effect.forkScoped({ startImmediately: true }));
+      yield* sending(
+        input,
+        {
+          progress: (value) =>
+            Effect.flatMap(Effect.orDie(encodeProgress(value)), (json) =>
+              send(Progressed.Progress({ value: json })),
+            ),
+        },
+        send,
+      ).pipe(boundary, Queue.into(sent), Effect.forkScoped({ startImmediately: true }));
 
-        return sent;
-      });
+      return sent;
+    });
 
-      const wrapped = throughSteps(steps, call, { ...options, payload });
+    const wrapped = throughSteps(steps, call, { ...options, payload });
 
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased call boundary: the steps pass the call's queue through, or fail; the boundary fails with a declared failure in its wrapper alone, or an interruption.
-      return boundary(wrapped) as Effect.Effect<
-        Queue.Dequeue<Schema.Json, DeclaredFailure | Cause.Done>,
-        DeclaredFailure,
-        Scope.Scope
-      >;
-    };
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased call boundary: the steps pass the call's queue through, or fail; the boundary fails with a declared failure in its wrapper alone, or an interruption.
+    return boundary(wrapped) as Effect.Effect<
+      Queue.Dequeue<Schema.Json, DeclaredFailure | Cause.Done>,
+      DeclaredFailure,
+      Scope.Scope
+    >;
   };
+};
 
-/** Each value an action's handler reports sent as a `Progress`, then its answer as a `Final`. */
-const progressHandlerOf = streamingHandlerOf((action) => {
-  const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(action.success));
+/** Each value `run` reports sent as a `Progress`, then its answer as a `Final`. */
+const sendingAnswer = (success: Codec, run: ErasedHandler<unknown>): Sending => {
+  const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(success));
 
-  return (input, run, reporting, send) =>
+  return (input, reporting, send) =>
     run(input, reporting).pipe(
       Effect.flatMap(encode),
       Effect.flatMap((value) => send(Progressed.Final({ value }))),
     );
-});
+};
 
-/** Each element of an action's stream sent as an `Element`, beside its progress. */
-const elementHandlerOf = (element: Codec) =>
-  streamingHandlerOf(() => {
-    const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(element));
+/** Each element of the stream `run` answers sent as an `Element`, beside its progress. */
+const sendingElements = (element: Codec, run: ErasedHandler<unknown>): Sending => {
+  const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(element));
 
-    return (input, run, reporting, send) =>
-      Stream.runForEach(elementsOf(run(input, reporting)), (each) =>
-        Effect.flatMap(encode(each), (value) => send(Progressed.Element({ value }))),
-      );
-  });
+  return (input, reporting, send) =>
+    Stream.runForEach(elementsOf(run(input, reporting)), (each) =>
+      Effect.flatMap(encode(each), (value) => send(Progressed.Element({ value }))),
+    );
+};
 
 /**
  * Serve the binding's actions among `implementations` with Effect's own `RpcServer`, or those
@@ -601,12 +594,20 @@ export function layer(
 
       const bound = yield* acquire(apps);
 
-      const handlerFor = (action: Action.Any) => {
+      const handlerFor = (
+        action: Action.Any,
+        run: ErasedHandler<unknown>,
+        steps: ReadonlyArray<Step>,
+        error: Schema.Union<Action.Errors>,
+      ) => {
         const element = elementOf(action.success);
 
-        if (element !== undefined) return elementHandlerOf(element);
+        if (element !== undefined)
+          return streamingHandlerOf(action, sendingElements(element, run), steps, error);
 
-        return action.progress === undefined ? handlerOf : progressHandlerOf;
+        return action.progress === undefined
+          ? handlerOf(action, run, steps, error)
+          : streamingHandlerOf(action, sendingAnswer(action.success, run), steps, error);
       };
 
       const byName = Object.fromEntries(
@@ -614,7 +615,7 @@ export function layer(
           ([action, run]) =>
             [
               action.name,
-              handlerFor(action)(
+              handlerFor(
                 action,
                 run,
                 action.caller === Anyone || authenticate === undefined

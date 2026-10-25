@@ -31,8 +31,8 @@ import { Anyone, assertAuthentication } from "../contract/caller.js";
 import { projectedErrors } from "../contract/declared.js";
 import { hintsOf } from "../contract/hints.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
-import { assertNoStream, type ToolAction } from "../contract/stream.js";
 import { inputParseOptions } from "../contract/call.js";
+import { toolSuccessOf } from "../contract/stream.js";
 import {
   defaultPath,
   fieldKey,
@@ -50,6 +50,7 @@ import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
 import {
   acquire,
+  answeringWhole,
   type Protected,
   type ActionOf,
   type AnyImplementation,
@@ -62,7 +63,6 @@ import {
   select,
   type Served,
   toList,
-  toolsOf,
   type Known,
   type SelectedOf,
   type Selection,
@@ -300,13 +300,15 @@ const registerTools = Effect.fnUntraced(function* (
   const internalErrorOnDefect = (cause: Cause.Cause<McpSchema.InvalidParams>) =>
     Cause.hasDies(cause) ? internalError(cause) : Effect.failCause(cause);
 
-  for (const [action, run] of bound) {
-    const lift = liftOf(action.success);
+  for (const [action, handler] of bound) {
+    const toolSuccess = toolSuccessOf(action.success);
+    const run = answeringWhole(action, handler);
+    const lift = liftOf(toolSuccess);
     const media = lift.fields.length === 0 ? undefined : lift;
 
     const structured =
       media === undefined
-        ? Schema.toCodecJson(action.success)
+        ? Schema.toCodecJson(toolSuccess)
         : media.rest === undefined
           ? undefined
           : Schema.toCodecJson(media.rest);
@@ -327,7 +329,7 @@ const registerTools = Effect.fnUntraced(function* (
       return (value: ErasedValue) => Effect.orDie(encode(value));
     };
 
-    const encodeSuccess = encoder(action.success);
+    const encodeSuccess = encoder(toolSuccess);
     const encodeFailure = encoder(Schema.Union(projectedErrors(action)));
 
     const reported = (input: ErasedValue) =>
@@ -431,10 +433,9 @@ const server = <Out, R>(
     apps.flatMap((app) => app.actions),
     heldOnce,
   );
-  assertNoStream(apps.flatMap((app) => app.actions));
 
   const lifted = apps.flatMap((app) =>
-    app.actions.map((action) => [action, liftOf(action.success)] as const),
+    app.actions.map((action) => [action, liftOf(toolSuccessOf(action.success))] as const),
   );
 
   assertToolShapes(lifted);
@@ -542,6 +543,7 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  *
  * - A success is `isError: false` with `structuredContent` its JSON and the same JSON as one text block, both `null` for an action without `success`; an `Action.Image` field is left out of `structuredContent` and its text, its block following them, and a success of images alone has no `structuredContent`.
  * - A declared error is an `isError: true` tool result in a 200 holding its JSON as one text block, with no `structuredContent`; a refusal is answered as `Action.Unauthenticated` and `Action.Forbidden` say.
+ * - An action answering a stream, `Action.Stream`, answers its elements collected into one array once the stream ends, a success of that array.
  * - An action declaring `progress` sends each value as `notifications/progress` on the `progressToken` its call's `_meta` carries, before the result: `progress` counts from 1, `message` is the value's JSON and `_meta["effect-actions/progress"]` the value; a call without a token gets none.
  * - Arguments that do not decode never reach the handler: an `isError: true` result in a 200, text `Invalid parameters for tool '<name>': …`, or for a 2025-06-18 client a JSON-RPC error.
  * - A defect, an undeclared failure, or a success or an error that does not encode is `isError: true`, text `Tool execution failed due to an internal server error.`: the cause goes to the log and to the call's `ErrorReporter`s, never to the client.
@@ -552,34 +554,28 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  */
 export function layerHttp<
   const Apps extends Served,
-  const O extends Selection<ToolAction<ActionOf<Member<Apps>>>> = {},
+  const O extends Selection<ActionOf<Member<Apps>>> = {},
   E = never,
   R = never,
   const D extends Authentication | undefined = undefined,
 >(
   implementations: Apps,
-  options: LayerHttpOptions<E, R, ToolAction<ActionOf<Member<Apps>>>> &
+  options: LayerHttpOptions<E, R, ActionOf<Member<Apps>>> &
     O &
     NoInfer<Known<O, LayerHttpOptions<E, R, Action.Any>>> &
-    NoInfer<RequiredAuthentication<ToolAction<SelectedOf<O, Apps>>>> &
-    Matching<NoInfer<ToolAction<SelectedOf<O, Apps>>>, NoInfer<D>> &
-    Inferring<D, NoInfer<ToolAction<SelectedOf<O, Apps>>>>,
+    NoInfer<RequiredAuthentication<SelectedOf<O, Apps>>> &
+    Matching<NoInfer<SelectedOf<O, Apps>>, NoInfer<D>> &
+    Inferring<D, NoInfer<SelectedOf<O, Apps>>>,
 ): Layer.Layer<
   never,
-  | BuildError<
-      Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
-      ToolAction<SelectedOf<O, Apps>>
-    >
+  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Cause.IllegalArgumentError
   | E,
-  | ServerBuildServices<
-      Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
-      ToolAction<SelectedOf<O, Apps>>
-    >
+  | ServerBuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
-      HttpToolRequestContext<RemoteRequest<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>>
+      HttpToolRequestContext<RemoteRequest<Member<Apps>, SelectedOf<O, Apps>>>
     >
   | ProviderOf<D>
   | Features<R>
@@ -596,7 +592,7 @@ export function layerHttp(
     ...options
   }: LayerHttpOptions<unknown, unknown>,
 ) {
-  const selected = toolsOf(select(toList(apps), actions), actions);
+  const selected = select(toList(apps), actions);
   const served = selected.flatMap((app) => app.actions);
   assertAuthentication(served, authentication);
 
@@ -678,28 +674,20 @@ const jsonLinesOnly = Layer.effect(
  */
 export function runStdio<
   const Apps extends Served,
-  const O extends Selection<ToolAction<ActionOf<Member<Apps>>>> = {},
+  const O extends Selection<ActionOf<Member<Apps>>> = {},
   E = never,
   R = never,
 >(
   implementations: Apps,
-  options: Options<E, R, ToolAction<ActionOf<Member<Apps>>>> &
-    O &
-    NoInfer<Known<O, Options<E, R, Action.Any>>>,
+  options: Options<E, R, ActionOf<Member<Apps>>> & O & NoInfer<Known<O, Options<E, R, Action.Any>>>,
 ): Effect.Effect<
   void,
-  | BuildError<
-      Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
-      ToolAction<SelectedOf<O, Apps>>
-    >
+  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Cause.IllegalArgumentError
   | E,
-  | BuildServices<
-      Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
-      ToolAction<SelectedOf<O, Apps>>
-    >
+  | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | Stdio.Stdio
-  | ToolRequestContext<ServedRequest<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>>
+  | ToolRequestContext<ServedRequest<Member<Apps>, SelectedOf<O, Apps>>>
   | Features<R>
 >;
 export function runStdio(
@@ -707,7 +695,7 @@ export function runStdio(
   { actions, features, ...options }: Options<unknown, unknown>,
 ) {
   const transport = server(
-    toolsOf(select(toList(apps), actions), actions),
+    select(toList(apps), actions),
     McpServer.layerStdio({ ...options, protocols }).pipe(Layer.provide(jsonLinesOnly)),
     features,
   );

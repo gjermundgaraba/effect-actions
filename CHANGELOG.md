@@ -4,12 +4,6 @@
 
 ### Breaking changes
 
-**`watch` is not an action name.** `Action.make` refuses it as it refuses `then`, since every
-client watches events through a method of that name, beside one per action:
-`Invalid action name: <name> (use [A-Za-z0-9_-]{1,128}, other than "then", which would make a client a thenable, awaited as a promise, and "watch", every client's method for events)`.
-
-- Migrate: rename an action called `watch`, and update code matching the old message.
-
 **`ActionMcp.McpCallError` has a reason `FrameTooLarge`**: an endpoint's event stream holding
 more than the 10 MiB a client keeps with no frame ending fails the call with it, where it failed
 with `NoReply`.
@@ -24,8 +18,8 @@ client's call takes `{ onProgress }` after its input. Progress is lossy: a calle
 loses the oldest values, never the answer; an `onProgress` that fails is logged, and the call
 answers. In process the values reach `onProgress` directly;
 over HTTP a request accepting `text/event-stream` is answered with an SSE stream of `progress`
-events, then a `final` one holding the answer, and `ActionHttp.client` asks for it when the call
-gives `onProgress`; over RPC such an action is a stream rpc of `Progress` elements, then a
+events, then a `final` one holding the answer, which `ActionHttp.client` always asks for, dropping
+the values where the call gives no `onProgress`; over RPC such an action is a stream rpc of `Progress` elements, then a
 `Final`; over MCP each value is `notifications/progress` on the call's `progressToken`, which
 `ActionMcp.client` sends when the call gives `onProgress`; a toolkit streams each as a preliminary
 result, `{ _tag: "Progress", value }`, its tool's success that or `success`; a command prints each value as
@@ -44,16 +38,21 @@ stops reading; over HTTP the route answers an SSE stream of `element` events, an
 ones where declared, a failure before the first event answering its status; over RPC such an
 action is a stream rpc of `Element` elements, and `Progress` ones; a command prints each element
 as a line of JSON on stdout, or `render`'s text of it. A tool answers one result, so
-`ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make` leave such an action out of
-implementations given whole, requiring nothing of it, and refuse one their `actions` list names,
-a type error, or at startup for a list of `Action.Any`; `ActionMcp.client` gives it no method. Guide: `docs/Action-streams.md#answer-a-stream`; example:
-kitchen-sink's `exportIssues`.
+`ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make` answer the elements collected into one
+array once the stream ends, a stream that never ends never answering, and `ActionMcp.client`'s
+method streams that array again, so every client's call of such an action returns a `Stream`.
+Guide: `docs/Action-streams.md#answer-a-stream`; example: kitchen-sink's `exportIssues`.
 
 ### Other changes
 
 - **`ActionMcp` no longer records a tool call's arguments on its span**, only the tool's name,
   as HTTP records no body: a credential or a `Schema.Redacted` value among them reached every
   trace exported. `ActionToolkit` still records them, as Effect's toolkit does.
+- **`ActionHttp.client` sends `Accept: application/json, text/event-stream` with every request**,
+  so the route of an action declaring `progress` answers it the event stream; every other route
+  answers as before.
+- **An `ActionMcp.McpCallError`'s `body` from an event stream holds the data of its frames**, one
+  per line, without their `data:` framing and without its `notifications/progress` frames.
 - kitchen-sink has `exportIssues`, an action answering a stream of issues with progress, under an
   export limit.
 

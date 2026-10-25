@@ -1,6 +1,6 @@
 import { Effect, Predicate } from "effect";
 import type { Refusal } from "./errors.js";
-import { memoized } from "./implementation.js";
+import { type ErasedAuthorize, memoized } from "./implementation.js";
 
 // Why: An index TypeScript cannot read until `T` is known, so an implementation written inside a
 // surface's arguments infers nothing from what that surface accepts. Rejected: `NoInfer<T>`, which
@@ -18,11 +18,10 @@ export type Authorizer<C, RA, EAX, RAX> =
   | ((contract: C) => Effect.Effect<void, Refusal, RA>)
   | Effect.Effect<(contract: C) => Effect.Effect<void, Refusal, RA>, EAX, RAX>;
 
-/** An authorization rule over contracts `C`, erased: it refuses, or lets the call run. */
-export type ErasedRule<C> = (contract: C) => Effect.Effect<void, unknown, unknown>;
-
 /** What `implement` takes as `authorize`, erased: the rule, or an Effect building it. */
-export type ErasedAuthorizer<C> = ErasedRule<C> | Effect.Effect<ErasedRule<C>, unknown, unknown>;
+export type ErasedAuthorizer<C> =
+  | ErasedAuthorize<C>
+  | Effect.Effect<ErasedAuthorize<C>, unknown, unknown>;
 
 /** How the messages name what an implementation holds. */
 export interface Holding {
@@ -32,7 +31,7 @@ export interface Holding {
 
 const assertRule =
   ({ module }: Holding) =>
-  <C>(rule: ErasedRule<C>): ErasedRule<C> => {
+  <C>(rule: ErasedAuthorize<C>): ErasedAuthorize<C> => {
     if (!Predicate.isFunction(rule)) {
       throw new Error(
         `Missing authorize: not a function (pass your rule, ${module}.allowAll, or an Effect returning one)`,

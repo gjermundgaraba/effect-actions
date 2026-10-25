@@ -65,6 +65,18 @@ export const elementsOf = (
 const notAStream = new Error("A handler answered otherwise than its action's success declares");
 
 /**
+ * `run` as a tool calls it, a tool answering one result: the elements of an action answering a
+ * stream collected, in order, into one array once the stream ends.
+ */
+export const answeringWhole = (
+  action: Action.Any,
+  run: ErasedHandler<unknown>,
+): ErasedHandler<unknown> =>
+  elementOf(action.success) === undefined
+    ? run
+    : (input, reporting) => Stream.runCollect(elementsOf(run(input, reporting)));
+
+/**
  * Authorization for protected contracts: it refuses, and fails with nothing else. It runs only for
  * protected actions, after authentication and before the handler.
  */
@@ -72,8 +84,10 @@ export type Authorize<A extends Action.Any, R = never> = (
   action: A,
 ) => Effect.Effect<void, Refusal, R>;
 
-/** An implementation's authorizer, erased. */
-export type ErasedAuthorize = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
+/** An authorization rule over contracts `C`, erased: it refuses, or lets the call run. */
+export type ErasedAuthorize<C = Action.Any> = (
+  contract: C,
+) => Effect.Effect<void, unknown, unknown>;
 
 /** Each action of an implementation with its handler, as `dispatch` makes it. */
 export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
@@ -428,22 +442,6 @@ export const select = (
     (app) => app.actions,
     (own, app) => Implementation.share(own, app),
   );
-
-// Why: a tool answers one result, so an action answering a stream is left out of the actions a
-// tool surface is given whole, where a listed one is refused by name.
-/** `selected`, as a tool surface serves them: given whole, less the actions answering a stream. */
-export const toolsOf = (
-  selected: ReadonlyArray<AnyImplementation>,
-  listed: ReadonlyArray<unknown> | undefined,
-): ReadonlyArray<AnyImplementation> =>
-  listed === undefined
-    ? select(
-        selected,
-        selected
-          .flatMap((app) => app.actions)
-          .filter((action) => elementOf(action.success) === undefined),
-      )
-    : selected;
 
 export const servedBy = (
   what: string,

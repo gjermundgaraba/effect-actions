@@ -340,23 +340,8 @@ const Tailed = Action.make("tailed", {
   success: Action.Stream(Schema.String),
 });
 
-const withoutStream = ActionToolkit.make(
-  Action.implement([Tailed, ServiceFree], {
-    tailed: () => Stream.empty,
-    service_free: () => Effect.succeed("free"),
-  }),
-);
+const tailing = ActionToolkit.make(Action.implement(Tailed, () => Stream.empty));
 
-expectTypeOf<keyof typeof withoutStream.toolkit.tools>().toEqualTypeOf<"service_free">();
-
-class TailBuild extends Context.Service<TailBuild, string>()("toolkit-types/TailBuild") {}
-
-const streamOnly = ActionToolkit.make([
-  Action.implement(
-    Tailed,
-    Effect.map(TailBuild, () => () => Stream.empty),
-  ),
-  Action.implement(ServiceFree, () => Effect.succeed("free")),
-]);
-
-expectTypeOf<Layer.Services<typeof streamOnly.layer>>().toBeNever();
+expectTypeOf<Tool.Success<(typeof tailing.toolkit.tools)["tailed"]>>().toEqualTypeOf<
+  ReadonlyArray<string>
+>();

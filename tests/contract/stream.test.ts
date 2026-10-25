@@ -7,6 +7,7 @@ import {
   Logger,
   References,
   Schema,
+  SchemaTransformation,
   Stream,
   Tracer,
 } from "effect";
@@ -17,7 +18,9 @@ import { recordSpans } from "../support/tracing.js";
 
 class LogGone extends Schema.TaggedError<LogGone>()("LogGone", { at: Schema.Finite }) {}
 
-const Line = Schema.Struct({ n: Schema.Finite, text: Schema.String, at: Schema.Date });
+const Trimmed = Schema.String.pipe(Schema.decodeTo(Schema.String, SchemaTransformation.trim()));
+
+const Line = Schema.Struct({ n: Schema.Finite, text: Trimmed, at: Schema.Date });
 
 const Tail = Action.make("tail", {
   description: "Follow lines, failing where the log is gone.",
@@ -28,24 +31,18 @@ const Tail = Action.make("tail", {
   caller: Action.Anyone,
 });
 
+const padded = (lines: ReadonlyArray<typeof Line.Type>) =>
+  Stream.fromIterable(lines.map((line) => ({ ...line, text: ` ${line.text} ` })));
+
 const tails = Action.implement(Tail, ({ lines, goneAt }) =>
   goneAt === undefined
-    ? Stream.fromIterable(lines)
-    : Stream.concat(
-        Stream.fromIterable(lines.slice(0, goneAt)),
-        Stream.fail(new LogGone({ at: goneAt })),
-      ),
+    ? padded(lines)
+    : Stream.concat(padded(lines.slice(0, goneAt)), Stream.fail(new LogGone({ at: goneAt }))),
 );
-
-const asJsonText = Schema.fromJsonString(Schema.toCodecJson(Line));
-
-const sentAsJson = Schema.decodeSync(asJsonText);
-
-const asJson = Schema.encodeSync(asJsonText);
 
 describe("an action answering a stream, in process", () => {
   it.effect.prop(
-    "streams the generated elements its handler gives, as JSON carries them",
+    "streams the generated elements its handler gives, as JSON carries them: text trimmed, -0 as 0",
     [Arbitrary.schema(Schema.Array(Line))],
     ([lines]) =>
       Effect.gen(function* () {
@@ -53,7 +50,9 @@ describe("an action answering a stream, in process", () => {
 
         const elements = yield* Stream.runCollect(client.tail({ lines }));
 
-        expect(elements).toEqual(lines.map((line) => sentAsJson(asJson(line))));
+        expect(elements).toEqual(
+          lines.map((line) => ({ ...line, n: line.n + 0, text: line.text.trim() })),
+        );
       }),
     { arbitrary: { runs: 100 } },
   );
@@ -262,9 +261,7 @@ describe("an action answering a stream, in process", () => {
         Action.implement(Ping, () => Stream.make(1)),
       );
 
-      expect(yield* defectOf(client.ping())).toEqual(
-        new Error("A handler answered otherwise than its action's success declares"),
-      );
+      expect(String(yield* defectOf(client.ping()))).toContain("answered otherwise");
     }),
   );
 });

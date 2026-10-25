@@ -1,7 +1,5 @@
-import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, ErrorReporter, Exit, Layer, Schema, Stream } from "effect";
-import { Sse } from "effect/encoding";
-import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
+import { assert, describe, expect, it } from "@effect/vitest";
+import { Cause, Effect, ErrorReporter, Exit, Layer, Schema } from "effect";
 import { OpenApi } from "effect/http-api";
 import * as Action from "../../src/contract/Action.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
@@ -11,6 +9,7 @@ import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { recorder } from "../support/reporter.js";
 import { serve } from "../support/serve.js";
+import { call, failureEvent, framesOf } from "../support/sse.js";
 
 class Halted extends Schema.TaggedError<Halted>()(
   "Halted",
@@ -82,31 +81,13 @@ const served = (reported: Array<string> = []) =>
     ),
   );
 
-const Json = Schema.fromJsonString(Schema.Json);
-
-const call = (name: string, body: Schema.Json, stream: boolean) =>
-  HttpClient.execute(
-    HttpClientRequest.post(`/api/${name}`).pipe(
-      HttpClientRequest.bodyJsonUnsafe(body),
-      HttpClientRequest.setHeaders(stream ? { accept: "text/event-stream" } : {}),
-    ),
-  );
-
-const framesOf = (response: HttpClientResponse.HttpClientResponse) =>
-  response.stream.pipe(
-    Stream.decodeText,
-    Stream.pipeThroughChannel(Sse.decode()),
-    Stream.map((frame) => ({
-      event: frame.event,
-      data: Schema.decodeUnknownSync(Json)(frame.data),
-    })),
-    Stream.runCollect,
-  );
+const failureOf = (frames: ReadonlyArray<{ readonly data: Schema.Json }>) =>
+  JSON.stringify(frames.at(-1)?.data);
 
 describe("HTTP progress", () => {
   it.effect("streams each value as a progress event, then the answer as a final one", () =>
     Effect.gen(function* () {
-      const response = yield* call("importAll", { count: 2 }, true);
+      const response = yield* call("importAll", { count: 2 });
 
       expect([response.status, response.headers["content-type"]]).toEqual([
         200,
@@ -122,7 +103,7 @@ describe("HTTP progress", () => {
 
   it.effect("answers JSON alone where the request does not accept an event stream", () =>
     Effect.gen(function* () {
-      const response = yield* call("importAll", { count: 2 }, false);
+      const response = yield* call("importAll", { count: 2 }, {});
 
       expect([response.status, yield* response.json]).toEqual([200, { imported: 2 }]);
     }).pipe(Effect.provide(served())),
@@ -134,7 +115,7 @@ describe("HTTP progress", () => {
       const reported: Array<string> = [];
 
       return Effect.gen(function* () {
-        const response = yield* call("importAll", { count: 2, halt: "before" }, true);
+        const response = yield* call("importAll", { count: 2, halt: "before" });
 
         expect([response.status, yield* response.json]).toEqual([409, { _tag: "Halted", at: 0 }]);
         expect(reported).toEqual([expect.stringContaining("Halted")]);
@@ -147,12 +128,15 @@ describe("HTTP progress", () => {
 
     return Effect.gen(function* () {
       const frames = yield* Effect.flatMap(
-        call("importAll", { count: 1, halt: "defect" }, true),
+        call("importAll", { count: 1, halt: "defect" }),
         framesOf,
       );
 
-      expect(frames.slice(0, 1)).toEqual([{ event: "progress", data: { done: 1, total: 1 } }]);
-      expect(JSON.stringify(frames.slice(1))).toContain("Internal server error");
+      expect(frames).toMatchObject([
+        { event: "progress", data: { done: 1, total: 1 } },
+        { event: failureEvent },
+      ]);
+      expect(failureOf(frames)).toContain("Internal server error");
       expect(JSON.stringify(frames)).not.toContain("secret detail");
       expect(reported).toEqual([expect.stringContaining("the import's secret detail")]);
     }).pipe(Effect.provide(served(reported)));
@@ -163,12 +147,15 @@ describe("HTTP progress", () => {
 
     return Effect.gen(function* () {
       const frames = yield* Effect.flatMap(
-        call("importAll", { count: 1, halt: "unencodable" }, true),
+        call("importAll", { count: 1, halt: "unencodable" }),
         framesOf,
       );
 
-      expect(frames.slice(0, 1)).toEqual([{ event: "progress", data: { done: 1, total: 1 } }]);
-      expect(JSON.stringify(frames.slice(1))).toContain("Internal server error");
+      expect(frames).toMatchObject([
+        { event: "progress", data: { done: 1, total: 1 } },
+        { event: failureEvent },
+      ]);
+      expect(failureOf(frames)).toContain("Internal server error");
       expect(JSON.stringify(frames)).not.toContain("Expected");
       expect(reported).toEqual([expect.stringContaining("Expected a finite number")]);
     }).pipe(Effect.provide(served(reported)));
@@ -179,14 +166,18 @@ describe("HTTP progress", () => {
 
     return Effect.gen(function* () {
       const frames = yield* Effect.flatMap(
-        call("importAll", { count: 1, halt: "after" }, true),
+        call("importAll", { count: 1, halt: "after" }),
         framesOf,
       );
 
-      expect(JSON.stringify(frames.slice(1))).toContain("Halted");
+      expect(frames).toMatchObject([
+        { event: "progress", data: { done: 1, total: 1 } },
+        { event: failureEvent },
+      ]);
+      expect(failureOf(frames)).toContain('"_tag":"Halted"');
       expect(reported).toEqual([expect.stringContaining("Halted")]);
 
-      yield* call("importAll", { count: 1, halt: "after" }, false);
+      yield* call("importAll", { count: 1, halt: "after" }, {});
 
       expect(reported).toEqual([
         expect.stringContaining("Halted"),
@@ -197,7 +188,7 @@ describe("HTTP progress", () => {
 
   it.effect("answers a refusal before the first event with its status", () =>
     Effect.gen(function* () {
-      const response = yield* call("guarded", {}, true);
+      const response = yield* call("guarded", {});
 
       expect([response.status, yield* response.json]).toEqual([
         401,
@@ -214,7 +205,7 @@ describe("HTTP progress", () => {
     const reported: Array<string> = [];
 
     return Effect.gen(function* () {
-      const response = yield* call("importAll", { count: 0, halt: "defect" }, true);
+      const response = yield* call("importAll", { count: 0, halt: "defect" });
 
       expect([response.status, yield* response.text]).toEqual([500, ""]);
       expect(reported).toEqual([expect.stringContaining("the import's secret detail")]);
@@ -223,8 +214,8 @@ describe("HTTP progress", () => {
 
   it.effect("streams an action answering nothing, which answers a 204 without the stream", () =>
     Effect.gen(function* () {
-      const frames = yield* Effect.flatMap(call("touch", {}, true), framesOf);
-      const plain = yield* call("touch", {}, false);
+      const frames = yield* Effect.flatMap(call("touch", {}), framesOf);
+      const plain = yield* call("touch", {}, {});
 
       expect([frames, plain.status]).toEqual([
         [
@@ -261,27 +252,35 @@ describe("ActionHttp.client's onProgress", () => {
     }).pipe(Effect.provide(served())),
   );
 
-  it.effect("asks for the event stream only where the call gives onProgress", () => {
-    const web = serve(ActionHttp.layer(Http, [imports, touches]));
-    const accepted: Array<string | null> = [];
+  it.effect(
+    "accepts the event stream with every call, dropping the values of one without onProgress",
+    () => {
+      const web = serve(ActionHttp.layer(Http, [imports, touches]));
+      const accepted: Array<string | null> = [];
 
-    return Effect.gen(function* () {
-      const client = yield* ActionHttp.client(Http, { baseUrl: "http://localhost" });
+      return Effect.gen(function* () {
+        const client = yield* ActionHttp.client(Http, { baseUrl: "http://localhost" });
 
-      yield* client.importAll({ count: 1 });
-      yield* client.importAll({ count: 1 }, { onProgress: () => Effect.void });
+        const answers = [
+          yield* client.importAll({ count: 1 }),
+          yield* client.importAll({ count: 1 }, { onProgress: () => Effect.void }),
+        ];
 
-      expect(accepted).toEqual([null, "text/event-stream"]);
-    }).pipe(
-      Effect.provide(
-        Testing.layer((request) => {
-          accepted.push(request.headers.get("accept"));
+        expect([answers, accepted]).toEqual([
+          [{ imported: 1 }, { imported: 1 }],
+          ["application/json, text/event-stream", "application/json, text/event-stream"],
+        ]);
+      }).pipe(
+        Effect.provide(
+          Testing.layer((request) => {
+            accepted.push(request.headers.get("accept"));
 
-          return web.handler(request);
-        }),
-      ),
-    );
-  });
+            return web.handler(request);
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("fails with a declared failure after its progress, as typed", () =>
     Effect.gen(function* () {
@@ -300,33 +299,17 @@ describe("ActionHttp.client's onProgress", () => {
     }).pipe(Effect.provide(served())),
   );
 
-  it.effect("answers alike without onProgress, and an action answering nothing with it", () =>
+  it.effect("answers an action answering nothing after its progress", () =>
     Effect.gen(function* () {
       const client = yield* ActionHttp.client(Http);
       const touched: Array<boolean> = [];
 
-      const answers = [
-        yield* client.importAll({ count: 2 }),
-        yield* client.touch(
-          {},
-          { onProgress: ({ touched: each }) => Effect.sync(() => touched.push(each)) },
-        ),
-      ];
-
-      expect([answers, touched]).toEqual([[{ imported: 2 }, undefined], [true]]);
-    }).pipe(Effect.provide(served())),
-  );
-
-  it.effect("answers where onProgress dies, logging it", () =>
-    Effect.gen(function* () {
-      const client = yield* ActionHttp.client(Http);
-
-      const answer = yield* client.importAll(
-        { count: 2 },
-        { onProgress: () => Effect.die(new Error("the page broke")) },
+      const answer = yield* client.touch(
+        {},
+        { onProgress: ({ touched: each }) => Effect.sync(() => touched.push(each)) },
       );
 
-      expect(answer).toEqual({ imported: 2 });
+      expect([answer, touched]).toEqual([undefined, [true]]);
     }).pipe(Effect.provide(served())),
   );
 
@@ -338,7 +321,8 @@ describe("ActionHttp.client's onProgress", () => {
         client.importAll({ count: 1, halt: "defect" }, { onProgress: () => Effect.void }),
       );
 
-      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      assert(Exit.isFailure(exit) && Cause.hasDies(exit.cause));
+      expect(Cause.pretty(exit.cause)).toContain("Internal server error");
     }).pipe(Effect.provide(served())),
   );
 });
