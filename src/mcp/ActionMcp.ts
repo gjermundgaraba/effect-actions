@@ -50,7 +50,7 @@ import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
 import {
   acquire,
-  actionsOnly,
+  toList,
   answeringWhole,
   type Protected,
   type ActionOf,
@@ -592,7 +592,7 @@ export function layerHttp(
     ...options
   }: LayerHttpOptions<unknown, unknown>,
 ) {
-  const selected = select(actionsOnly("An MCP server", apps), actions);
+  const selected = select(toList(apps), actions);
   const served = selected.flatMap((app) => app.actions);
   assertAuthentication(served, authentication);
 
@@ -695,7 +695,7 @@ export function runStdio(
   { actions, features, ...options }: Options<unknown, unknown>,
 ) {
   const transport = server(
-    select(actionsOnly("An MCP server", apps), actions),
+    select(toList(apps), actions),
     McpServer.layerStdio({ ...options, protocols }).pipe(Layer.provide(jsonLinesOnly)),
     features,
   );

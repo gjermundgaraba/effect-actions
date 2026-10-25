@@ -13,6 +13,9 @@ const reserved = [
 
 export const reservedNames: ReadonlyArray<string> = reserved.map(([name]) => name);
 
+/** The reserved names as a message lists them: `"then" or "watch"`. */
+export const reservedList = reservedNames.map((name) => `"${name}"`).join(" or ");
+
 export const assertName = (name: string): void => {
   if (!validName.test(name) || reservedNames.includes(name)) {
     throw new Error(
@@ -28,9 +31,9 @@ const eventNamePattern = "[a-z0-9_-]+(\\.[a-z0-9_-]+)*";
 const validEventName = new RegExp(`^${eventNamePattern}$`);
 
 export const assertEventName = (name: string): void => {
-  if (name.length > 128 || !validEventName.test(name) || name.startsWith("mcp.")) {
+  if (name.length > 128 || !validEventName.test(name)) {
     throw new Error(
-      `Invalid event name: ${name} (use lowercase dot-separated segments of [a-z0-9_-], at most 128 characters, not starting with "mcp.")`,
+      `Invalid event name: ${name} (use lowercase dot-separated segments of [a-z0-9_-], at most 128 characters)`,
     );
   }
 };

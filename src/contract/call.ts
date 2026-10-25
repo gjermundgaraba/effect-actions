@@ -1,5 +1,6 @@
 import { Effect, Predicate, Schema, Stream } from "effect";
 import type * as Action from "./Action.js";
+import type { Codec } from "./codec.js";
 import { InvalidInput } from "./errors.js";
 import type { ErasedValue } from "./implementation.js";
 import type { CallOptions, ProgressArgs } from "./progress.js";
@@ -53,27 +54,35 @@ export const inputOf = (
     : Effect.succeed(args[0]);
 
 /**
- * A watch's input as every client sends it: read as `inputOf` reads an action's, encoded to its
- * JSON, dropping undeclared fields, and decoded back, or `InvalidInput` reporting every issue.
+ * Values of `schema` as they cross a network: each encoded to its JSON, then decoded back from
+ * that JSON's text, which carries `-0` as `0`, every issue reported, answering the JSON sent and
+ * the value received.
+ */
+export const jsonRoundTrip = <S extends Codec>(schema: S) => {
+  const codec = Schema.toCodecJson(schema);
+  const encode = Schema.encodeUnknownEffect(codec, { errors: "all" });
+  const decode = Schema.decodeUnknownEffect(Schema.fromJsonString(codec), { errors: "all" });
+
+  return (
+    value: S["Type"],
+  ): Effect.Effect<{ readonly json: Schema.Json; readonly value: S["Type"] }, Schema.SchemaError> =>
+    Effect.flatMap(encode(value), (json) =>
+      Effect.map(decode(JSON.stringify(json)), (received) => ({ json, value: received })),
+    );
+};
+
+/**
+ * A watch's input as every client sends it: read as `inputOf` reads an action's, then through
+ * its JSON, dropping undeclared fields, or `InvalidInput` reporting every issue.
  */
 export const watchInput = (
   event: Pick<Action.Any, "input">,
   input: ErasedValue,
-): Effect.Effect<{ readonly json: Schema.Json; readonly value: ErasedValue }, InvalidInput> => {
-  const codec = Schema.toCodecJson(event.input);
-
-  return inputOf(event, input === undefined ? [] : [input]).pipe(
-    Effect.flatMap(Schema.encodeUnknownEffect(codec, { errors: "all" })),
-    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)),
-    Effect.flatMap((json) =>
-      Effect.map(Schema.decodeUnknownEffect(codec, { errors: "all" })(json), (value) => ({
-        json,
-        value,
-      })),
-    ),
+): Effect.Effect<{ readonly json: Schema.Json; readonly value: ErasedValue }, InvalidInput> =>
+  inputOf(event, input === undefined ? [] : [input]).pipe(
+    Effect.flatMap(jsonRoundTrip(event.input)),
     Effect.mapError(InvalidInput.fromSchemaError),
   );
-};
 
 export type ErasedMethod<R = never> = (
   ...input: ReadonlyArray<ErasedValue>

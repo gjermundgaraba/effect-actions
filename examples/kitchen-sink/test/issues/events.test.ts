@@ -4,14 +4,12 @@ import { RateLimiter } from "effect/persistence";
 import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
-import { CurrentMember } from "../../src/identity/Identity.js";
 import { members } from "../../src/identity/members.js";
 import { issueEvents } from "../../src/issues/events.js";
 import { issues } from "../../src/issues/handlers.js";
 import { IssueChanged } from "../../src/issues/Issues.js";
 import { IssueStore } from "../../src/issues/store.js";
-
-const as = (member: keyof typeof members) => Effect.provideService(CurrentMember, members[member]);
+import { as } from "../support/as.js";
 
 const inProcess = Layer.mergeAll(
   IssueStore.layerMemory,

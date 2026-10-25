@@ -1,13 +1,11 @@
 import { Context, Duration, Effect, Equal, Hash, RcMap, Scope } from "effect";
-import type * as Event from "./Event.js";
-
-type Input = Event.Any["input"]["Type"];
+import type { ErasedValue } from "./implementation.js";
 
 /** A poll subscription's key, held with the context of the poll that first acquired it. */
 class Lease implements Equal.Equal {
   constructor(
     readonly key: string,
-    readonly input: Input,
+    readonly input: ErasedValue,
     readonly context: Context.Context<never>,
   ) {}
 
@@ -25,7 +23,7 @@ class Lease implements Equal.Equal {
  * acquisition, released `ttl` after the last of them.
  */
 export interface Leases {
-  readonly hold: (key: string, input: Input) => Effect.Effect<void>;
+  readonly hold: (key: string, input: ErasedValue) => Effect.Effect<void>;
   /** Releases `key`'s lease now, rather than `ttl` after its last poll. */
   readonly release: (key: string) => Effect.Effect<void>;
 }
@@ -33,7 +31,7 @@ export interface Leases {
 const defaultLease = Duration.minutes(5);
 
 export const makeLeases = (
-  subscription: (input: Input) => Effect.Effect<void, never, unknown>,
+  subscription: (input: ErasedValue) => Effect.Effect<void, never, unknown>,
   ttl: Duration.Input = defaultLease,
 ): Effect.Effect<Leases, never, unknown> =>
   Effect.map(

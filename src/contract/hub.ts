@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Queue, type Scope, type Stream } from "effect";
+import { Context, Effect, Layer, Queue, type Scope, Stream } from "effect";
 import type * as Event from "./Event.js";
 import {
   type Bounds,
@@ -121,7 +121,7 @@ interface Attachments {
   readonly log: (
     event: Event.Any,
     bounds: Bounds | undefined,
-    emit: Stream.Stream<ErasedEmitted> | undefined,
+    emit: Emitting | undefined,
   ) => Effect.Effect<Log<ErasedEmitted>, never, Scope.Scope>;
 }
 
@@ -148,8 +148,10 @@ interface Waiter {
   readonly woken: Queue.Queue<void>;
 }
 
+type Emitting = Stream.Stream<ErasedEmitted & KeyOptions>;
+
 interface Held {
-  readonly emit: Stream.Stream<ErasedEmitted>;
+  readonly emit: Emitting;
 }
 
 interface Kept {
@@ -252,7 +254,7 @@ export const makeEvents = (
         kept.feeding = true;
 
         const fed = Effect.andThen(
-          kept.log.feed(next.emit),
+          kept.log.feed(Stream.map(next.emit, ({ key, ...value }) => ({ value, key }))),
           Effect.suspend(() => {
             kept.feeding = false;
 
@@ -263,7 +265,7 @@ export const makeEvents = (
         return Effect.asVoid(Effect.forkIn(fed, scope));
       });
 
-    const fedBy = (kept: Kept, emit: Stream.Stream<ErasedEmitted>) =>
+    const fedBy = (kept: Kept, emit: Emitting) =>
       Effect.tap(holding(kept.waiting, { emit }), () => feed(kept));
 
     const events = Events.of({

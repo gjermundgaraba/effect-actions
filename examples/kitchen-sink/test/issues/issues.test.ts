@@ -2,16 +2,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { Array, Effect, Layer, References } from "effect";
 import { RateLimiter } from "effect/persistence";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import { CurrentMember } from "../../src/identity/Identity.js";
 import { members } from "../../src/identity/members.js";
 import { issues } from "../../src/issues/handlers.js";
 import { IssueNotFound, Issues, RateLimited } from "../../src/issues/Issues.js";
 import { IssueStore } from "../../src/issues/store.js";
+import { as } from "../support/as.js";
 import { status } from "../../src/workspaces/handlers.js";
-
-// What the implementation does, with no transport: `Action.client` runs the same decoding,
-// `authorize` and handler a server runs. Each call names its caller, as a request would.
-const as = (member: keyof typeof members) => Effect.provideService(CurrentMember, members[member]);
 
 // The two startup services the issues' builder yields, and nothing else of the application.
 const services = Layer.mergeAll(

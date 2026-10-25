@@ -3,7 +3,7 @@ import type { Scope, Context } from "effect";
 import { Anyone, assertCaller } from "./caller.js";
 import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
 import { assertKnown, assertName, assertOnce, heldOnce } from "./names.js";
-import { type Call, inputOf, onProgressOf, watchInput } from "./call.js";
+import { type Call, inputOf, jsonRoundTrip, onProgressOf, watchInput } from "./call.js";
 import { type BuiltIn, InvalidInput } from "./errors.js";
 import { progressSink, type ReportingOf } from "./progress.js";
 import { type Answer, elementOf } from "./stream.js";
@@ -29,8 +29,6 @@ import {
   type HoldingEvents,
   type ServingEvents,
 } from "./feed.js";
-import type { Fed } from "./pages.js";
-import { OccurrenceOf, ReceivedOf } from "./occurrence.js";
 import { polledOn, queuedPush, readOn } from "./push.js";
 import { selectFrom } from "./serving.js";
 import { type WatchArgs, watching } from "./watch.js";
@@ -608,13 +606,11 @@ type ErasedMethod = (
   ...input: ReadonlyArray<ErasedValue>
 ) => Effect.Effect<ErasedValue, unknown, unknown> | Elements.Stream<ErasedValue, unknown, unknown>;
 
-const jsonRoundTrip = <S extends Codec>(schema: S) => {
-  const codec = Schema.fromJsonString(Schema.toCodecJson(schema));
-  const encode = Schema.encodeUnknownEffect(codec, { errors: "all" });
-  const decode = Schema.decodeUnknownEffect(codec, { errors: "all" });
+const received = <S extends Codec>(schema: S) => {
+  const sent = jsonRoundTrip(schema);
 
   return (value: S["Type"]): Effect.Effect<S["Type"], Schema.SchemaError> =>
-    Effect.flatMap(encode(value), (encoded) => decode(encoded));
+    Effect.map(sent(value), ({ value }) => value);
 };
 
 const mapFailuresInPlace = (
@@ -639,10 +635,10 @@ const mapFailuresInPlace = (
   );
 
 const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
-  const input = jsonRoundTrip(action.input);
+  const input = received(action.input);
   const element = elementOf(action.success);
-  const success = jsonRoundTrip(element ?? action.success);
-  const failure = jsonRoundTrip(Schema.Union(projectedErrors(action)));
+  const success = received(element ?? action.success);
+  const failure = received(Schema.Union(projectedErrors(action)));
 
   const declared = (cause: Cause.Cause<ErasedValue>) =>
     Effect.flatMap(mapFailuresInPlace(cause, failure), Effect.failCause);
@@ -772,12 +768,6 @@ const watcherOf =
       return Elements.fail(SubscriptionError.of(event.name, new NotServed()));
     }
 
-    const occurrence = jsonRoundTrip(OccurrenceOf(event));
-    const received = jsonRoundTrip(ReceivedOf(event));
-
-    const decoded = (fed: Fed): Effect.Effect<Fed> =>
-      Predicate.isTagged(fed, "Checked") ? Effect.succeed(fed) : Effect.orDie(received(fed));
-
     return Elements.unwrap(
       Effect.map(watchInput(event, input), ({ value }) => {
         // Why: In process, no principal tells subscribers apart, so each watch is a subscriber
@@ -791,14 +781,7 @@ const watcherOf =
             poll: polledOn(
               "In process",
               event.name,
-            )((cursor) =>
-              Effect.flatMap(feed.poll(value, cursor, { subscriber }), (page) =>
-                Effect.map(
-                  Effect.forEach(page.events, (sent) => Effect.orDie(occurrence(sent))),
-                  (events) => ({ ...page, events }),
-                ),
-              ),
-            ),
+            )((cursor) => feed.poll(value, cursor, { subscriber })),
             // Why: Read through the boundary every surface serves a stream by, so a source's
             // failure is reported once and read on from, in process as over a network. With no
             // network between, each position arrives in order, and one element waits, so a
@@ -811,7 +794,7 @@ const watcherOf =
                     (queue) => Elements.fromQueue(queue),
                   ),
                 ),
-              ).pipe(readOn("In process", event.name), Elements.mapEffect(decoded)),
+              ).pipe(readOn("In process", event.name)),
           },
           options,
         ).pipe(Elements.ensuring(feed.release?.(value, subscriber) ?? Effect.void));

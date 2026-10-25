@@ -75,7 +75,7 @@ import { servingOf } from "../contract/serving.js";
 import type { Codec } from "../contract/codec.js";
 import { answerFrom, elementsFrom, Progressed, type Reporting } from "../contract/progress.js";
 import { type Answer, elementOf, type StreamOf } from "../contract/stream.js";
-import { reservedNames } from "../contract/names.js";
+import { reservedList, reservedNames } from "../contract/names.js";
 
 type BindingError = Action.Errors[number];
 
@@ -257,7 +257,7 @@ export interface Options<E extends Action.Errors = Action.Errors> {
    * - The layer's `middleware` runs on actions alone: a native rpc runs the native middleware its group adds, inside its authentication.
    * - Native middleware added to the binding's `rpcs` after `make` runs outside the authentication, before the identity exists; added to the group given here, inside it.
    * - `layer` refuses a protected binding holding a native rpc without its authentication, such as one added with `rpcs.add` after `make`: add rpcs to the group given here.
-   * - A native rpc named after an action or `then`, a name the client keeps, is refused as the binding is made.
+   * - A native rpc named after an action or a name the client keeps, `then` or `watch`, is refused as the binding is made.
    */
   readonly rpcs?: RpcGroup.Any;
 }
@@ -324,7 +324,7 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   for (const tag of given.requests.keys()) {
     if (reservedNames.includes(tag) || actions.some((action) => action.name === tag)) {
       throw new Error(
-        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action or a name the client keeps, "then" or "watch" (rename it)`,
+        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action or a name the client keeps, ${reservedList} (rename it)`,
       );
     }
   }

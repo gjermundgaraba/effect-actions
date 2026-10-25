@@ -3,6 +3,7 @@ import { Effect, Fiber, Schema, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { settle } from "../support/events.js";
 
 const Key = Schema.Literals(["a", "b"]);
 
@@ -14,8 +15,6 @@ const Status = Event.make("status.changed", {
 });
 
 type Key = typeof Key.Type;
-
-const settle = TestClock.adjust("0 millis");
 
 const makeStatuses = () => {
   const values = new Map<Key | undefined, number>();
@@ -104,7 +103,7 @@ describe("Event current source", () => {
 
       const received = yield* client
         .watch(Status, {})
-        .pipe(Stream.take(2), Stream.runCollect, Effect.timeout("1 second"), Effect.forkChild);
+        .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
 
       yield* settle;
 

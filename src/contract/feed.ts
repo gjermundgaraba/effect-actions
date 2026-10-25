@@ -7,18 +7,19 @@ import {
   Layer,
   Option,
   Predicate,
-  Schema,
   Stream,
 } from "effect";
 import type * as Event from "./Event.js";
 import { attachmentsOf, type Checking, Events } from "./hub.js";
 import type { Entry, Log, Logged, Read } from "./log.js";
 import { Anyone } from "./caller.js";
+import { jsonRoundTrip } from "./call.js";
 import { canonicalInput } from "./canonical.js";
 import { Unauthenticated } from "./errors.js";
 import {
   builderLayer,
   type ErasedAuthorize,
+  type ErasedValue,
   type Memoized,
   memoized,
   notMadeHere,
@@ -27,12 +28,10 @@ import {
   selectHeld,
 } from "./implementation.js";
 import { type Leases, makeLeases } from "./lease.js";
-import { AnyOccurrence, Checked, Gap } from "./occurrence.js";
-import { type Fed, type Page, pagedFrom } from "./pages.js";
+import { AnyOccurrence, Gap } from "./occurrence.js";
+import { type Fed, fedOf, type Page, pagedFrom } from "./pages.js";
 import { assertKnown } from "./names.js";
 import { reported } from "./reported.js";
-
-type ErasedValue = Event.Any["input"]["Type"];
 
 type ErasedOccurrence = Event.Occurrence<Event.Any>;
 
@@ -45,9 +44,10 @@ export interface Feed {
   readonly event: Event.Any;
   /** Whether its source is a log fed by `emit`, which feeds it only while a build holds it. */
   readonly emits: boolean;
-  /** Whether its source has a `subscription` hook, held per subscriber. */
-  readonly subscribes: boolean;
-  /** Releases the `subscription` hook `subscriber`'s polls of `input` hold, where it has one. */
+  /**
+   * Releases the `subscription` hook `subscriber`'s polls of `input` hold: present exactly where
+   * its source has a hook, held per subscriber.
+   */
   readonly release?: ((input: ErasedValue, subscriber: string) => Effect.Effect<void>) | undefined;
   /** Authenticates and authorizes the subscriber, as `poll` and `stream` do first. */
   readonly admit: Effect.Effect<void, unknown, unknown>;
@@ -106,27 +106,29 @@ const logPageSize = 100;
 const pageLimit = (maxEvents: number) => Math.min(Math.max(Math.floor(maxEvents), 1), logPageSize);
 
 // Why: An id generated only when the source gives none: one the source gives, such as an
-// upstream's own, is what lets a subscriber deduplicate a replay. An occurrence whose data breaks
-// its schema is reported and a `Gap` sent in its place, so a subscriber reads on past it, as a
-// poll answers the rest of its page: a check's occurrences before a page's last share the page's
-// cursor, so failing the read would resume at the same page, failing again.
+// upstream's own, is what lets a subscriber deduplicate a replay. Its data is checked once, here,
+// through its JSON, so every surface sends, and a watch in process receives, what a client
+// decodes. An occurrence whose data breaks its schema is reported and a `Gap` sent in its place,
+// so a subscriber reads on past it, as a poll answers the rest of its page: a check's occurrences
+// before a page's last share the page's cursor, so failing the read would resume at the same
+// page, failing again.
 const occurrencesOf = (event: Event.Any) => {
-  const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(event.payload));
+  const sent = jsonRoundTrip(event.payload);
 
   return (
     emitted: Event.Emitted<Event.Any>,
     cursor: string | null,
   ): Effect.Effect<ErasedOccurrence | Gap> =>
-    Effect.matchCauseEffect(encode(emitted.data), {
+    Effect.matchCauseEffect(sent(emitted.data), {
       onFailure: (cause) =>
         Effect.as(Effect.annotateLogs(reported(cause), "event", event.name), Gap.make({ cursor })),
-      onSuccess: () =>
+      onSuccess: ({ value }) =>
         Effect.map(DateTime.now, (now) =>
           AnyOccurrence.make({
             eventId: emitted.eventId ?? globalThis.crypto.randomUUID(),
             name: event.name,
             timestamp: emitted.timestamp ?? now,
-            data: emitted.data,
+            data: value,
             cursor,
           }),
         ),
@@ -144,10 +146,11 @@ const keyOf = (source: ErasedSource, input: ErasedValue) =>
     ? Effect.succeed<string | undefined>(undefined)
     : lifted(source.key(input));
 
+// Why: Each source holds leases of its own, so a subscriber and an input are a lease's key.
 const leaseKey = (event: Event.Any, subscriber: string | undefined, input: ErasedValue) =>
   Effect.map(
     canonicalInput(event.input, input),
-    (encoded) => `${subscriber ?? ""}\u0000${event.name}\u0000${encoded}`,
+    (encoded) => `${subscriber ?? ""}\u0000${encoded}`,
   );
 
 const checkRun = (
@@ -159,10 +162,7 @@ const checkRun = (
 
   // Why: A stream yields a skipped occurrence's `Gap` in its place, at the cursor the page was
   // asked for, so a resume from it reads the rest of the page again; a poll's page, holding
-  // occurrences alone, says it as `truncated`. A truncated page's leading `Gap` is at that cursor
-  // too where the page holds occurrences: at the page's end, a position delivered once the gap is,
-  // it would skip them. An empty one's is at the page's end, the fresh position SEP-3415 has a
-  // gap carry, there being nothing to skip.
+  // occurrences alone, says it as `truncated`.
   const read = (input: ErasedValue, cursor: string | null) =>
     Effect.flatMap(source.check(input, cursor), (answered) =>
       Effect.map(
@@ -173,44 +173,50 @@ const checkRun = (
           // the honest answer, as the rest of the page has no position of its own to skip to.
           occurrenceOf(emitted, index === answered.events.length - 1 ? answered.cursor : cursor),
         ),
-        (items) => {
-          const events = items.filter(isOccurrence);
-
-          const page: Page = {
-            events,
-            cursor: answered.cursor,
-            truncated: answered.truncated === true || events.length < items.length,
-            hasMore: answered.hasMore === true,
-            nextPoll: Duration.min(
-              Duration.fromInputUnsafe(answered.nextPoll ?? defaultNextPoll),
-              longestNextPoll,
-            ),
-          };
-
-          const fed: ReadonlyArray<Fed> = [
-            ...(answered.truncated === true
-              ? [Gap.make({ cursor: answered.events.length === 0 ? answered.cursor : cursor })]
-              : []),
-            ...items,
-            Checked.make({ cursor: answered.cursor }),
-          ];
-
-          return { page, fed };
-        },
+        (items) => ({ answered, items }),
       ),
     );
 
+  const pageOf = ({
+    answered,
+    items,
+  }: {
+    readonly answered: Event.Page<Event.Any>;
+    readonly items: ReadonlyArray<ErasedOccurrence | Gap>;
+  }): Page => {
+    const events = items.filter(isOccurrence);
+
+    return {
+      events,
+      cursor: answered.cursor,
+      truncated: answered.truncated === true || events.length < items.length,
+      hasMore: answered.hasMore === true,
+      nextPoll: Duration.min(
+        Duration.fromInputUnsafe(answered.nextPoll ?? defaultNextPoll),
+        longestNextPoll,
+      ),
+    };
+  };
+
   return {
     emits: false,
-    subscribes: false,
-    poll: (input, cursor) => Effect.map(read(input, cursor), ({ page }) => page),
+    poll: (input, cursor) => Effect.map(read(input, cursor), pageOf),
     // Why: The waiter is held before the first read, so a notify while it runs reads again at
     // once rather than at the next poll.
     stream: (input, cursor) =>
       Stream.unwrap(
         Effect.map(Effect.flatMap(keyOf(source, input), wakes), (woken) =>
           pagedFrom(
-            (at) => Effect.map(read(input, at), ({ page, fed }) => ({ ...page, fed })),
+            (at) =>
+              Effect.map(read(input, at), (delivered) => ({
+                ...pageOf(delivered),
+                fed: fedOf({
+                  items: delivered.items,
+                  truncated: delivered.answered.truncated === true,
+                  from: at,
+                  to: delivered.answered.cursor,
+                }),
+              })),
             cursor,
             woken,
             polls,
@@ -255,7 +261,7 @@ const logRun = (
     input: ErasedValue,
     key: string | undefined,
     entry: Entry<Logged<Event.Emitted<Event.Any>> | undefined>,
-  ): Effect.Effect<Fed | undefined, never, unknown> => {
+  ): Effect.Effect<ErasedOccurrence | Gap | undefined, never, unknown> => {
     const { cursor, value: logged } = entry;
 
     // Why: An entry its storage could not read is a gap at its cursor, before any of the source's
@@ -281,7 +287,7 @@ const logRun = (
         : source.match === undefined
           ? Effect.succeed(true)
           : lifted(source.match(input, emitted.data)),
-      (matches): Effect.Effect<Fed | undefined, never, unknown> =>
+      (matches): Effect.Effect<ErasedOccurrence | Gap | undefined, never, unknown> =>
         matches
           ? Effect.flatMap(
               source.transform === undefined
@@ -304,6 +310,9 @@ const logRun = (
     );
   };
 
+  // Why: An entry the subscriber does not reach or match sends nothing: the read's closing
+  // `Checked` moves the position past it, so an `inOrder` push sends one per read, not one
+  // per skipped entry of a busy log.
   const received = (
     input: ErasedValue,
     key: string | undefined,
@@ -311,36 +320,36 @@ const logRun = (
   ) =>
     Effect.map(
       Effect.forEach(read.entries, (entry) => delivered(input, key, entry)),
-      // Why: An entry the subscriber does not reach or match sends nothing: the read's closing
-      // `Checked` moves the position past it, so an `inOrder` push sends one per read, not one
-      // per skipped entry of a busy log.
-      (fed): ReadonlyArray<Fed> => [
-        ...(read.truncated ? [Gap.make({ cursor: read.after })] : []),
-        ...fed.filter(Predicate.isNotUndefined),
-        Checked.make({ cursor: read.cursor }),
-      ],
+      (items) => items.filter(Predicate.isNotUndefined),
     );
 
   return {
     emits: source.log.emit !== undefined,
-    subscribes: false,
     poll: (input, cursor, { maxEvents = logPageSize }) =>
       Effect.flatMap(
         Effect.all([keyOf(source, input), log.read(cursor, pageLimit(maxEvents))]),
         ([key, read]) =>
-          Effect.map(received(input, key, read), (fed): Page => ({
-            events: fed.filter(isOccurrence),
-            cursor: read.cursor,
-            truncated: fed.some((each) => Predicate.isTagged(each, "Gap")),
-            hasMore: read.hasMore,
-            nextPoll: defaultNextPoll,
-          })),
+          Effect.map(received(input, key, read), (items): Page => {
+            const events = items.filter(isOccurrence);
+
+            return {
+              events,
+              cursor: read.cursor,
+              truncated: read.truncated || events.length < items.length,
+              hasMore: read.hasMore,
+              nextPoll: defaultNextPoll,
+            };
+          }),
       ),
     stream: (input, cursor) =>
       Stream.unwrap(
         Effect.map(keyOf(source, input), (key) =>
           log.follow(cursor, logPageSize).pipe(
-            Stream.mapEffect((read) => received(input, key, read)),
+            Stream.mapEffect((read) =>
+              Effect.map(received(input, key, read), (items) =>
+                fedOf({ items, truncated: read.truncated, from: read.after, to: read.cursor }),
+              ),
+            ),
             Stream.flattenIterable,
           ),
         ),
@@ -356,7 +365,6 @@ const hooked = (
   leases: Leases,
 ): Run => ({
   ...run,
-  subscribes: true,
   poll: (input, cursor, options) =>
     Effect.flatMap(leaseKey(event, options.subscriber, input), (key) =>
       Effect.andThen(leases.hold(key, input), () => run.poll(input, cursor, options)),
@@ -484,6 +492,8 @@ export class EventImplementation<
   EAX = never,
   RAX = never,
 > {
+  /** Tells an event implementation from an action implementation among what a surface is given. */
+  readonly _tag = "EventImplementation";
   /** Type-only: what its sources read per subscription, by event name. */
   declare readonly "~eventRequest": R;
   /** Type-only: what building its sources fails with. */
@@ -585,7 +595,6 @@ const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>)
   return {
     event,
     emits: run.emits,
-    subscribes: run.subscribes,
     release: run.release,
     admit: admitted,
     poll: (input, cursor, options) =>
@@ -605,7 +614,9 @@ const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>)
 
 /** The event implementations among what a surface is given. */
 export const eventsOf = (served: Served): ReadonlyArray<AnyEventImplementation> =>
-  Arr.ensure(served).filter((app) => "events" in app);
+  Arr.ensure(served).filter((app): app is AnyEventImplementation =>
+    Predicate.isTagged(app, "EventImplementation"),
+  );
 
 /**
  * The event implementations among `apps` holding an event type of `listed`, each holding those

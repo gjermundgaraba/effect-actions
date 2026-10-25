@@ -30,7 +30,7 @@ import {
   type SelectedOf,
   type Selection,
   type ServedActions,
-  actionsOnly,
+  toList,
   elementsOf,
 } from "../contract/implementation.js";
 import { elementOf } from "../contract/stream.js";
@@ -339,7 +339,7 @@ export function command<
   Effect.Services<Local<Owning<Member<Apps>, A>, A>>
 > {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: the command runs `action` by its one implementation among `implementations`, so its channels are what `Local` states for that implementation.
-  return inProcess(actionsOnly("A CLI", implementations), action, options) as never;
+  return inProcess(toList(implementations), action, options) as never;
 }
 
 /**
@@ -470,7 +470,7 @@ export function make<
   | Effect.Services<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>
   | Command.Services<OwnCommand<Own>>
 > {
-  const apps = actionsOnly("A CLI", implementations);
+  const apps = toList(implementations);
 
   const commands = checkedCommandsOf(
     options.commands,

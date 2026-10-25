@@ -6,6 +6,7 @@ import {
   Exit,
   Layer,
   Option,
+  Predicate,
   References,
   Schema,
   Stream,
@@ -343,26 +344,12 @@ export type OptionalUnless<O, Given> = {} extends O ? [options?: Given] : [optio
 
 /**
  * The action implementations among what a surface is given; `eventsOf` reads the event
- * implementations, those holding `events`.
+ * implementations, by their tag.
  */
 export const toList = (served: Served): ReadonlyArray<AnyImplementation> =>
-  Arr.ensure(served).filter((app): app is AnyImplementation => !("events" in app));
-
-/**
- * What a surface serving no events is given, refusing an event implementation, which its types
- * refuse too: a caller bypassing them would otherwise lose its events without a word.
- */
-export const actionsOnly = (surface: string, served: Served): ReadonlyArray<AnyImplementation> => {
-  const events = Arr.ensure(served).flatMap((app) => ("events" in app ? app.events : []));
-
-  if (events.length > 0) {
-    throw new Error(
-      `${surface} serves no events: ${events.map(({ name }) => name).join(", ")} (leave their implementations out of the ones it is given)`,
-    );
-  }
-
-  return toList(served);
-};
+  Arr.ensure(served).filter(
+    (app): app is AnyImplementation => !Predicate.isTagged(app, "EventImplementation"),
+  );
 
 /** The actions of the implementations a surface serves. */
 export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;

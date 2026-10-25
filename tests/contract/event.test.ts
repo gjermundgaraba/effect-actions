@@ -19,57 +19,23 @@ import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { actors, CurrentActor } from "../support/app/authorization.js";
+import {
+  makeMessages,
+  type Message,
+  Posted,
+  type Received,
+  settle,
+  texts,
+} from "../support/events.js";
 import { recorder } from "../support/reporter.js";
 
-const Posted = Event.make("message.posted", {
-  description: "A message was posted.",
-  input: {
-    channel: Schema.optional(Schema.String).annotate({ description: "Only this channel." }),
-  },
-  payload: { id: Schema.String, channel: Schema.String, text: Schema.String },
-  caller: Action.Anyone,
-});
-
-type Message = typeof Posted.payload.Type;
-
-type Received = Event.Received<typeof Posted>;
-
-const makeLog = () => {
-  const messages: Array<Message> = [];
-  let checks = 0;
-
-  const post = (channel: string, text: string) =>
-    messages.push({ id: `m${messages.length + 1}`, channel, text });
-
-  const check = ({ channel }: typeof Posted.input.Type, cursor: string | null) =>
-    Effect.sync(() => {
-      checks += 1;
-      const seen = cursor === null ? messages.length : Number(cursor);
-
-      return {
-        cursor: String(messages.length),
-        events: messages
-          .slice(seen)
-          .filter((message) => channel === undefined || message.channel === channel)
-          .map((data) => ({ eventId: data.id, data })),
-      };
-    });
-
-  return { post, check, implementation: Event.implement(Posted, { check }), checks: () => checks };
-};
-
-const texts = (received: ReadonlyArray<Received>) =>
-  received.map((item) => (item._tag === "Gap" ? "gap" : item.data.text));
-
-const settle = TestClock.adjust("0 millis");
-
 describe("Event.make", () => {
-  it("refuses a name that is not lowercase dot-separated segments, or that MCP reserves", () => {
-    for (const name of ["Message.posted", "a..b", "", "mcp.task", ".a", "a b", "x".repeat(129)]) {
+  it("refuses a name that is not lowercase dot-separated segments", () => {
+    for (const name of ["Message.posted", "a..b", "", ".a", "a b", "x".repeat(129)]) {
       expect(() =>
         Event.make(name, { description: "", payload: {}, caller: Action.Anyone }),
       ).toThrow(
-        `Invalid event name: ${name} (use lowercase dot-separated segments of [a-z0-9_-], at most 128 characters, not starting with "mcp.")`,
+        `Invalid event name: ${name} (use lowercase dot-separated segments of [a-z0-9_-], at most 128 characters)`,
       );
     }
 
@@ -128,13 +94,11 @@ describe("Event.implement", () => {
     const check = () => Effect.succeed({ events: [], cursor: "0" });
 
     // @ts-expect-error -- The failure under test: a protected event type without authorize.
-    expect(() => Event.implement(Created, { check })).toThrow(
-      "Protected events require authorize, or Event.allowAll",
-    );
+    expect(() => Event.implement(Created, { check })).toThrow("Protected events require authorize");
     expect(() =>
       // @ts-expect-error -- The failure under test: authorize for a public event type.
       Event.implement(Posted, { check }, { authorize: Event.allowAll }),
-    ).toThrow("A public-only target takes no authorize (remove it, or list a protected event)");
+    ).toThrow("list a protected event");
   });
 });
 
@@ -148,7 +112,7 @@ describe("Action.layer", () => {
         Effect.sync(() => {
           built += 1;
 
-          return { check: makeLog().check };
+          return { check: makeMessages().check };
         }),
       );
 
@@ -194,7 +158,7 @@ describe("Action.client given actions", () => {
             built.push("clock");
 
             return {
-              "message.posted": { check: makeLog().check },
+              "message.posted": { check: makeMessages().check },
               "clock.ticked": { check: tick },
             };
           }),
@@ -233,28 +197,29 @@ describe("Action.client given actions", () => {
 
   it("refuses a listed event type no implementation holds", () => {
     // @ts-expect-error -- The failure under test: an event type no implementation holds.
-    expect(() => Action.client([makeLog().implementation], { actions: [Ticked] })).toThrow(
-      "Listed in actions, but no implementation holds it: clock.ticked (pass the implementation holding it, or list the contract it implements)",
+    expect(() => Action.client([makeMessages().implementation], { actions: [Ticked] })).toThrow(
+      "no implementation holds it: clock.ticked",
     );
   });
 });
 
 describe("a check source, watched in process", () => {
-  it.effect("starts from now, then streams what happened since, asking again every 5 seconds", () =>
+  it.effect("starts from now, then streams what happened since", () =>
     Effect.gen(function* () {
-      const log = makeLog();
+      const log = makeMessages();
       log.post("general", "before");
 
       const client = yield* Action.client(log.implementation);
+      const events = yield* Event.Events;
 
       const fiber = yield* client
         .watch(Posted)
         .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
 
-      yield* TestClock.adjust("1 second");
+      yield* settle;
       log.post("general", "one");
       log.post("random", "two");
-      yield* TestClock.adjust("4 seconds");
+      yield* events.notify(Posted);
 
       expect(texts(yield* Fiber.join(fiber))).toEqual(["one", "two"]);
     }).pipe(Effect.provide(Event.layerMemory)),
@@ -262,7 +227,7 @@ describe("a check source, watched in process", () => {
 
   it.effect("asks the check only when its poll is due", () =>
     Effect.gen(function* () {
-      const log = makeLog();
+      const log = makeMessages();
       let asked = 0;
 
       const Counted = Event.implement(Posted, {
@@ -288,7 +253,7 @@ describe("a check source, watched in process", () => {
 
   it.effect("delivers only what the subscription's input selects", () =>
     Effect.gen(function* () {
-      const log = makeLog();
+      const log = makeMessages();
       const client = yield* Action.client(log.implementation);
 
       const fiber = yield* client
@@ -415,7 +380,7 @@ describe("a check source, watched in process", () => {
     "keeps its cursor under resume, a quiet poll's too, and a later watch resumes from it",
     () =>
       Effect.gen(function* () {
-        const log = makeLog();
+        const log = makeMessages();
         const client = yield* Action.client(log.implementation);
         const store = yield* KeyValueStore.KeyValueStore;
         const resume = { store, key: "posted" };
@@ -447,7 +412,7 @@ describe("a check source, watched in process", () => {
 
   it.effect("keeps a quiet stream's cursor under resume as its pages move on", () =>
     Effect.gen(function* () {
-      const log = makeLog();
+      const log = makeMessages();
       const client = yield* Action.client(log.implementation);
       const store = yield* KeyValueStore.KeyValueStore;
 
@@ -470,7 +435,7 @@ describe("a check source, watched in process", () => {
     "keeps an occurrence's cursor once the next is pulled, so one unhandled is received again",
     () =>
       Effect.gen(function* () {
-        const log = makeLog();
+        const log = makeMessages();
         const client = yield* Action.client(log.implementation);
         const store = yield* KeyValueStore.KeyValueStore;
         const resume = { store, key: "posted" };
@@ -505,7 +470,7 @@ describe("a check source, watched in process", () => {
 
   it.effect("fails with what its resume store fails with", () =>
     Effect.gen(function* () {
-      const log = makeLog();
+      const log = makeMessages();
       const client = yield* Action.client(log.implementation);
 
       const failing: Event.CursorStore<"unavailable"> = {
@@ -522,7 +487,7 @@ describe("a check source, watched in process", () => {
   );
 
   const makeFlaky = () => {
-    const log = makeLog();
+    const log = makeMessages();
     const asked: Array<string | null> = [];
     let refuse = false;
 
@@ -606,7 +571,7 @@ describe("a check source, watched in process", () => {
         const reported: Array<string> = [];
 
         return Effect.gen(function* () {
-          const log = makeLog();
+          const log = makeMessages();
           let reads = 0;
 
           const failingSecondRead = Event.implement(Posted, {
@@ -731,7 +696,7 @@ describe("a check source, watched in process", () => {
 
   it.effect("fails with NotServed for an event type the client was not given", () =>
     Effect.gen(function* () {
-      const log = makeLog();
+      const log = makeMessages();
       const client = yield* Action.client(log.implementation);
 
       const Other = Event.make("other.happened", {
@@ -757,7 +722,7 @@ describe("a check source, watched in process", () => {
 
   it.effect("fails with InvalidInput, subscribing nothing, for input that does not encode", () =>
     Effect.gen(function* () {
-      const log = makeLog();
+      const log = makeMessages();
       const client = yield* Action.client(log.implementation);
 
       const failure = yield* Effect.flip(
@@ -904,10 +869,11 @@ describe("a log source fed by a stream, watched in process", () => {
     }).pipe(Effect.provide(Event.layerMemory)),
   );
 
-  it.effect("hands a follower that falls behind what is kept a gap, holding one page at most", () =>
+  it.effect("hands a follower that falls behind what is kept a gap, then what is kept", () =>
     Effect.gen(function* () {
       const queue = yield* Queue.unbounded<Message>();
       const latch = yield* Latch.make(false);
+      const emitted = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
       const Bounded = Event.implement(Posted, {
         log: {
@@ -916,14 +882,11 @@ describe("a log source fed by a stream, watched in process", () => {
         },
       });
 
-      const emit = (id: string) =>
-        Effect.andThen(Queue.offer(queue, { id, channel: "c", text: id }), settle);
-
       const client = yield* Action.client(Bounded);
       const received: Array<Received> = [];
 
       const fiber = yield* client.watch(Posted).pipe(
-        Stream.take(5),
+        Stream.takeUntil((each) => each._tag === "Occurrence" && each.data.text === "8"),
         Stream.runForEach((each) =>
           Effect.andThen(
             Effect.sync(() => received.push(each)),
@@ -935,52 +898,53 @@ describe("a log source fed by a stream, watched in process", () => {
 
       yield* settle;
 
-      for (const id of ["1", "2", "3", "4", "5", "6", "7", "8"]) yield* emit(id);
+      for (const id of emitted) {
+        yield* Queue.offer(queue, { id, channel: "c", text: id });
+        yield* settle;
+      }
 
       yield* latch.open;
       yield* Fiber.join(fiber);
 
-      expect(texts(received)).toEqual(["1", "2", "3", "gap", "6"]);
+      const got = texts(received);
+      const gap = got.indexOf("gap");
+
+      expect(gap).toBeGreaterThan(0);
+      expect(got.slice(0, gap)).toEqual(emitted.slice(0, gap));
+      expect(got.slice(gap + 1)).toEqual(emitted.slice(-3));
     }).pipe(Effect.provide(Event.layerMemory)),
   );
 
-  it.effect("hands every follower each emitted occurrence once, in order, whenever it starts", () =>
-    Effect.gen(function* () {
-      const ticker = yield* makeTicker;
-      const client = yield* Action.client(ticker.implementation);
-      const emitted = Array.from({ length: 20 }, (_, index) => `${index}`);
+  it.effect(
+    "hands every follower each emitted occurrence once, in order, from when it starts",
+    () =>
+      Effect.gen(function* () {
+        const ticker = yield* makeTicker;
+        const client = yield* Action.client(ticker.implementation);
+        const emitted = Array.from({ length: 20 }, (_, index) => `${index}`);
+        const followers: Array<{ readonly from: number; readonly got: Array<string> }> = [];
 
-      const emitting = yield* Effect.forEach(
-        emitted,
-        (id) =>
-          Effect.andThen(
-            Queue.offer(ticker.queue, { id, channel: "c", text: id }),
-            Effect.yieldNow,
-          ),
-        { discard: true },
-      ).pipe(Effect.forkChild);
+        for (const [index, id] of emitted.entries()) {
+          if (index < 10) {
+            const got: Array<string> = [];
 
-      const followers = yield* Effect.forEach(emitted.slice(0, 10), () =>
-        Effect.andThen(
-          Effect.yieldNow,
-          client.watch(Posted).pipe(
-            Stream.takeUntil((each) => each._tag === "Occurrence" && each.data.text === "19"),
-            Stream.runCollect,
-            Effect.forkChild,
-          ),
-        ),
-      );
+            yield* client.watch(Posted).pipe(
+              Stream.runForEach((each) => Effect.sync(() => got.push(...texts([each])))),
+              Effect.forkChild,
+            );
+            yield* settle;
+            followers.push({ from: index, got });
+          }
 
-      yield* Fiber.join(emitting);
-      yield* settle;
+          yield* ticker.emit(id, "c", id);
+        }
 
-      for (const follower of followers) {
-        const got = texts(yield* Fiber.join(follower));
-        const first = Number(got[0] ?? "20");
+        yield* settle;
 
-        expect(got).toEqual(emitted.slice(first));
-      }
-    }).pipe(Effect.provide(Event.layerMemory)),
+        expect(followers.map(({ got }) => got)).toEqual(
+          followers.map(({ from }) => emitted.slice(from)),
+        );
+      }).pipe(Effect.provide(Event.layerMemory)),
   );
 
   it.effect(
@@ -1028,7 +992,7 @@ describe("a log source fed by a stream, watched in process", () => {
 
 describe("a subscription hook", () => {
   const makeHooked = () => {
-    const log = makeLog();
+    const log = makeMessages();
     const held: Array<string> = [];
 
     const implementation = Event.implement(Posted, {

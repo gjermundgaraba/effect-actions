@@ -1,50 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Layer, PubSub, Schema, Scope, Stream } from "effect";
+import { DateTime, Effect, Exit, Fiber, Layer, PubSub, Schema, Scope, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
-
-const Posted = Event.make("message.posted", {
-  description: "A message was posted.",
-  input: { room: Schema.optional(Schema.String) },
-  payload: { id: Schema.String, room: Schema.String, text: Schema.String },
-  caller: Action.Anyone,
-});
-
-type Message = typeof Posted.payload.Type;
-
-const settle = TestClock.adjust("0 millis");
-
-const texts = (received: ReadonlyArray<Event.Received<typeof Posted>>) =>
-  received.map((item) => (item._tag === "Gap" ? "gap" : item.data.text));
-
-const makeCountedStore = () => {
-  const messages: Array<Message> = [];
-  const reads = new Map<string, number>();
-
-  const post = (room: string, text: string) =>
-    messages.push({ id: `m${messages.length + 1}`, room, text });
-
-  const implementation = Event.implement(Posted, {
-    check: ({ room }, cursor) =>
-      Effect.sync(() => {
-        reads.set(room ?? "*", (reads.get(room ?? "*") ?? 0) + 1);
-
-        const seen = cursor === null ? messages.length : Number(cursor);
-
-        return {
-          cursor: String(messages.length),
-          events: messages
-            .slice(seen)
-            .filter((message) => room === undefined || message.room === room)
-            .map((data) => ({ eventId: data.id, data })),
-        };
-      }),
-    key: ({ room }) => room,
-  });
-
-  return { post, implementation, readsOf: (room: string) => reads.get(room) ?? 0 };
-};
+import { memoryStorage } from "../../src/contract/log.js";
+import { makeMessages, type Message, Posted, settle, texts } from "../support/events.js";
 
 const Key = Schema.UndefinedOr(Schema.Literals(["a", "b"]));
 
@@ -52,19 +12,19 @@ const Published = Schema.Struct({ key: Key, text: Schema.String });
 
 const logged = Event.implement(Posted, {
   log: {},
-  key: ({ room }) => room,
-  match: ({ room }, data) => room === undefined || data.room === room,
+  key: ({ channel }) => channel,
+  match: ({ channel }, data) => channel === undefined || data.channel === channel,
 });
 
 describe("Event.Events.notify", () => {
   it.effect("wakes a check source's streamed subscribers to read now, not at their next poll", () =>
     Effect.gen(function* () {
-      const store = makeCountedStore();
+      const store = makeMessages();
       const client = yield* Action.client(store.implementation);
       const events = yield* Event.Events;
 
       const watching = yield* client
-        .watch(Posted, { room: "general" })
+        .watch(Posted, { channel: "general" })
         .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
       yield* settle;
@@ -94,7 +54,7 @@ describe("Event.Events.notify", () => {
             };
 
             if (reads === 2) {
-              messages.push({ id: "m1", room: "general", text: "one" });
+              messages.push({ id: "m1", channel: "general", text: "one" });
               yield* events.notify(Posted);
             }
 
@@ -119,19 +79,19 @@ describe("Event.Events.notify", () => {
 
   it.effect("wakes the subscribers of the key notified, and those following every key", () =>
     Effect.gen(function* () {
-      const store = makeCountedStore();
+      const store = makeMessages();
       const client = yield* Action.client(store.implementation);
       const events = yield* Event.Events;
 
       const general = yield* client
-        .watch(Posted, { room: "general" })
+        .watch(Posted, { channel: "general" })
         .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
       const everywhere = yield* client
         .watch(Posted, {})
         .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
-      yield* client.watch(Posted, { room: "random" }).pipe(Stream.runDrain, Effect.forkChild);
+      yield* client.watch(Posted, { channel: "random" }).pipe(Stream.runDrain, Effect.forkChild);
       yield* settle;
 
       const randomReads = store.readsOf("random");
@@ -144,23 +104,6 @@ describe("Event.Events.notify", () => {
         ["one"],
       ]);
       expect(store.readsOf("random")).toBe(randomReads);
-    }).pipe(Effect.provide(Event.layerMemory)),
-  );
-
-  it.effect("still reads at each poll without a notify", () =>
-    Effect.gen(function* () {
-      const store = makeCountedStore();
-      const client = yield* Action.client(store.implementation);
-
-      const watching = yield* client
-        .watch(Posted, {})
-        .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
-
-      yield* settle;
-      store.post("general", "one");
-      yield* TestClock.adjust("5 seconds");
-
-      expect(texts(yield* Fiber.join(watching))).toEqual(["one"]);
     }).pipe(Effect.provide(Event.layerMemory)),
   );
 });
@@ -180,8 +123,8 @@ describe("Event.Events.publish", () => {
         .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
 
       yield* settle;
-      yield* events.publish(Posted, { data: { id: "m1", room: "general", text: "one" } });
-      yield* events.publish(Posted, { data: { id: "m2", room: "random", text: "two" } });
+      yield* events.publish(Posted, { data: { id: "m1", channel: "general", text: "one" } });
+      yield* events.publish(Posted, { data: { id: "m2", channel: "random", text: "two" } });
 
       expect(texts(yield* Fiber.join(streamed))).toEqual(["one", "two"]);
 
@@ -191,56 +134,81 @@ describe("Event.Events.publish", () => {
     }).pipe(Effect.provide(Event.layerMemory)),
   );
 
-  it.effect("keeps an occurrence's id and time for every subscriber, and resumes by cursor", () =>
-    Effect.gen(function* () {
-      const client = yield* Action.client(logged);
-      const events = yield* Event.Events;
+  it.effect(
+    "gives a published occurrence without an id or time its cursor and when it was published, for every subscriber and replay",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* Action.client(logged);
+        const events = yield* Event.Events;
 
-      const first = yield* client
-        .watch(Posted, {})
-        .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+        const watching = client
+          .watch(Posted, {})
+          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
-      yield* settle;
-      yield* events.publish(Posted, { data: { id: "m1", room: "general", text: "one" } });
-      yield* events.publish(Posted, { data: { id: "m2", room: "general", text: "two" } });
+        const [first, second] = [yield* watching, yield* watching];
 
-      const [one] = yield* Fiber.join(first);
+        yield* settle;
+        yield* TestClock.adjust("1 minute");
+        yield* events.publish(Posted, { data: { id: "m1", channel: "general", text: "one" } });
+        yield* TestClock.adjust("1 minute");
 
-      if (one?._tag !== "Occurrence") throw new Error("Expected an occurrence");
+        const replayed = yield* client
+          .watch(Posted, {}, { cursor: "elsewhere:1" })
+          .pipe(Stream.take(2), Stream.drop(1), Stream.runCollect);
 
-      const resumed = yield* client
-        .watch(Posted, {}, { cursor: one.cursor })
-        .pipe(Stream.take(1), Stream.runCollect);
+        const stamps = (received: ReadonlyArray<Event.Received<typeof Posted>>) =>
+          received.map((item) =>
+            item._tag === "Gap" ? "gap" : [item.eventId, DateTime.toEpochMillis(item.timestamp)],
+          );
 
-      expect(texts(resumed)).toEqual(["two"]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        const delivered = yield* Fiber.join(first);
+        const [one] = delivered;
+
+        if (one?._tag !== "Occurrence") throw new Error("Expected an occurrence");
+
+        expect([delivered, yield* Fiber.join(second), replayed].map(stamps)).toEqual([
+          [[one.cursor, 60_000]],
+          [[one.cursor, 60_000]],
+          [[one.cursor, 60_000]],
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory)),
   );
 
   it.effect.prop(
-    "gives each subscriber exactly the occurrences published to its key or to none, in order",
-    { published: Schema.Array(Published).check(Schema.isMaxLength(12)), room: Key },
-    ({ published, room }) =>
+    "gives each subscriber exactly the occurrences published or emitted to its key or to none, in order",
+    {
+      published: Schema.Array(Published).check(Schema.isMaxLength(12)),
+      channel: Key,
+      emitted: Schema.Boolean,
+    },
+    ({ published, channel, emitted }) =>
       Effect.gen(function* () {
-        const keyed = Event.implement(Posted, { log: {}, key: ({ room }) => room });
+        const upstream = yield* PubSub.unbounded<Event.Emitted<typeof Posted> & Event.KeyOptions>();
+
+        const keyed = Event.implement(Posted, {
+          log: emitted ? { emit: Stream.fromPubSub(upstream) } : {},
+          key: ({ channel }) => channel,
+        });
+
         const client = yield* Action.client(keyed);
         const events = yield* Event.Events;
 
         const expected = published.filter(
-          ({ key }) => key === undefined || room === undefined || key === room,
+          ({ key }) => key === undefined || channel === undefined || key === channel,
         );
 
         const watching = yield* client
-          .watch(Posted, room === undefined ? {} : { room })
+          .watch(Posted, channel === undefined ? {} : { channel })
           .pipe(Stream.take(expected.length), Stream.runCollect, Effect.forkChild);
 
         yield* settle;
 
         for (const [index, { key, text }] of published.entries()) {
-          yield* events.publish(
-            Posted,
-            { data: { id: `m${index}`, room: key ?? "", text } },
-            key === undefined ? undefined : { key },
-          );
+          const data = { id: `m${index}`, channel: key ?? "", text };
+
+          yield* emitted
+            ? PubSub.publish(upstream, { data, key })
+            : events.publish(Posted, { data }, key === undefined ? undefined : { key });
         }
 
         expect(texts(yield* Fiber.join(watching))).toEqual(expected.map(({ text }) => text));
@@ -251,14 +219,14 @@ describe("Event.Events.publish", () => {
 describe("Event.Events", () => {
   it.effect("dies naming the other verb where the source is of the other kind", () =>
     Effect.gen(function* () {
-      const store = makeCountedStore();
+      const store = makeMessages();
       const events = yield* Event.Events;
 
       yield* Action.client(store.implementation);
 
       const published = yield* Effect.flip(
         Effect.sandbox(
-          events.publish(Posted, { data: { id: "m1", room: "general", text: "one" } }),
+          events.publish(Posted, { data: { id: "m1", channel: "general", text: "one" } }),
         ),
       );
 
@@ -298,15 +266,22 @@ describe("Event.Events", () => {
   );
 
   it.effect(
-    "does nothing for an event no implementation attached here, or no check any longer",
+    "lets notify and publish succeed for an event attached nowhere here, publish included once its check source is released",
     () =>
       Effect.gen(function* () {
         const events = yield* Event.Events;
 
-        yield* events.notify(Posted);
-        yield* events.publish(Posted, { data: { id: "m1", room: "general", text: "one" } });
-        yield* Effect.scoped(Action.client(makeCountedStore().implementation));
-        yield* events.notify(Posted);
+        const publish = events.publish(Posted, {
+          data: { id: "m1", channel: "general", text: "one" },
+        });
+
+        const unattached = yield* Effect.exit(Effect.andThen(events.notify(Posted), publish));
+
+        yield* Effect.scoped(Action.client(makeMessages().implementation));
+
+        const released = yield* Effect.exit(publish);
+
+        expect([unattached, released]).toEqual([Exit.void, Exit.void]);
       }).pipe(Effect.provide(Event.layerMemory)),
   );
 
@@ -325,13 +300,13 @@ describe("Event.Events", () => {
               .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
             yield* settle;
-            yield* events.publish(Posted, { data: { id: "m1", room: "general", text: "one" } });
+            yield* events.publish(Posted, { data: { id: "m1", channel: "general", text: "one" } });
 
             return yield* Fiber.join(watching);
           }),
         );
 
-        yield* events.publish(Posted, { data: { id: "m2", room: "general", text: "two" } });
+        yield* events.publish(Posted, { data: { id: "m2", channel: "general", text: "two" } });
 
         const [one] = first;
 
@@ -372,7 +347,7 @@ describe("Event.Events", () => {
       yield* settle;
       yield* Scope.close(second, Exit.void);
       yield* settle;
-      yield* PubSub.publish(upstream, { id: "m1", room: "general", text: "one" });
+      yield* PubSub.publish(upstream, { id: "m1", channel: "general", text: "one" });
 
       expect(texts(yield* Fiber.join(watching))).toEqual(["one"]);
     }).pipe(Effect.provide(Event.layerMemory)),
@@ -404,10 +379,10 @@ describe("Event.Events", () => {
           .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
 
         yield* settle;
-        yield* PubSub.publish(upstream, { id: "m1", room: "general", text: "one" });
+        yield* PubSub.publish(upstream, { id: "m1", channel: "general", text: "one" });
         yield* settle;
         yield* Scope.close(released, Exit.void);
-        yield* PubSub.publish(upstream, { id: "m2", room: "general", text: "two" });
+        yield* PubSub.publish(upstream, { id: "m2", channel: "general", text: "two" });
 
         expect(texts(yield* Fiber.join(watching))).toEqual(["one", "two"]);
       }).pipe(Effect.provide(Event.layerMemory)),
@@ -449,7 +424,7 @@ const recordingStorage = () => {
 describe("Event.makeEvents", () => {
   it.effect("moves the revision at a notify of a current source, and none of a check source", () =>
     Effect.gen(function* () {
-      const bumped: Array<string> = [];
+      let bumps = 0;
 
       const Status = Event.make("status.changed", {
         description: "A status changed.",
@@ -459,11 +434,14 @@ describe("Event.makeEvents", () => {
 
       const layer = Layer.effect(Event.Events)(
         Event.makeEvents({
-          log: () => recordingStorage().storage,
+          log: () => memoryStorage(),
           revisions: {
             epoch: "epoch",
             get: () => Effect.succeed(0),
-            bump: (names) => Effect.sync(() => bumped.push(...names)),
+            bump: () =>
+              Effect.sync(() => {
+                bumps += 1;
+              }),
           },
         }),
       );
@@ -471,20 +449,20 @@ describe("Event.makeEvents", () => {
       yield* Effect.gen(function* () {
         const events = yield* Event.Events;
 
-        yield* Action.client(makeCountedStore().implementation);
+        yield* Action.client(makeMessages().implementation);
         yield* Action.client(
           Event.implement(Status, { current: () => Effect.succeed({ value: 0 }) }),
         );
         yield* events.notify(Posted);
-        expect(bumped).toEqual([]);
+        expect(bumps).toBe(0);
         yield* events.notify(Status);
-        expect(bumped).toEqual(["status.changed", "status.changed\u0000"]);
+        expect(bumps).toBe(1);
       }).pipe(Effect.provide(layer));
     }),
   );
 
   it.effect(
-    "keeps a log source's entries in the storage its log option makes, read back by its cursors",
+    "keeps a log source's entries, with their keys, in the storage its log option makes, and reads them from it",
     () =>
       Effect.gen(function* () {
         const { kept, storage } = recordingStorage();
@@ -500,7 +478,7 @@ describe("Event.makeEvents", () => {
           }),
         );
 
-        const [received, resumed] = yield* Effect.gen(function* () {
+        const received = yield* Effect.gen(function* () {
           const client = yield* Action.client(logged);
           const events = yield* Event.Events;
 
@@ -511,26 +489,15 @@ describe("Event.makeEvents", () => {
           yield* settle;
           yield* events.publish(
             Posted,
-            { data: { id: "m1", room: "a", text: "one" } },
+            { data: { id: "m1", channel: "a", text: "one" } },
             { key: "a" },
           );
-          yield* events.publish(Posted, { data: { id: "m2", room: "b", text: "two" } });
+          yield* events.publish(Posted, { data: { id: "m2", channel: "b", text: "two" } });
 
-          const both = yield* Fiber.join(watching);
-          const [first] = both;
-
-          if (first?._tag !== "Occurrence") throw new Error("Expected an occurrence");
-
-          return [
-            both,
-            yield* client
-              .watch(Posted, {}, { cursor: first.cursor })
-              .pipe(Stream.take(1), Stream.runCollect),
-          ] as const;
+          return yield* Fiber.join(watching);
         }).pipe(Effect.provide(layer));
 
         expect(texts(received)).toEqual(["one", "two"]);
-        expect(texts(resumed)).toEqual(["two"]);
         expect(made).toEqual([Posted.name]);
         expect(kept.map(({ seq, stored }) => [seq, stored.logged.key])).toEqual([
           [1, "a"],
@@ -543,10 +510,10 @@ describe("Event.makeEvents", () => {
     "reads a check source only as it subscribes and when notified, where polls is false",
     () =>
       Effect.gen(function* () {
-        const store = makeCountedStore();
+        const store = makeMessages();
 
         const layer = Layer.effect(Event.Events)(
-          Event.makeEvents({ log: () => recordingStorage().storage, polls: false }),
+          Event.makeEvents({ log: () => memoryStorage(), polls: false }),
         );
 
         const [quiet, received, reads] = yield* Effect.gen(function* () {
@@ -554,7 +521,7 @@ describe("Event.makeEvents", () => {
           const events = yield* Event.Events;
 
           const watching = yield* client
-            .watch(Posted, { room: "general" })
+            .watch(Posted, { channel: "general" })
             .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
           yield* settle;

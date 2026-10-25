@@ -194,12 +194,12 @@ search for in the file.
 
 ### Event
 
-| Export or option                                                                           | File                                    |
-| ------------------------------------------------------------------------------------------ | --------------------------------------- |
-| `make`: `description`, `input` that filters and shapes, `payload`, `caller`                | `src/issues/Issues.ts` (`IssueChanged`) |
-| `implement`: a log source fed by `emit`, `match` reading the caller, `transform`, `maxAge` | `src/issues/events.ts`                  |
-| `implement`: `authorize`, one rule for actions and events                                  | `src/identity/authorize.ts`             |
-| `watch` in process, `Forbidden` for a subscriber                                           | `test/issues/events.test.ts`            |
+| Export or option                                                                                          | File                                    |
+| --------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `make`: `description`, `input` that filters and shapes, `payload`, `caller`                               | `src/issues/Issues.ts` (`IssueChanged`) |
+| `implement`: a log source fed by a keyed `emit`, `key` reading the caller, `match`, `transform`, `maxAge` | `src/issues/events.ts`                  |
+| `implement`: `authorize`, one rule for actions and events                                                 | `src/identity/authorize.ts`             |
+| `watch` in process, `Forbidden` for a subscriber                                                          | `test/issues/events.test.ts`            |
 
 ### ActionHttp
 

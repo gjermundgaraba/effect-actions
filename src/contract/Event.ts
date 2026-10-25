@@ -20,8 +20,8 @@ import {
 } from "./authorizer.js";
 import type { Refusal } from "./errors.js";
 import { EventImplementation, sourcesOf } from "./feed.js";
-import type { Events } from "./hub.js";
-import type { Protected } from "./implementation.js";
+import type { Events, KeyOptions } from "./hub.js";
+import type { ErasedValue, Protected } from "./implementation.js";
 import { assertEventName, assertOnce } from "./names.js";
 import { Gap, type OccurrenceSchema } from "./occurrence.js";
 
@@ -199,7 +199,7 @@ interface Hooked<E extends Any, R> {
    *
    * **Gotchas**
    *
-   * - An occurrence a log's `emit` appends has no key, so it reaches every subscriber: filter those with `match`.
+   * - An occurrence a log's `emit` gives without a `key` reaches every subscriber, whatever key it follows: give each one its key.
    */
   readonly key?:
     | ((
@@ -282,8 +282,11 @@ export interface Log<E extends Any, R = never> extends Hooked<E, R> {
 
 /** What a log source keeps, and what feeds it besides `Events.publish`. */
 export interface LogOptions<E extends Any> {
-  /** A stream of occurrences, such as a message bus's, appended as they arrive from startup. */
-  readonly emit?: Stream.Stream<Emitted<E>> | undefined;
+  /**
+   * A stream of occurrences, such as a message bus's, appended as they arrive from startup, each
+   * reaching the subscribers of its `key`, as `Events.publish` given one does.
+   */
+  readonly emit?: Stream.Stream<Emitted<E> & KeyOptions> | undefined;
   /**
    * How long an occurrence is kept for subscribers resuming from a cursor; defaults to 10 minutes.
    * The first build attached to its log sets it, and later builds share that log.
@@ -487,7 +490,7 @@ export function implement<
 ): Implemented<T, RequestServices, R, EX, RX, never, never, never>;
 export function implement(
   events: Target,
-  sources: Any["input"]["Type"],
+  sources: ErasedValue,
   options?: { readonly authorize?: ErasedAuthorizer<Any> },
 ): EventImplementation<Any, unknown, unknown, unknown, unknown, unknown, unknown> {
   const listed = Arr.ensure(events);

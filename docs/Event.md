@@ -255,8 +255,9 @@ export const deployEvents = Event.implement(
 
 The action publishes each request with `Event.Events`' `publish`, in
 [build-events/src/deploys/handlers.ts](../examples/build-events/src/deploys/handlers.ts). An
-upstream that is a stream, such as a message bus, gives it as `log.emit`, which the library
-consumes from the start of a surface serving its event type: kitchen-sink's
+upstream that is a stream, such as a message bus, gives it as `log.emit`, each occurrence with
+the `key` `publish` would take, which the library consumes from the start of a surface serving its
+event type: kitchen-sink's
 [issues/events.ts](../examples/kitchen-sink/src/issues/events.ts). How much the log keeps, and
 what a cursor from another process or a restart reads as, are on `Event.Log`.
 

@@ -18,19 +18,26 @@ export type Fed = Event.Received<Event.Any> | Checked;
 const pollFloor = Duration.seconds(1);
 
 /**
- * One page as a feed yields it, read from `cursor`: its gap, at `cursor` where the page holds
- * occurrences, so that a resume from it never skips them, and at its end where it holds none,
- * then those occurrences, and where it ends.
+ * What one read delivers: its occurrences, and gaps in their place, whether some before them were
+ * missed, and the positions it read from and ends at.
  */
-export const fedOf = (
-  page: Pick<Page, "events" | "cursor" | "truncated">,
-  cursor: string | null,
-): ReadonlyArray<Fed> => [
-  ...(page.truncated
-    ? [Gap.make({ cursor: page.events.length === 0 ? (page.cursor ?? cursor) : cursor })]
-    : []),
-  ...page.events,
-  Checked.make({ cursor: page.cursor ?? cursor }),
+export interface Delivered {
+  readonly items: ReadonlyArray<Event.Received<Event.Any>>;
+  readonly truncated: boolean;
+  /** Where the read resumed from, before `items`. */
+  readonly from: string | null;
+  /** Where the read ends, after `items`. */
+  readonly to: string | null;
+}
+
+// Why: A truncated read's gap is where a resume from it skips none of `items`: at `from` where
+// it holds some, which reads them again rather than skips them, and at `to` where it holds none,
+// the fresh position SEP-3415 has a gap carry, there being nothing to skip.
+/** What a feed's stream yields of one read: its gap, its items, and where it ends. */
+export const fedOf = ({ items, truncated, from, to }: Delivered): ReadonlyArray<Fed> => [
+  ...(truncated ? [Gap.make({ cursor: items.length === 0 ? to : from })] : []),
+  ...items,
+  Checked.make({ cursor: to }),
 ];
 
 /** One page as a feed's stream reads it: what the stream yields of it, and when to read on. */
@@ -75,4 +82,16 @@ export const paged = <E, R>(
   poll: (cursor: string | null) => Effect.Effect<Page, E, R>,
   cursor: string | null,
 ): Stream.Stream<Fed, E, R> =>
-  pagedFrom((at) => Effect.map(poll(at), (page) => ({ ...page, fed: fedOf(page, at) })), cursor);
+  pagedFrom(
+    (at) =>
+      Effect.map(poll(at), (page) => ({
+        ...page,
+        fed: fedOf({
+          items: page.events,
+          truncated: page.truncated,
+          from: at,
+          to: page.cursor ?? at,
+        }),
+      })),
+    cursor,
+  );

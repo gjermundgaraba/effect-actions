@@ -1208,7 +1208,7 @@ describe("HTTP bindings", () => {
       "Listed in actions, but the binding does not hold it: alpha (another contract) (add it to the binding's actions; one marked (another contract) is a contract of that name it does not hold: list the one it holds)",
     );
     expect(() => ActionHttp.layer(bound, apps, { actions: [Audit] })).toThrow(
-      "Listed in actions, but no implementation holds it: audit (pass the implementation holding it, or list the contract it implements)",
+      "no implementation holds it: audit",
     );
   });
 

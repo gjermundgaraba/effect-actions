@@ -35,7 +35,8 @@ each occurrence carries (`payload`) and who may subscribe (`caller`), as an acti
 `Event.implement` binds it to its source, behind an authorizer: a `check`, asked what happened since
 a cursor, for a store that keeps the occurrences, or a `log`, which the library keeps for
 occurrences nothing else does, appended by `Event.Events.publish` and by `log.emit`, a stream
-consumed from startup, with a `match` and `transform` per subscriber; a logged occurrence without an
+consumed from startup whose occurrences may each carry a `key`, with a `match` and `transform`
+per subscriber; a logged occurrence without an
 `eventId` or `timestamp` takes its cursor and the time it was appended, the same on every replay.
 The authorizer `Event.allowAll` admits every subscriber the event's `caller` lets in. `Event.Events`
 announces occurrences as they happen: `notify` wakes a check source's subscribers to read now,
@@ -148,8 +149,8 @@ Guide: `docs/Action-streams.md#answer-a-stream`; example: kitchen-sink's `export
 - **An `ActionMcp.McpCallError`'s `body` from an event stream holds the data of its frames**, one
   per line, without their `data:` framing and without its `notifications/progress` frames.
 - kitchen-sink uses `Event`: `issue.changed`, a log source fed by the issue store's
-  changes, filtered to the subscriber's workspace by `match`, shaped by `transform`, watched in
-  process; and `exportIssues`, an action answering a stream of
+  changes, each keyed by its workspace and reaching that workspace's subscribers alone, shaped by
+  `transform`, watched in process; and `exportIssues`, an action answering a stream of
   issues with progress, under an export limit.
 
 ## 0.20.0

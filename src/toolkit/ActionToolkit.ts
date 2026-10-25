@@ -27,7 +27,7 @@ import {
   type SelectedOf,
   type ServedActions,
   type Serving,
-  actionsOnly,
+  toList,
   type ErasedValue,
 } from "../contract/implementation.js";
 
@@ -239,7 +239,7 @@ export function make<
   BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
 >;
 export function make(apps: ServedActions, options?: ErasedOptions): ErasedTools {
-  const served = select(actionsOnly("A toolkit", apps), options?.actions);
+  const served = select(toList(apps), options?.actions);
 
   const needsApproval = options?.needsApproval;
 

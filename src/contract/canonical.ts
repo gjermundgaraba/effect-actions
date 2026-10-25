@@ -1,8 +1,6 @@
 import { Effect, Predicate, Schema } from "effect";
-import type * as Action from "./Action.js";
 import type { Codec } from "./codec.js";
-
-type ErasedValue = Action.Any["input"]["Type"];
+import type { ErasedValue } from "./implementation.js";
 
 /**
  * `value`, an encoded input, as JSON written one way whatever the order of its objects' keys:

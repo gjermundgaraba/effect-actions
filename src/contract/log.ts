@@ -241,8 +241,8 @@ export const makeLogStore = <A>(
 /** What a log source keeps, appended to by `publish` and its `emit` stream. */
 export interface Log<A> {
   readonly append: (value: A, key: string | undefined) => Effect.Effect<void>;
-  /** Appends each value of `emit`, unkeyed, until it ends or is interrupted. */
-  readonly feed: (emit: Stream.Stream<A>) => Effect.Effect<void>;
+  /** Appends each value of `emit` under its key, until it ends or is interrupted. */
+  readonly feed: (emit: Stream.Stream<Logged<A>>) => Effect.Effect<void>;
   readonly read: (
     cursor: string | null,
     limit: number,
@@ -280,7 +280,7 @@ export const makeLog = <A>(store: LogStore<A>): Log<A> => {
     append,
     feed: (emit) =>
       emit.pipe(
-        Stream.runForEach((value) => append(value, undefined)),
+        Stream.runForEach(({ value, key }) => append(value, key)),
         Effect.matchCauseEffect({
           onFailure: (cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : reported(cause)),
           onSuccess: () =>
