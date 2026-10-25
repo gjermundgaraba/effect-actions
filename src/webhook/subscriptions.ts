@@ -23,7 +23,6 @@ import { type HttpClient, HttpRouter, HttpServerRequest } from "effect/http";
 import type { Dns } from "effect/net";
 import type { SigningSecret } from "../contract/callback.js";
 import type { Keyed, Named } from "../contract/caller.js";
-import { checkInput } from "../contract/input-check.js";
 import * as Event from "../contract/Event.js";
 import { canonicalInput } from "../contract/canonical.js";
 import { sentError } from "../contract/codes.js";
@@ -300,7 +299,11 @@ export const makeWebhooks = (
     // An admission failing with no refusal fails the read, which `pushed` reports and resumes
     // from before that occurrence, as it does a source's failure; one whose body is over 256 KiB
     // is given up, a gap the subscriber is told of once, and the worker reads on past it.
-    const deliverTo = (subscription: Held, confirmation: Deferred.Deferred<Confirmed, unknown>) => {
+    const deliverTo = (
+      subscription: Held,
+      input: Event.Any["input"]["Type"],
+      confirmation: Deferred.Deferred<Confirmed, unknown>,
+    ) => {
       const encode = encodeUntaggedOf(subscription.feed.event);
 
       const moved = (cursor: string | null) =>
@@ -327,7 +330,7 @@ export const makeWebhooks = (
             Deferred.isDoneUnsafe(confirmation) ? skipped(cursor) : confirmed(cursor, true),
           Occurrence: (occurrence) =>
             Effect.gen(function* () {
-              const body = yield* asSubscriber(subscription, subscription.feed.admit).pipe(
+              const body = yield* asSubscriber(subscription, subscription.feed.admit(input)).pipe(
                 Effect.andThen(Effect.map(encode(occurrence), JSON.stringify)),
               );
 
@@ -403,7 +406,7 @@ export const makeWebhooks = (
           (from) =>
             Stream.unwrap(Effect.map(subscription.feed.stream(input), (read) => read(from))),
           cursor,
-          deliverTo(subscription, confirmation),
+          deliverTo(subscription, input, confirmation),
           { inOrder: true, resumesUnconfirmed: Deferred.isDoneUnsafe(confirmation) },
         ),
         expired(subscription),
@@ -728,10 +731,7 @@ export const makeWebhooks = (
 
         return yield* locked(id)(
           Effect.gen(function* () {
-            yield* Effect.catchCause(
-              Effect.andThen(checkInput(feed.event, input), feed.admit),
-              (cause) => refused(id, cause),
-            );
+            yield* Effect.catchCause(feed.admit(input), (cause) => refused(id, cause));
 
             const now = yield* Clock.currentTimeMillis;
 

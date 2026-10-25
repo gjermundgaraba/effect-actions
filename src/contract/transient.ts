@@ -2,14 +2,7 @@ import { Cause, Duration, Effect, Match, Predicate, Stream } from "effect";
 import { HttpClientError } from "effect/http";
 import type { Fed } from "./pages.js";
 import { type Pushed, readOn } from "./push.js";
-
-// Why: What a reconnect may outlast is what `HttpClient.retryTransient` retries: the transport
-// failing, a status a server sends while it recovers, or a silence. A wrong URL, a request that
-// does not encode, or a refusal fails the watch.
-const transientStatuses = new Set([408, 429, 500, 502, 503, 504]);
-
-/** Whether a server answering `status` may answer otherwise once it recovers. */
-export const isTransientStatus = (status: number): boolean => transientStatuses.has(status);
+import { isTransientStatus } from "./status.js";
 
 // Why: A raw client fails a status with `StatusCodeError`, and a native `HttpApiClient` one its
 // endpoint does not declare with `DecodeError`, both holding the response.
@@ -19,6 +12,12 @@ export const answeredStatus = ({ reason }: HttpClientError.HttpClientError): num
     Match.tag("StatusCodeError", "DecodeError", ({ response }) => response.status),
     Match.orElse(() => undefined),
   );
+
+/** Whether `error` is an HTTP client's failure on a 404 answer. */
+export const isNotFound = Predicate.compose(
+  HttpClientError.isHttpClientError,
+  (error) => answeredStatus(error) === 404,
+);
 
 // Why: A `DecodeError` on a success is its body failing as it is read, such as a stream a proxy
 // or a restart cut: the transport's failure, not the server's answer.

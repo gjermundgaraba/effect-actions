@@ -7,7 +7,7 @@ import { type Call, inputOf, jsonRoundTrip, onProgressOf, watchInput } from "./c
 import { type BuiltIn, InvalidInput } from "./errors.js";
 import { progressSink, type ReportingOf } from "./progress.js";
 import { type Answer, elementOf } from "./stream.js";
-import { type Idempotency, idempotency, keyed } from "./idempotency.js";
+import { Idempotency, keyed } from "./idempotency.js";
 import {
   type Authorizer,
   authorizerOf,
@@ -214,7 +214,7 @@ export interface Options {
    *
    * **Gotchas**
    *
-   * - Kept are an answer and a failure the action declares or a built-in one; a defect or an interruption is not, and the call runs again when retried: at least once, not exactly once.
+   * - Kept are an answer and a failure the action declares or a built-in one; a defect, an interruption and a declared failure whose status is 408, 429, 500, 502, 503 or 504 are not, and the call runs again when retried: at least once, not exactly once.
    * - A repeat with the key and another input fails with `InvalidInput`, naming the key: the key stands for one call, and a record's keys in another order are the same input.
    * - A repeat while the first runs waits for its answer, in the same server; two servers sharing a store run both, the later answer kept.
    * - A repeat answers without the progress the first reported.
@@ -593,7 +593,7 @@ export function implement(
 
   const recorded = listed.some((action) => action.idempotencyKey !== undefined)
     ? Effect.flatMap(paired, (written) =>
-        Effect.map(idempotency, (store) =>
+        Effect.map(Effect.service(Idempotency), (store) =>
           written.map(([action, handle]) => [action, keyed(action, store, handle)] as const),
         ),
       )

@@ -341,6 +341,7 @@ export interface Options<A = unknown> {
    * - A surface serving a protected event type whose source has a `subscription` hook refuses to start without it, its message naming this option.
    * - Two identities with one principal share those subscriptions, so give each its own: a tenant's id alone merges its users.
    * - Without it no surface offers a protected event by webhook, which a subscription keys by its principal: the listing names no webhook, and a webhook subscription fails with `Event.SubscriptionError`, reason `Unsupported`.
+   * - Without it every caller shares one idempotency key space: another caller sending a key with the same input is given the first call's answer, as `Action.Options.idempotencyKey` says.
    */
   readonly principal?: ((identity: A) => string) | undefined;
   /**

@@ -48,8 +48,11 @@ export interface Feed {
    * its source has a hook, held per subscriber.
    */
   readonly release?: ((input: ErasedValue, subscriber: string) => Effect.Effect<void>) | undefined;
-  /** Authenticates and authorizes the subscriber, as `poll` and `stream` do first. */
-  readonly admit: Effect.Effect<void, unknown, unknown>;
+  /**
+   * Authenticates the subscriber, checks `input` by `Action.InputCheck` and authorizes it, as
+   * `poll` and `stream` do first.
+   */
+  readonly admit: (input: ErasedValue) => Effect.Effect<void, unknown, unknown>;
   readonly poll: (
     input: ErasedValue,
     cursor: string | null,
@@ -579,23 +582,24 @@ export type AnyEventImplementation<E extends Event.Any = Event.Any> = EventImple
 const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>): Feed => {
   const attributes = { "event.name": event.name };
 
-  const admitted =
+  const admit = (input: ErasedValue) =>
     event.caller === Anyone
-      ? Effect.void
+      ? checkInput(event, input)
       : Effect.flatMap(Effect.serviceOption(event.caller), (subscriber) =>
           Option.isSome(subscriber)
-            ? Effect.suspend(() => before(event))
+            ? Effect.andThen(
+                checkInput(event, input),
+                Effect.suspend(() => before(event)),
+              )
             : Effect.fail(new Unauthenticated()),
         );
 
   return {
     event,
     release: run.release,
-    admit: admitted,
+    admit,
     poll: (input, cursor, options) =>
-      Effect.andThen(Effect.andThen(checkInput(event, input), admitted), () =>
-        run.poll(input, cursor, options),
-      ).pipe(
+      Effect.andThen(admit(input), () => run.poll(input, cursor, options)).pipe(
         Effect.annotateLogs(attributes),
         Effect.withSpan(event.name, { attributes }, { captureStackTrace: false }),
       ),
@@ -603,7 +607,7 @@ const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>)
     // failure reads on under that admission, as a held stream does between reads, and a client's
     // reconnect is a new subscription, admitted again.
     stream: (input) =>
-      Effect.as(Effect.andThen(checkInput(event, input), admitted), (cursor: string | null) =>
+      Effect.as(admit(input), (cursor: string | null) =>
         run.stream(input, cursor).pipe(Stream.withSpan(event.name, { attributes })),
       ),
   };

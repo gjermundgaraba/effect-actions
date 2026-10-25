@@ -1,9 +1,11 @@
 import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Option, Schema } from "effect";
 import type * as Action from "./Action.js";
-import { canonical } from "./canonical.js";
+import { canonicalInput } from "./canonical.js";
 import { projectedErrors } from "./declared.js";
+import { sha256Hex } from "./digest.js";
 import { InvalidInput } from "./errors.js";
 import type { ErasedValue, WrittenHandler } from "./implementation.js";
+import { declared, httpApiStatusOf, isTransientStatus } from "./status.js";
 
 // Why: Declared once, as the schema a store decodes what it reads with and the time it keeps it
 // for, both statics of `Idempotency`, so a store of its own reads them where the core writes them.
@@ -69,30 +71,6 @@ export const layerIdempotency: Layer.Layer<Idempotency> = Layer.sync(Idempotency
   });
 });
 
-const encoder = new TextEncoder();
-
-const digestOf = (json: string) =>
-  Effect.promise(async () =>
-    Array.from(
-      new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(json))),
-      (byte) => byte.toString(16).padStart(2, "0"),
-    ).join(""),
-  );
-
-/** The `Idempotency` of the layer graph, or a defect saying to provide it. */
-export const idempotency = Effect.flatMap(
-  Effect.serviceOption(Idempotency),
-  Option.match({
-    onSome: Effect.succeed,
-    onNone: () =>
-      Effect.die(
-        new Error(
-          "An action naming idempotencyKey is served without Action.Idempotency (provide Action.layerIdempotency, or a layer of Action.Idempotency, around the surfaces)",
-        ),
-      ),
-  }),
-);
-
 /**
  * `handle`, answering a call given `action`'s idempotency key as the first call with it and the
  * same input was answered: from `store`, or, while that call runs, once it has.
@@ -106,8 +84,6 @@ export const keyed = (
 
   if (field === undefined) return handle;
 
-  const encodeInput = Schema.encodeUnknownEffect(Schema.toCodecJson(action.input));
-
   const Outcome = Schema.fromJsonString(
     Schema.toCodecJson(
       Schema.Exit(action.success, Schema.Union(projectedErrors(action)), Schema.Never),
@@ -116,7 +92,21 @@ export const keyed = (
 
   const encodeOutcome = Schema.encodeUnknownEffect(Outcome);
   const decodeOutcome = Schema.decodeUnknownOption(Outcome);
-  const KeyOf = Schema.decodeUnknownOption(Schema.Struct({ [field]: Schema.String }));
+
+  const KeyOf = Schema.decodeUnknownOption(
+    Schema.Struct({ key: Schema.String }).pipe(Schema.encodeKeys({ key: field })),
+  );
+
+  // Why: a declared failure whose status a server sends while it recovers, as a 503, is the
+  // server's state, not the call's answer: a retry with the key runs the call again.
+  const isTransientFailure = Schema.is(
+    Schema.Union(
+      projectedErrors(action).filter((error) =>
+        isTransientStatus(httpApiStatusOf(declared(error).ast) ?? 422),
+      ),
+    ),
+  );
+
   const running = new Map<string, Deferred.Deferred<void>>();
 
   const run = (
@@ -162,7 +152,12 @@ export const keyed = (
 
         // Why: an answer and the action's own failures alone are kept: after a defect or an
         // interruption the call may not have done its work, so a retry runs it again.
-        const keeps = Exit.isSuccess(exit) || exit.cause.reasons.every(Cause.isFailReason);
+        const keeps =
+          Exit.isSuccess(exit) ||
+          exit.cause.reasons.every(
+            (reason) => Cause.isFailReason(reason) && !isTransientFailure(reason.error),
+          );
+
         const json = keeps ? yield* Effect.option(encodeOutcome(exit)) : Option.none();
 
         if (Option.isSome(json)) {
@@ -180,9 +175,7 @@ export const keyed = (
   return (input, reporting, principal) =>
     Option.match(KeyOf(input), {
       onNone: () => handle(input, reporting),
-      onSome: (fields) => {
-        const key = fields[field] ?? "";
-
+      onSome: ({ key }) => {
         // Why: `make` refuses a key on an action answering a stream, so its answer is an Effect.
         const answer = Effect.suspend(() => {
           const answered = handle(input, reporting);
@@ -194,10 +187,8 @@ export const keyed = (
         // answers no one else's call; a record's keys, in whatever order they arrive, are one input.
         return Effect.flatMap(
           Effect.all([
-            digestOf(JSON.stringify([principal ?? null, key])),
-            Effect.flatMap(Effect.orDie(encodeInput(input)), (encoded) =>
-              digestOf(canonical(encoded)),
-            ),
+            sha256Hex(JSON.stringify([principal ?? null, key])),
+            Effect.flatMap(canonicalInput(action.input, input), sha256Hex),
           ]),
           ([id, digest]) => run(`${action.name}/${id}`, key, digest, answer),
         );

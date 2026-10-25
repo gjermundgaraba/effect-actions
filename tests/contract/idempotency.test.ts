@@ -155,6 +155,40 @@ describe("an action's idempotencyKey", () => {
       }),
   );
 
+  it.effect(
+    "runs a call again whose declared failure has a status a recovering server sends, and keeps the next declared failure",
+    () =>
+      Effect.gen(function* () {
+        class Busy extends Schema.TaggedError<Busy>()("Busy", {}, { httpApiStatus: 503 }) {}
+
+        class Taken extends Schema.TaggedError<Taken>()("Taken", {}) {}
+
+        const Claim = Action.make("claim", {
+          description: "Claim a name, once for each request.",
+          input: { request: Schema.String },
+          error: [Busy, Taken],
+          readOnly: false,
+          caller: Action.Anyone,
+          idempotencyKey: "request",
+        });
+
+        let runs = 0;
+
+        const client = yield* Action.client(
+          Action.implement(Claim, () =>
+            Effect.suspend(() => Effect.fail((runs += 1) === 1 ? new Busy() : new Taken())),
+          ),
+        );
+
+        const answers = yield* Effect.forEach([1, 2, 3], () =>
+          Effect.flip(client.claim({ request: "r1" })),
+        );
+
+        expect(answers).toEqual([new Busy(), new Taken(), new Taken()]);
+        expect(runs).toBe(2);
+      }).pipe(Effect.provide(Action.layerIdempotency)),
+  );
+
   it.effect("keeps an answer in memory for 24 hours, and forgets it once a later one is kept", () =>
     Effect.gen(function* () {
       const { posted, implementation } = posting();
@@ -239,29 +273,29 @@ describe("an action's idempotencyKey", () => {
     );
   });
 
-  it.effect("dies naming the fix where the types did not require Action.Idempotency", () =>
-    Effect.gen(function* () {
-      const erased: ReadonlyArray<Action.Any> = [{ ...Post, caller: Member }];
+  it.effect(
+    "dies naming the missing service where the types did not require Action.Idempotency",
+    () =>
+      Effect.gen(function* () {
+        const erased: ReadonlyArray<Action.Any> = [{ ...Post, caller: Member }];
 
-      const exit = yield* Effect.exit(
-        Effect.scoped(
-          Action.client(
-            Action.implement(
-              erased,
-              { post: () => Effect.never },
-              {
-                authorize: Action.allowAll,
-              },
+        const exit = yield* Effect.exit(
+          Effect.scoped(
+            Action.client(
+              Action.implement(
+                erased,
+                { post: () => Effect.never },
+                {
+                  authorize: Action.allowAll,
+                },
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toEqual(
-        new Error(
-          "An action naming idempotencyKey is served without Action.Idempotency (provide Action.layerIdempotency, or a layer of Action.Idempotency, around the surfaces)",
-        ),
-      );
-    }),
+        expect(Exit.isFailure(exit) && String(Cause.squash(exit.cause))).toContain(
+          "Service not found: effect-actions/Action/Idempotency",
+        );
+      }),
   );
 });

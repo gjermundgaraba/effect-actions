@@ -122,6 +122,67 @@ describe("Action.InputCheck", () => {
     }),
   );
 
+  it("refuses a call and a watch with no identity in process before it checks their input", async () => {
+    class Reader extends Context.Service<Reader, string>()("tests/input-check/LocalReader") {}
+
+    const Shelf = Action.make("shelf", {
+      description: "Read a shelf as its reader.",
+      input: { shelf: Schema.String },
+      success: Schema.String,
+      readOnly: true,
+      caller: Reader,
+    });
+
+    const Shelved = Event.make("shelf.shelved", {
+      description: "A shelf, whole, as its reader sees it.",
+      input: { shelf: Schema.String },
+      payload: { shelf: Schema.String },
+      caller: Reader,
+    });
+
+    const checked: Array<string> = [];
+
+    const refusals = await Effect.runPromise(
+      // @ts-expect-error -- Deliberately call without a caller, as no surface verified one.
+      Effect.gen(function* () {
+        const client = yield* Action.client([
+          Action.implement(Shelf, ({ shelf }) => Effect.succeed(shelf), {
+            authorize: Action.allowAll,
+          }),
+          Event.implement(
+            Shelved,
+            { current: ({ shelf }) => Effect.succeed({ shelf }) },
+            { authorize: Event.allowAll },
+          ),
+        ]);
+
+        return [
+          yield* Effect.flip(client.shelf({ shelf: "theirs" })),
+          yield* Effect.flip(
+            client.watch(Shelved, { shelf: "theirs" }).pipe(Stream.take(1), Stream.runCollect),
+          ),
+        ];
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Event.layerMemory),
+        Effect.provide(
+          Layer.succeed(Action.InputCheck)((contract) =>
+            Effect.andThen(
+              Effect.sync(() => void checked.push(contract.name)),
+              Effect.fail(refused),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(refusals.map((refusal) => refusal instanceof Action.Unauthenticated)).toEqual([
+      true,
+      true,
+    ]);
+    expect(checked).toEqual([]);
+  });
+
   it.effect(
     "runs on a watch once the surface has verified the caller, and before the authorizer, polled or streamed",
     () =>

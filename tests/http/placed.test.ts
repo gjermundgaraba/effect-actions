@@ -76,7 +76,7 @@ describe("ActionHttp.placed", () => {
   );
 
   it.effect(
-    "passes back a placed action's stream element by element, and its progress before its answer",
+    "passes back a placed action's stream element by element, and its progress before its answer where the caller reads it",
     () =>
       Effect.gen(function* () {
         const reached = target();
@@ -91,14 +91,21 @@ describe("ActionHttp.placed", () => {
               { slots: 2 },
               { onProgress: ({ slot }) => Effect.sync(() => reported.push(slot)) },
             ),
+            unread: yield* client.fill({ slots: 1 }),
           };
         }).pipe(Effect.provide(worker(reached.placed)));
 
         expect({ ...answered, reported }).toEqual({
           counted: [3, 2, 1],
           filled: { filled: 2 },
+          unread: { filled: 1 },
           reported: [1, 2],
         });
+        expect(
+          reached.requests
+            .filter(({ url }) => url.endsWith("/fill"))
+            .map((request) => (request.headers.get("accept") ?? "").includes("text/event-stream")),
+        ).toEqual([true, false]);
       }),
   );
 

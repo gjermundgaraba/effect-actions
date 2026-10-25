@@ -1,11 +1,5 @@
 import { Effect, Option, Predicate, Schema, Stream } from "effect";
-import {
-  Headers,
-  HttpClient,
-  HttpClientError,
-  HttpClientRequest,
-  HttpServerRequest,
-} from "effect/http";
+import { Headers, HttpClient, HttpClientRequest, HttpServerRequest } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import * as Event from "../contract/Event.js";
 import type { ErasedRule } from "../contract/authorizer.js";
@@ -18,7 +12,7 @@ import {
   type Written,
   type WrittenHandler,
 } from "../contract/implementation.js";
-import { answeredStatus } from "../contract/transient.js";
+import { isNotFound } from "../contract/transient.js";
 import { actionMethodWith, type AnyHttp, transportWith } from "./client.js";
 import { elementOf } from "../contract/stream.js";
 
@@ -61,11 +55,6 @@ const forwarded = Effect.map(
     onSome: ({ headers }) =>
       Headers.fromInput(Object.entries(headers).filter(([name]) => !ownedByTheRequest(name))),
   }),
-);
-
-const isNotFound = Predicate.compose(
-  HttpClientError.isHttpClientError,
-  (error) => answeredStatus(error) === 404,
 );
 
 const isSubscriptionError: Predicate.Refinement<unknown, Event.SubscriptionError> = Schema.is(
@@ -122,7 +111,12 @@ export const placed = <const H extends AnyHttp>(
       const sent = Effect.map(
         Effect.flatMap(sending(action, input), (http) => actionMethodWith(binding, http, action)),
         (method) =>
-          method(input, ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }])),
+          method(
+            input,
+            ...(reporting === undefined || reporting.dropped
+              ? []
+              : [{ onProgress: reporting.progress }]),
+          ),
       );
 
       return elementOf(action.success) === undefined

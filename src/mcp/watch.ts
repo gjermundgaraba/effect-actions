@@ -8,12 +8,8 @@ import { Checked, Gap, untaggedOccurrenceOf } from "../contract/occurrence.js";
 import type { Fed, Page } from "../contract/pages.js";
 import { Failed, type Pushed, readOn } from "../contract/push.js";
 import { defaultNextPoll } from "../contract/feed.js";
-import {
-  failingWhenSilent,
-  failingWhenUnanswered,
-  isTransient,
-  isTransientStatus,
-} from "../contract/transient.js";
+import { failingWhenSilent, failingWhenUnanswered, isTransient } from "../contract/transient.js";
+import { isTransientStatus } from "../contract/status.js";
 import { reasonOf } from "../contract/codes.js";
 import { Receiving, webhookFed } from "../contract/receiving.js";
 import { WebhookCallback, WebhookTarget } from "../contract/subscribe.js";

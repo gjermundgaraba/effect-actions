@@ -669,7 +669,7 @@ const dispatch = (
   });
 
   const admitted = (input: ErasedValue) =>
-    Effect.andThen(checkInput(action, input), Effect.andThen(authentication, authorization));
+    Effect.andThen(authentication, Effect.andThen(checkInput(action, input), authorization));
 
   const span = { attributes: actionAttributes };
   const trace = { captureStackTrace: false };
