@@ -19,6 +19,7 @@ import { Login } from "./identity/Identity.js";
 import { HttpQuota, quota, RpcQuota } from "./identity/quota.js";
 import { layer as assistantTools } from "./issues/assistant.js";
 import { features } from "./issues/guide.js";
+import { exports } from "./issues/export.js";
 import { issues } from "./issues/handlers.js";
 import { cors, requestPolicy } from "./request-policy.js";
 import { Rpc } from "./Rpc.js";
@@ -28,7 +29,7 @@ import { GetStatus } from "./workspaces/Workspaces.js";
 
 // Every domain's implementation of the public port's actions, once. Each surface below takes
 // this one list and serves the actions its binding or its `actions` names.
-const implementations = [status, identity, issues, attachments, assistant];
+const implementations = [status, identity, issues, exports, attachments, assistant];
 
 // JSON routes at `/api/v1/<action>`, in two layers of one binding, each naming its `actions`.
 // The quota requires the caller, and a public route has none, so `getStatus` is served by a
@@ -113,6 +114,6 @@ export const adminRoutes = Layer.mergeAll(
 // Every builder as one layer. The two ports are two layer graphs, and each would run the
 // builder of an implementation it serves: `status`, which both serve, twice, each port then
 // reporting an `instance` of its own. Provided above both, with the services, each builder
-// runs once for every surface of both ports. The assistant's is left out: the public port
-// alone serves it, and builds it once for its routes and its rpcs.
+// runs once for every surface of both ports. The assistant's and the export's are left out: the
+// public port alone serves them, and builds each once for its routes and its rpcs.
 export const builders = Action.layer([status, identity, issues, attachments, admin]);

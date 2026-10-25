@@ -178,6 +178,14 @@ export default defineConfig({
         },
       },
       {
+        files: ["vite.config.ts", "tools/oxlint/tests/probe-*/*/vite.config.ts"],
+        rules: { "no-comments/no-prose-comments": ["error", { allowWhy: true }] },
+      },
+      {
+        files: ["tests/support/**", "tools/oxlint/tests/probe-*/*/tests/support/**"],
+        rules: { "no-comments/no-prose-comments": ["error", { allowJsDoc: true }] },
+      },
+      {
         files: ["examples/**"],
         rules: { "no-comments/no-prose-comments": "off" },
       },

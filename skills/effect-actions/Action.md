@@ -8,7 +8,8 @@ process.
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search
 [Action-failures.md](Action-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`:
 each declaration's JSDoc carries its rules and gotchas, and this page only what an example
-cannot show.
+cannot show. An action reporting progress or answering a stream is on
+[Action-streams.md](Action-streams.md).
 
 ## Define a contract
 
@@ -40,8 +41,8 @@ are on `Action.make`. The list each surface takes lives in one file beside the c
 ([kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts)).
 
 - **List an action as a tool only where a model may hold what it takes and returns.** A tool
-  call passes both through the model's context and records its arguments on the current span,
-  a `Schema.Redacted` value included.
+  call passes both through the model's context, and `ActionToolkit`, through Effect's toolkit,
+  records its arguments on the current span, a `Schema.Redacted` value included.
 
 ## Say who may call an action
 

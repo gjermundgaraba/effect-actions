@@ -671,7 +671,7 @@ it("keeps same-contract implementations apart over MCP", async () => {
   }
 });
 
-it("records a tool call's arguments on its span, a Schema.Redacted value included, where HTTP records no body", async () => {
+it("keeps a tool call's arguments off its spans over MCP, as HTTP keeps its body, where Effect's toolkit records them, a Schema.Redacted value included", async () => {
   const SignIn = Action.make("login", {
     description: "",
     readOnly: false,
@@ -729,8 +729,9 @@ it("records a tool call's arguments on its span, a Schema.Redacted value include
   );
 
   expect(http).toContain("login");
-  expect(http).not.toContainEqual(sent);
-  expect(mcp).toContainEqual(sent);
+  expect(mcp).toContain("login");
+  expect(JSON.stringify(http)).not.toContain("hunter2");
+  expect(JSON.stringify(mcp)).not.toContain("hunter2");
   expect(toolkit).toContainEqual(sent);
 });
 

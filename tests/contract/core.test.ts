@@ -88,7 +88,7 @@ describe("contracts", () => {
   });
 
   it("rejects invalid names at definition time, where they are also tool names", () => {
-    const invalidNames = ["bad name", "then", "", "x".repeat(129)];
+    const invalidNames = ["bad name", "then", "watch", "", "x".repeat(129)];
     const validNames = ["x".repeat(128), "1st", "_private"];
 
     for (const name of invalidNames) {
@@ -99,7 +99,9 @@ describe("contracts", () => {
           caller: Action.Anyone,
           success: Schema.String,
         }),
-      ).toThrow(`Invalid action name: ${name} (use [A-Za-z0-9_-]{1,128}, other than "then")`);
+      ).toThrow(
+        `Invalid action name: ${name} (use [A-Za-z0-9_-]{1,128}, other than "then", which would make a client a thenable, awaited as a promise, and "watch", every client's method for events)`,
+      );
     }
 
     for (const name of validNames) {

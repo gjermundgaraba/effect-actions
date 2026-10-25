@@ -41,6 +41,7 @@ export interface SecurityMiddleware<I, Name extends string = string> {
 
 type Response = Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>;
 
+/** What a provider holds for the surfaces serving its descriptor, beside its identity. */
 export interface Runtime {
   /** The descriptor the provider was built from, the one a binding naming it must hold. */
   readonly descriptor: unknown;
@@ -112,16 +113,18 @@ export interface Descriptor<
  */
 export type Any = Descriptor<unknown, unknown, Security, string, Action.Errors>;
 
-export type Identity<A extends Action.Any> = [A] extends [never]
+/** The identity an action's `caller` names, or `never` for none. */
+export type Identity<A extends Pick<Action.Any, "caller">> = [A] extends [never]
   ? never
   : A["caller"] extends Context.Key<infer I, unknown>
     ? I
     : never;
 
-type Covered<A extends Action.Any> =
+type Covered<A extends Pick<Action.Any, "caller">> =
   Exclude<A["caller"], typeof Anyone> extends Context.Key<infer I, unknown> ? I : never;
 
-export type Required<A extends Action.Any> = [Protected<A>] extends [never]
+/** The `authentication` a binding of these actions takes: required once one is protected. */
+export type Required<A extends Pick<Action.Any, "caller">> = [Protected<A>] extends [never]
   ? { readonly authentication?: Any }
   : {
       readonly authentication: Descriptor<
@@ -133,13 +136,14 @@ export type Required<A extends Action.Any> = [Protected<A>] extends [never]
       >;
     };
 
+/** The provider `Authentication.layer` builds for the descriptor `D`. */
 export type ProviderOf<D> =
   D extends Descriptor<infer I, unknown, Security, infer Name, Action.Errors>
     ? Provider<I, Name>
     : never;
 
 /** Actions a binding takes without options: public ones, as a protected one names its descriptor. */
-export type PublicOnly<Actions extends ReadonlyArray<Action.Any>> = [
+export type PublicOnly<Actions extends ReadonlyArray<Pick<Action.Any, "caller">>> = [
   Exclude<Actions[number], { readonly caller: typeof Anyone }>,
 ] extends [never]
   ? unknown
@@ -151,7 +155,7 @@ export type DescriptorOf<O> = [O] extends [{ readonly authentication: infer D ex
   : undefined;
 
 /** All protected actions on a surface use the descriptor's single identity key. */
-export type Matching<A extends Action.Any, D> =
+export type Matching<A extends Pick<Action.Any, "caller">, D> =
   unknown extends Covered<Protected<A>>
     ? unknown
     : [
@@ -196,12 +200,19 @@ export type ServerBuildServices<App, A extends Action.Any> = App extends unknown
  * What a call of `A` under the descriptor `D` may fail with from its verifier: the errors `D`
  * declares, for a protected action; none for a public one, which nothing verifies.
  */
-export type VerifierError<A extends Action.Any, D> = A["caller"] extends typeof Anyone
+export type VerifierError<
+  A extends Pick<Action.Any, "caller">,
+  D,
+> = A["caller"] extends typeof Anyone
   ? never
   : D extends { readonly error: infer E extends Action.Errors }
     ? E[number]
     : never;
 
+/**
+ * The provider a surface's startup reads under the descriptor `D`, where the implementations
+ * `App` serve a protected action of `A`.
+ */
 export type ServedProvider<App, A extends Action.Any, D> = [Protected<Serving<App, A>>] extends [
   never,
 ]

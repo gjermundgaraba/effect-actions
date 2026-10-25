@@ -37,6 +37,10 @@ const tracker = ActionCli.remote(Http, {
     createIssue: { stdin: "body" },
     commentOnIssue: { name: "comment", positional: ["id"], stdin: "text" },
     closeIssue: { name: "close", positional: ["id"] },
+    // An action answering a stream: `render` takes each issue, printed as it arrives, one line
+    // each; `--json` prints each as a line of JSON instead, so `tracker export-issues --json >
+    // issues.jsonl` writes JSON Lines.
+    exportIssues: { render: ({ id, status, title }) => `${id}  ${status}  ${title}` },
     // `render` receives the decoded success, the image's bytes a `Uint8Array`.
     getAttachment: {
       positional: ["id"],

@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect";
+import { Context, Effect, Layer, Stream } from "effect";
 import { type Comment, type Issue, IssueNotFound, type Status } from "./Issues.js";
 
 /**
@@ -14,6 +14,15 @@ export class IssueStore extends Context.Service<
       status: typeof Status.Type | undefined,
       limit: number,
     ) => Effect.Effect<ReadonlyArray<Issue>>;
+    /** Every issue, oldest first. */
+    readonly all: (
+      workspace: string,
+      status: typeof Status.Type | undefined,
+    ) => Stream.Stream<Issue>;
+    readonly count: (
+      workspace: string,
+      status: typeof Status.Type | undefined,
+    ) => Effect.Effect<number>;
     readonly get: (workspace: string, id: string) => Effect.Effect<Issue, IssueNotFound>;
     readonly create: (
       workspace: string,
@@ -33,6 +42,9 @@ export class IssueStore extends Context.Service<
     const issues = new Map<string, Array<Issue>>();
 
     const of = (workspace: string) => issues.get(workspace) ?? [];
+
+    const having = (workspace: string, status: typeof Status.Type | undefined) =>
+      of(workspace).filter((issue) => status === undefined || issue.status === status);
 
     const get = Effect.fn("IssueStore.get")(function* (workspace: string, id: string) {
       const issue = of(workspace).find((candidate) => candidate.id === id);
@@ -66,12 +78,11 @@ export class IssueStore extends Context.Service<
 
     return IssueStore.of({
       list: (workspace, status, limit) =>
-        Effect.sync(() =>
-          of(workspace)
-            .filter((issue) => status === undefined || issue.status === status)
-            .toReversed()
-            .slice(0, limit),
-        ),
+        Effect.sync(() => having(workspace, status).toReversed().slice(0, limit)),
+      // A database reads it in pages, by id, so an export never holds the workspace whole.
+      all: (workspace, status) =>
+        Stream.suspend(() => Stream.fromIterable(having(workspace, status))),
+      count: (workspace, status) => Effect.sync(() => having(workspace, status).length),
       get,
       create: (workspace, draft) =>
         Effect.sync(() => {

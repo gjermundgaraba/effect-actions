@@ -103,7 +103,12 @@ it("gives every module page a -failures.md beside it, each entry one line", () =
   for (const page of docsPages) {
     if (page.endsWith("-failures.md") || page === "docs/README.md") continue;
 
-    const failures = page.replace(/(-advanced)?\.md$/, "-failures.md");
+    const own = page.replace(/\.md$/, "-failures.md");
+
+    const failures = existsSync(join(root, own))
+      ? own
+      : page.replace(/-[a-z-]+\.md$/, "-failures.md");
+
     const lines = read(failures).split("\n");
 
     expect(lines.filter((line) => line.startsWith("- ")).length, failures).toBeGreaterThan(0);

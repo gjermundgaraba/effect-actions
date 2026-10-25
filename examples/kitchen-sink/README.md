@@ -22,6 +22,7 @@ node --import tsx examples/kitchen-sink/src/cli.ts list-issues -n 5
 node --import tsx examples/kitchen-sink/src/cli.ts get-issue ACME-1
 echo "It crashes on an empty draft" | node --import tsx examples/kitchen-sink/src/cli.ts create-issue --title Crash
 node --import tsx examples/kitchen-sink/src/cli.ts ask-assistant --prompt "Close what is done."   # answers with a call to approve
+node --import tsx examples/kitchen-sink/src/cli.ts export-issues      # each issue as it arrives, with progress on stderr
 
 # The admin port takes an operator key, not a member's token.
 curl -s 127.0.0.1:3001/admin/suspendWorkspace -H 'Content-Type: application/json' \
@@ -71,10 +72,11 @@ src/
 │   ├── tenant.ts          Tenant, and the router middleware that resolves it per request
 │   └── handlers.ts
 ├── issues/
-│   ├── Issues.ts          contract: schemas, errors, five actions
+│   ├── Issues.ts          contract: schemas, errors, five actions, exportIssues
 │   ├── store.ts           IssueStore, scoped by workspace
-│   ├── write-limit.ts     the write limit, wrapped around handlers
+│   ├── write-limit.ts     the write and export limits, wrapped around handlers
 │   ├── handlers.ts        Action.implement over the store
+│   ├── export.ts          exportIssues: a stream, with progress
 │   ├── guide.ts           a native MCP resource and prompt
 │   └── assistant.ts       the actions as a model's Toolkit, with approval
 ├── assistant/             the model loop, served: a turn per request
@@ -112,7 +114,8 @@ src/
 test/
 ├── routes.test.ts         the host's surfaces: one port over HTTP and MCP, then both ports
 ├── request-policy.test.ts raw requests to each port as a web handler
-├── issues/                in process, with Action.client; the assistant's tools
+├── issues/                in process, with Action.client; the assistant's tools; the export over
+│                          HTTP and RPC
 ├── assistant/             the assistant over HTTP, with a scripted model
 ├── support/               the scripted model the assistant's tests give the routes
 ├── identity/              what authentication adds: tokens over HTTP, sessions over RPC
@@ -151,6 +154,8 @@ search for in the file.
 | `make`: errors with `httpApiStatus`                            | `src/issues/Issues.ts` (`IssueNotFound`, `RateLimited`)                              |
 | `make`: a shared error list                                    | `src/issues/Issues.ts` (`IssueWriteErrors`), `src/attachments/Attachments.ts`        |
 | `make`: an option bundle, spread                               | `src/issues/Issues.ts` (`change`), `src/admin/Admin.ts` (`onWorkspace`)              |
+| `make`: `progress`, and `Stream`, a success answering a stream | `src/issues/Issues.ts` (`ExportIssues`)                                              |
+| A handler returning a `Stream`, reporting progress             | `src/issues/export.ts`                                                               |
 | `Image`, in a success and in an input                          | `src/attachments/Attachments.ts`                                                     |
 | `byName`                                                       | `src/issues/guide.ts` (`tools`)                                                      |
 | `implement`: one action, a plain handler                       | `src/identity/handlers.ts`                                                           |
@@ -202,6 +207,7 @@ search for in the file.
 | `client`: `baseUrl`, `transformClient`                         | `src/seed.ts`                                                               |
 | `fetchClient`                                                  | `src/sdk.ts`                                                                |
 | Declared errors handled by tag                                 | `src/seed.ts`, `src/sdk.ts`                                                 |
+| A stream action's route and method, with `onProgress`          | `test/issues/export.test.ts`                                                |
 
 ### ActionMcp
 
@@ -229,6 +235,7 @@ search for in the file.
 | A WebSocket protocol              | `src/server.ts` (`socket`)                                    |
 | `client`, over a WebSocket        | `src/browser.ts`                                              |
 | A credential per message          | `test/identity/session.test.ts` (`as`)                        |
+| A stream action's method          | `test/issues/export.test.ts`                                  |
 
 ### ActionToolkit
 
@@ -251,6 +258,7 @@ search for in the file.
 | A client from `Config`, its credentials optional                              | `src/cli.ts`                               |
 | `make`, with a trusted identity the host supplies                             | `src/ops.ts`                               |
 | `logToStderr`                                                                 | `src/cli.ts`, `src/ops.ts`, `src/stdio.ts` |
+| `render` of each element of a stream action                                   | `src/cli.ts` (`exportIssues`)              |
 
 ### Testing
 

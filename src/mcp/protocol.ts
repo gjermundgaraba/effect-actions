@@ -27,6 +27,12 @@ export const protocols = [
 
 export const defaultPath = "/mcp";
 
+/** The forms an MCP routing header may carry `name` in: as sent, or base64-encoded in its sentinel. */
+export const routingFormsOf = (name: string): ReadonlyArray<string> => [
+  name,
+  `=?base64?${Base64.encode(name)}?=`,
+];
+
 type Codec = Action.Any["success"];
 
 export const fieldKey = "effect-actions/field";

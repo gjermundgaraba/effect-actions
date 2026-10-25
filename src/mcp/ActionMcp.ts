@@ -15,7 +15,6 @@ import {
   Stream,
 } from "effect";
 import { AiError, McpSchema, McpServer } from "effect/ai";
-import { Base64 } from "effect/encoding";
 import { type Headers, HttpRouter, HttpServerRequest, type HttpServerResponse } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import {
@@ -32,6 +31,7 @@ import { Anyone, assertAuthentication } from "../contract/caller.js";
 import { projectedErrors } from "../contract/declared.js";
 import { hintsOf } from "../contract/hints.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
+import { assertNoStream, type ToolAction } from "../contract/stream.js";
 import { inputParseOptions } from "../contract/call.js";
 import {
   defaultPath,
@@ -43,7 +43,9 @@ import {
   liftedFrom,
   liftOf,
   protocols,
+  routingFormsOf,
 } from "./protocol.js";
+import { progressNotifier } from "./progress.js";
 import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
 import {
@@ -58,17 +60,24 @@ import {
   type Member,
   provideHandlers,
   select,
+  type Served,
+  toList,
+  toolsOf,
   type Known,
   type SelectedOf,
   type Selection,
-  type Served,
   type ServedRequest,
-  toList,
 } from "../contract/implementation.js";
 
-export { client, McpCallError, request } from "./client.js";
+export { client } from "./client.js";
 
-export type { Client, ClientOptions, Params, RequestOptions } from "./client.js";
+export { McpCallError } from "./reply.js";
+
+export { request } from "./request.js";
+
+export type { Client, ClientOptions } from "./client.js";
+
+export type { Params, RequestOptions } from "./request.js";
 
 /**
  * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option but `protocols`,
@@ -321,10 +330,15 @@ const registerTools = Effect.fnUntraced(function* (
     const encodeSuccess = encoder(action.success);
     const encodeFailure = encoder(Schema.Union(projectedErrors(action)));
 
+    const reported = (input: ErasedValue) =>
+      action.progress === undefined
+        ? run(input)
+        : Effect.flatMap(progressNotifier(registry.notifications), (sink) => run(input, sink));
+
     const call =
       authentication === undefined || action.caller === Anyone
-        ? run
-        : (input: ErasedValue) => recordStepUp(promote(authentication, run(input)));
+        ? reported
+        : (input: ErasedValue) => recordStepUp(promote(authentication, reported(input)));
 
     const liftedFieldNames = new Set(media?.fields.map(({ name }) => name));
 
@@ -362,7 +376,9 @@ const registerTools = Effect.fnUntraced(function* (
       tool,
       annotations: Context.empty(),
       handle: (payload: ErasedValue) =>
-        Effect.annotateCurrentSpan({ tool: action.name, parameters: payload ?? {} }).pipe(
+        // Why: a tool's arguments stay off its span, as HTTP keeps a body off its own: they
+        // may hold a credential or a `Schema.Redacted` value, which a trace exports as it is.
+        Effect.annotateCurrentSpan({ tool: action.name }).pipe(
           Effect.andThen(() => decode(payload ?? {})),
           Effect.mapError(
             ({ message }) =>
@@ -413,6 +429,7 @@ const server = <Out, R>(
     apps.flatMap((app) => app.actions),
     heldOnce,
   );
+  assertNoStream(apps.flatMap((app) => app.actions));
 
   const lifted = apps.flatMap((app) =>
     app.actions.map((action) => [action, liftOf(action.success)] as const),
@@ -442,8 +459,8 @@ const server = <Out, R>(
 
   // Why: Effect's registry is one layer, shared by a whole layer graph, so `Layer.fresh` gives each
   // endpoint its own, and the features are provided inside it, as each native helper provides that
-  // layer itself. The handlers are provided outside it, so builders stay shared with the graph's
-  // other surfaces.
+  // layer itself. The handlers' builders are provided outside it, so they stay shared with the
+  // graph's other surfaces.
   return Layer.effectDiscard(register).pipe(
     Layer.provide(features),
     Layer.provide(transport),
@@ -459,9 +476,7 @@ const requiresAuthentication = (actions: ReadonlyArray<Action.Any>) => {
   // base64-encoded between `=?base64?` and `?=`, so a public tool's name is admitted in either form.
   // An action's name is plain ASCII, whose standard encoding is one string: any other fails closed.
   const open = new Set(
-    actions
-      .filter(({ caller }) => caller === Anyone)
-      .flatMap(({ name }) => [name, `=?base64?${Base64.encode(name)}?=`]),
+    actions.filter(({ caller }) => caller === Anyone).flatMap(({ name }) => routingFormsOf(name)),
   );
 
   return (headers: Headers.Headers): boolean => {
@@ -525,6 +540,7 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  *
  * - A success is `isError: false` with `structuredContent` its JSON and the same JSON as one text block, both `null` for an action without `success`; an `Action.Image` field is left out of `structuredContent` and its text, its block following them, and a success of images alone has no `structuredContent`.
  * - A declared error is an `isError: true` tool result in a 200 holding its JSON as one text block, with no `structuredContent`; a refusal is answered as `Action.Unauthenticated` and `Action.Forbidden` say.
+ * - An action declaring `progress` sends each value as `notifications/progress` on the `progressToken` its call's `_meta` carries, before the result: `progress` counts from 1, `message` is the value's JSON and `_meta["effect-actions/progress"]` the value; a call without a token gets none.
  * - Arguments that do not decode never reach the handler: an `isError: true` result in a 200, text `Invalid parameters for tool '<name>': …`, or for a 2025-06-18 client a JSON-RPC error.
  * - A defect, an undeclared failure, or a success or an error that does not encode is `isError: true`, text `Tool execution failed due to an internal server error.`: the cause goes to the log and to the call's `ErrorReporter`s, never to the client.
  * - An unknown tool is a JSON-RPC error `-32602` in a 200; a body that is not JSON a JSON-RPC error `-32700` in a 200; a `Content-Type` missing or not JSON an empty 415; another HTTP method an empty 405 with `Allow: POST, DELETE`, `Allow: POST` where `requestScoped`, or the 401 of an endpoint with authentication when signed out.
@@ -543,19 +559,25 @@ export function layerHttp<
   options: LayerHttpOptions<E, R, ActionOf<Member<Apps>>> &
     O &
     NoInfer<Known<O, LayerHttpOptions<E, R, Action.Any>>> &
-    NoInfer<RequiredAuthentication<SelectedOf<O, Apps>>> &
-    Matching<NoInfer<SelectedOf<O, Apps>>, NoInfer<D>> &
-    Inferring<D, NoInfer<SelectedOf<O, Apps>>>,
+    NoInfer<RequiredAuthentication<ToolAction<SelectedOf<O, Apps>>>> &
+    Matching<NoInfer<ToolAction<SelectedOf<O, Apps>>>, NoInfer<D>> &
+    Inferring<D, NoInfer<ToolAction<SelectedOf<O, Apps>>>>,
 ): Layer.Layer<
   never,
-  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | BuildError<
+      Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
+      ToolAction<SelectedOf<O, Apps>>
+    >
   | Cause.IllegalArgumentError
   | E,
-  | ServerBuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | ServerBuildServices<
+      Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
+      ToolAction<SelectedOf<O, Apps>>
+    >
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
-      HttpToolRequestContext<RemoteRequest<Member<Apps>, SelectedOf<O, Apps>>>
+      HttpToolRequestContext<RemoteRequest<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>>
     >
   | ProviderOf<D>
   | Features<R>
@@ -572,7 +594,7 @@ export function layerHttp(
     ...options
   }: LayerHttpOptions<unknown, unknown>,
 ) {
-  const selected = select(toList(apps), actions);
+  const selected = toolsOf(select(toList(apps), actions), actions);
   const served = selected.flatMap((app) => app.actions);
   assertAuthentication(served, authentication);
 
@@ -662,12 +684,18 @@ export function runStdio<
   options: Options<E, R, ActionOf<Member<Apps>>> & O & NoInfer<Known<O, Options<E, R, Action.Any>>>,
 ): Effect.Effect<
   void,
-  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | BuildError<
+      Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
+      ToolAction<SelectedOf<O, Apps>>
+    >
   | Cause.IllegalArgumentError
   | E,
-  | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | BuildServices<
+      Holding<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>,
+      ToolAction<SelectedOf<O, Apps>>
+    >
   | Stdio.Stdio
-  | ToolRequestContext<ServedRequest<Member<Apps>, SelectedOf<O, Apps>>>
+  | ToolRequestContext<ServedRequest<Member<Apps>, ToolAction<SelectedOf<O, Apps>>>>
   | Features<R>
 >;
 export function runStdio(
@@ -675,7 +703,7 @@ export function runStdio(
   { actions, features, ...options }: Options<unknown, unknown>,
 ) {
   const transport = server(
-    select(toList(apps), actions),
+    toolsOf(select(toList(apps), actions), actions),
     McpServer.layerStdio({ ...options, protocols }).pipe(Layer.provide(jsonLinesOnly)),
     features,
   );

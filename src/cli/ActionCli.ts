@@ -1,9 +1,10 @@
-import { Cause, Effect, Logger, Runtime } from "effect";
+import { Cause, Effect, Logger, Runtime, Stream } from "effect";
 import { type CliError, Command } from "effect/cli";
 import type { HttpClient } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import { projectedErrors, bindingErrors, type Declaring } from "../contract/declared.js";
 import { assertDistinct, assertKnown } from "../contract/names.js";
+import { type CallOptions, progressSink } from "../contract/progress.js";
 import {
   type UserError,
   command as makeCommand,
@@ -24,13 +25,15 @@ import {
   type Member,
   type RequestOf,
   select,
+  type Served,
+  toList,
   type Known,
   type Selected,
   type SelectedOf,
   type Selection,
-  type Served,
-  toList,
+  elementsOf,
 } from "../contract/implementation.js";
+import { elementOf } from "../contract/stream.js";
 
 export type { Options as CommandOptions } from "./commands.js";
 
@@ -151,16 +154,27 @@ const runWithBuildOfItsOwn = <App extends AnyImplementation, A extends Action.An
   app: App,
   action: A,
   input: A["input"]["Type"],
+  onProgress: CallOptions<unknown>["onProgress"],
 ): Local<App, A> => {
   const thisActionOnly = Implementation.share([action], app);
 
   const call = Effect.flatMap(acquire([thisActionOnly]), (bound) => {
     const [, run] = bound.find(([candidate]) => candidate === action) ?? [];
 
-    return run === undefined ? Effect.die(new Error(`No handler for ${action.name}`)) : run(input);
+    return run === undefined
+      ? Effect.die(new Error(`No handler for ${action.name}`))
+      : run(input, progressSink(action.progress, onProgress));
   });
 
-  const built = call.pipe(Effect.provide(Implementation.layerOf(thisActionOnly), { local: true }));
+  const builder = Implementation.layerOf(thisActionOnly);
+
+  // Why: A stream is read after its call succeeds with it, so the build is the stream's, open
+  // while it is read: provided around the call alone, it would close first, and a handler
+  // reading what its builder acquired would read it released.
+  const built =
+    elementOf(action.success) === undefined
+      ? call.pipe(Effect.provide(builder, { local: true }))
+      : Effect.succeed(elementsOf(call).pipe(Stream.provide(builder, { local: true })));
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased handler boundary: the builders' failures and services are the implementation's `EX` and `RX`, the handler's and authorization's services its entry of `R`; the handler fails with the action's errors or a `BuiltIn`, authorization with a refusal.
   return built as Local<App, A>;
@@ -194,7 +208,7 @@ const inProcess = <A extends Action.Any>(
 
   return makeCommand(
     action,
-    (input) => runWithBuildOfItsOwn(app, action, input),
+    (input, onProgress) => runWithBuildOfItsOwn(app, action, input, onProgress),
     options,
     projectedErrors(action),
   );
@@ -214,7 +228,7 @@ const overHttp = <A extends Action.Any>(
 
   return makeCommand(
     action,
-    (input) =>
+    (input, onProgress) =>
       Effect.flatMap(client ?? httpClient(binding), (methods) => {
         const method = methods[action.name];
 
@@ -224,7 +238,10 @@ const overHttp = <A extends Action.Any>(
           );
         }
 
-        return method(input);
+        const answer = method(input, { onProgress });
+
+        // Why: A stream method answers its `Stream` itself, which the command reads as the value.
+        return Stream.isStream(answer) ? Effect.succeed(answer) : answer;
       }),
     options,
     bindingErrors(action, binding),
@@ -297,6 +314,8 @@ const checkedCommandsOf = (
  * **Gotchas**
  *
  * - A success is its JSON on stdout, indented by two spaces, or `render`'s text; nothing for an action without `success`. Its Effect logs and `Console` output go to stderr; other writes as `logToStderr` says.
+ * - Each value an action declaring `progress` reports is one line of compact JSON on stderr, as it arrives, so stdout holds the answer alone; `remoteCommand` asks the server for them too.
+ * - An action answering a stream prints each element on stdout as it arrives, one line of compact JSON, or `render`'s text of it; a declared failure ends the command after the elements before it.
  * - A declared error is its JSON on stderr, under Effect CLI's `ERROR` heading, the command failing with a `UserError` whose `cause` is the error, exit 1 or its `Runtime.errorExitCode`; a refusal as `Action.Unauthenticated` and `Action.Forbidden` say; input that does not decode, in `--input` or a flag's JSON value, is `InvalidInput`'s JSON there, while a missing flag or a rejected choice is Effect CLI's own parse error.
  * - Effect CLI styles what it prints, a failure's JSON included, on a terminal and, from Effect 4.0.6, wherever `FORCE_COLOR` forces colour: for plain text there, set `NO_COLOR` or provide `TerminalCapabilities.TerminalCapabilities` with `canColor: false`.
  * - A failure no schema encodes, a builder's or an accepted error that does not encode, is a `UserError` printed as its tag or name and its message, then its causes, never its other fields; a defect, an undeclared failure, or a success that does not encode is the command's defect, which `runMain` reports as `logToStderr` says.
@@ -348,7 +367,7 @@ export function remoteCommand(
   return overHttp(binding, action, options === undefined ? undefined : syntax, client);
 }
 
-// Why: One declaration of `client` for `remote` and `remoteCommand`, so its JSDoc has one home.
+/** The `client` option of `remote` and `remoteCommand`, declared once for both. */
 export interface Calling<C> {
   /**
    * The connection: an Effect of the binding's client, such as
@@ -399,16 +418,21 @@ type Called<M, A extends Action.Any> = A extends unknown
     : never
   : never;
 
+// Why: A call answers one value or a stream, so both carry its failures and requirements.
+type CallError<Call> = Effect.Error<Call> | Stream.Error<Call>;
+
+type CallRequirements<Call> = Effect.Services<Call> | Stream.Services<Call>;
+
 // Why: Distributive over the client, so one that may be `undefined` also fails and requires as
 // its omission does: as `ActionHttp.client(binding)` on the host's `HttpClient`.
 type CallFailure<H extends AnyHttp, C, A extends Action.Any> =
   C extends Effect.Effect<infer M, infer CE, unknown>
-    ? CE | Effect.Error<Called<M, A>>
-    : Effect.Error<Called<Client<H>, A>>;
+    ? CE | CallError<Called<M, A>>
+    : CallError<Called<Client<H>, A>>;
 
 type CallServices<C, A extends Action.Any> =
   C extends Effect.Effect<infer M, unknown, infer CR>
-    ? CR | Effect.Services<Called<M, A>>
+    ? CR | CallRequirements<Called<M, A>>
     : HttpClient.HttpClient;
 
 /**

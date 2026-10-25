@@ -42,14 +42,23 @@ import {
   bindingOf,
 } from "../contract/declared.js";
 import { declared } from "../contract/status.js";
-import { type ErasedMethod, inputParseOptions } from "../contract/call.js";
+import { inputParseOptions } from "../contract/call.js";
 import { type AnyHttp, type Client, methods, type Options as ClientOptions } from "./client.js";
 import type { BuiltIn, BuiltIns } from "../contract/errors.js";
 import { SchemaErrors, schemaErrors } from "./schema-errors.js";
 import {
+  answeredWithProgress,
+  answeringElements,
+  answeringWithProgress,
+  elementStreamOf,
+  progressStreamOf,
+} from "./streamed.js";
+import { elementOf } from "../contract/stream.js";
+import {
   type Protected,
   acquire,
   type BuildError,
+  type ErasedHandler,
   type ErasedValue,
   type Known,
   type Member,
@@ -59,8 +68,8 @@ import {
   type Serving,
   type Selected,
   type Holding,
-  servingOf,
 } from "../contract/implementation.js";
+import { servingOf } from "../contract/serving.js";
 
 export type { Client } from "./client.js";
 
@@ -147,6 +156,7 @@ export interface LayerOptions<M extends Middleware = [], A extends Action.Any = 
    * **Gotchas**
    *
    * - A middleware requiring the identity needs a layer serving only protected actions: serve the public ones from a second layer without it.
+   * - On a stream answering an action declaring `progress`, or one answering a stream, a middleware sees the call end at its first event, while its handler runs on, and never sees a later failure; what it provides lasts the handler.
    */
   readonly middleware?: M;
 }
@@ -266,12 +276,35 @@ const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constrain
 // string, where `HttpApi` takes only fields that encode to strings or arrays of strings, so a
 // nested input or a number has no faithful form; and the caching a GET would buy only a public
 // `readOnly` action gives up, as a protected route's answers are `no-store`.
+const successOf = (action: Action.Any, errors: Action.Errors) => {
+  const element = elementOf(action.success);
+
+  if (element !== undefined) return elementStreamOf(element, action.progress, errors);
+
+  return action.progress === undefined
+    ? action.success
+    : [
+        answeredWithProgress(action.success),
+        progressStreamOf(action.progress, action.success, errors),
+      ];
+};
+
 const endpointOf = (action: Action.Any, path: `/${string}`, errors: Action.Errors) =>
   HttpApiEndpoint.post(action.name, path, {
     payload: action.input.pipe(HttpApiSchema.asJson()),
-    success: action.success,
+    success: successOf(action, errors),
     error: errors.map(declared),
   });
+
+const answerOf = (action: Action.Any, run: ErasedHandler<unknown>) => {
+  const element = elementOf(action.success);
+
+  if (element !== undefined) return answeringElements(element, action.progress, run);
+
+  return action.progress === undefined
+    ? run
+    : answeringWithProgress(action.progress, action.success, run);
+};
 
 const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middleware = []) =>
   middleware.reduce((inner, key) => inner.middleware(key), endpoint);
@@ -387,7 +420,10 @@ const jsonContentType = () =>
  *
  * **Gotchas**
  *
- * - A success is its JSON as the body; an action without `success` answers an empty 200, no body and no content type, so a hand-written client must not parse it. One without `input` still takes the body `{}` typed as JSON: no body is a 400.
+ * - A success is its JSON as the body; an action without `success` answers an empty 200, no body and no content type, so a hand-written client must not parse it, or an empty 204 where it declares `progress`. One without `input` still takes the body `{}` typed as JSON: no body is a 400.
+ * - An action declaring `progress` answers a request whose `Accept` names `text/event-stream`, whatever else it names, with an SSE stream, listed in OpenAPI: a `progress` event for each value, its data the value's JSON, then one `final` event holding the answer's JSON, `null` for none; without that `Accept` it answers as any action, its progress dropped.
+ * - An action answering a stream, `Action.Stream`, answers an SSE stream alone, whatever `Accept` says: an `element` event for each element, its data the element's JSON, and a `progress` event for each value where it declares `progress`; a stream of none answers a 200 with no event. A failure before the first event answers its status; one after ends the stream as Effect's stream failure event, a defect as `Internal server error`.
+ * - The stream starts with the call's first event, so a failure before it, a refusal included, answers as it would without the stream; a declared failure after it ends the stream with Effect's `effect/http-api/stream/failure` event, reported as `Info` as without the stream, and a defect or an answer that does not encode with one saying `Internal server error`, its cause logged and reported.
  * - A body that is not JSON is a 400 `InvalidInput`; a request with no `Content-Type` a 415 `Unsupported content-type: none`, one with another type Effect's own 415; each after authentication on a protected route.
  * - A defect, an undeclared failure, or a success or an error that does not encode answers an empty 500: the cause goes to the log and to the call's `ErrorReporter`s, never to the body.
  * - A path no layer serves, or a method other than `POST` on a route, is a 404.
@@ -463,9 +499,11 @@ export function layer(
       );
 
       const byName = Object.fromEntries(
-        bound.map(
-          ([action, run]) => [action.name, (request: Request) => run(request.payload)] as const,
-        ),
+        bound.map(([action, run]) => {
+          const answer = answerOf(action, run);
+
+          return [action.name, (request: Request) => answer(request.payload)] as const;
+        }),
       );
 
       return HttpApiBuilder.group(api, name, (builder) =>
@@ -498,6 +536,8 @@ export function layer(
  *
  * - An input that does not encode fails with `InvalidInput`, and nothing is sent; undeclared input fields, which TypeScript lets through on a wider value, are dropped as it encodes, since the server would refuse them.
  * - It interprets no status and retries nothing: a failed write may have happened, and only a declared error says what the server did.
+ * - A call given `onProgress` asks for the route's event stream and reads its answer from the `final` event; a call without one asks for the answer alone, so the server sends no progress.
+ * - A call of an action answering a stream returns a `Stream` of its elements, failing as the route's stream fails, with `Sse.SseError` or `Sse.Retry` too; its `onProgress` gets each `progress` event, which the server sends whether or not the call gave one.
  */
 export function client<const H extends AnyHttp>(
   binding: H,
@@ -532,7 +572,7 @@ export function fetchClient<const H extends AnyHttp, E, R>(
 export function fetchClient(
   binding: AnyHttp,
   { fetch, ...options }: FetchClientOptions | FetchClientOptions<unknown, unknown> = {},
-): { readonly [name: string]: ErasedMethod } {
+): object {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: as `client`'s, each overload states the channels its own options give. Building runs no request, so it needs only the `HttpClient` provided here; what a transform requires, each call requires.
   return methods(binding, options as ClientOptions<unknown, never>).pipe(
     Effect.provide(FetchHttpClient.layer),

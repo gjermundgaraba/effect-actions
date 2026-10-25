@@ -1,5 +1,62 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**`watch` is not an action name.** `Action.make` refuses it as it refuses `then`, since every
+client watches events through a method of that name, beside one per action:
+`Invalid action name: <name> (use [A-Za-z0-9_-]{1,128}, other than "then", which would make a client a thenable, awaited as a promise, and "watch", every client's method for events)`.
+
+- Migrate: rename an action called `watch`, and update code matching the old message.
+
+**`ActionMcp.McpCallError` has a reason `FrameTooLarge`**: an endpoint's event stream holding
+more than the 10 MiB a client keeps with no frame ending fails the call with it, where it failed
+with `NoReply`.
+
+- Migrate: a match over `reason` that names every member names `FrameTooLarge` too.
+
+### Additions
+
+**Progress.** `Action.make` takes `progress`, a schema or struct fields: the handler reports
+values through its second argument, `{ progress }`, without waiting for the caller, and a
+client's call takes `{ onProgress }` after its input. Progress is lossy: a caller falling behind
+loses the oldest values, never the answer; an `onProgress` that fails is logged, and the call
+answers. In process the values reach `onProgress` directly;
+over HTTP a request accepting `text/event-stream` is answered with an SSE stream of `progress`
+events, then a `final` one holding the answer, and `ActionHttp.client` asks for it when the call
+gives `onProgress`; over RPC such an action is a stream rpc of `Progress` elements, then a
+`Final`; over MCP each value is `notifications/progress` on the call's `progressToken`, which
+`ActionMcp.client` sends when the call gives `onProgress`; a toolkit streams each as a preliminary
+result, `{ _tag: "Progress", value }`, its tool's success that or `success`; a command prints each value as
+a line of JSON on stderr. Guide: `docs/Action-streams.md#report-progress`; example: kitchen-sink's
+`exportIssues`.
+
+- An action declaring `progress` and no `success` answers an HTTP request without the stream with
+  an empty 204, where one without `progress` answers an empty 200: `HttpApi` cannot stream at the
+  status of an empty answer.
+
+**Streamed answers.** `Action.Stream(element)`, a schema or struct fields, whose type is
+`Action.StreamOf`, as an action's `success` makes its handler return a `Stream` of elements, which may fail with the action's
+errors, and every client's call return one; with `progress`, its values reach `onProgress`
+beside the elements. In process the stream runs in a scope of its own, closed when the caller
+stops reading; over HTTP the route answers an SSE stream of `element` events, and `progress`
+ones where declared, a failure before the first event answering its status; over RPC such an
+action is a stream rpc of `Element` elements, and `Progress` ones; a command prints each element
+as a line of JSON on stdout, or `render`'s text of it. A tool answers one result, so
+`ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make` leave such an action out of
+implementations given whole, requiring nothing of it, and refuse one their `actions` list names;
+`ActionMcp.client` gives it no method. Guide: `docs/Action-streams.md#answer-a-stream`; example:
+kitchen-sink's `exportIssues`.
+
+### Other changes
+
+- **`ActionMcp` no longer records a tool call's arguments on its span**, only the tool's name,
+  as HTTP records no body: a credential or a `Schema.Redacted` value among them reached every
+  trace exported. `ActionToolkit` still records them, as Effect's toolkit does.
+- kitchen-sink has `exportIssues`, an action answering a stream of issues with progress, under an
+  export limit.
+
 ## 0.20.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.6`. The `effect` peer stays

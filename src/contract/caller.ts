@@ -1,3 +1,4 @@
+import { Context } from "effect";
 import type * as Action from "./Action.js";
 
 /**
@@ -25,5 +26,16 @@ export const assertAuthentication = (
         `Protected action '${action.name}' requires its matching authentication descriptor (give it the authentication whose identity the action's caller names)`,
       );
     }
+  }
+};
+
+/** Refuses a declared `caller` that is neither `Anyone` nor an identity service. */
+export const assertCaller = (caller: Action.Options["caller"]): void => {
+  if (caller !== Anyone && !Context.isKey(caller)) {
+    throw new Error("Missing caller: declare Action.Anyone or an identity service key");
+  }
+
+  if (caller !== Anyone && Context.isReference(caller)) {
+    throw new Error("Invalid caller: an identity is a Context.Service, not a Context.Reference");
   }
 };

@@ -1,25 +1,35 @@
-import { Array as Arr, Cause, Context, Effect, type Layer, Predicate, Schema } from "effect";
-import type { Scope } from "effect";
-import { Anyone } from "./caller.js";
+import { Array as Arr, Cause, Effect, Layer, Predicate, Schema, Stream as Elements } from "effect";
+import type { Scope, Context } from "effect";
+import { Anyone, assertCaller } from "./caller.js";
 import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
 import { assertKnown, assertName, assertOnce, heldOnce } from "./names.js";
-import { type Call, inputOf } from "./call.js";
-import { type BuiltIn, InvalidInput, type Refusal } from "./errors.js";
+import { type Call, inputOf, onProgressOf } from "./call.js";
+import { type BuiltIn, InvalidInput } from "./errors.js";
+import { progressSink, type ReportingOf } from "./progress.js";
+import { type Answer, elementOf } from "./stream.js";
+import {
+  type Authorizer,
+  authorizerOf,
+  type Deferred,
+  type ErasedAuthorizer,
+} from "./authorizer.js";
+import type { NoInput } from "./codec.js";
+import { type Codec, type CodecOf, codecOf, type Fields } from "./codec.js";
 import {
   type ActionOf,
   type Authorize,
-  type Bound,
   type BuildServices,
   type BuildError,
-  builders,
-  built,
-  type ErasedAuthorize,
+  acquire,
+  builtWith,
+  elementsOf,
   type ErasedHandler,
   type ErasedValue,
   type Handlers as ErasedHandlers,
   Implementation,
   type Member,
   memoized,
+  provideBuilders,
   type RequestOf,
   type Protected,
   type Holding,
@@ -31,6 +41,8 @@ import {
   select,
   type Served,
   toList,
+  type Written,
+  type WrittenHandler,
 } from "./implementation.js";
 
 export type { BuildServices } from "./implementation.js";
@@ -43,21 +55,11 @@ export type { Authorize } from "./implementation.js";
 
 export type { AnyImplementation } from "./implementation.js";
 
-type Codec = Schema.Codec<unknown, unknown, never, never>;
-
-type Fields = { readonly [key: string]: Codec };
-
-const NoInput = Schema.Record(Schema.String, Schema.Never);
-
-type CodecOf<S extends Codec | Fields> = S extends Codec
-  ? S
-  : S extends Schema.Struct.Fields
-    ? keyof S extends never
-      ? typeof NoInput
-      : Extract<Schema.Struct<S>, Codec>
-    : never;
-
 export { Anyone } from "./caller.js";
+
+export { Stream } from "./stream.js";
+
+export type { StreamOf } from "./stream.js";
 
 /**
  * How the action's tool presents itself over MCP, in MCP's own names; every field is optional
@@ -130,11 +132,27 @@ export interface Options {
    */
   readonly input?: Codec | Fields | undefined;
   /**
-   * A schema or struct fields. Omit for an action that returns nothing, `Schema.Void`; what each
-   * surface answers is on its `layer`, `layerHttp`, `runStdio`, `make` or `command`. A top-level field whose schema is
-   * `Action.Image` is a media field: see `Action.Image`.
+   * A schema or struct fields, or `Action.Stream(element)` for an action answering a stream of
+   * elements. Omit for an action that returns nothing, `Schema.Void`; what each surface answers
+   * is on its `layer`, `layerHttp`, `runStdio`, `make` or `command`. A top-level field whose
+   * schema is `Action.Image` is a media field: see `Action.Image`.
    */
   readonly success?: Codec | Fields | undefined;
+  /**
+   * A schema or struct fields: what the handler reports while it runs, through its second
+   * argument's `progress`, before it answers. Omit for an action that reports nothing; the
+   * handler then takes its input alone. A client's call takes `onProgress` after the input;
+   * how each surface carries progress is on `ActionHttp.layer`, `ActionRpc.make`,
+   * `ActionMcp.layerHttp`, `ActionToolkit.make` and `ActionCli.command`.
+   *
+   * **Gotchas**
+   *
+   * - Progress is a snapshot to show, not an event to count: values a caller falls behind on are dropped, the oldest first, while the answer never is.
+   * - A value breaking the schema is the call's defect, as an answer breaking `success` is.
+   * - A caller's `onProgress` that fails or dies is logged as a warning, and the call goes on and answers: the handler is never interrupted for it.
+   * - A value the caller's `progress` schema cannot decode, where client and server differ, is logged and dropped by MCP's client, the toolkit, `ActionCli.command` and `Action.client`; RPC's client decodes it with the response, so the call fails with a `SchemaError`, `onProgress` given or not, and HTTP's where `onProgress` is given, asking for no progress otherwise.
+   */
+  readonly progress?: Codec | Fields | undefined;
   /**
    * The declared failures: one schema, or a list of them, as `HttpApiEndpoint` takes them;
    * each keeps its own HTTP status annotation, the third argument of
@@ -194,6 +212,10 @@ type SchemaOf<O, K extends "input" | "success", Default extends Codec> = CodecOf
   Extract<OptionOf<O, K, Default>, Codec | Fields>
 >;
 
+type ProgressOf<O> = [Extract<OptionOf<O, "progress", never>, Codec | Fields>] extends [never]
+  ? undefined
+  : CodecOf<Extract<OptionOf<O, "progress", never>, Codec | Fields>>;
+
 type ErrorSchemasOf<O> = ReadonlyArray<
   ErrorMembers<Extract<OptionOf<O, "error", []>, Codec | ReadonlyArray<Codec>>>
 >;
@@ -210,6 +232,7 @@ export interface Action<
   Errors extends ReadonlyArray<Codec>,
   ReadOnly extends boolean = boolean,
   Caller extends Options["caller"] = Options["caller"],
+  Progress extends Codec | undefined = Codec | undefined,
 > {
   readonly caller: Caller;
   readonly name: Name;
@@ -222,6 +245,8 @@ export interface Action<
   readonly success: Success;
   /** The declared failures, as a list: one given alone is a list of one. */
   readonly error: Errors;
+  /** What the handler reports while it runs, as a schema; `undefined` where none is declared. */
+  readonly progress: Progress;
   readonly readOnly: ReadOnly;
   /** The `mcp` options as given, none when left out. */
   readonly mcp: Mcp;
@@ -236,10 +261,14 @@ export type Any = Action<string, Codec, Codec, ReadonlyArray<Codec>>;
  */
 export type Errors = ReadonlyArray<Codec>;
 
-/** Receives decoded input; may fail only with the declared errors and the built-in ones. */
+/**
+ * Receives decoded input, and what it reports progress by where `A` declares `progress`; may
+ * fail only with the declared errors and the built-in ones.
+ */
 export type Handler<A extends Any, R = never> = (
   input: A["input"]["Type"],
-) => Effect.Effect<A["success"]["Type"], A["error"][number]["Type"] | BuiltIn, R>;
+  ...reporting: ReportingOf<A>
+) => Answer<A["success"], A["error"][number]["Type"] | BuiltIn, R>;
 
 /**
  * The handlers of the actions `A`, keyed by name, as `implement` takes them: what a builder
@@ -249,13 +278,6 @@ export type Handler<A extends Any, R = never> = (
 export type Handlers<A extends ReadonlyArray<Any>, R = never> = {
   readonly [Action in A[number] as Action["name"]]: Handler<Action, R>;
 };
-
-const codecOf = (schema: Codec | Fields): Codec =>
-  Schema.isSchema(schema)
-    ? schema
-    : Reflect.ownKeys(schema).length === 0
-      ? NoInput
-      : Schema.Struct(schema);
 
 /**
  * Define an action contract: what it takes and answers, whether it changes anything, and who
@@ -278,20 +300,15 @@ export function make<const Name extends string, const O extends Options>(
   SchemaOf<O, "success", typeof Schema.Void>,
   ErrorSchemasOf<O>,
   O["readOnly"],
-  O["caller"]
+  O["caller"],
+  ProgressOf<O>
 >;
 export function make(name: string, options: Options): Any {
   assertName(name);
 
   const { caller, readOnly } = options;
 
-  if (caller !== Anyone && !Context.isKey(caller)) {
-    throw new Error("Missing caller: declare Action.Anyone or an identity service key");
-  }
-
-  if (caller !== Anyone && Context.isReference(caller)) {
-    throw new Error("Invalid caller: an identity is a Context.Service, not a Context.Reference");
-  }
+  assertCaller(caller);
 
   if (readOnly !== true && readOnly !== false) {
     throw new Error(`Invalid readOnly: ${String(readOnly)} (set true or false)`);
@@ -304,6 +321,7 @@ export function make(name: string, options: Options): Any {
     input: codecOf(options.input ?? {}),
     success: options.success === undefined ? Schema.Void : codecOf(options.success),
     error: errorList(options.error),
+    progress: options.progress === undefined ? undefined : codecOf(options.progress),
     readOnly,
     mcp: { ...options.mcp },
   };
@@ -359,7 +377,8 @@ type NoHandler<R> = { readonly "~list": R };
 type Single<T extends Target, R> = T extends Any
   ? (
       input: T["input"]["Type"],
-    ) => Effect.Effect<T["success"]["Type"], T["error"][number]["Type"] | BuiltIn, R>
+      ...reporting: ReportingOf<T>
+    ) => Answer<T["success"], T["error"][number]["Type"] | BuiltIn, R>
   : NoHandler<R>;
 
 // Why: Mapped over `RequestServices`, not over the actions' names: TypeScript infers it from the
@@ -371,19 +390,6 @@ type Several<T extends Target, RequestServices> = {
 };
 
 type HandlersOf<T extends Target, R, RequestServices> = Single<T, R> | Several<T, RequestServices>;
-
-// Why: An index TypeScript cannot read until `T` is known, so an implementation written inside a
-// surface's arguments infers nothing from what that surface accepts. Rejected: `NoInfer<T>`, which
-// stays in a layer's requirements, where providing a union's members in two `Layer.provide` calls
-// leaves it owed; this reads as `T` itself once inferred.
-type Deferred<T> = [T][T extends unknown ? 0 : never];
-
-// Why: `Authorize` written out, not the alias, for the reason on `NoHandler`, and since TypeScript
-// would infer `RA` from only one branch of a conditional authorizer whose other branch is typed
-// `Authorize`, such as `enabled ? authorize : Action.allowAll`.
-type Authorizer<A extends Any, RA, EAX, RAX> =
-  | ((action: A) => Effect.Effect<void, Refusal, RA>)
-  | Effect.Effect<(action: A) => Effect.Effect<void, Refusal, RA>, EAX, RAX>;
 
 type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = Implementation<
   ActionsOf<T>,
@@ -400,45 +406,10 @@ type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = I
   Deferred<Exclude<RAX, Scope.Scope>>
 >;
 
-type ErasedAuthorizer = ErasedAuthorize | Effect.Effect<ErasedAuthorize, unknown, unknown>;
-
-type Built = ErasedHandlers<unknown> | ErasedHandler<unknown>;
+type Built = ErasedHandlers<unknown> | WrittenHandler<unknown>;
 
 /** Every authenticated caller may call a protected action. */
 export const allowAll: Authorize<Any> = () => Effect.void;
-
-const assertAuthorizer = (before: ErasedAuthorize): ErasedAuthorize => {
-  if (!Predicate.isFunction(before)) {
-    throw new Error(
-      "Missing authorize: not a function (pass your rule, Action.allowAll, or an Effect returning one)",
-    );
-  }
-
-  return before;
-};
-
-const assertAuthorization = (authorize: ErasedAuthorizer | undefined): ErasedAuthorizer => {
-  if (authorize === undefined)
-    throw new Error("Protected actions require authorize, or Action.allowAll");
-
-  return authorize;
-};
-
-const assertNoAuthorization = (authorize: ErasedAuthorizer | undefined): ErasedAuthorizer => {
-  if (authorize !== undefined)
-    throw new Error(
-      "A public-only target takes no authorize (remove it, or list a protected action)",
-    );
-
-  return allowAll;
-};
-
-const authorizerOf = (before: ErasedAuthorizer) =>
-  memoized(
-    Effect.isEffect(before)
-      ? Effect.map(before, assertAuthorizer)
-      : Effect.succeed(assertAuthorizer(before)),
-  );
 
 /**
  * Bind handlers to contracts, behind authorization: one action and its handler, or a list of
@@ -499,7 +470,7 @@ export function implement<
 export function implement(
   actions: Target,
   handlers: Built | Effect.Effect<Built, unknown, unknown>,
-  options?: { readonly authorize?: ErasedAuthorizer },
+  options?: { readonly authorize?: ErasedAuthorizer<Any> },
 ): Implementation<Any, {}, unknown, unknown, unknown, unknown, unknown> {
   const listed = Arr.ensure(actions);
   const names = listed.map((action) => action.name);
@@ -507,12 +478,12 @@ export function implement(
   assertOnce("action", listed);
 
   const authorizer = authorizerOf(
-    listed.some((action) => action.caller !== Anyone)
-      ? assertAuthorization(options?.authorize)
-      : assertNoAuthorization(options?.authorize),
+    { singular: "action", module: "Action" },
+    listed.some((action) => action.caller !== Anyone),
+    options?.authorize,
   );
 
-  const pairWithActions = (built: Built): Bound => {
+  const pairWithActions = (built: Built): Written => {
     const keyed: ErasedHandlers<unknown> = Predicate.isFunction(built)
       ? Object.fromEntries(Array.isArray(actions) ? [] : listed.map(({ name }) => [name, built]))
       : built;
@@ -561,12 +532,14 @@ export function layer<const Apps extends Served>(
   implementations: Apps,
 ): Layer.Layer<never, BuildError<Member<Apps>>, BuildServices<Member<Apps>>>;
 export function layer(implementations: Served): Layer.Layer<never, unknown, unknown> {
-  return builders(toList(implementations));
+  return Layer.empty.pipe(
+    provideBuilders(toList(implementations).map((app) => Implementation.layerOf(app))),
+  );
 }
 
 type Method<A extends Any, R> = Call<
   A,
-  Effect.Effect<A["success"]["Type"], A["error"][number]["Type"] | BuiltIn, R>
+  Answer<A["success"], A["error"][number]["Type"] | BuiltIn, R>
 >;
 
 /**
@@ -582,14 +555,15 @@ export type Client<
 
 type ErasedMethod = (
   ...input: ReadonlyArray<ErasedValue>
-) => Effect.Effect<ErasedValue, unknown, unknown>;
+) => Effect.Effect<ErasedValue, unknown, unknown> | Elements.Stream<ErasedValue, unknown, unknown>;
 
-const jsonRoundTrip = (schema: Codec) => {
+const jsonRoundTrip = <S extends Codec>(schema: S) => {
   const codec = Schema.fromJsonString(Schema.toCodecJson(schema));
   const encode = Schema.encodeUnknownEffect(codec, { errors: "all" });
   const decode = Schema.decodeUnknownEffect(codec, { errors: "all" });
 
-  return (value: ErasedValue) => Effect.flatMap(encode(value), (encoded) => decode(encoded));
+  return (value: S["Type"]): Effect.Effect<S["Type"], Schema.SchemaError> =>
+    Effect.flatMap(encode(value), (encoded) => decode(encoded));
 };
 
 const mapFailuresInPlace = (
@@ -615,18 +589,30 @@ const mapFailuresInPlace = (
 
 const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
   const input = jsonRoundTrip(action.input);
-  const success = jsonRoundTrip(action.success);
+  const element = elementOf(action.success);
+  const success = jsonRoundTrip(element ?? action.success);
   const failure = jsonRoundTrip(Schema.Union(projectedErrors(action)));
 
-  return (...args) =>
+  const declared = (cause: Cause.Cause<ErasedValue>) =>
+    Effect.flatMap(mapFailuresInPlace(cause, failure), Effect.failCause);
+
+  const called = (args: ReadonlyArray<ErasedValue>) =>
     inputOf(action, args).pipe(
       Effect.flatMap(input),
       Effect.mapError(InvalidInput.fromSchemaError),
-      Effect.flatMap((value) =>
-        Effect.catchCause(run(value), (cause) =>
-          Effect.flatMap(mapFailuresInPlace(cause, failure), Effect.failCause),
-        ),
-      ),
+      Effect.map((value) => run(value, progressSink(action.progress, onProgressOf(args)))),
+    );
+
+  if (element !== undefined)
+    return (...args) =>
+      Elements.unwrap(Effect.map(called(args), elementsOf)).pipe(
+        Elements.catchCause((cause) => Elements.fromEffect(declared(cause))),
+        Elements.mapEffect((value) => Effect.orDie(success(value))),
+      );
+
+  return (...args) =>
+    called(args).pipe(
+      Effect.flatMap((answer) => Effect.catchCause(answer, declared)),
       Effect.flatMap((value) => Effect.orDie(success(value))),
     );
 };
@@ -684,7 +670,12 @@ export function client(
     heldOnce,
   );
 
-  return Effect.map(built(apps), (bound) =>
-    Object.fromEntries(bound.map(([action, run]) => [action.name, methodOf(action, run)])),
+  return Effect.map(
+    builtWith(
+      apps.map((app) => Implementation.layerOf(app)),
+      acquire(apps),
+    ),
+    (bound) =>
+      Object.fromEntries(bound.map(([action, run]) => [action.name, methodOf(action, run)])),
   );
 }

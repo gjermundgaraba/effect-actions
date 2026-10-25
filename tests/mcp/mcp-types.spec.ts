@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer, Schema, type Stdio, type Types } from "effect";
+import { Cause, Context, Effect, Layer, Schema, type Stdio, Stream, type Types } from "effect";
 import { type McpSchema, McpServer } from "effect/ai";
 import { HttpClient, type HttpClientError, HttpClientRequest, type HttpRouter } from "effect/http";
 import { expectTypeOf } from "@effect/vitest";
@@ -169,7 +169,12 @@ expectTypeOf<
 >().toBeUnknown();
 
 expectTypeOf<Types.ReasonTags<ActionMcp.McpCallError>>().toEqualTypeOf<
-  "StatusError" | "ProtocolError" | "NoReply" | "UndeclaredError" | "NoStructuredContent"
+  | "StatusError"
+  | "ProtocolError"
+  | "NoReply"
+  | "UndeclaredError"
+  | "NoStructuredContent"
+  | "FrameTooLarge"
 >();
 
 type CallFailure =
@@ -202,3 +207,23 @@ export const transformErrorsAndServices = Effect.gen(function* () {
   const unprovided: Effect.Effect<void, unknown> = call;
   void unprovided;
 });
+
+const PrivateTail = Action.make("private_tail", {
+  ...read,
+  caller: Caller,
+  success: Action.Stream(Schema.String),
+});
+
+const tailing = Action.implement(
+  [Open, PrivateTail],
+  { open: done, private_tail: () => Stream.empty },
+  { authorize: () => Effect.asVoid(Region) },
+);
+
+expectTypeOf(ActionMcp.layerHttp(tailing, options)).toEqualTypeOf<
+  Layer.Layer<never, Cause.IllegalArgumentError, HttpRouter.HttpRouter>
+>();
+
+expectTypeOf(ActionMcp.runStdio(tailing, options)).toEqualTypeOf<
+  Effect.Effect<void, Cause.IllegalArgumentError, Stdio.Stdio>
+>();

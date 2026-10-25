@@ -1,5 +1,5 @@
 import { Deferred, Effect, Option, Predicate, Schema, Sink, Stdio, Stream } from "effect";
-import { type Params, statelessRequest } from "../../src/mcp/client.js";
+import { type Params, statelessRequest } from "../../src/mcp/request.js";
 import { httpProtocol } from "../../src/mcp/protocol.js";
 import { sessionMessage } from "./requests.js";
 
@@ -28,13 +28,17 @@ const sessionInitialize = (revision: string): HostRequest => ({
 
 const isStateless = (revision: string) => revision === httpProtocol.protocolVersion;
 
-const exchange = <E>(
+export const exchange = <E>(
   server: Effect.Effect<void, E, Stdio.Stdio>,
   revision: string,
   requests: ReadonlyArray<HostRequest>,
-): Effect.Effect<ReadonlyArray<string>, E> =>
+): Effect.Effect<
+  { readonly replies: ReadonlyArray<string>; readonly lines: ReadonlyArray<string> },
+  E
+> =>
   Effect.gen(function* () {
     const stateless = isStateless(revision);
+    const lines: Array<string> = [];
 
     const sent = [
       ...(stateless ? [] : [{ id: 0, request: sessionInitialize(revision) }]),
@@ -75,6 +79,8 @@ const exchange = <E>(
           return Effect.forEach(
             complete,
             (line) => {
+              lines.push(line);
+
               const reply = Option.flatMap(idOf(line), ({ id }) =>
                 Option.fromNullishOr(pending.find((entry) => entry.id === id)),
               );
@@ -88,7 +94,9 @@ const exchange = <E>(
 
     yield* server.pipe(Effect.provide(Stdio.layerTest({ stdin, stdout })));
 
-    return yield* Effect.forEach(pending, ({ reply }) => Deferred.await(reply));
+    const replies = yield* Effect.forEach(pending, ({ reply }) => Deferred.await(reply));
+
+    return { replies, lines };
   });
 
 export const converse = <E>(
@@ -96,11 +104,18 @@ export const converse = <E>(
   revision: string,
   requests: ReadonlyArray<HostRequest>,
 ): Effect.Effect<ReadonlyArray<string>, E> =>
-  Effect.map(exchange(server, revision, requests), (lines) =>
-    isStateless(revision) ? lines : lines.slice(1),
+  Effect.map(exchange(server, revision, requests), ({ replies }) =>
+    isStateless(revision) ? replies : replies.slice(1),
   );
+
+export const transcript = <E>(
+  server: Effect.Effect<void, E, Stdio.Stdio>,
+  requests: ReadonlyArray<HostRequest>,
+): Effect.Effect<ReadonlyArray<string>, E> =>
+  Effect.map(exchange(server, httpProtocol.protocolVersion, requests), ({ lines }) => lines);
 
 export const negotiate = <E>(
   server: Effect.Effect<void, E, Stdio.Stdio>,
   revision: string,
-): Effect.Effect<string, E> => Effect.map(exchange(server, revision, []), ([line = ""]) => line);
+): Effect.Effect<string, E> =>
+  Effect.map(exchange(server, revision, []), ({ replies: [line = ""] }) => line);

@@ -69,8 +69,10 @@ export const errorSchemas = (errors: Action.Errors): Action.Errors => {
   return [...schemas.values()];
 };
 
-export const projectedErrors = (action: Action.Any, surface: Action.Errors = []): Action.Errors =>
-  errorSchemas([...builtIns, ...action.error, ...surface]);
+export const projectedErrors = (
+  action: Pick<Action.Any, "error">,
+  surface: Action.Errors = [],
+): Action.Errors => errorSchemas([...builtIns, ...action.error, ...surface]);
 
 /** The errors a binding declares for every call, and its protected actions' authentication's. */
 export interface Declaring {
@@ -85,7 +87,10 @@ export interface Declaring {
  * Every error a binding's call of `action` declares: the built-in ones, the action's, the
  * binding's and, where `action` is protected, its authentication's.
  */
-export const bindingErrors = (action: Action.Any, binding: Declaring): Action.Errors =>
+export const bindingErrors = (
+  action: Pick<Action.Any, "error" | "caller">,
+  binding: Declaring,
+): Action.Errors =>
   projectedErrors(
     action,
     action.caller === Anyone || binding.authentication === undefined

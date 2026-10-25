@@ -109,3 +109,23 @@ export const CloseIssue = Action.make("closeIssue", {
 });
 
 export const Issues = [ListIssues, GetIssue, CreateIssue, CommentOnIssue, CloseIssue] as const;
+
+// An action answering a stream: its handler returns a `Stream` of issues, and every client's
+// call returns one, each issue read as the server sends it. It reports how far it is, too.
+// `Issues` leaves it out, so MCP's `Tools` and the assistant's tools do: a tool answers one
+// result, and MCP refuses a stream action it is given. HTTP, RPC and the CLI serve it.
+export const ExportIssues = Action.make("exportIssues", {
+  description: "Stream every issue of your workspace, oldest first, with bodies and comments.",
+  input: {
+    status: Schema.optional(Status).annotate({ description: "Only issues of this status." }),
+  },
+  success: Action.Stream(Issue),
+  progress: {
+    exported: Schema.Finite.annotate({ description: "How many issues were sent." }),
+    total: Schema.Finite.annotate({ description: "How many the export holds." }),
+  },
+  // An export is costly, so it is limited too: refused before its first issue, a 429.
+  error: RateLimited,
+  readOnly: true,
+  caller: CurrentMember,
+});

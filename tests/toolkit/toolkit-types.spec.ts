@@ -313,3 +313,50 @@ expectTypeOf<
     >["layer"]
   >
 >().toBeUnknown();
+
+const Imported = Action.make("imported", {
+  description: "Reports progress.",
+  readOnly: false,
+  caller: Action.Anyone,
+  success: { imported: Schema.Finite },
+  progress: { done: Schema.Finite },
+});
+
+const imported = ActionToolkit.make(
+  Action.implement(Imported, (_input, { progress }) =>
+    Effect.as(progress({ done: 1 }), { imported: 1 }),
+  ),
+);
+
+expectTypeOf<Tool.Success<(typeof imported.toolkit.tools)["imported"]>>().toEqualTypeOf<
+  | { readonly imported: number }
+  | { readonly _tag: "Progress"; readonly value: { readonly done: number } }
+>();
+
+const Tailed = Action.make("tailed", {
+  description: "Answers a stream.",
+  readOnly: true,
+  caller: Action.Anyone,
+  success: Action.Stream(Schema.String),
+});
+
+const withoutStream = ActionToolkit.make(
+  Action.implement([Tailed, ServiceFree], {
+    tailed: () => Stream.empty,
+    service_free: () => Effect.succeed("free"),
+  }),
+);
+
+expectTypeOf<keyof typeof withoutStream.toolkit.tools>().toEqualTypeOf<"service_free">();
+
+class TailBuild extends Context.Service<TailBuild, string>()("toolkit-types/TailBuild") {}
+
+const streamOnly = ActionToolkit.make([
+  Action.implement(
+    Tailed,
+    Effect.map(TailBuild, () => () => Stream.empty),
+  ),
+  Action.implement(ServiceFree, () => Effect.succeed("free")),
+]);
+
+expectTypeOf<Layer.Services<typeof streamOnly.layer>>().toBeNever();

@@ -1,6 +1,6 @@
 # ActionRpc
 
-Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one unary rpc per action.
+Actions as Effect RPC, on Effect's own `RpcServer` and `RpcClient`: one rpc per action.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionRpc-failures.md](ActionRpc-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
 
@@ -121,6 +121,9 @@ alone for it.
   is built once. The routes need what the rpcs did not: an `httpApiStatus` on a declared error,
   by the rule on `Action.Options.error`, and router middleware for a service an `RpcMiddleware`
   provides ([ActionHttp.md](ActionHttp.md#serve-the-routes)).
+- **An action reporting progress or answering a stream is a stream rpc.** Over a WebSocket, or
+  HTTP under `RpcSerialization.layerNdjson`, its values and elements arrive as sent; under
+  `layerJson` over HTTP, all at the end (`ActionRpc.layer`).
 
 ## Call the rpcs
 

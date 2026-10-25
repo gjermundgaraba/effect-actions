@@ -1,60 +1,29 @@
-import { Effect, Match, Option, Predicate, Schema } from "effect";
-import {
-  type Headers,
-  HttpClient,
-  type HttpClientError,
-  HttpClientRequest,
-  type HttpClientResponse,
-} from "effect/http";
+import { Effect, Option, Schema } from "effect";
+import { HttpClient, type HttpClientError } from "effect/http";
 import { McpSchema } from "effect/ai";
-import { Sse } from "effect/encoding";
 import type { Any as Authentication, VerifierError } from "../authentication/provider.js";
 import type * as Action from "../contract/Action.js";
 import { type Call, checked } from "../contract/call.js";
 import { type BuiltIn, Refusal } from "../contract/errors.js";
+import { progressSink, type Reporting } from "../contract/progress.js";
 import { Anyone } from "../contract/caller.js";
 import { projectedErrors } from "../contract/declared.js";
 import { assertOnce } from "../contract/names.js";
-import { defaultPath, httpProtocol, type Lift, liftOf, unliftedFrom } from "./protocol.js";
-
-/**
- * An MCP request's parameters, as `request` takes them: JSON, with any `_meta`, leaving
- * out an `undefined` one, as a caller may. A helper passing on whole params types them as this,
- * and a tool's `arguments` as `Schema.Json`, never `unknown`.
- */
-export interface Params {
-  readonly _meta?: { readonly [key: string]: Schema.Json };
-  readonly [key: string]: Schema.Json | undefined;
-}
-
-/** The routing headers and JSON-RPC body of the request `request` builds. */
-export const statelessRequest = (method: string, params: Params) => {
-  const { protocolVersion } = httpProtocol;
-  const name = method === "resources/read" ? params["uri"] : params["name"];
-
-  return {
-    headers: {
-      accept: "application/json, text/event-stream",
-      "mcp-protocol-version": protocolVersion,
-      "mcp-method": method,
-      ...(Predicate.isString(name) ? { "mcp-name": name } : {}),
-    },
-    body: {
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params: {
-        ...params,
-        _meta: {
-          "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
-          ...params._meta,
-          "io.modelcontextprotocol/protocolVersion": protocolVersion,
-        },
-      },
-    },
-  };
-};
+import { elementOf, type ToolAction } from "../contract/stream.js";
+import { defaultPath, type Lift, liftOf, unliftedFrom } from "./protocol.js";
+import {
+  bodyOf,
+  callError,
+  failWith,
+  type McpCallError,
+  NoReply,
+  NoStructuredContent,
+  ProtocolError,
+  replyOf,
+  StatusError,
+  UndeclaredError,
+} from "./reply.js";
+import { request } from "./request.js";
 
 /**
  * Where `client` sends, through what client, and what the endpoint's authentication declares: the
@@ -85,84 +54,6 @@ export interface ClientOptions<
   readonly authentication?: D;
 }
 
-/** Where a `request` goes, and with what headers. */
-export interface RequestOptions {
-  /**
-   * The endpoint, resolved by the `HttpClient` that sends the request: relative under `Testing.layer`.
-   * Defaults to `/mcp`, as `client`'s does; converting to a web `Request` needs an absolute
-   * one.
-   */
-  readonly url?: string;
-  /**
-   * Headers sent beside the routing ones `request` fills in, such as `Authorization`; a routing
-   * header wins over a given one of its name.
-   */
-  readonly headers?: Headers.Input;
-}
-
-/** The endpoint answered with an HTTP status other than 200, and a body no declared error decodes. */
-class StatusError extends Schema.TaggedError<StatusError>()("StatusError", {
-  status: Schema.Int,
-  body: Schema.String,
-}) {}
-
-/**
- * The endpoint answered with a JSON-RPC error, such as the native server's for an unknown tool.
- */
-class ProtocolError extends Schema.TaggedError<ProtocolError>()("ProtocolError", {
-  code: Schema.Finite,
-  message: Schema.String,
-}) {}
-
-/** The endpoint answered 200 without a JSON-RPC reply to read, as JSON or as an event stream. */
-class NoReply extends Schema.TaggedError<NoReply>()("NoReply", { body: Schema.String }) {}
-
-/** The tool returned an error whose text decodes as none of the action's declared errors. */
-class UndeclaredError extends Schema.TaggedError<UndeclaredError>()("UndeclaredError", {
-  text: Schema.String,
-}) {}
-
-/** The tool returned a result without the structured content its action's success needs. */
-class NoStructuredContent extends Schema.TaggedError<NoStructuredContent>()("NoStructuredContent", {
-  body: Schema.String,
-}) {}
-
-const Reason = Schema.Union([
-  StatusError,
-  ProtocolError,
-  NoReply,
-  UndeclaredError,
-  NoStructuredContent,
-]);
-
-const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
-  StatusError: ({ status, body }) => `answered ${status}: ${body}`,
-  ProtocolError: ({ code, message }) => `failed with ${code}: ${message}`,
-  NoReply: ({ body }) => `had no reply: ${body}`,
-  UndeclaredError: ({ text }) => `returned an error: ${text}`,
-  NoStructuredContent: ({ body }) => `returned no structured content: ${body}`,
-});
-
-/**
- * An answer a client method cannot read as the action's success or a declared error: `reason`
- * says which, with what the endpoint sent, so a caller branches on it with
- * `Effect.catchReason("McpCallError", "StatusError", ...)`. `message` names the tool and the
- * reason. Structured content that does not decode as the success is a `SchemaError` instead,
- * and a request that fails an `HttpClientError`.
- *
- * **Gotchas**
- *
- * - `returned an error: Invalid parameters for tool …`, an `UndeclaredError`, from a call its types allowed: the endpoint serves another contract under that name; give `client` the served contract value.
- */
-export class McpCallError extends Schema.TaggedError<McpCallError>()("McpCallError", {
-  tool: Schema.String,
-  reason: Reason,
-  message: Schema.String,
-}) {}
-
-const callError = (tool: string, reason: (typeof Reason)["Type"]): McpCallError =>
-  new McpCallError({ tool, reason, message: `MCP tools/call "${tool}" ${sentenceOf(reason)}` });
-
 type CallError<A extends Action.Any, D> =
   | A["error"][number]["Type"]
   | VerifierError<A, D>["Type"]
@@ -181,7 +72,7 @@ export type Client<
   E = never,
   R = never,
 > = {
-  readonly [A in Actions[number] as A["name"]]: Call<
+  readonly [A in ToolAction<Actions[number]> as A["name"]]: Call<
     A,
     Effect.Effect<A["success"]["Type"], CallError<A, D> | E, R>
   >;
@@ -197,31 +88,7 @@ const ToolCallReply = Schema.Union([
   Schema.Struct({ error: Schema.Struct({ code: Schema.Finite, message: Schema.String }) }),
 ]);
 
-const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(ToolCallReply));
-
-const replyOf = (response: HttpClientResponse.HttpClientResponse, text: string) => {
-  if (!(response.headers["content-type"] ?? "").startsWith("text/event-stream")) {
-    return decodeReply(text);
-  }
-
-  const data: Array<string> = [];
-
-  Sse.makeParser((event) => {
-    if (Predicate.isTagged(event, "Event")) data.push(event.data);
-  }).feed(text);
-
-  return Option.fromNullishOr(
-    data.flatMap((message) => Option.toArray(decodeReply(message))).at(-1),
-  );
-};
-
-const failWith = (errors: Action.Errors, text: string, otherwise: McpCallError) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))))(
-    text,
-  ).pipe(
-    Effect.mapError(() => otherwise),
-    Effect.flatMap(Effect.fail),
-  );
+const toolCallReplyOf = replyOf(Schema.decodeUnknownOption(Schema.fromJsonString(ToolCallReply)));
 
 // Why: `execute` alone, since the native client is invariant in what it fails with and requires:
 // no one client type holds both a plain client and a transformed one, but each one's `execute` fits.
@@ -232,6 +99,7 @@ const callTool = (
   lift: Lift,
   refusedWith: Action.Errors,
   input: Action.Any["input"]["Type"],
+  sink: Reporting | undefined,
 ): Effect.Effect<unknown, unknown, unknown> => {
   const { name } = action;
 
@@ -239,10 +107,20 @@ const callTool = (
     const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.input))(input);
 
     const response = yield* client.execute(
-      request("tools/call", { name, arguments: encoded }, { url }),
+      request(
+        "tools/call",
+        {
+          name,
+          arguments: encoded,
+          // Why: Any token will do, since a stateless request's notifications are its own.
+          ...(sink === undefined ? {} : { _meta: { progressToken: "progress" } }),
+        },
+        { url },
+      ),
     );
 
-    const text = yield* response.text;
+    const body = yield* bodyOf(name, response, sink);
+    const { text } = body;
 
     if (response.status !== 200) {
       return yield* failWith(
@@ -252,7 +130,7 @@ const callTool = (
       );
     }
 
-    const reply = replyOf(response, text);
+    const reply = toolCallReplyOf(body);
 
     if (Option.isNone(reply)) {
       return yield* Effect.fail(callError(name, new NoReply({ body: text })));
@@ -298,6 +176,7 @@ const callTool = (
  * **Gotchas**
  *
  * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
+ * - A call given `onProgress` sends a `progressToken` and reads each `notifications/progress` as its frame arrives; a call without one sends none, so the endpoint sends no progress.
  */
 export function client<
   const Actions extends ReadonlyArray<Action.Any>,
@@ -316,14 +195,23 @@ export function client<
   options: ClientOptions<D, E, R>,
 ): Effect.Effect<Client<Actions, D, E, R>, never, HttpClient.HttpClient>;
 export function client(
-  actions: ReadonlyArray<Action.Any>,
+  listed: ReadonlyArray<Action.Any>,
   {
     url = defaultPath,
     transformClient,
     authentication,
   }: ClientOptions | ClientOptions<Authentication | undefined, unknown, unknown> = {},
 ): Effect.Effect<unknown, never, HttpClient.HttpClient> {
-  assertOnce("action", actions);
+  assertOnce("action", listed);
+
+  // Why: a tool answers one result, so an action answering a stream has no method, as `Client`
+  // types it.
+  const actions = listed.filter((action) => elementOf(action.success) === undefined);
+
+  const refusedWith = (contract: Pick<Action.Any, "caller">): Action.Errors => [
+    ...Refusal.members,
+    ...(contract.caller === Anyone ? [] : (authentication?.error ?? [])),
+  ];
 
   return Effect.map(HttpClient.HttpClient, (native) => {
     const http = transformClient === undefined ? native : transformClient(native);
@@ -332,42 +220,21 @@ export function client(
       actions.map((action) => {
         const lift = liftOf(action.success);
 
-        const refusedWith = [
-          ...Refusal.members,
-          ...(action.caller === Anyone ? [] : (authentication?.error ?? [])),
-        ];
-
         return [
           action.name,
-          checked(action, (input) => callTool(http, url, action, lift, refusedWith, input)),
+          checked(action, (input, onProgress) =>
+            callTool(
+              http,
+              url,
+              action,
+              lift,
+              refusedWith(action),
+              input,
+              progressSink(action.progress, onProgress),
+            ),
+          ),
         ];
       }),
     );
   });
 }
-
-/**
- * One stateless MCP request of `method` with `params`, as `layerHttp` serves it,
- * as the native request value: the JSON-RPC envelope, the 2026-07-28 headers (`Accept`,
- * `MCP-Protocol-Version`, `MCP-Method`), `mcp-name` from
- * `params.uri` for `resources/read` and `params.name` otherwise, and the client metadata in
- * `_meta` are filled in, under any `_meta` given, such as a `progressToken`; the protocol
- * version is always the request's own. The test sends it: `HttpClient.execute` answers the
- * response as the endpoint sent it, whatever its status, and `HttpClientRequest.toWebResult`
- * gives the web `Request` a web handler or `fetch` takes, once `url` is absolute. It is for a test
- * asserting on what `client` decodes away, such as `tools/list`, a refusal's challenge, or
- * a call its types would not send.
- */
-export const request = (
-  method: string,
-  params: Params = {},
-  { headers = {}, url = defaultPath }: RequestOptions = {},
-): HttpClientRequest.HttpClientRequest => {
-  const { headers: routingHeaders, body } = statelessRequest(method, params);
-
-  return HttpClientRequest.post(url).pipe(
-    HttpClientRequest.setHeaders(headers),
-    HttpClientRequest.setHeaders(routingHeaders),
-    HttpClientRequest.bodyJsonUnsafe(body),
-  );
-};
