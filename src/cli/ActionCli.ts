@@ -163,7 +163,7 @@ const runWithBuildOfItsOwn = <App extends AnyImplementation, A extends Action.An
 
     return run === undefined
       ? Effect.die(new Error(`No handler for ${action.name}`))
-      : run(input, progressSink(action.progress, onProgress));
+      : run(input, progressSink(onProgress));
   });
 
   const builder = Implementation.layerOf(thisActionOnly);

@@ -36,6 +36,29 @@ describe("an action reporting progress, in process", () => {
     }),
   );
 
+  it.effect("hands onProgress each value as it was reported, never through its JSON", () =>
+    Effect.gen(function* () {
+      const Stamp = Action.make("stamp", {
+        description: "Report when each step started.",
+        progress: { at: Schema.instanceOf(Date) },
+        readOnly: true,
+        caller: Action.Anyone,
+      });
+
+      const at = new Date(0);
+
+      const client = yield* Action.client(
+        Action.implement(Stamp, (_, { progress }) => progress({ at })),
+      );
+
+      const seen: Array<Date> = [];
+
+      yield* client.stamp({}, { onProgress: (value) => Effect.sync(() => seen.push(value.at)) });
+
+      expect(seen).toEqual([at]);
+    }),
+  );
+
   it.effect("answers alike without onProgress", () =>
     Effect.gen(function* () {
       const client = yield* Action.client(imports);

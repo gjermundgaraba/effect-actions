@@ -13,10 +13,7 @@ import {
 import type { Codec } from "./codec.js";
 import type { ErasedValue } from "./implementation.js";
 
-/**
- * Where a call's progress goes: each value reported is given to `progress`. A handler's is the
- * one `dispatch` gives it, taking decoded values; a surface's takes each value's JSON.
- */
+/** Where a call's progress goes: each value reported, checked by its schema, is given to `progress`. */
 export interface Reporting {
   readonly progress: (value: ErasedValue) => Effect.Effect<void>;
 }
@@ -58,16 +55,16 @@ interface Buffered {
 }
 
 /**
- * What a handler reports by, where `progress` is declared: each value encoded to its JSON, a
- * value breaking the schema a defect, and handed to `sink` from a buffer dropping the oldest, so
- * the handler never waits. Without a `sink`, values are checked and dropped.
+ * What a handler reports by, where `progress` is declared: each value checked by the schema, one
+ * breaking it a defect, and handed to `sink` from a buffer dropping the oldest, so the handler
+ * never waits. Without a `sink`, values are checked and dropped.
  */
 const buffering = (
   progress: Codec,
   sink: Reporting | undefined,
 ): Effect.Effect<Buffered, never, Scope.Scope> => {
-  const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(progress));
-  const checked = (value: ErasedValue) => Effect.orDie(encode(value));
+  const check = Schema.decodeUnknownEffect(Schema.toType(progress));
+  const checked = (value: ErasedValue) => Effect.orDie(check(value));
 
   if (sink === undefined)
     return Effect.succeed({
@@ -85,7 +82,7 @@ const buffering = (
     return {
       reporting: {
         progress: (value) =>
-          Effect.flatMap(checked(value), (json) => Effect.asVoid(Queue.offer(buffered, json))),
+          Effect.flatMap(checked(value), (each) => Effect.asVoid(Queue.offer(buffered, each))),
       },
       drained: Effect.andThen(Queue.end(buffered), Fiber.join(forwarding)),
     };
@@ -155,27 +152,11 @@ const shown =
           : Effect.logWarning("onProgress failed", cause),
     );
 
-/**
- * What MCP's client, the toolkit, a local command and `Action.client` hand a call's surface for
- * `onProgress`: each value's JSON decoded by `progress`, one that does not decode logged and
- * dropped, as a value the caller fell behind on is.
- */
+/** What a caller in process hands a call for `onProgress`, as `Action.client` and the toolkit do. */
 export const progressSink = (
-  progress: Codec | undefined,
   onProgress: CallOptions<unknown>["onProgress"],
-): Reporting | undefined => {
-  if (progress === undefined || onProgress === undefined) return undefined;
-
-  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(progress));
-
-  return {
-    progress: (json) =>
-      Effect.matchEffect(decode(json), {
-        onFailure: (error) => Effect.logWarning("A progress value did not decode", error),
-        onSuccess: shown(onProgress),
-      }),
-  };
-};
+): Reporting | undefined =>
+  onProgress === undefined ? undefined : { progress: shown(onProgress) };
 
 /**
  * One element a call streams: a value reported, the answer of an action answering one value, or

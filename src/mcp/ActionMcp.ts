@@ -333,7 +333,9 @@ const registerTools = Effect.fnUntraced(function* (
     const reported = (input: ErasedValue) =>
       action.progress === undefined
         ? run(input)
-        : Effect.flatMap(progressNotifier(registry.notifications), (sink) => run(input, sink));
+        : Effect.flatMap(progressNotifier(registry.notifications, action.progress), (sink) =>
+            run(input, sink),
+          );
 
     const call =
       authentication === undefined || action.caller === Anyone
@@ -550,13 +552,13 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  */
 export function layerHttp<
   const Apps extends Served,
-  const O extends Selection<ActionOf<Member<Apps>>> = {},
+  const O extends Selection<ToolAction<ActionOf<Member<Apps>>>> = {},
   E = never,
   R = never,
   const D extends Authentication | undefined = undefined,
 >(
   implementations: Apps,
-  options: LayerHttpOptions<E, R, ActionOf<Member<Apps>>> &
+  options: LayerHttpOptions<E, R, ToolAction<ActionOf<Member<Apps>>>> &
     O &
     NoInfer<Known<O, LayerHttpOptions<E, R, Action.Any>>> &
     NoInfer<RequiredAuthentication<ToolAction<SelectedOf<O, Apps>>>> &
@@ -676,12 +678,14 @@ const jsonLinesOnly = Layer.effect(
  */
 export function runStdio<
   const Apps extends Served,
-  const O extends Selection<ActionOf<Member<Apps>>> = {},
+  const O extends Selection<ToolAction<ActionOf<Member<Apps>>>> = {},
   E = never,
   R = never,
 >(
   implementations: Apps,
-  options: Options<E, R, ActionOf<Member<Apps>>> & O & NoInfer<Known<O, Options<E, R, Action.Any>>>,
+  options: Options<E, R, ToolAction<ActionOf<Member<Apps>>>> &
+    O &
+    NoInfer<Known<O, Options<E, R, Action.Any>>>,
 ): Effect.Effect<
   void,
   | BuildError<

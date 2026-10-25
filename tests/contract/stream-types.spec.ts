@@ -29,6 +29,20 @@ describe("Action.Stream", () => {
     expectTypeOf(Tail.success.Type).toEqualTypeOf<Stream.Stream<{ readonly line: string }>>();
   });
 
+  it("keeps the stream's type through an annotation", () => {
+    const Lines = Action.make("lines", {
+      description: "Follow lines.",
+      success: Action.Stream(Schema.String).annotate({ description: "Lines." }),
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    expectTypeOf(Lines.success).toEqualTypeOf<Action.StreamOf<typeof Schema.String>>();
+    expectTypeOf<Action.Handler<typeof Lines>>().returns.toEqualTypeOf<
+      Stream.Stream<string, Action.BuiltIn>
+    >();
+  });
+
   it("takes a handler returning a stream of the element, failing with the declared errors", () => {
     const tails = Action.implement(Tail, ({ id }) =>
       Stream.fromEffect(Effect.map(Logs, (log) => ({ line: `${id}: ${log}` }))),

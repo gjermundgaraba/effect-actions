@@ -7,6 +7,7 @@ const TypeId = "~effect-actions/Stream";
 export interface StreamOf<Element extends Codec> extends Schema.declare<
   Elements.Stream<Element["Type"]>
 > {
+  readonly Rebuild: StreamOf<Element>;
   readonly [TypeId]: typeof TypeId;
   /** The schema of each element. */
   readonly element: Element;
@@ -23,7 +24,7 @@ const streams = Schema.declare(Elements.isStream);
  *
  * **Gotchas**
  *
- * - MCP and a toolkit cannot answer a stream: `ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make` leave such an action out of implementations given whole, requiring nothing it needs, and throw where their `actions` list names one; `ActionMcp.client` gives it no method.
+ * - MCP and a toolkit cannot answer a stream: `ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make` leave such an action out of implementations given whole, requiring nothing it needs, and their `actions` list naming one is a type error, an erased list's thrown at startup; `ActionMcp.client` gives it no method.
  * - An element breaking its schema is the call's defect, as an answer breaking `success` is.
  * - With `progress`, values and elements are each in their order, not against each other: a value may reach `onProgress` after an element yielded after it.
  */

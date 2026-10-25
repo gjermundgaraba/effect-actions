@@ -215,12 +215,12 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
  */
 export function make<
   const Apps extends Served,
-  const O extends Options<ActionOf<Member<Apps>>> = {},
+  const O extends Options<ToolAction<ActionOf<Member<Apps>>>> = {},
 >(
   implementations: Apps,
   ...options: OptionalUnless<
     O,
-    Options<ActionOf<Member<Apps>>> & O & NoInfer<Known<O, Options<Action.Any>>>
+    Options<ToolAction<ActionOf<Member<Apps>>>> & O & NoInfer<Known<O, Options<Action.Any>>>
   >
 ): Tools<
   {
@@ -276,21 +276,18 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   const layer = toolkit.toLayer(
     Effect.map(acquire(served), (bound) =>
       Object.fromEntries(
-        bound.map(([action, run]) => {
-          const Progress = action.progress === undefined ? undefined : ProgressOf(action.progress);
-
-          return [
-            action.name,
-            (input: ErasedValue, { preliminary }: Toolkit.HandlerContext<Tool.Any>) =>
-              run(
-                input,
-                progressSink(
-                  action.progress,
-                  Progress === undefined ? undefined : (value) => preliminary(new Reported(value)),
-                ),
+        bound.map(([action, run]) => [
+          action.name,
+          (input: ErasedValue, { preliminary }: Toolkit.HandlerContext<Tool.Any>) =>
+            run(
+              input,
+              progressSink(
+                action.progress === undefined
+                  ? undefined
+                  : (value) => preliminary(new Reported(value)),
               ),
-          ];
-        }),
+            ),
+        ]),
       ),
     ),
   );

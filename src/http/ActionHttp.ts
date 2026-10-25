@@ -52,6 +52,7 @@ import {
   answeringWithProgress,
   elementStreamOf,
   progressStreamOf,
+  type SuccessOf,
 } from "./streamed.js";
 import { elementOf } from "../contract/stream.js";
 import {
@@ -199,6 +200,10 @@ export interface Options<E extends Action.Errors = Action.Errors> {
   readonly authentication?: Authentication;
 }
 
+type EndpointError<A extends Action.Any, E extends Action.Errors, D> = Schema.toCodecJson<
+  A["error"][number] | E[number] | VerifierError<A, D> | BuiltIns
+>;
+
 type Endpoint<A extends Action.Any, E extends Action.Errors, D> = A extends Action.Any
   ? HttpApiEndpoint.HttpApiEndpoint<
       A["name"],
@@ -208,8 +213,8 @@ type Endpoint<A extends Action.Any, E extends Action.Errors, D> = A extends Acti
       never,
       Schema.toCodecJson<A["input"]>,
       never,
-      Schema.toCodecJson<A["success"]>,
-      Schema.toCodecJson<A["error"][number] | E[number] | VerifierError<A, D> | BuiltIns>,
+      SuccessOf<A, EndpointError<A, E, D>>,
+      EndpointError<A, E, D>,
       never
     >
   : never;

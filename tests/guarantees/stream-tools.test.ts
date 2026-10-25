@@ -56,12 +56,15 @@ it.effect("leaves an action answering a stream out of a tool surface given it wh
   }).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(held, options)))),
 );
 
-it("refuses an action answering a stream where a tool surface's actions list it, naming it", () => {
+it("refuses an action answering a stream where a tool surface's actions list it: a type error, and at run time naming it", () => {
   const message =
     "A tool cannot answer a stream: tail (serve such an action over HTTP, RPC or a " +
     "command, and remove it from actions)";
 
+  // @ts-expect-error -- an action answering a stream is no tool
   expect(() => ActionMcp.layerHttp(held, { ...options, actions: [Tail, Ping] })).toThrow(message);
+  // @ts-expect-error -- an action answering a stream is no tool
   expect(() => ActionMcp.runStdio(held, { ...options, actions: [Tail, Ping] })).toThrow(message);
+  // @ts-expect-error -- an action answering a stream is no tool
   expect(() => ActionToolkit.make(held, { actions: [Tail, Ping] })).toThrow(message);
 });

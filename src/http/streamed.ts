@@ -12,6 +12,7 @@ import {
 } from "../contract/progress.js";
 import { concealed } from "../contract/reported.js";
 import type { Codec } from "../contract/codec.js";
+import type { StreamOf } from "../contract/stream.js";
 
 /** One event a route streams: a progress value, an element, or the answer it ends with. */
 interface Sent {
@@ -19,12 +20,36 @@ interface Sent {
   readonly data: ErasedValue;
 }
 
-const eventOf = (event: Sent["event"], data: Codec) =>
+const eventOf = <const N extends Sent["event"], D extends Codec>(event: N, data: D) =>
   Schema.Struct({
     id: Schema.optional(Schema.String),
     event: Schema.Literal(event),
     data: Schema.fromJsonString(Schema.toCodecJson(data)),
   });
+
+type EventOf<N extends Sent["event"], D extends Codec> = ReturnType<typeof eventOf<N, D>>;
+
+/** The success of the endpoint of action `A` declaring errors `E`, as `ActionHttp` builds it. */
+export type SuccessOf<A extends Action.Any, E extends Schema.Top> =
+  A["success"] extends StreamOf<infer Element>
+    ? HttpApiSchema.StreamSse<
+        Schema.Union<
+          A["progress"] extends Codec
+            ? readonly [EventOf<"element", Element>, EventOf<"progress", A["progress"]>]
+            : readonly [EventOf<"element", Element>]
+        >,
+        E
+      >
+    : A["progress"] extends Codec
+      ?
+          | Schema.toCodecJson<A["success"]>
+          | HttpApiSchema.StreamSse<
+              Schema.Union<
+                readonly [EventOf<"progress", A["progress"]>, EventOf<"final", A["success"]>]
+              >,
+              E
+            >
+      : Schema.toCodecJson<A["success"]>;
 
 // Why: An empty answer is a 200 elsewhere, which a route cannot also stream at, so here it is a 204.
 /** What a route of an action declaring `progress` answers without its stream: `success`. */
@@ -93,18 +118,10 @@ const streamed = (
         }),
       );
 
-    const decode =
-      progress === undefined ? undefined : Schema.decodeUnknownEffect(Schema.toCodecJson(progress));
-
     const reporting: Reporting | undefined =
-      decode === undefined
+      progress === undefined
         ? undefined
-        : {
-            progress: (json) =>
-              Effect.flatMap(Effect.orDie(decode(json)), (data) =>
-                send({ event: "progress", data }),
-              ),
-          };
+        : { progress: (data) => send({ event: "progress", data }) };
 
     const ended = (cause: Cause.Cause<unknown>) => {
       if (Cause.hasDies(cause)) return concealed(cause);

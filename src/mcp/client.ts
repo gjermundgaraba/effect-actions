@@ -5,7 +5,7 @@ import type { Any as Authentication, VerifierError } from "../authentication/pro
 import type * as Action from "../contract/Action.js";
 import { type Call, checked } from "../contract/call.js";
 import { type BuiltIn, Refusal } from "../contract/errors.js";
-import { progressSink, type Reporting } from "../contract/progress.js";
+import { type CallOptions, progressSink, type Reporting } from "../contract/progress.js";
 import { Anyone } from "../contract/caller.js";
 import { projectedErrors } from "../contract/declared.js";
 import { assertOnce } from "../contract/names.js";
@@ -89,6 +89,26 @@ const ToolCallReply = Schema.Union([
 ]);
 
 const toolCallReplyOf = replyOf(Schema.decodeUnknownOption(Schema.fromJsonString(ToolCallReply)));
+
+/** `onProgress` given each `notifications/progress` value decoded, one that does not logged and dropped. */
+const decodedSink = (
+  progress: Action.Any["progress"],
+  onProgress: CallOptions<unknown>["onProgress"],
+): Reporting | undefined => {
+  const sink = progressSink(onProgress);
+
+  if (progress === undefined || sink === undefined) return undefined;
+
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(progress));
+
+  return {
+    progress: (json) =>
+      Effect.matchEffect(decode(json), {
+        onFailure: (error) => Effect.logWarning("A progress value did not decode", error),
+        onSuccess: sink.progress,
+      }),
+  };
+};
 
 // Why: `execute` alone, since the native client is invariant in what it fails with and requires:
 // no one client type holds both a plain client and a transformed one, but each one's `execute` fits.
@@ -230,7 +250,7 @@ export function client(
               lift,
               refusedWith(action),
               input,
-              progressSink(action.progress, onProgress),
+              decodedSink(action.progress, onProgress),
             ),
           ),
         ];

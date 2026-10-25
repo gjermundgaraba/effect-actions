@@ -1,5 +1,6 @@
 import { Effect, Schema, Stream } from "effect";
 import type { HttpClientError } from "effect/http";
+import type { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { expectTypeOf } from "@effect/vitest";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
@@ -24,7 +25,15 @@ const Follow = Action.make("follow", {
 
 const Open = Action.make("open", { description: "", readOnly: true, caller: Action.Anyone });
 
-const Http = ActionHttp.make([Tail, Follow, Open]);
+const Build = Action.make("build", {
+  description: "Build, reporting its step.",
+  success: Schema.String,
+  progress: { step: Schema.Finite },
+  readOnly: false,
+  caller: Action.Anyone,
+});
+
+const Http = ActionHttp.make([Tail, Follow, Open, Build]);
 
 export const tailOverHttp = Effect.gen(function* () {
   const http = yield* ActionHttp.client(Http);
@@ -59,3 +68,24 @@ export const tailOverHttp = Effect.gen(function* () {
     Action.BuiltIn | HttpClientError.HttpClientError | Schema.SchemaError
   >();
 });
+
+type Endpoints =
+  typeof Http.api extends HttpApi.HttpApi<string, infer Group>
+    ? HttpApiGroup.Endpoints<Group>
+    : never;
+
+type Answered<Name extends string> = HttpApiEndpoint.Success<
+  Extract<Endpoints, { readonly identifier: Name }>
+>["Type"];
+
+expectTypeOf<Stream.Success<Answered<"tail">>["data"]>().toEqualTypeOf<{ readonly line: string }>();
+
+expectTypeOf<Stream.Success<Answered<"tail">>["event"]>().toEqualTypeOf<"element">();
+
+expectTypeOf<Stream.Success<Answered<"follow">>["event"]>().toEqualTypeOf<"element" | "progress">();
+
+expectTypeOf<Answered<"open">>().toEqualTypeOf<void>();
+
+expectTypeOf<Exclude<Answered<"build">, string>>().toExtend<Stream.Stream<unknown, unknown>>();
+
+expectTypeOf<Extract<Answered<"build">, string>>().toEqualTypeOf<string>();

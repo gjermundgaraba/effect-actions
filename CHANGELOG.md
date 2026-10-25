@@ -45,8 +45,8 @@ ones where declared, a failure before the first event answering its status; over
 action is a stream rpc of `Element` elements, and `Progress` ones; a command prints each element
 as a line of JSON on stdout, or `render`'s text of it. A tool answers one result, so
 `ActionMcp.layerHttp`, `runStdio` and `ActionToolkit.make` leave such an action out of
-implementations given whole, requiring nothing of it, and refuse one their `actions` list names;
-`ActionMcp.client` gives it no method. Guide: `docs/Action-streams.md#answer-a-stream`; example:
+implementations given whole, requiring nothing of it, and refuse one their `actions` list names,
+a type error, or at startup for a list of `Action.Any`; `ActionMcp.client` gives it no method. Guide: `docs/Action-streams.md#answer-a-stream`; example:
 kitchen-sink's `exportIssues`.
 
 ### Other changes

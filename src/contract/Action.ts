@@ -150,7 +150,8 @@ export interface Options {
    * - Progress is a snapshot to show, not an event to count: values a caller falls behind on are dropped, the oldest first, while the answer never is.
    * - A value breaking the schema is the call's defect, as an answer breaking `success` is.
    * - A caller's `onProgress` that fails or dies is logged as a warning, and the call goes on and answers: the handler is never interrupted for it.
-   * - A value the caller's `progress` schema cannot decode, where client and server differ, is logged and dropped by MCP's client, the toolkit, `ActionCli.command` and `Action.client`; RPC's client decodes it with the response, so the call fails with a `SchemaError`, `onProgress` given or not, and HTTP's where `onProgress` is given, asking for no progress otherwise.
+   * - In process, `Action.client`, the toolkit and a local command hand `onProgress` each value as reported, checked by the schema and never encoded: a value with no JSON form reaches them, and is the call's defect on a surface sending JSON.
+   * - A value the caller's `progress` schema cannot decode, where client and server differ, is logged and dropped by MCP's client; RPC's client decodes it with the response, so the call fails with a `SchemaError`, `onProgress` given or not, and HTTP's where `onProgress` is given, asking for no progress otherwise.
    */
   readonly progress?: Codec | Fields | undefined;
   /**
@@ -600,7 +601,7 @@ const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
     inputOf(action, args).pipe(
       Effect.flatMap(input),
       Effect.mapError(InvalidInput.fromSchemaError),
-      Effect.map((value) => run(value, progressSink(action.progress, onProgressOf(args)))),
+      Effect.map((value) => run(value, progressSink(onProgressOf(args)))),
     );
 
   if (element !== undefined)

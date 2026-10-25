@@ -458,6 +458,10 @@ const streamingHandlerOf =
     const answered = answer(action);
     const boundary = callBoundaryOf(error);
 
+    const encodeProgress = Schema.encodeUnknownEffect(
+      Schema.toCodecJson(action.progress ?? Schema.Never),
+    );
+
     return (payload: Schema.Json, options: Omit<CallOptions, "payload">) => {
       const call = Effect.gen(function* () {
         const input = yield* decode(payload);
@@ -467,7 +471,12 @@ const streamingHandlerOf =
         yield* answered(
           input,
           run,
-          { progress: (value) => send(Progressed.Progress({ value })) },
+          {
+            progress: (value) =>
+              Effect.flatMap(Effect.orDie(encodeProgress(value)), (json) =>
+                send(Progressed.Progress({ value: json })),
+              ),
+          },
           send,
         ).pipe(boundary, Queue.into(sent), Effect.forkScoped({ startImmediately: true }));
 

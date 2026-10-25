@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from "effect";
 import { McpSchema, type McpServer } from "effect/ai";
+import type { Codec } from "../contract/codec.js";
 import type { Reporting } from "../contract/progress.js";
 
 /** The `_meta` key a `notifications/progress` carries its value under, as JSON. */
@@ -14,22 +15,26 @@ const tokenOf = Schema.decodeUnknownOption(McpSchema.ProgressToken);
  */
 export const progressNotifier = (
   notifications: McpServer.McpServer["Service"]["notifications"],
+  progress: Codec,
 ): Effect.Effect<Reporting | undefined, never, McpSchema.McpRequestContext> =>
   Effect.map(Effect.service(McpSchema.McpRequestContext), ({ requestMetadata }) => {
     const token = tokenOf(requestMetadata?.["progressToken"]);
 
     if (Option.isNone(token)) return undefined;
 
+    const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(progress));
     let sent = 0;
 
     return {
-      progress: (json) =>
-        notifications["notifications/progress"]({
-          progressToken: token.value,
-          progress: ++sent,
-          message: JSON.stringify(json),
-          _meta: { [progressKey]: json },
-        }),
+      progress: (value) =>
+        Effect.flatMap(Effect.orDie(encode(value)), (json) =>
+          notifications["notifications/progress"]({
+            progressToken: token.value,
+            progress: ++sent,
+            message: JSON.stringify(json),
+            _meta: { [progressKey]: json },
+          }),
+        ),
     };
   });
 
