@@ -30,14 +30,14 @@ import {
   type ServerBuildServices,
 } from "../authentication/provider.js";
 import { Anyone, assertAuthentication } from "../contract/caller.js";
-import {
-  type AnyEventImplementation,
-  type EventBuildError,
-  type EventBuildServices,
-  type EventOf,
-  type EventRequestOf,
-  type EventServedRequest,
-  type HoldingEvents,
+import type {
+  AnyEventImplementation,
+  EventBuildError,
+  EventBuildServices,
+  EventOf,
+  EventRequestOf,
+  EventServedRequest,
+  HoldingEvents,
 } from "../contract/feed.js";
 import { provideServed, selectFrom } from "../contract/serving.js";
 import { projectedErrors } from "../contract/declared.js";

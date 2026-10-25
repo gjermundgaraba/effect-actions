@@ -130,6 +130,7 @@ export const transportOf = <R>(
   ): Effect.Effect<A, unknown, R> =>
     Effect.gen(function* () {
       const messages = yield* bodyOf(method, name, yield* sent(method, params));
+
       const reply = Option.fromNullishOr(
         messages.flatMap((message) => Option.toArray(replyOf(message))).at(-1),
       );

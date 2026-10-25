@@ -162,9 +162,10 @@ const implementations = [builds, logs, buildEvents, statusEvents, deploys, deplo
 // in memory, so this endpoint cannot be `requestScoped`; a serverless host would serve check
 // sources by poll alone.
 //
-// A tool answers one result, so `tailLog`, which answers a stream, is left out: an endpoint
-// given every implementation serves every other action and every event.
-const mcp = ActionMcp.layerHttp(implementations, {
+// A tool answers one result, so `tailLog` would collect a whole log before answering, all of it
+// in a model's context: its implementation, `logs`, is left out, and the endpoint serves every
+// other action and every event.
+const mcp = ActionMcp.layerHttp([builds, buildEvents, statusEvents, deploys, deployEvents], {
   name: "build-events",
   version: "1.0.0",
   authentication: Login,
