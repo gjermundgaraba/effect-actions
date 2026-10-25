@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import { Base64, Hex } from "effect/encoding";
+import { sha256Hex } from "../contract/digest.js";
 
 const encoder = new TextEncoder();
 
@@ -34,11 +35,7 @@ export const signature = (
 
 /** `sub_` and the first 16 bytes of the SHA-256 of `key`, in hex: a subscription's id. */
 export const subscriptionId = (key: string): Effect.Effect<string> =>
-  Effect.promise(async () => {
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(key)));
-
-    return `sub_${Hex.encode(digest.slice(0, 16))}`;
-  });
+  Effect.map(sha256Hex(key), (hex) => `sub_${hex.slice(0, 32)}`);
 
 /** 16 random bytes in hex, for a challenge or an envelope's `webhook-id`. */
 export const randomToken = (): Effect.Effect<string> =>

@@ -23,7 +23,8 @@ import { type HttpClient, HttpRouter, HttpServerRequest } from "effect/http";
 import type { Dns } from "effect/net";
 import { Anyone, type Keyed } from "../contract/caller.js";
 import * as Event from "../contract/Event.js";
-import { canonicalInput, type Feed } from "../contract/feed.js";
+import { canonicalInput } from "../contract/canonical.js";
+import type { Feed } from "../contract/feed.js";
 import { encodeUntaggedOf } from "../contract/occurrence.js";
 import { type Pushed, pushed, refusalIn } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
@@ -498,7 +499,7 @@ export const makeWebhooks = (
     // spelling parsing changes, such as an explicit default port, names another subscription
     // once it is restored.
     const idOf = ({ feed, principal, input, url }: Subscription) =>
-      Effect.flatMap(canonicalInput(feed.event, input), (encoded) =>
+      Effect.flatMap(canonicalInput(feed.event.input, input), (encoded) =>
         subscriptionId(
           `${principal}\u0000${URL.parse(url)?.href ?? url}\u0000${feed.event.name}\u0000${encoded}`,
         ),
