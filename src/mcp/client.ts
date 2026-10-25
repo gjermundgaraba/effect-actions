@@ -9,6 +9,7 @@ import {
   checkedStream,
   type ErasedMethod,
   type ErasedStreamMethod,
+  sendingJson,
 } from "../contract/call.js";
 import { type BuiltIn, Refusal } from "../contract/errors.js";
 import { type CallOptions, progressSink, type Reporting } from "../contract/progress.js";
@@ -124,21 +125,19 @@ const callTool = <S extends Action.Any["success"]>(
   action: Action.Any,
   success: S,
   refusedWith: Action.Errors,
-  input: Action.Any["input"]["Type"],
+  input: Schema.Json,
   sink: Reporting | undefined,
 ): Effect.Effect<S["Type"], unknown, unknown> => {
   const { name } = action;
   const lift = liftOf(success);
 
   return Effect.gen(function* () {
-    const encoded = yield* Schema.encodeEffect(Schema.toCodecJson(action.input))(input);
-
     const response = yield* client.execute(
       request(
         "tools/call",
         {
           name,
-          arguments: encoded,
+          arguments: input,
           // Why: Any token will do, since a stateless request's notifications are its own.
           ...(sink === undefined ? {} : { _meta: { progressToken: "progress" } }),
         },
@@ -247,7 +246,7 @@ export function client(
         (action): readonly [string, ErasedMethod<unknown> | ErasedStreamMethod<unknown>] => {
           const call = <S extends Action.Any["success"]>(
             success: S,
-            input: Action.Any["input"]["Type"],
+            input: Schema.Json,
             onProgress: CallOptions<unknown>["onProgress"],
           ) =>
             callTool(
@@ -269,7 +268,7 @@ export function client(
 
             return [
               action.name,
-              checkedStream(action, (input, onProgress) =>
+              checkedStream(action, sendingJson, (input, onProgress) =>
                 Stream.fromIterableEffect(call(elements, input, onProgress)),
               ),
             ];
@@ -277,7 +276,9 @@ export function client(
 
           return [
             action.name,
-            checked(action, (input, onProgress) => call(action.success, input, onProgress)),
+            checked(action, sendingJson, (input, onProgress) =>
+              call(action.success, input, onProgress),
+            ),
           ];
         },
       ),

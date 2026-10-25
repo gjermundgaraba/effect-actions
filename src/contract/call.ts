@@ -57,25 +57,41 @@ export type ErasedMethod<R = never> = (
 ) => Effect.Effect<ErasedValue, unknown, R>;
 
 /**
- * A client's method of `action`, its input checked by encoding it before `send` sends it, given
- * as it is and as its JSON, with the call's `onProgress` where it gave one, taking decoded
- * values, for `send` to use where the action declares `progress`.
+ * How a client checks a call's input before sending it, chosen once per client: what it sends of
+ * an input whose JSON encodes by `action`'s schema, or the `SchemaError` of one that does not.
  */
-export const checked = <R, A = ErasedValue>(
+export type CheckedInput<S> = (
+  action: Pick<Action.Any, "input">,
+) => (input: ErasedValue) => Effect.Effect<S, Schema.SchemaError>;
+
+/** Send the input's JSON, for a client handing it to its protocol as it is. */
+export const sendingJson: CheckedInput<Schema.Json> = (action) =>
+  Schema.encodeUnknownEffect(Schema.toCodecJson(action.input), { errors: "all" });
+
+/** Send the input itself once its JSON encodes, for a client encoding it by the action's schema. */
+export const sendingValue: CheckedInput<ErasedValue> = (action) => {
+  const encode = sendingJson(action);
+
+  return (input) => Effect.as(encode(input), input);
+};
+
+/**
+ * A client's method of `action`, its input checked by `check` before `send` sends what the check
+ * answers, with the call's `onProgress` where it gave one, taking decoded values, for `send` to
+ * use where the action declares `progress`.
+ */
+export const checked = <S, R, A = ErasedValue>(
   action: Action.Any,
-  send: (
-    payload: ErasedValue,
-    onProgress: CallOptions<unknown>["onProgress"],
-    json: Schema.Json,
-  ) => Effect.Effect<A, unknown, R>,
+  check: CheckedInput<S>,
+  send: (input: S, onProgress: CallOptions<unknown>["onProgress"]) => Effect.Effect<A, unknown, R>,
 ): ((...input: ReadonlyArray<ErasedValue>) => Effect.Effect<A, unknown, R>) => {
-  const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(action.input), { errors: "all" });
+  const encode = check(action);
 
   return (...args) =>
     inputOf(action, args).pipe(
-      Effect.flatMap((payload) => Effect.map(encode(payload), (json) => ({ payload, json }))),
+      Effect.flatMap(encode),
       Effect.mapError(InvalidInput.fromSchemaError),
-      Effect.flatMap(({ payload, json }) => send(payload, onProgressOf(args), json)),
+      Effect.flatMap((input) => send(input, onProgressOf(args))),
     );
 };
 
@@ -84,16 +100,16 @@ export type ErasedStreamMethod<R = never> = (
 ) => Stream.Stream<ErasedValue, unknown, R>;
 
 /** A client's method of `action` answering a stream, its input checked as `checked` checks it. */
-export const checkedStream = <R>(
+export const checkedStream = <S, R>(
   action: Action.Any,
+  check: CheckedInput<S>,
   send: (
-    payload: ErasedValue,
+    input: S,
     onProgress: CallOptions<unknown>["onProgress"],
-    json: Schema.Json,
   ) => Stream.Stream<ErasedValue, unknown, R>,
 ): ErasedStreamMethod<R> => {
-  const method = checked(action, (payload, onProgress, json) =>
-    Effect.succeed(send(payload, onProgress, json)),
+  const method = checked(action, check, (input, onProgress) =>
+    Effect.succeed(send(input, onProgress)),
   );
 
   return (...args) => Stream.unwrap(method(...args));

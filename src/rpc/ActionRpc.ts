@@ -52,6 +52,7 @@ import {
   decodeInput,
   type ErasedMethod,
   type ErasedStreamMethod,
+  sendingJson,
 } from "../contract/call.js";
 import { type BuiltIn, type BuiltIns, Unauthenticated } from "../contract/errors.js";
 import {
@@ -309,15 +310,13 @@ export function make<const Actions extends ReadonlyArray<Action.Any>>(
 export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}): Any {
   const bound = bindingOf("ActionRpc binding", actions, options);
 
-  const rpcOf = (action: Action.Any) => {
-    const { name, input: payload } = action;
-    const error = Schema.Union(bindingErrors(action, bound));
-    const success = sentOf(action);
-
-    return streams(action)
-      ? Rpc.make(name, { payload, success, error, stream: true })
-      : Rpc.make(name, { payload, success, error });
-  };
+  const rpcOf = (action: Action.Any) =>
+    Rpc.make(action.name, {
+      payload: action.input,
+      success: sentOf(action),
+      error: Schema.Union(bindingErrors(action, bound)),
+      stream: streams(action),
+    });
 
   const given = options.rpcs === undefined ? RpcGroup.make() : nativeOf(options.rpcs);
 
@@ -923,7 +922,7 @@ const actionMethodOf = (
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The native client's method of an rpc of `erasedOf` that does not stream: it takes and answers JSON, failing with the declared failure's wrapper.
     const call = method as JsonMethod;
 
-    return checked(action, (_payload, _onProgress, json) =>
+    return checked(action, sendingJson, (json) =>
       call(json).pipe(Effect.catchIf(isDeclared, failed), Effect.flatMap(sent)),
     );
   }
@@ -939,8 +938,8 @@ const actionMethodOf = (
     ) as Stream.Stream<Progressed, unknown>;
 
   return elementOf(action.success) === undefined
-    ? checked(action, (_payload, onProgress, json) => answerFrom(progressed(json), onProgress))
-    : checkedStream(action, (_payload, onProgress, json) =>
+    ? checked(action, sendingJson, (json, onProgress) => answerFrom(progressed(json), onProgress))
+    : checkedStream(action, sendingJson, (json, onProgress) =>
         elementsFrom(progressed(json), onProgress),
       );
 };

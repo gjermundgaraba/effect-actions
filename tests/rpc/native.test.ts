@@ -10,7 +10,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
+import { Rpc, RpcClient, RpcGroup, RpcMiddleware } from "effect/rpc";
 import { authenticate, verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
@@ -18,10 +18,10 @@ import { Status, WhoAmI } from "../support/app/contracts.js";
 import { status, userActions } from "../support/app/handlers.js";
 import { Users } from "../support/app/users.js";
 import { recorder } from "../support/reporter.js";
+import { overHttp } from "../support/rpc.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import * as Testing from "../../src/testing/Testing.js";
 
 const Countdown = Rpc.make("countdown", {
   payload: { from: Schema.Int },
@@ -60,19 +60,6 @@ const anyone = Public.rpcs.toLayer({
   countdown: (payload) => countdown(payload, Effect.succeed("anyone")),
 });
 
-const overHttp = <E, R>(server: Layer.Layer<never, E, R>) =>
-  RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-    Layer.provide(RpcSerialization.layerNdjson),
-    Layer.provide(
-      Testing.layer(
-        server.pipe(
-          Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-          Layer.provide(RpcSerialization.layerNdjson),
-        ),
-      ),
-    ),
-  );
-
 const protectedRoutes = ActionRpc.layer(Protected, [status, userActions]).pipe(
   Layer.provide(signedIn),
   Layer.provide(authenticate),
@@ -105,6 +92,15 @@ const whoseOver = <B extends ActionRpc.Any, E, R>(
     Effect.provide(overHttp(server)),
     Effect.provide(Users.layerMemory),
   );
+
+const recordingActor =
+  (seen: Array<string>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.flatMap(Effect.serviceOption(CurrentActor), (actor) => {
+      seen.push(Option.match(actor, { onNone: () => "nobody", onSome: ({ id }) => id }));
+
+      return effect;
+    });
 
 describe("ActionRpc native rpcs", () => {
   it.effect("streams a native rpc's chunks to its client, its handler given the identity", () =>
@@ -222,15 +218,7 @@ describe("ActionRpc native rpcs", () => {
             Watched.rpcs.toLayer({ whose: () => Effect.map(CurrentActor, (actor) => actor.id) }),
           ),
           Layer.provide(authenticate),
-          Layer.provide(
-            Layer.succeed(Seen)((effect) =>
-              Effect.flatMap(Effect.serviceOption(CurrentActor), (actor) => {
-                seen.push(Option.match(actor, { onNone: () => "nobody", onSome: ({ id }) => id }));
-
-                return effect;
-              }),
-            ),
-          ),
+          Layer.provide(Layer.succeed(Seen)(recordingActor(seen))),
         );
 
         const refused = yield* Effect.flip(whoseOver(Watched, server, (client) => client.whose()));
@@ -288,15 +276,7 @@ describe("ActionRpc native rpcs", () => {
             }),
           ),
           Layer.provide(authenticate),
-          Layer.provide(
-            Layer.succeed(Outer)((effect) =>
-              Effect.flatMap(Effect.serviceOption(CurrentActor), (actor) => {
-                seen.push(Option.match(actor, { onNone: () => "nobody", onSome: ({ id }) => id }));
-
-                return effect;
-              }),
-            ),
-          ),
+          Layer.provide(Layer.succeed(Outer)(recordingActor(seen))),
         );
 
         const refused = yield* Effect.flip(whoseOver(Wrapped, server, (client) => client.whose()));

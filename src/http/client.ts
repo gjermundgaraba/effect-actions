@@ -9,6 +9,7 @@ import {
   checkedStream,
   type ErasedMethod,
   type ErasedStreamMethod,
+  sendingValue,
 } from "../contract/call.js";
 import type { BuiltIns } from "../contract/errors.js";
 import type { ErasedValue } from "../contract/implementation.js";
@@ -144,13 +145,14 @@ const actionMethodOf = <R>(
   const method = methodOf(native, action.name);
 
   if (elementOf(action.success) !== undefined)
-    return checkedStream(action, (payload, onProgress) =>
+    return checkedStream(action, sendingValue, (payload, onProgress) =>
       Stream.unwrap(Effect.map(method({ payload }), (answer) => readElements(answer, onProgress))),
     );
 
-  if (action.progress === undefined) return checked(action, (payload) => method({ payload }));
+  if (action.progress === undefined)
+    return checked(action, sendingValue, (payload) => method({ payload }));
 
-  return checked(action, (payload, onProgress) =>
+  return checked(action, sendingValue, (payload, onProgress) =>
     Effect.flatMap(method({ payload }), (answer) => readWithProgress(answer, onProgress)),
   );
 };
