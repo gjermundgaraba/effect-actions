@@ -454,6 +454,16 @@ const eventSchemasOf = (events: ReadonlyArray<AnyEventImplementation>): Serving[
 
   assertOnce("MCP event", listed);
 
+  // Why: MCP keeps event names starting with `mcp.` for its own events, so one of an
+  // application's would be read as the protocol's.
+  const reserved = listed.find(({ name }) => name.startsWith("mcp."));
+
+  if (reserved !== undefined) {
+    throw new Error(
+      `Invalid event name: ${reserved.name} (use lowercase dot-separated segments of [a-z0-9_-], at most 128 characters, not starting with "mcp.")`,
+    );
+  }
+
   const schemas = listed.map((event) => ({
     name: event.name,
     inputSchema: toolJsonSchema(Schema.toCodecJson(event.input), true),
@@ -658,6 +668,7 @@ type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [undefined
  * - A 2025-11-25 or 2025-06-18 client gets `structuredContent` only for a success that is an object: any other success arrives as its text block alone, a string unquoted.
  * - A client asking for an earlier revision, such as 2025-03-26, is offered 2025-11-25, so a client speaking only that earlier one cannot connect.
  * - A request body is read whole, however large, and a 2025 session holds what its `initialize` sent until it ends, so an oversized `initialize` costs memory for that long: limit bodies as `ActionHttp.layer` says.
+ * - An event type named starting with `mcp.`, a prefix MCP keeps for its own events, is refused as the endpoint is made, with `Invalid event name`.
  * - Events are 2026-07-28's alone: a 2025 session gets `-32601` for `events/*`, and its `initialize` advertises no events extension.
  * - With `requestScoped`, an event fed by `emit` or with a `subscription` hook is refused at startup, and `events/stream` answers `-32026`: no server outlives a request to consume a stream, hold a lease or push; a published log source's log is the `Events`' own, under `Event.layerMemory` each instance's, whose cursors another reads as a gap.
  * - A protected event with a `subscription` hook needs `principal` on `authentication`, or the endpoint is refused at startup: a poll's hook is held per principal between requests.

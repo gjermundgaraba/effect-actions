@@ -121,7 +121,9 @@ The client reads SEP-3415's codes: `-32602` as `InvalidInput`, `-32023` as the r
 no reason of its own. A
 `requestScoped` endpoint serves events by poll alone, and refuses at startup a log source fed by
 `emit` or a `subscription` hook. `allowSubscriptions` now defaults to `true` where event
-implementations are given, as `events/stream` needs it; `false` serves events by poll alone.
+implementations are given, as `events/stream` needs it; `false` serves events by poll alone. An
+event type named starting with `mcp.`, a prefix MCP keeps for its own events, is refused as the
+endpoint is made, `Event.make` accepting it for the other surfaces.
 Guide: `docs/ActionMcp.md#serve-events`; example: `examples/build-events`.
 
 **HTTP events (experimental).** `ActionHttp.make` binds event types beside actions, and

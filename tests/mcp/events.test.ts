@@ -133,6 +133,19 @@ it("refuses an event type whose input or payload is no object, naming it", () =>
   );
 });
 
+it("refuses an event type named starting with mcp., a prefix MCP keeps", () => {
+  const Reserved = Event.make("mcp.task", { description: "", payload: {}, caller: Action.Anyone });
+
+  expect(() =>
+    ActionMcp.layerHttp(Event.implement(Reserved, { log: { emit: Stream.empty } }), {
+      name: "events",
+      version: "0",
+    }),
+  ).toThrow(
+    `Invalid event name: mcp.task (use lowercase dot-separated segments of [a-z0-9_-], at most 128 characters, not starting with "mcp.")`,
+  );
+});
+
 describe("MCP events over HTTP", () => {
   it.effect(
     "advertises the events extension in 2026-07-28 discovery alone, and lists each event with its schemas and delivery",
