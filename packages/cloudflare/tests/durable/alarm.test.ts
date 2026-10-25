@@ -87,18 +87,19 @@ describe("the alarm schedule", () => {
     }),
   );
 
-  it.effect("runs the earliest owner when the runtime alarm fires before its time", () =>
+  it.effect("runs no owner before its time at a repeated firing, and keeps the alarm for it", () =>
     Effect.gen(function* () {
       const ran: Array<string> = [];
 
       const { alarm, start } = yield* inObject((schedule, start) =>
         Effect.gen(function* () {
+          const owners = { sooner: recording(ran, "sooner"), later: recording(ran, "later") };
+
           yield* schedule.set("sooner", start + hour);
           yield* schedule.set("later", start + 2 * hour);
-          yield* schedule.runDue({
-            sooner: recording(ran, "sooner"),
-            later: recording(ran, "later"),
-          });
+          yield* TestClock.setTime(start + hour);
+          yield* schedule.runDue(owners);
+          yield* schedule.runDue(owners);
         }),
       );
 
@@ -178,6 +179,7 @@ describe("the alarm schedule", () => {
 
             yield* TestClock.adjust("0 millis");
             yield* Fiber.interrupt(cut);
+            yield* TestClock.setTime(start + hour + 2000);
 
             yield* schedule.runDue({
               digest: ({ retryCount }) =>
@@ -295,7 +297,14 @@ describe("the alarm schedule", () => {
   it.effect("drops the time of an owner the alarm does not run", () =>
     Effect.gen(function* () {
       const { result, alarm } = yield* inObject((schedule, start) =>
-        Effect.andThen(schedule.set("removed", start + hour), schedule.runDue<never>({})),
+        Effect.all(
+          [
+            schedule.set("removed", start + hour),
+            TestClock.setTime(start + hour),
+            schedule.runDue<never>({}),
+          ],
+          { discard: true },
+        ),
       );
 
       expect(result).toEqual(Exit.void);

@@ -125,12 +125,8 @@ export const makeSchedule = (state: DurableObjectState) => {
         const now = yield* Clock.currentTimeMillis;
         const kept = yield* times;
 
-        // Why: the runtime alarm is set for the earliest time, so its firing makes that time due
-        // even before it comes, as `runDurableObjectAlarm` fires it in a test.
-        const dueBy = Math.max(now, Math.min(...kept.map(({ at }) => at)));
-
         yield* Effect.forEach(
-          kept.filter(({ at }) => at <= dueBy),
+          kept.filter(({ at }) => at <= now),
           ({ owner }) =>
             Effect.gen(function* () {
               const key = `${alarmPrefix}${owner}`;
@@ -154,7 +150,7 @@ export const makeSchedule = (state: DurableObjectState) => {
                 Effect.gen(function* () {
                   const current = yield* stored;
 
-                  if (current === undefined || current.at > dueBy) return undefined;
+                  if (current === undefined || current.at > now) return undefined;
 
                   if (run === undefined) return yield* Effect.as(drop, undefined);
 
@@ -227,7 +223,7 @@ export const applicationOwner = "application";
  * **Gotchas**
  *
  * - `State`'s `storage.setAlarm` replaces the package's alarm: the times it keeps then run at that alarm, early or late, or never, and the `alarm` option runs only for a time `Alarm.set` gave, so schedule with `Alarm`.
- * - The object's alarm firing runs the earliest time even before it comes, as `runDurableObjectAlarm` fires it in a test.
+ * - A firing before every time it keeps, as a repeated one or `runDurableObjectAlarm` in a test, runs none and sets the alarm again: a test runs a time once it has come.
  * - A time already past runs at once; the option runs once per `set`, and sets its next itself.
  * - The times live in the object's storage, under `effect-actions/alarm/`, beside the application's data: a store deleting every key deletes them too.
  */

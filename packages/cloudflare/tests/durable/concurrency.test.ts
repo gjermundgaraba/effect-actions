@@ -40,6 +40,17 @@ describe("an object's Effects", () => {
   );
 });
 
+describe("a call arriving while a failed build is built again", () => {
+  it.effect("is answered when it calls the object back, outside the build's gate", () =>
+    Effect.gen(function* () {
+      const stub = env.BUILT_AGAIN_RACED.getByName("called-back");
+      const raced = (yield* ActionDurableObject.client(RacedRpcs))(() => stub);
+
+      expect(yield* raced.callsBack()).toBe(404);
+    }).pipe(Effect.scoped),
+  );
+});
+
 describe("calls in flight on one object, each reading then writing storage", () => {
   it.effect("lose no write to one another arriving while a failed build is built again", () =>
     Effect.map(

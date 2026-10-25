@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { Effect, Layer, Schema } from "effect";
 import { Rpc, RpcGroup, RpcServer } from "effect/rpc";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
@@ -6,6 +7,7 @@ export const RacedRpcs = RpcGroup.make(
   Rpc.make("bump"),
   Rpc.make("count", { success: Schema.Number }),
   Rpc.make("yieldsPastTimer", { success: Schema.Boolean }),
+  Rpc.make("callsBack", { success: Schema.Number }),
 );
 
 export const yieldsPastTimer = Effect.suspend(() => {
@@ -45,6 +47,14 @@ export const racedCalls = RpcServer.layer(RacedRpcs).pipe(
           ),
         ),
       yieldsPastTimer: () => yieldsPastTimer,
+      callsBack: (): Effect.Effect<number, never, ActionDurableObject.State> =>
+        Effect.flatMap(ActionDurableObject.State, ({ id }) =>
+          Effect.promise(async () => {
+            const response = await env.BUILT_AGAIN_RACED.get(id).fetch("https://object/");
+
+            return response.status;
+          }),
+        ),
       count: () =>
         Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
           Effect.promise(async () => (await storage.get<number>("count")) ?? 0),

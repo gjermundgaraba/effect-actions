@@ -8,7 +8,7 @@ import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { Sockets } from "../../src/durable/sockets.js";
 import { noteHeader, Overdrawn } from "../support/app.js";
 import type { Room } from "../worker.js";
-import { scopedClientOver, upgradeToRpc } from "../support/socket.js";
+import { nextMessage, scopedClientOver, upgradeToRpc } from "../support/socket.js";
 
 const room = (name: string) => env.ROOM.getByName(name);
 
@@ -391,6 +391,29 @@ describe("layerWebSocket", () => {
         expect(yield* upgradeWith("fits", 12_000)).toEqual([101, 1]);
         expect(yield* upgradeWith("too-large", 20_000)).toEqual([431, 0]);
       }),
+  );
+
+  it.effect("fails a call at once whose id its socket's attachment cannot hold, never run", () =>
+    Effect.gen(function* () {
+      const socket = yield* upgradeToRpc(room("untracked"), bearer("ada"));
+      const answer = nextMessage(socket);
+
+      socket.send(
+        JSON.stringify({
+          _tag: "Request",
+          id: "1".repeat(20_000),
+          tag: "spend",
+          payload: { amount: 3 },
+          headers: [],
+        }),
+      );
+
+      const answered = yield* answer;
+      const client = yield* scopedClientOver(socket);
+
+      expect(answered).toMatch(/^\{"_tag":"Exit".*16 KiB/);
+      expect(yield* client.spend({ amount: 3 })).toEqual({ left: 7 });
+    }).pipe(Effect.scoped),
   );
 
   it.effect("never gives a socket's calls a service only router middleware provides", () =>

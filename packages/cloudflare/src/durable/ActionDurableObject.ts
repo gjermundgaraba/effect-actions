@@ -356,33 +356,40 @@ const handlersOf = <S>(
   // every event, the first included, until the build ends, and each then finds `instance` set
   // and starts at once, as on a built instance. An event arriving while a build runs, the one
   // building again after a failure or one the runtime let in that same turn, waits in line and
-  // runs to its end before the gate opens, one after another: resumed together from one promise,
-  // calls reading then writing storage each read before any wrote, a write lost. The cost is the
-  // runtime's window, which those events share with the build: past 30 seconds the object
-  // resets. A failed build's Layer would stay failed in a memo map whose scope stays open, and
-  // its protocols registered with its `Calls` and `Sockets`, so a failure closes its scope and
-  // drops it, rejects the events in line with it, and the next event builds from nothing; the
-  // gate's callback resolves either way, as a rejection under it would reset the object.
+  // runs once the gate opens, one after another: resumed together from one promise, calls
+  // reading then writing storage each read before any wrote, a write lost. They run outside the
+  // gate, as one calling another object that calls this one back would wait under it on its own
+  // callback until the runtime reset the object. A failed build's
+  // Layer would stay failed in a memo map whose scope stays open, and its protocols registered
+  // with its `Calls` and `Sockets`, so a failure closes its scope and drops it, rejects the
+  // events in line with it, and the next event builds from nothing; the gate's callback
+  // resolves either way, as a rejection under it would reset the object.
   const start = () => {
     building = true;
 
-    void ctx.blockConcurrencyWhile(async () => {
-      const exit = await Effect.runPromiseExit(inObject(build));
+    void ctx
+      .blockConcurrencyWhile(async () => {
+        const exit = await Effect.runPromiseExit(inObject(build));
 
-      building = false;
+        building = false;
 
-      if (Exit.isFailure(exit)) {
-        for (const next of waiting.splice(0)) next.fail(exit.cause);
+        if (Exit.isFailure(exit)) {
+          for (const next of waiting.splice(0)) next.fail(exit.cause);
 
-        return;
-      }
+          return undefined;
+        }
 
-      instance = exit.value;
+        instance = exit.value;
 
-      for (let next = waiting.shift(); next !== undefined; next = waiting.shift()) {
-        await next.use(exit.value);
-      }
-    });
+        return instance;
+      })
+      .then(async (built) => {
+        if (built === undefined) return;
+
+        for (let next = waiting.shift(); next !== undefined; next = waiting.shift()) {
+          await next.use(built);
+        }
+      });
   };
 
   start();
@@ -484,7 +491,7 @@ type InstanceOf<S, Env, RT> = [RT] extends [Layer.Any]
  *
  * - An instance lasts until the runtime evicts it, and the next event builds everything again on a new one: nothing the services, calls or routes build is finalized, and in-memory state is lost, so keep state in storage.
  * - A build that fails is dropped with all it built, and the events waiting on it are rejected with its failure: the next event builds again, under the same gate.
- * - An event arriving while a build runs, such as the one building again after a failure, runs to its end before the gate opens, one after another, inside the same 30 seconds as the build.
+ * - The events arriving while a build runs, such as the one building again after a failure, run once it ends, one after another, each to its end before the next: a slow one holds those after it.
  * - An instance builds as it is constructed, under `blockConcurrencyWhile`, so the runtime holds every event, the first included, until the build ends, then delivers them one by one, as to a built instance: a build longer than 30 seconds resets the object.
  * - Every Effect of the object runs under Effect's microtask scheduler, `new Scheduler.MixedScheduler("sync")`, where its default's timers would let the next event in between any two steps: CPU-heavy work holds every other event until it ends.
  * - Calls still interleave where a plain method's would: while one waits on I/O, another object or a timer, such as `Effect.sleep`, the next event runs, so serialize a read and the write that depends on it with a `Semaphore`, or make both one synchronous `storage.kv` or `storage.sql` step.

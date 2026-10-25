@@ -10,6 +10,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { Calls } from "../../src/durable/calls.js";
+import { dueNow, runAlarmDue } from "../support/alarm.js";
 import { alarmBuildsKey, Builds, Http, ownTag, readyKey } from "../support/app.js";
 import type { OwnSockets, Room } from "../worker.js";
 import { nextMessage, scopedClientOver, upgradeTo, upgradeToRpc } from "../support/socket.js";
@@ -80,7 +81,7 @@ describe("handlers", () => {
 
       yield* setAlarm(stub);
 
-      expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
+      expect(yield* runAlarmDue(stub)).toBe(true);
       expect(yield* stored(stub, alarmBuildsKey)).toBe(1);
       expect(yield* Effect.promise(() => stub.builds())).toBe(1);
     }),
@@ -262,6 +263,7 @@ describe("handlers", () => {
         });
 
         yield* client.schedule();
+        yield* dueNow(stub);
         yield* Effect.promise(() => evictDurableObject(stub));
 
         expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
@@ -280,7 +282,7 @@ describe("handlers", () => {
 
       yield* setAlarm(stub);
 
-      expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
+      expect(yield* runAlarmDue(stub)).toBe(true);
       expect(yield* stored(stub, alarmBuildsKey)).toBe(1);
     }),
   );
@@ -388,7 +390,7 @@ describe("make", () => {
 
       yield* setAlarm(stub);
 
-      expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
+      expect(yield* runAlarmDue(stub)).toBe(true);
 
       const ran = yield* Effect.promise(() =>
         runInDurableObject(stub, (_, state) =>

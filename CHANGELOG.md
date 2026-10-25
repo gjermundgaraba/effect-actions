@@ -341,13 +341,14 @@ class of your own delegates to, `handlers`, and what they serve:
   the runtime retries a plain object's alarm, then hourly, never dropped. A run is counted and the
   alarm set for its retry before it runs, so one an eviction, a deploy or a crash cuts off is
   retried as a failure, and an instance's build sets the alarm again for times kept with none set.
-  The `alarm` option is given its `scheduledTime` and `retryCount`.
+  A firing runs only the times that have come, so a repeated one runs nothing early. The `alarm`
+  option is given its `scheduledTime` and `retryCount`.
   `Alarm.layer` requires `State`; `handlers` and `make` provide it to the services, the calls,
   the routes, the alarm and `run`. `State`'s `storage.setAlarm` replaces the package's alarm.
 - `layerWebSocket({ path, protocol? })` is the protocol `ActionRpc.layer` serves on: WebSockets
   the runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
   Effect's own socket protocol does, and each message is authenticated with them under its own
-  headers. An upgrade whose headers exceed a socket's 16 KiB attachment answers 431. Each
+  headers. An upgrade whose headers exceed a socket's 16 KiB attachment answers 431, and a call whose id would take it past them fails at once, never run. Each
   protocol of one object needs a `path` of its own. `protocol: { version, code, reason? }`
   refuses an upgrade whose `?protocol=` is absent or names another version with
   `refuseUpgrade(code, reason)`: 101 and a socket closed at once with that code and reason, which
@@ -386,7 +387,8 @@ class of your own delegates to, `handlers`, and what they serve:
   which may require `State` and `Alarm`, then
   `calls`, which may require those, the services and `RpcServer.Protocol`, and `routes`, whose
   Layers and handlers may require those, the services and `Sockets`; every event arrives after
-  that build, and a failed build is dropped, so the next event builds again. `run(effect)` runs an
+  that build, and a failed build is dropped, so the next event builds again, the events arriving
+  meanwhile running one after another once it ends. `run(effect)` runs an
   Effect in the object with the services, `State`, `Alarm` and a `Scope`, for
   the class's own methods.
 - `make(options)` is a Durable Object class delegating every handler and `run` to `handlers`, for

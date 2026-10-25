@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Match, Predicate, Queue, Schema } from "effect";
+import { Context, Effect, Layer, Match, Option, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import { closeQuietly, groupTag, RequestId, sendFrame, socketIdOf, socketTag } from "./frames.js";
@@ -105,31 +105,32 @@ const Attachment = Schema.Struct({
 
 const attachmentOf = Schema.decodeUnknownSync(Schema.NullishOr(Attachment));
 
-const pendingOf = (socket: WebSocket) => {
-  try {
-    return attachmentOf(socket.deserializeAttachment())?.pending ?? [];
-  } catch {
-    return [];
-  }
-};
+const heldOf = (socket: WebSocket) =>
+  Option.getOrUndefined(Schema.decodeUnknownOption(Attachment)(socket.deserializeAttachment()));
 
+const pendingOf = (socket: WebSocket) => heldOf(socket)?.pending ?? [];
+
+// Why: answers whether the attachment holds the update, which it cannot past the runtime's 16
+// KiB: a call whose id it cannot hold is refused, as an eviction would leave it unanswered on a
+// socket kept open. One with no attachment to hold it, as on celld, is not tracked.
 const tracked = (
   socket: WebSocket,
   update: (pending: ReadonlyArray<string | number>) => ReadonlyArray<string | number>,
 ) => {
+  const held = heldOf(socket);
+
+  if (held === undefined) return true;
+
+  const pending = update(held.pending ?? []);
+
   try {
-    const held = attachmentOf(socket.deserializeAttachment());
-
-    if (held === null || held === undefined) return;
-
-    const pending = update(held.pending ?? []);
-
     socket.serializeAttachment(
       Attachment.make({ headers: held.headers, ...(pending.length > 0 && { pending }) }),
     );
+
+    return true;
   } catch {
-    // Why: an attachment that does not decode or no longer fits keeps what it held: the call
-    // is answered as before, and only its socket's reset after an eviction is lost.
+    return false;
   }
 };
 
@@ -147,6 +148,9 @@ const settledBy = (response: RpcMessage.FromServerEncoded) =>
   );
 
 const lostCalls = "This server lost the calls it was answering on this socket: connect again";
+
+const untracked =
+  "This socket's attachment, its upgrade's headers and the ids of its calls under way, would pass the runtime's 16 KiB: send fewer calls at once, or fewer or smaller headers on the upgrade";
 
 const json = RpcSerialization.json;
 
@@ -242,17 +246,22 @@ const makeProtocol = (
               Predicate.isTagged(message, "Request") ? [message.id] : [],
             );
 
-            if (sent.length > 0) tracked(socket, (pending) => [...pending, ...sent]);
+            const kept = sent.length === 0 || tracked(socket, (pending) => [...pending, ...sent]);
 
             return Effect.forEach(
               messages,
               (message) =>
-                write(
-                  clientId,
-                  Predicate.isTagged(message, "Request")
-                    ? { ...message, headers: [...headers, ...message.headers] }
-                    : message,
-                ),
+                !Predicate.isTagged(message, "Request")
+                  ? write(clientId, message)
+                  : kept
+                    ? write(clientId, { ...message, headers: [...headers, ...message.headers] })
+                    : send(
+                        clientId,
+                        RpcMessage.ResponseExitDieEncoded({
+                          requestId: RpcMessage.RequestId(message.id),
+                          encodedDefect: encodeDefect(untracked),
+                        }),
+                      ),
               { discard: true },
             );
           }).pipe(
@@ -458,7 +467,7 @@ export interface LayerWebSocketOptions {
  * - An idle object is evicted while its sockets stay open: a message constructs a new instance, which builds the routes and then answers it.
  * - A message's event ends once the message is handed to the server: a call doing I/O or waiting on a timer keeps the object from hibernating, billed as long, and one waiting only on in-memory state, such as a `Deferred`, is lost if the object hibernates. A call an eviction, a deploy or a crash cut off closes its socket with 1012 as the next instance builds, so its client fails it with a `SocketCloseError` and connects again; on celld 0.6.2, which drops attachments, it waits for good.
  * - A client's close frame is answered with its own code and reason, as the closing handshake asks, whatever the `compatibility_date`: where the runtime already replied, under `web_socket_auto_reply_to_close`, the second reply is ignored; a socket the class accepted itself is the class's to answer.
- * - An upgrade whose headers, cookies included, exceed the runtime's 16 KiB attachment is answered 431; a request to `path` that is no upgrade is answered 426.
+ * - An upgrade whose headers, cookies included, exceed the runtime's 16 KiB attachment is answered 431, and a call whose id would take the attachment past it fails at once with a defect naming it, never run; a request to `path` that is no upgrade is answered 426.
  * - workerd keeps a socket's headers across hibernation; celld 0.6.2 drops them when it evicts an idle object, so a message relying on the upgrade's token is refused as unauthenticated: send a token on each message.
  * - The upgrade's URL and query are not kept, as Effect's own socket protocol keeps neither: a message has no URL, so an API key in the query never authenticates; `protocol` reads the upgrade's query for a version, and router middleware reads it for any other judge, refusing with `refuseUpgrade`.
  * - A browser WebSocket sets no header on its upgrade, so a page sends its token on each message, with `RpcClient.withHeaders`; under a cookie scheme the browser sends the cookie on any page's upgrade, which is never preflighted, so refuse a foreign `Origin` with router middleware, which runs for the upgrade, returning `refuseUpgrade`: a 403 reaches the page as a bare 1006, and its client connects again for good.
