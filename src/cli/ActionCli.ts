@@ -25,12 +25,12 @@ import {
   type Member,
   type RequestOf,
   select,
-  type Served,
-  toList,
   type Known,
   type Selected,
   type SelectedOf,
   type Selection,
+  type ServedActions,
+  actionsOnly,
   elementsOf,
 } from "../contract/implementation.js";
 import { elementOf } from "../contract/stream.js";
@@ -323,7 +323,11 @@ const checkedCommandsOf = (
  * - Each run builds the action's implementation, its builder and an authorizer an Effect builds, and releases them after the call, even where the host already built them; implementations passed beside it are not built.
  * - A field named like a global flag (`help`, `version`, `log-level`) is no clash: its flag shadows the global one on this command.
  */
-export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>, const O = {}>(
+export function command<
+  const Apps extends ServedActions,
+  A extends ActionOf<Member<Apps>>,
+  const O = {},
+>(
   implementations: Apps,
   action: A,
   options?: O & NoInfer<CommandOptions<A>> & NoInfer<Known<O, CommandOptions<Action.Any>>>,
@@ -335,7 +339,7 @@ export function command<const Apps extends Served, A extends ActionOf<Member<App
   Effect.Services<Local<Owning<Member<Apps>, A>, A>>
 > {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: the command runs `action` by its one implementation among `implementations`, so its channels are what `Local` states for that implementation.
-  return inProcess(toList(implementations), action, options) as never;
+  return inProcess(actionsOnly("A CLI", implementations), action, options) as never;
 }
 
 /**
@@ -447,7 +451,7 @@ type CallServices<C, A extends Action.Any> =
  * - Services provided on it with `Command.provide` are also built when it runs with no subcommand, before it shows its help.
  */
 export function make<
-  const Apps extends Served,
+  const Apps extends ServedActions,
   const O extends Selection<ActionOf<Member<Apps>>> = {},
   const Own extends Subcommands = [],
 >(
@@ -466,7 +470,7 @@ export function make<
   | Effect.Services<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>
   | Command.Services<OwnCommand<Own>>
 > {
-  const apps = toList(implementations);
+  const apps = actionsOnly("A CLI", implementations);
 
   const commands = checkedCommandsOf(
     options.commands,

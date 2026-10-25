@@ -3,7 +3,7 @@ import type { Scope, Context } from "effect";
 import { Anyone, assertCaller } from "./caller.js";
 import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
 import { assertKnown, assertName, assertOnce, heldOnce } from "./names.js";
-import { type Call, inputOf, onProgressOf } from "./call.js";
+import { type Call, inputOf, onProgressOf, watchInput } from "./call.js";
 import { type BuiltIn, InvalidInput } from "./errors.js";
 import { progressSink, type ReportingOf } from "./progress.js";
 import { type Answer, elementOf } from "./stream.js";
@@ -15,6 +15,25 @@ import {
 } from "./authorizer.js";
 import type { NoInput } from "./codec.js";
 import { type Codec, type CodecOf, codecOf, type Fields } from "./codec.js";
+import type * as Event from "./Event.js";
+import { NotServed, SubscriptionError } from "./Event.js";
+import {
+  acquireFeeds,
+  type EventBuildError,
+  type EventBuildServices,
+  type EventOf,
+  type EventRequestOf,
+  eventsOf,
+  type Feed,
+  feedBuilders,
+  type HoldingEvents,
+  type ServingEvents,
+} from "./feed.js";
+import type { Fed } from "./pages.js";
+import { OccurrenceOf, ReceivedOf } from "./occurrence.js";
+import { polledOn, queuedPush, readOn } from "./push.js";
+import { selectFrom } from "./serving.js";
+import { type WatchArgs, watching } from "./watch.js";
 import {
   type ActionOf,
   type Authorize,
@@ -36,11 +55,12 @@ import {
   type Known,
   type Offered,
   type OptionalUnless,
+  type SelectedEventsOf,
   type SelectedOf,
   type Serving,
-  select,
   type Served,
   toList,
+  uniqueKey,
   type Written,
   type WrittenHandler,
 } from "./implementation.js";
@@ -531,10 +551,17 @@ export function implement(
  */
 export function layer<const Apps extends Served>(
   implementations: Apps,
-): Layer.Layer<never, BuildError<Member<Apps>>, BuildServices<Member<Apps>>>;
+): Layer.Layer<
+  never,
+  BuildError<Member<Apps>> | EventBuildError<Member<Apps>>,
+  BuildServices<Member<Apps>> | EventBuildServices<Member<Apps>>
+>;
 export function layer(implementations: Served): Layer.Layer<never, unknown, unknown> {
   return Layer.empty.pipe(
-    provideBuilders(toList(implementations).map((app) => Implementation.layerOf(app))),
+    provideBuilders([
+      ...toList(implementations).map((app) => Implementation.layerOf(app)),
+      ...feedBuilders(eventsOf(implementations)),
+    ]),
   );
 }
 
@@ -544,15 +571,38 @@ type Method<A extends Any, R> = Call<
 >;
 
 /**
- * Every action of the implementations `Apps`, one or a list, as `client.<action>(input)`: what
+ * Every action of the implementations `Apps`, one or a list, as `client.<action>(input)`, or
+ * those of `Listed`, and `watch` for their event types, or those of `ListedEvents`: what
  * `client` gives, each method owing per call what its handler and `authorize` read.
  */
 export type Client<
   Apps extends Served,
   Listed extends Any = Extract<ActionOf<Member<Apps>>, Any>,
+  ListedEvents extends Event.Any = EventOf<Member<Apps>>,
 > = {
   readonly [A in Serving<Member<Apps>, Listed> as A["name"]]: Method<A, RequestOf<Member<Apps>, A>>;
-};
+} & Watching<Member<Apps>, ListedEvents>;
+
+/**
+ * Watch one of the event types of the implementations `App`, or of those among `Listed`: its
+ * occurrences, and the gaps where occurrences were missed, owing per subscription what its
+ * source and `authorize` read.
+ */
+export type Watch<App, Listed extends Event.Any = EventOf<App>> = <
+  E extends ServingEvents<App, Listed>,
+  SE = never,
+>(
+  event: E,
+  ...args: WatchArgs<E, SE>
+) => Elements.Stream<
+  Event.Received<E>,
+  Event.SubscriptionError | BuiltIn | SE,
+  EventRequestOf<App, E>
+>;
+
+type Watching<App, Listed extends Event.Any> = [ServingEvents<App, Listed>] extends [never]
+  ? unknown
+  : { readonly watch: Watch<App, Listed> };
 
 type ErasedMethod = (
   ...input: ReadonlyArray<ErasedValue>
@@ -618,11 +668,16 @@ const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
     );
 };
 
-/** What `client` takes: the actions to call. */
-export interface ClientOptions<A extends Any> {
+/** What `client` takes: the actions to call and the event types to watch. */
+export interface ClientOptions<A extends Any | Event.Any> {
   /**
-   * The actions to call, among the implementations': `[GetUser]`. Defaults to every action of
-   * them. Options whose `actions` may be absent are typed as every action, as they may run.
+   * The actions to call and the event types to watch, among the implementations':
+   * `[GetUser, UserRenamed]`, exactly those. Defaults to every one of them. Options whose
+   * `actions` may be absent are typed as every one, as they may run.
+   *
+   * **Gotchas**
+   *
+   * - A list naming actions alone watches no event type: the client has no `watch` until the event types are listed beside them.
    */
   readonly actions?: ReadonlyArray<A> | undefined;
 }
@@ -630,8 +685,10 @@ export interface ClientOptions<A extends Any> {
 /**
  * Call implementations in process: one method per action, taking its input directly as
  * `ActionHttp.client`'s methods do, `client.renameUser({ id, name })`, so moving between the
- * two changes the line acquiring it. A call runs as a remote one does, its input and its answer
- * through their JSON codecs, the implementation's `authorize` and the handler in a scope of
+ * two changes the line acquiring it; given event implementations, `watch(event, input, options)`
+ * too, for their event types or those `actions` lists, as every client of a surface serving
+ * events has it. A call runs as a remote one does, its input and its answer through their JSON
+ * codecs, the implementation's `authorize` and the handler in a scope of
  * their own, failing with the action's errors and the built-in ones. Acquiring it builds the
  * implementations' builders into the layer graph it is acquired in, as a layer does, and its
  * scope holds them: acquire it where builders live.
@@ -644,39 +701,119 @@ export interface ClientOptions<A extends Any> {
  * - Every implemented action has a method, whether or not a surface serves it; `actions` lists the ones to call, and an implementation holding none of them is left unbuilt.
  * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, running nothing, for an input that does not encode.
  * - A builder acquiring a client of its own implementation is refused by the compiler, TS7022, and with the types bypassed never completes: call the services both use instead.
+ * - `watch` runs as the caller around the stream, authorized when it starts.
  */
 export function client<
   const Apps extends Served,
-  const O extends ClientOptions<ActionOf<Member<Apps>>> = {},
+  const O extends ClientOptions<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> = {},
 >(
   implementations: Apps,
   ...options: OptionalUnless<
     O,
-    ClientOptions<ActionOf<Member<Apps>>> & O & NoInfer<Known<O, ClientOptions<Any>>>
+    ClientOptions<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> &
+      O &
+      NoInfer<Known<O, ClientOptions<Any>>>
   >
 ): Effect.Effect<
-  Client<Apps, Offered<O, ActionOf<Member<Apps>>>>,
-  BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>,
-  BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>> | Scope.Scope
+  Client<Apps, Offered<O, ActionOf<Member<Apps>>>, Offered<O, EventOf<Member<Apps>>>>,
+  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | EventBuildError<
+      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
+      SelectedEventsOf<O, Apps>
+    >,
+  | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | EventBuildServices<
+      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
+      SelectedEventsOf<O, Apps>
+    >
+  | Scope.Scope
 >;
 export function client(
   served: Served,
-  options?: { readonly actions?: ReadonlyArray<Any> | undefined },
-): Effect.Effect<{ readonly [name: string]: ErasedMethod }, unknown, unknown> {
-  const apps = select(toList(served), options?.actions);
+  options?: { readonly actions?: ReadonlyArray<Any | Event.Any> | undefined },
+): Effect.Effect<{ readonly [name: string]: ErasedMethod | ErasedWatch }, unknown, unknown> {
+  const { apps, events } = selectFrom(served, options?.actions);
 
   assertOnce(
     "action",
     apps.flatMap((app) => app.actions),
     heldOnce,
   );
+  assertOnce(
+    "event",
+    events.flatMap((app) => app.events),
+    heldOnce,
+  );
 
   return Effect.map(
     builtWith(
-      apps.map((app) => Implementation.layerOf(app)),
-      acquire(apps),
+      [...apps.map((app) => Implementation.layerOf(app)), ...feedBuilders(events)],
+      Effect.all([acquire(apps), acquireFeeds(events)]),
     ),
-    (bound) =>
-      Object.fromEntries(bound.map(([action, run]) => [action.name, methodOf(action, run)])),
+    ([bound, feeds]) => ({
+      ...Object.fromEntries(bound.map(([action, run]) => [action.name, methodOf(action, run)])),
+      ...(feeds.length === 0 ? {} : { watch: watcherOf(feeds) }),
+    }),
   );
 }
+
+type ErasedWatch = (
+  event: Event.Any,
+  input?: ErasedValue,
+  options?: Event.WatchOptions<unknown>,
+) => Elements.Stream<Event.Received<Event.Any>, unknown, unknown>;
+
+const watcherOf =
+  (feeds: ReadonlyArray<Feed>): ErasedWatch =>
+  (event, input, options) => {
+    const feed = feeds.find((held) => held.event === event);
+
+    if (feed === undefined) {
+      return Elements.fail(SubscriptionError.of(event.name, new NotServed()));
+    }
+
+    const occurrence = jsonRoundTrip(OccurrenceOf(event));
+    const received = jsonRoundTrip(ReceivedOf(event));
+
+    const decoded = (fed: Fed): Effect.Effect<Fed> =>
+      Predicate.isTagged(fed, "Checked") ? Effect.succeed(fed) : Effect.orDie(received(fed));
+
+    return Elements.unwrap(
+      Effect.map(watchInput(event, input), ({ value }) => {
+        // Why: In process, no principal tells subscribers apart, so each watch is a subscriber
+        // of its own: a poll subscription's `subscription` hook runs as the one who polls.
+        const subscriber = uniqueKey();
+
+        return watching(
+          {
+            name: event.name,
+            poll: polledOn(
+              "In process",
+              event.name,
+            )((cursor) =>
+              Effect.flatMap(feed.poll(value, cursor, { subscriber }), (page) =>
+                Effect.map(
+                  Effect.forEach(page.events, (sent) => Effect.orDie(occurrence(sent))),
+                  (events) => ({ ...page, events }),
+                ),
+              ),
+            ),
+            // Why: Read through the boundary every surface serves a stream by, so a source's
+            // failure is reported once and read on from, in process as over a network. With no
+            // network between, each position arrives in order, and one element waits, so a
+            // reader slower than a log source falls behind its log into a `Gap`.
+            stream: (cursor) =>
+              Elements.unwrap(
+                Effect.flatMap(feed.stream(value), (open) =>
+                  Effect.map(
+                    queuedPush(open, cursor, Effect.succeed, { inOrder: true, capacity: 1 }),
+                    (queue) => Elements.fromQueue(queue),
+                  ),
+                ),
+              ).pipe(readOn("In process", event.name), Elements.mapEffect(decoded)),
+          },
+          options,
+        );
+      }),
+    );
+  };

@@ -24,10 +24,10 @@ import {
   provideHandlers,
   type RequestOf,
   select,
-  type Served,
-  toList,
   type SelectedOf,
+  type ServedActions,
   type Serving,
+  actionsOnly,
   type ErasedValue,
 } from "../contract/implementation.js";
 
@@ -223,7 +223,7 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
  * - A defect, or a failure the action's errors reject, is the call's defect; a success or an error that does not encode fails the call with an `AiError`, `Failed to encode result for tool …`.
  */
 export function make<
-  const Apps extends Served,
+  const Apps extends ServedActions,
   const O extends Options<ActionOf<Member<Apps>>> = {},
 >(
   implementations: Apps,
@@ -238,8 +238,8 @@ export function make<
   BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>,
   BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
 >;
-export function make(apps: Served, options?: ErasedOptions): ErasedTools {
-  const served = select(toList(apps), options?.actions);
+export function make(apps: ServedActions, options?: ErasedOptions): ErasedTools {
+  const served = select(actionsOnly("A toolkit", apps), options?.actions);
 
   const needsApproval = options?.needsApproval;
 

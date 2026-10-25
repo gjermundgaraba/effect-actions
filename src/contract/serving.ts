@@ -1,7 +1,26 @@
 import type * as Action from "./Action.js";
+import type * as Event from "./Event.js";
 import { Anyone, assertAuthentication, type Proving } from "./caller.js";
-import { type Served, servedBy, toList } from "./implementation.js";
+import { eventsOf, selectEvents } from "./feed.js";
+import { select, type Served, servedBy, toList } from "./implementation.js";
+import { selection } from "./listed.js";
 import { assertDistinct } from "./names.js";
+
+/**
+ * What a surface without a binding serves of `served`: the actions and event types `actions`
+ * lists, each implementation holding those alone, or every one where it lists none.
+ */
+export const selectFrom = (
+  served: Served,
+  actions: ReadonlyArray<Action.Any | Event.Any> | undefined,
+) => {
+  const listed = selection(actions);
+
+  return {
+    apps: select(toList(served), listed.actions),
+    events: selectEvents(eventsOf(served), listed.events),
+  };
+};
 
 /**
  * What `ActionHttp.layer` and `ActionRpc.layer` serve, with the checks they share: the actions

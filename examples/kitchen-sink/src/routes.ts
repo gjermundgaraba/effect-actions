@@ -63,9 +63,9 @@ const mcp = Layer.unwrap(
 // quota as native RPC middleware. It still requires its protocol and serialization, chosen by
 // whoever serves it: server.ts gives it a WebSocket, and a test Effect's HTTP protocol, which
 // answers in memory.
-export const rpc = ActionRpc.layer(Rpc, implementations, { middleware: [RpcQuota] }).pipe(
-  Layer.provide([authenticateSession, quota, assistantTools]),
-);
+export const rpc = ActionRpc.layer(Rpc, implementations, {
+  middleware: [RpcQuota],
+}).pipe(Layer.provide([authenticateSession, quota, assistantTools]));
 
 // Effect's own tools read the binding's native `HttpApi`: the OpenAPI document and a Swagger
 // UI, each showing the bearer scheme on every route but `getStatus`.

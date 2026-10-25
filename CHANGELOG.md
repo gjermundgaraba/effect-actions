@@ -23,6 +23,51 @@ with `NoReply`.
 
 ### Additions
 
+**Events (experimental).** A new module, `Event`, defines event types: something that happens, which
+subscribers receive as it happens. `Event.make` declares what a subscription takes (`input`), what
+each occurrence carries (`payload`) and who may subscribe (`caller`), as an action's contract does.
+`Event.implement` binds it to its source, behind an authorizer: a `check`, asked what happened since
+a cursor, for a store that keeps the occurrences, or a `log`, which the library keeps for
+occurrences nothing else does, appended by `Event.Events.publish` and by `log.emit`, a stream
+consumed from startup, with a `match` and `transform` per subscriber; a logged occurrence without an
+`eventId` or `timestamp` takes its cursor and the time it was appended, the same on every replay.
+The authorizer `Event.allowAll` admits every subscriber the event's `caller` lets in. `Event.Events`
+announces occurrences as they happen: `notify` wakes a check source's subscribers to read now,
+rather than at their next poll every 5 seconds, and `publish` appends to a log source, delivering at
+once; a source's `key`, such as the pipeline a subscriber follows, lets an announcement given that key
+reach its subscribers alone. `notify` of a log source and `publish` to a check source die naming the
+other. A page's `nextPoll` over 5 minutes, `Duration.infinity` included, is read as 5 minutes, so a
+check source is read again at least that often where its host polls. `Event.layerMemory` keeps it in
+a process's memory, each log source's log included, beyond the builds attached to it: `Action.client`
+watching them needs one, provided once around the handlers that announce and the watches. `Event.makeEvents({ log, polls?, emits? })` builds one over
+log storage of a host's own, `Event.LogStorage` (its `position`, `put`, `list` from a sequence
+number and `delete`), the core keeping each log's cursors, bounds and expiry over it, and reads
+check sources when notified, and 5 seconds after a read fails, where `polls` is `false`, and refuses
+a log source fed by `emit` where `emits` is `false`. An occurrence whose data breaks its payload is
+reported and a gap sent in its place, and a read failing with no refusal is reported once and read
+again. A `subscription` hook sets something up upstream for as long
+as a subscription lasts, a poll's under a lease. A list of event types takes a record of sources by
+name, each reading services of its own, which a client owes only for the event types it watches.
+Event implementations go in the same list as action implementations, and `Action.client`'s
+`actions` option lists event types beside actions: a client given it has exactly what it lists, and
+one without it every one. `Action.client` given them has `watch(event, input, options)`,
+typed `Action.Watch`, a `Stream` of occurrences and gaps that polls or streams, drops duplicates by
+`eventId` among its last 1,000, and keeps its cursor in an `Event.CursorStore` under `resume`,
+across retries and restarts; `Event.isEvent` tells an event type from an action. Guide:
+`docs/Event.md`; example: `examples/build-events`, whose builds notify a check source and whose
+deploy requests are published to a log. Events follow MCP's draft events extension,
+SEP-3415.
+
+**A current source for events whose occurrence is the whole value.** `Event.implement` takes
+`current`, beside `check` and `log`: the value as it is, for the subscription's input, such as a
+status or a list small enough to send whole. A subscriber is sent it first, then again after each
+`Event.Events.notify` reaching its key, never each change it missed one by one. The library keeps
+the revision that is the cursor and each occurrence's id, `<epoch>:<count>`, so the store keeps
+none: `makeEvents` takes `revisions`, where a host keeps them, and `Event.layerMemory` keeps them in
+memory, a new epoch with each build. Every `notify` moves its event's revision, a current source
+attached or not, so a request-scoped server answers a change announced between requests.
+build-events' `pipeline.status` is one.
+
 **Native rpcs beside actions.** `ActionRpc.make` takes `rpcs`, a native `RpcGroup` served beside
 the actions on the same protocol, with its own schemas, such as one that streams. Under the
 binding's `authentication`, each of their messages authenticates as a protected action's does, a
@@ -94,8 +139,10 @@ Guide: `docs/Action-streams.md#answer-a-stream`; example: kitchen-sink's `export
   answers as before.
 - **An `ActionMcp.McpCallError`'s `body` from an event stream holds the data of its frames**, one
   per line, without their `data:` framing and without its `notifications/progress` frames.
-- kitchen-sink has `exportIssues`, an action answering a stream of issues with progress, under an
-  export limit.
+- kitchen-sink uses `Event`: `issue.changed`, a log source fed by the issue store's
+  changes, filtered to the subscriber's workspace by `match`, shaped by `transform`, watched in
+  process; and `exportIssues`, an action answering a stream of
+  issues with progress, under an export limit.
 
 ## 0.20.0
 

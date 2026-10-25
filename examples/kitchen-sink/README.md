@@ -72,11 +72,12 @@ src/
 │   ├── tenant.ts          Tenant, and the router middleware that resolves it per request
 │   └── handlers.ts
 ├── issues/
-│   ├── Issues.ts          contract: schemas, errors, five actions, exportIssues
-│   ├── store.ts           IssueStore, scoped by workspace
+│   ├── Issues.ts          contract: schemas, errors, five actions, exportIssues, issue.changed
+│   ├── store.ts           IssueStore, scoped by workspace, and its changes
 │   ├── write-limit.ts     the write and export limits, wrapped around handlers
 │   ├── handlers.ts        Action.implement over the store
 │   ├── export.ts          exportIssues: a stream, with progress
+│   ├── events.ts          issue.changed: a log source fed by the store's changes
 │   ├── guide.ts           a native MCP resource and prompt
 │   └── assistant.ts       the actions as a model's Toolkit, with approval
 ├── assistant/             the model loop, served: a turn per request
@@ -115,7 +116,7 @@ test/
 ├── routes.test.ts         the host's surfaces: one port over HTTP and MCP, then both ports
 ├── request-policy.test.ts raw requests to each port as a web handler
 ├── issues/                in process, with Action.client; the assistant's tools; the export over
-│                          HTTP and RPC
+│                          HTTP and RPC; issue.changed in process
 ├── assistant/             the assistant over HTTP, with a scripted model
 ├── support/               the scripted model the assistant's tests give the routes
 ├── identity/              what authentication adds: tokens over HTTP, sessions over RPC
@@ -190,6 +191,15 @@ search for in the file.
 | A trusted identity no verifier returns                         | `src/admin/Admin.ts`, `src/admin/authenticate.ts`, `src/ops.ts` |
 | A verifier's declared error over MCP                           | `test/identity/identity.test.ts`                                |
 | A test replacing a verifier's service                          | `test/identity/identity.test.ts` (`issuerDown`)                 |
+
+### Event
+
+| Export or option                                                                           | File                                    |
+| ------------------------------------------------------------------------------------------ | --------------------------------------- |
+| `make`: `description`, `input` that filters and shapes, `payload`, `caller`                | `src/issues/Issues.ts` (`IssueChanged`) |
+| `implement`: a log source fed by `emit`, `match` reading the caller, `transform`, `maxAge` | `src/issues/events.ts`                  |
+| `implement`: `authorize`, one rule for actions and events                                  | `src/identity/authorize.ts`             |
+| `watch` in process, `Forbidden` for a subscriber                                           | `test/issues/events.test.ts`            |
 
 ### ActionHttp
 
@@ -300,5 +310,9 @@ Left out because this application has no honest place for them:
   `BuildServices`, `ActionHttp.Client`, `Authentication.Any`.
 - A handler sending MCP notifications through `McpServer.McpServer`, and one reading
   `McpSchema.McpRequestContext`.
+- An event's `check` source and `subscription`, and a watch's `resume`:
+  [build-events](../build-events/) has them.
+  No example sets a `subscription`'s `lease` or an occurrence's `timestamp`: the defaults (5
+  minutes, and when the occurrence arrived) serve both.
 - A tenant taken from a subdomain. The workspace is a header, so the OAuth resource the server
   publishes is one fixed URL.

@@ -25,8 +25,8 @@ export type ErasedAuthorizer<C> =
 
 /** How the messages name what an implementation holds. */
 export interface Holding {
-  readonly singular: "action";
-  readonly module: "Action";
+  readonly singular: "action" | "event";
+  readonly module: "Action" | "Event";
 }
 
 /**

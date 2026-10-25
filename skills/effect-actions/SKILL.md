@@ -53,6 +53,7 @@ the installed version. Install first ([setup.md](setup.md#install)).
 | [setup.md](setup.md)                                     | install, write `tsconfig.json`, import the modules, write the minimal program, lay out an application, bundle a browser client                                        |
 | [Action.md](Action.md)                                   | define a contract and who may call it, implement it, authorize calls, fail with declared and built-in errors, call actions from a job, share one build across servers |
 | [Action-streams.md](Action-streams.md)                   | report progress while an action runs, answer a stream of elements                                                                                                     |
+| [Event.md](Event.md)                                     | define an event type, read it from an upstream you can ask or one that pushes, set up a subscription upstream, watch events in process                                |
 | [ActionHttp.md](ActionHttp.md)                           | bind actions to JSON routes, serve them, limit request bodies, split a binding across layers and add middleware, publish OpenAPI, call them from Effect or a browser  |
 | [ActionMcp.md](ActionMcp.md)                             | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, allow browser clients, add prompts and resources, send notifications       |
 | [ActionRpc.md](ActionRpc.md)                             | bind actions to Effect rpcs, serve them on a protocol, call them, add native rpcs, send request context with a call                                                   |
@@ -60,7 +61,7 @@ the installed version. Install first ([setup.md](setup.md#install)).
 | [ActionCli.md](ActionCli.md)                             | run actions as local commands, or call a server from commands; shape flags, input and output; name the caller; add a command of your own                              |
 | [Authentication.md](Authentication.md)                   | declare how callers sign in, verify credentials, publish OAuth discovery, step up for a scope                                                                         |
 | [Authentication-advanced.md](Authentication-advanced.md) | use an API key or a cookie, read the request in a verifier, protect a route of your own, run a request policy before authentication                                   |
-| [Testing.md](Testing.md)                                 | test an implementation in process, and routes, tools and rpcs in memory, as a signed-in caller; assert on errors                                                      |
+| [Testing.md](Testing.md)                                 | test an implementation in process, and routes, tools and rpcs in memory, as a signed-in caller; test events; assert on errors                                         |
 
 ## Examples
 
@@ -71,6 +72,7 @@ the installed version. Install first ([setup.md](setup.md#install)).
 | [mcp-tools](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/)         | An MCP server whose tools wrap an upstream HTTP API, over stdio and over HTTP, with an image result.             | You are putting an existing API in front of a model.                    |
 | [assistant](node_modules/@gjermundgaraba/effect-actions/examples/assistant/)         | No server: the same implementations as a model's tools, with approval of writes, and as local commands.          | A model calls your code in process, or you are building a local CLI.    |
 | [live-rpc](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/)           | Effect RPC over a WebSocket with a browser-shaped client, each message carrying its own token.                   | A client keeps a connection open, or the application speaks Effect RPC. |
+| [build-events](node_modules/@gjermundgaraba/effect-actions/examples/build-events/)   | A CI service whose members watch events in process: one read by cursor, one pushed upstream.                     | Something happens that subscribers should hear about.                   |
 | [kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/)   | The reference: a multi-tenant issue tracker using every module and nearly every option, with an index.           | You need a working use of one specific feature.                         |
 
 The index in [kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/README.md#index) maps every export and

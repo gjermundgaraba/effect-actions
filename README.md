@@ -103,6 +103,8 @@ type-checked and tested with the library and ship in the package.
 - [assistant](examples/assistant/): no server, the same implementations as a model's tools
   and as local commands.
 - [live-rpc](examples/live-rpc/): Effect RPC over a WebSocket.
+- [build-events](examples/build-events/): events watched in process, and actions reporting
+  progress and answering a stream.
 - [kitchen-sink](examples/kitchen-sink/): every module and nearly every option in one
   application, with an index from each to the file that shows it.
 

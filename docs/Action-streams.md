@@ -25,7 +25,8 @@ The rules are on `Action.Options.progress`; how each surface carries the values,
 `ActionCli.command`.
 
 - **Report a snapshot to show, never an event to count.** A caller falling behind loses the
-  oldest values, never the answer: what a caller must receive each time is the answer.
+  oldest values, never the answer: what a caller must receive each time is the answer, or an
+  [event](Event.md).
 
 ## Answer a stream
 

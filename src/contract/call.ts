@@ -52,6 +52,29 @@ export const inputOf = (
     ? Schema.decodeUnknownEffect(Schema.toCodecJson(action.input))({})
     : Effect.succeed(args[0]);
 
+/**
+ * A watch's input as every client sends it: read as `inputOf` reads an action's, encoded to its
+ * JSON, dropping undeclared fields, and decoded back, or `InvalidInput` reporting every issue.
+ */
+export const watchInput = (
+  event: Pick<Action.Any, "input">,
+  input: ErasedValue,
+): Effect.Effect<{ readonly json: Schema.Json; readonly value: ErasedValue }, InvalidInput> => {
+  const codec = Schema.toCodecJson(event.input);
+
+  return inputOf(event, input === undefined ? [] : [input]).pipe(
+    Effect.flatMap(Schema.encodeUnknownEffect(codec, { errors: "all" })),
+    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Json)),
+    Effect.flatMap((json) =>
+      Effect.map(Schema.decodeUnknownEffect(codec, { errors: "all" })(json), (value) => ({
+        json,
+        value,
+      })),
+    ),
+    Effect.mapError(InvalidInput.fromSchemaError),
+  );
+};
+
 export type ErasedMethod<R = never> = (
   ...input: ReadonlyArray<ErasedValue>
 ) => Effect.Effect<ErasedValue, unknown, R>;

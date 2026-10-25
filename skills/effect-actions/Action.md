@@ -9,7 +9,8 @@ A message the library throws says its fix; for a compiler diagnostic or Effect's
 [Action-failures.md](Action-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`:
 each declaration's JSDoc carries its rules and gotchas, and this page only what an example
 cannot show. An action reporting progress or answering a stream is on
-[Action-streams.md](Action-streams.md).
+[Action-streams.md](Action-streams.md); what happens apart from a call, which a subscriber
+watches, is an event type, on [Event.md](Event.md).
 
 ## Define a contract
 

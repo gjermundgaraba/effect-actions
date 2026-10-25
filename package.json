@@ -42,6 +42,7 @@
     "./ActionRpc": "./src/rpc/ActionRpc.ts",
     "./ActionToolkit": "./src/toolkit/ActionToolkit.ts",
     "./Authentication": "./src/authentication/Authentication.ts",
+    "./Event": "./src/contract/Event.ts",
     "./Testing": "./src/testing/Testing.ts",
     "./package.json": "./package.json"
   },
@@ -54,6 +55,7 @@
       "./ActionRpc": "./dist/ActionRpc.mjs",
       "./ActionToolkit": "./dist/ActionToolkit.mjs",
       "./Authentication": "./dist/Authentication.mjs",
+      "./Event": "./dist/Event.mjs",
       "./Testing": "./dist/Testing.mjs",
       "./package.json": "./package.json"
     },

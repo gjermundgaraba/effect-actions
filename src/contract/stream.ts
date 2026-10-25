@@ -20,7 +20,7 @@ const streams = Schema.declare(Elements.isStream);
  * `Stream` of them, which may fail with the action's errors, and every client's call returns
  * one. How each surface carries it is on `ActionHttp.layer`, `ActionRpc.make`,
  * `ActionMcp.layerHttp`, `ActionToolkit.make` and `ActionCli.command`.
- * Guide: `docs/Action-streams.md` in this package; in an application: `examples/kitchen-sink/src/issues/export.ts`.
+ * Guide: `docs/Action-streams.md` in this package; in an application: build-events' `tailLog`.
  *
  * **Gotchas**
  *

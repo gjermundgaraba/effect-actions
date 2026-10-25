@@ -50,6 +50,7 @@ import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
 import {
   acquire,
+  actionsOnly,
   answeringWhole,
   type Protected,
   type ActionOf,
@@ -61,11 +62,10 @@ import {
   type Member,
   provideHandlers,
   select,
-  type Served,
-  toList,
   type Known,
   type SelectedOf,
   type Selection,
+  type ServedActions,
   type ServedRequest,
 } from "../contract/implementation.js";
 
@@ -553,7 +553,7 @@ type Inferring<D, A extends Action.Any> = [D] extends [undefined]
  * - A request body is read whole, however large, and a 2025 session holds what its `initialize` sent until it ends, so an oversized `initialize` costs memory for that long: limit bodies as `ActionHttp.layer` says.
  */
 export function layerHttp<
-  const Apps extends Served,
+  const Apps extends ServedActions,
   const O extends Selection<ActionOf<Member<Apps>>> = {},
   E = never,
   R = never,
@@ -581,7 +581,7 @@ export function layerHttp<
   | Features<R>
 >;
 export function layerHttp(
-  apps: Served,
+  apps: ServedActions,
   {
     actions,
     features,
@@ -592,7 +592,7 @@ export function layerHttp(
     ...options
   }: LayerHttpOptions<unknown, unknown>,
 ) {
-  const selected = select(toList(apps), actions);
+  const selected = select(actionsOnly("An MCP server", apps), actions);
   const served = selected.flatMap((app) => app.actions);
   assertAuthentication(served, authentication);
 
@@ -673,7 +673,7 @@ const jsonLinesOnly = Layer.effect(
  * - The layers provided around it log to stdout, among the protocol's lines: apply `ActionCli.logToStderr` to the program, last, as its JSDoc says.
  */
 export function runStdio<
-  const Apps extends Served,
+  const Apps extends ServedActions,
   const O extends Selection<ActionOf<Member<Apps>>> = {},
   E = never,
   R = never,
@@ -691,11 +691,11 @@ export function runStdio<
   | Features<R>
 >;
 export function runStdio(
-  apps: Served,
+  apps: ServedActions,
   { actions, features, ...options }: Options<unknown, unknown>,
 ) {
   const transport = server(
-    select(toList(apps), actions),
+    select(actionsOnly("An MCP server", apps), actions),
     McpServer.layerStdio({ ...options, protocols }).pipe(Layer.provide(jsonLinesOnly)),
     features,
   );

@@ -12,10 +12,12 @@ import {
 } from "effect";
 import type { Scope } from "effect";
 import type * as Action from "./Action.js";
+import type * as Event from "./Event.js";
 import { Anyone } from "./caller.js";
 import { projectedErrors } from "./declared.js";
 import { assertOnce, heldOnce } from "./names.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
+import type { AnyEventImplementation, EventOf } from "./feed.js";
 import { type Reporting, reportedTo, streamReportedTo } from "./progress.js";
 import { elementOf } from "./stream.js";
 
@@ -124,7 +126,7 @@ export const builderLayer = <S, E, R, SA, EA, RA>(
     : built.layer;
 
 /** What a surface throws for an implementation some other copy of this module made. */
-export const notMadeHere = (module: "Action"): Error =>
+export const notMadeHere = (module: "Action" | "Event"): Error =>
   new Error(
     `Not an implementation made by this ${module}.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice`,
   );
@@ -252,26 +254,43 @@ export type AnyImplementation<A extends Action.Any = Action.Any> = Implementatio
   unknown
 >;
 
-/** What a surface serves: one implementation, or a list of them. */
-export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;
+/** What a surface serves: one implementation, of actions or of events, or a list of them. */
+export type Served =
+  | AnyImplementation
+  | AnyEventImplementation
+  | ReadonlyArray<AnyImplementation | AnyEventImplementation>;
+
+/** What a surface serving no events takes: one action implementation, or a list of them. */
+export type ServedActions = AnyImplementation | ReadonlyArray<AnyImplementation>;
 
 /** The implementations `S` stands for. */
 export type Member<S> = S extends ReadonlyArray<infer App> ? App : S;
 
-/** Options that may list actions of `A`, the shape every selecting surface's options share. */
-export interface Selection<A extends Action.Any> {
-  readonly actions?: ReadonlyArray<A> | undefined;
+/**
+ * Options that may list actions and event types of `C`, the shape every selecting surface's
+ * options share.
+ */
+export interface Selection<C extends Action.Any | Event.Any> {
+  readonly actions?: ReadonlyArray<C> | undefined;
 }
 
 /**
  * The actions options `O` select, of `All`: those its `actions` lists when it always lists
- * them, and every one otherwise. Options whose `actions` may be absent, being optional or
- * a union with options lacking it, select every action at run time, so they narrow nothing.
+ * them, none where it lists event types alone, and every one otherwise. Options whose `actions`
+ * may be absent, being optional or a union with options lacking it, select every action at run
+ * time, so they narrow nothing.
  */
 export type Selected<O, All extends Action.Any> = O extends {
-  readonly actions: ReadonlyArray<infer A extends Action.Any>;
+  readonly actions: ReadonlyArray<infer C>;
 }
-  ? A
+  ? Extract<C, Action.Any>
+  : All;
+
+/** The event types options `O` select, of `All`, as `Selected` selects actions. */
+export type SelectedEvents<O, All extends Event.Any> = O extends {
+  readonly actions: ReadonlyArray<infer C>;
+}
+  ? Extract<C, Event.Any>
   : All;
 
 /**
@@ -292,14 +311,17 @@ export type MiddlewareOf<O, L extends ReadonlyArray<unknown>> = O extends {
 /** The actions options `O` select of the implementations `Apps` stand for. */
 export type SelectedOf<O, Apps extends Served> = Selected<O, ActionOf<Member<Apps>>>;
 
+/** The event types options `O` select of the implementations `Apps` stand for. */
+export type SelectedEventsOf<O, Apps extends Served> = SelectedEvents<O, EventOf<Member<Apps>>>;
+
 /**
- * The actions a client of options `O` offers methods for, of `All`: those `actions` may
+ * The actions or event types a client of options `O` offers, of `All`: those `actions` may
  * list, wherever some member of `O` may list them, as each is present whether the list is
  * given or not; every one where no member lists any.
  */
-export type Offered<O, All extends Action.Any> = [Listing<O>] extends [never]
+export type Offered<O, All extends Action.Any | Event.Any> = [Listing<O>] extends [never]
   ? All
-  : Extract<All, Listing<O> extends ReadonlyArray<infer A extends Action.Any> ? A : never>;
+  : Extract<All, Listing<O> extends ReadonlyArray<infer C> ? C : never>;
 
 type Listing<O> = O extends unknown ? NonNullable<O["actions" & keyof O]> : never;
 
@@ -319,7 +341,28 @@ export type Known<O, Keys> = {
  */
 export type OptionalUnless<O, Given> = {} extends O ? [options?: Given] : [options: Given];
 
-export const toList = (served: Served): ReadonlyArray<AnyImplementation> => Arr.ensure(served);
+/**
+ * The action implementations among what a surface is given; `eventsOf` reads the event
+ * implementations, those holding `events`.
+ */
+export const toList = (served: Served): ReadonlyArray<AnyImplementation> =>
+  Arr.ensure(served).filter((app): app is AnyImplementation => !("events" in app));
+
+/**
+ * What a surface serving no events is given, refusing an event implementation, which its types
+ * refuse too: a caller bypassing them would otherwise lose its events without a word.
+ */
+export const actionsOnly = (surface: string, served: Served): ReadonlyArray<AnyImplementation> => {
+  const events = Arr.ensure(served).flatMap((app) => ("events" in app ? app.events : []));
+
+  if (events.length > 0) {
+    throw new Error(
+      `${surface} serves no events: ${events.map(({ name }) => name).join(", ")} (leave their implementations out of the ones it is given)`,
+    );
+  }
+
+  return toList(served);
+};
 
 /** The actions of the implementations a surface serves. */
 export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;
@@ -410,8 +453,8 @@ export const assertHeld = <C extends Pick<Action.Any, "name">>(
 
 /**
  * The implementations among `apps` holding what `listed` lists, each sharing its builder to hold
- * those alone, or every one where it lists none, by the contracts each `holds` and how it
- * `share`s them.
+ * those alone, or every one where it lists none: action and event implementations alike, by the
+ * contracts each `holds` and how it `share`s them.
  */
 export const selectHeld = <App, C extends Pick<Action.Any, "name">>(
   apps: ReadonlyArray<App>,
@@ -472,7 +515,7 @@ export const servedBy = (
   return served;
 };
 
-/** The protected members of a contract union. */
+/** The protected members of a contract union, of actions or of events. */
 export type Protected<A extends Pick<Action.Any, "caller">> = A extends unknown
   ? A["caller"] extends typeof Anyone
     ? never
