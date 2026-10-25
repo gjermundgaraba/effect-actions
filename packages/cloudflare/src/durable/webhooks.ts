@@ -94,20 +94,17 @@ const alarmClock = (state: DurableObjectState, base: Clock.Clock): Clock.Clock =
   };
 };
 
-/**
- * Ends each of the instance's waits due by its alarm, `scheduledTime` or now, whichever is later,
- * and sets the alarm for the next.
- */
-export const wakeDue = (state: DurableObjectState, scheduledTime: number) =>
+/** Ends each of the instance's waits that is due, and sets the alarm for the next. */
+export const wakeDue = (state: DurableObjectState) =>
   Effect.gen(function* () {
     const held = waiting.get(state);
 
     if (held === undefined) return;
 
-    const dueBy = Math.max(yield* Clock.currentTimeMillis, scheduledTime);
+    const now = yield* Clock.currentTimeMillis;
 
     for (const wait of held.waits) {
-      if (wait.at <= dueBy) {
+      if (wait.at <= now) {
         held.waits.delete(wait);
         Deferred.doneUnsafe(wait.woken, Exit.void);
       }
@@ -170,7 +167,7 @@ export type LayerWebhooksOptions = Omit<Webhook.Options, "persist" | "resolveCal
  * - A callback's name is not resolved for the address check, as Workers have no resolver: a literal address is checked, and a name is left to Cloudflare's egress, which reaches no private network of yours without a Tunnel or a VPC binding of your own.
  * - A delivery in flight when the instance is evicted is sent again by the next, from the subscription's last kept position: a subscriber drops the repeat by its `eventId`.
  * - A protected event offered by webhook needs its authentication's `schema`, as `Webhook.Options`' `persist` says: the subscriber's identity is kept by it, not authenticated again at a wake.
- * - The subscriptions live beside the application's data: a store deleting every key deletes them too, where `wipe` keeps them.
+ * - The subscriptions live beside the application's data: a store deleting every key deletes them too, and a subscriber hears nothing more.
  * - Only `make`'s and `handlers`' `alarm` ends its long waits: in a class whose `alarm` does not delegate to them, a delivery is never retried past its first wait of 10 seconds or more, and a subscription never ends at its expiry.
  * - Call it once per object and provide that Layer to every surface offering webhooks: two calls are two layers over one store, each losing the other's subscriptions at an eviction.
  * - The source, authorizer and client a delivery runs share its Clock: a wait of 10 seconds or more in them, a timeout included, sets the object's alarm, and one ended early leaves a wake for nothing.

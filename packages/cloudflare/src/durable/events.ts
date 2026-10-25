@@ -1,13 +1,7 @@
 import { DateTime, Effect, Layer, Option, Schema, Semaphore } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { batches } from "./batches.js";
-import { nextSocketKey } from "./frames.js";
 import { State } from "./state.js";
-import { alarmPrefix, makeSchedule } from "./alarm.js";
-import { keptPrefix } from "./subscriptions.js";
-import { clockOwner, webhookPrefix } from "./webhooks.js";
-
-const clockKey = `${alarmPrefix}${clockOwner}`;
 
 const Position = Schema.Struct({ epoch: Schema.String, last: Schema.Int });
 
@@ -201,7 +195,7 @@ const storageRevisions = (storage: DurableObjectStorage): Effect.Effect<Event.Re
  * - A logged occurrence's data is kept as its payload's JSON: one that does not encode as it is published is logged then, and one that no longer decodes, such as after a deployment changed the payload, is reported as it is read; each is sent as a gap.
  * - Provide no other `Event.Events`, such as the core's `Event.layerMemory`, to the services or routes: it shadows this one, its logs lost at each eviction and its check sources read on a timer that keeps the object awake.
  * - A log's entries live beside the application's data: a store deleting every key deletes them too, and a subscriber resuming from one of their cursors receives a gap.
- * - A current source's revisions live beside them, under `effect-actions/revisions/`: a store deleting every key starts them again, and until the object is evicted their ids repeat ones its watches have seen, which drop them; `wipe` keeps them.
+ * - A current source's revisions live beside them, under `effect-actions/revisions/`: a store deleting every key starts them again, and until the object is evicted their ids repeat ones its watches have seen, which drop them.
  * - Two log sources of event types sharing a name die as the second attaches, naming it: each log is kept under its event's name.
  * - A log source fed by `emit` dies as it attaches, naming `publish`: an evicted object would miss what the stream sends meanwhile, with no gap, and its open stream would keep the object awake.
  * - A subscriber's read that fails is tried again 5 seconds later, on a timer, until one succeeds: a source failing for good keeps the object awake, billed, and sends each subscriber a `Failed` each time.
@@ -231,52 +225,6 @@ export const layerEvents: Layer.Layer<Event.Events, never, State> = Layer.effect
         emits: false,
         revisions,
       });
-    }),
-  ),
-);
-
-/**
- * Deletes everything the object keeps, as `storage.deleteAll()` does, its alarm included, but its
- * open sockets' event subscriptions and its webhook subscriptions, which read on from where they
- * were, a subscriber of a log source receiving a gap, the alarm time ending their waits, current
- * sources' revisions, and the id its next socket is given. Every other event of the object waits
- * until it is done.
- *
- * **Gotchas**
- *
- * - `storage.deleteAll()` alone deletes the subscriptions too: a subscriber hears nothing more once the object hibernates.
- * - A subscriber of a current source is at the revision it reached, and is sent nothing until a `notify`: notify each current source whose value the deletion changed.
- * - A subscriber of a check source reads on from its cursor in the application's emptied store, which answers it: an event id from a counter the deletion starts again repeats one the watch has seen, which it drops, so give each id something the deletion changes.
- * - The kept subscriptions keep the headers they were made with, tokens and cookies included: a deletion that must remove credentials closes those sockets too.
- * - The webhook subscriptions keep each subscriber's secret and identity: a deletion that must remove credentials deletes the keys under `effect-actions/webhooks/` too.
- * - A subscription admitted while it runs, by a call already under way, can be deleted with the rest: that watch hears nothing more once the object hibernates.
- * - A task's mark is deleted too: a task whose run failed is not run again, so run it after the deletion where its work still matters.
- */
-export const wipe: Effect.Effect<void, never, State> = Effect.flatMap(State, (state) =>
-  Effect.promise(() =>
-    state.blockConcurrencyWhile(async () => {
-      const kept = await state.storage.list<unknown>({ prefix: keptPrefix });
-      const webhooks = await state.storage.list<unknown>({ prefix: webhookPrefix });
-      const revisions = await state.storage.list<unknown>({ prefix: revisionPrefix });
-      const next = await state.storage.get<unknown>(nextSocketKey);
-      const clock = await state.storage.get<unknown>(clockKey);
-
-      await state.storage.deleteAll();
-      await state.storage.deleteAlarm();
-
-      const entries = [
-        ...kept,
-        ...webhooks,
-        ...revisions,
-        ...(next === undefined ? [] : [[nextSocketKey, next] as const]),
-        ...(clock === undefined ? [] : [[clockKey, clock] as const]),
-      ];
-
-      for (const batch of batches(entries)) await state.storage.put(Object.fromEntries(batch));
-
-      // Why: the webhook layer's waits end at the alarm, which deleteAll cleared: set again, it
-      // runs the time kept, and only the schedule's earliest is ever set.
-      if (clock !== undefined) await Effect.runPromise(makeSchedule(state).rearm);
     }),
   ),
 );

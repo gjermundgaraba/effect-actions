@@ -4,8 +4,8 @@ import type * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { batches } from "./batches.js";
 import { closeQuietly, RequestId, socketTag } from "./frames.js";
 
-/** Where an object keeps its sockets' event subscriptions, which `wipe` keeps. */
-export const keptPrefix = "effect-actions/subscription/";
+/** Where an object keeps its sockets' event subscriptions. */
+const keptPrefix = "effect-actions/subscription/";
 
 const Request = Schema.TaggedStruct("Request", {
   id: RequestId,

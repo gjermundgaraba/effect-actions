@@ -164,29 +164,6 @@ describe("an event subscription over layerWebSocket", () => {
   );
 
   it.live(
-    "sends a current source's next value through wipe under an id it has not sent, its revisions kept",
-    () =>
-      Effect.gen(function* () {
-        const stub = watching("current-wiped");
-        const client = yield* clientOver(yield* upgradeToRpc(stub, bearer("ada")));
-        const { received } = yield* collected(client.watch(Statused));
-
-        yield* until(() => received.length === 1);
-
-        for (const text of ["one", "two"]) {
-          yield* Effect.promise(() => stub.status(text));
-          yield* until(() => received.at(-1) === text);
-        }
-
-        yield* Effect.promise(() => stub.wipe());
-        yield* Effect.promise(() => stub.status("three"));
-        yield* until(() => received.at(-1) === "three");
-
-        expect(received).toEqual(["idle", "one", "two", "three"]);
-      }).pipe(Effect.scoped),
-  );
-
-  it.live(
     "authenticates a resumed watch again, ending it as unauthenticated where its token was revoked while the object slept",
     () =>
       Effect.gen(function* () {
@@ -226,34 +203,6 @@ describe("an event subscription over layerWebSocket", () => {
         socket.close(1000);
 
         yield* untilKept(stub, (cursors) => cursors.length === 0);
-      }).pipe(Effect.scoped),
-  );
-
-  it.live(
-    "keeps open sockets' subscriptions through wipe, which delete the rest, a log's subscriber reading on past a gap",
-    () =>
-      Effect.gen(function* () {
-        const stub = watching("wiped");
-        const client = yield* clientOver(yield* upgradeToRpc(stub, bearer("ada")));
-        const { received } = yield* collected(client.watch(Said));
-
-        yield* untilKept(stub, (cursors) => cursors.length === 1 && cursors[0] !== null);
-        yield* Effect.promise(() => stub.say("one"));
-        yield* Effect.promise(() => stub.note("deleted"));
-        yield* until(() => received.length === 1);
-        yield* Effect.promise(() => stub.wipe());
-
-        const notes = yield* Effect.promise(() =>
-          runInDurableObject(stub, (_, state) => state.storage.get("notes")),
-        );
-
-        yield* evicted(stub);
-        yield* Effect.promise(() => stub.say("two"));
-        yield* until(() => received.length === 3);
-
-        expect(notes).toBeUndefined();
-        expect(received).toEqual(["one", "gap", "two"]);
-        expect(yield* keptCursors(stub)).toHaveLength(1);
       }).pipe(Effect.scoped),
   );
 

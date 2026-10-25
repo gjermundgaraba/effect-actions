@@ -1,13 +1,11 @@
-import {
-  env,
-  evictDurableObject,
-  runDurableObjectAlarm,
-  runInDurableObject,
-} from "cloudflare:test";
+import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { Effect, Option, Schema } from "effect";
 import { describe, expect, it, vi } from "@effect/vitest";
-import { webhookPrefix } from "../../src/durable/webhooks.js";
+import { TestClock } from "effect/testing";
+import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import { wakeDue, webhookPrefix } from "../../src/durable/webhooks.js";
 import { answerKey, Hooked, receivedKey } from "../support/webhooks.js";
+import type { Hooking } from "../worker.js";
 
 const hooking = (name: string) => env.HOOKING.getByName(name);
 
@@ -88,6 +86,19 @@ const clockAlarm = (stub: DurableObjectStub) =>
     runInDurableObject(stub, (_, state) => state.storage.get("effect-actions/alarm/webhooks")),
   );
 
+const wokenAtAlarm = (stub: DurableObjectStub) =>
+  Effect.flatMap(clockAlarm(stub), (kept) =>
+    Effect.promise(() =>
+      runInDurableObject(stub, (instance: Hooking) =>
+        instance.run(
+          Effect.flatMap(ActionDurableObject.State, (state) =>
+            Effect.andThen(TestClock.setTime(Option.getOrThrow(timedOf(kept)).at), wakeDue(state)),
+          ).pipe(Effect.provide(TestClock.layer())),
+        ),
+      ),
+    ),
+  );
+
 const evicted = (stub: DurableObjectStub) => Effect.promise(() => evictDurableObject(stub));
 
 const Record = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json));
@@ -138,32 +149,6 @@ describe("layerWebhooks", () => {
   );
 
   it.live(
-    "keeps its subscriptions and the alarm ending their waits through wipe, delivering on from their cursors",
-    () =>
-      Effect.gen(function* () {
-        const stub = hooking("wiped");
-
-        yield* subscribe(stub);
-        yield* Effect.promise(() => stub.hook("one"));
-        yield* untilPosted(stub, (texts) => texts.length === 1);
-        yield* Effect.promise(() => stub.wipe());
-
-        const alarm = yield* Effect.promise(() =>
-          runInDurableObject(stub, (_, state) => state.storage.getAlarm()),
-        );
-
-        yield* evicted(stub);
-        yield* Effect.promise(() => stub.hook("two"));
-        yield* Effect.promise(() => stub.hook("three"));
-        yield* untilPosted(stub, (texts) => texts.includes("three"));
-
-        const kept = yield* clockAlarm(stub);
-
-        expect(Option.map(timedOf(kept), ({ at }) => at)).toEqual(Option.some(alarm));
-      }),
-  );
-
-  it.live(
     "waits for a long retry on the object's alarm, which retries it on the instance waiting, or on the next after an eviction",
     () =>
       Effect.forEach(
@@ -195,8 +180,7 @@ describe("layerWebhooks", () => {
 
             if (evicting) yield* evicted(stub);
 
-            expect(yield* Effect.promise(() => runDurableObjectAlarm(stub))).toBe(true);
-
+            yield* wokenAtAlarm(stub);
             yield* untilPosted(stub, (texts) => texts.length > attempts);
             yield* Effect.promise(() =>
               vi.waitUntil(async () => (await Effect.runPromise(failingSince(stub))).length === 0, {

@@ -5,7 +5,6 @@ import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import {
   closeQuietly,
   groupTag,
-  nextSocketKey,
   parser,
   RequestId,
   sendFrame,
@@ -22,6 +21,9 @@ interface Receiver {
   /** Tells the protocol the socket closed or failed. */
   readonly close: (socket: WebSocket) => Effect.Effect<void>;
 }
+
+/** Where the object keeps the id its next socket is given, so no id is given twice. */
+const nextSocketKey = "effect-actions/socket/next";
 
 const storedIdOf = Schema.decodeUnknownOption(Schema.Int);
 
@@ -529,7 +531,7 @@ export interface LayerWebSocketOptions {
  * - A kept subscription that cannot be resumed, such as one a later version of this package stores in another shape, closes its socket with 1000, logged, so the page's client connects again and its `watch` subscribes anew.
  * - A native stream rpc or a streaming action is not kept: waiting on in-memory state, it is lost if the object hibernates, its socket closed with 1012 as the next instance builds; serve what a page follows as an event.
  * - Each chunk that moves a kept subscription's position is one small storage write, and it is sent with no heartbeat: Effect's socket client tells a dead socket by its pings.
- * - `storage.deleteAll()` deletes the kept subscriptions too, so a watch hears nothing more once the object hibernates: empty the object with `wipe`.
+ * - `storage.deleteAll()` deletes the kept subscriptions too, so a watch hears nothing more once the object hibernates: close the sockets with it, so their clients connect again and watch anew.
  * - A client's close frame is answered with its own code and reason, as the closing handshake asks, whatever the `compatibility_date`: where the runtime already replied, under `web_socket_auto_reply_to_close`, the second reply is ignored; a socket the class accepted itself is the class's to answer.
  * - An upgrade whose headers, cookies included, exceed the runtime's 16 KiB attachment is answered 431, and a call whose id would take the attachment past it fails at once with a defect naming it, never run; a request to `path` that is no upgrade is answered 426.
  * - workerd keeps a socket's headers across hibernation; celld 0.6.2 drops them when it evicts an idle object, so a message relying on the upgrade's token is refused as unauthenticated: send a token on each message.

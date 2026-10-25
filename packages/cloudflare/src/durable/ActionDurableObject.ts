@@ -20,7 +20,7 @@ export { Alarm } from "./alarm.js";
 
 export type { StubRequest } from "./calls.js";
 
-export { layerEvents, wipe } from "./events.js";
+export { layerEvents } from "./events.js";
 
 export {
   layerWebSocket,
@@ -458,7 +458,7 @@ const handlersOf = <S>(
       run(
         schedule.runDue({
           [applicationOwner]: (info) => options.alarm?.(info) ?? Effect.void,
-          [clockOwner]: ({ scheduledTime }) => wakeDue(ctx, scheduledTime),
+          [clockOwner]: () => wakeDue(ctx),
         }),
       ),
     run,

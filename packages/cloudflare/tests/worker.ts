@@ -237,18 +237,10 @@ export class Watching extends ActionDurableObject.make({ routes: watchedRoutes }
       ),
     );
   }
-
-  wipe() {
-    return this.run(ActionDurableObject.wipe);
-  }
 }
 
 export class Hooking extends ActionDurableObject.make({ routes: hookedRoutes }) {
   hook(text: string) {
     return this.run(hook(text));
-  }
-
-  wipe() {
-    return this.run(ActionDurableObject.wipe);
   }
 }
