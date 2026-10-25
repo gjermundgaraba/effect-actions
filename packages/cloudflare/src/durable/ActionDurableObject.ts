@@ -148,8 +148,8 @@ export interface Options<
    * as values Workers RPC's structured clone copies, each schema's plain form
    * (`Schema.toCodecIso`), never a JSON string. Built after the services, beside the routes,
    * again after every eviction, and never finalized. It may require the protocol, `State`,
-   * `Alarm`, `Event.Events`, `Action.Idempotency` and the services; every call's own requirement must be provided by
-   * its middleware or be one of those. Without it, a call over the stub rejects once the object
+   * `Alarm`, `Tasks`, `Event.Events`, `Action.Idempotency` and the services; every call's own
+   * requirement must be provided by its middleware or be one of those. Without it, a call over the stub rejects once the object
    * is built, naming the option.
    *
    * **Gotchas**
@@ -169,8 +169,9 @@ export interface Options<
   readonly calls?: Layer.Layer<CA, CE, CR> | undefined;
   /**
    * What runs at the time `Alarm.set` gave, given its `scheduledTime` and `retryCount`, 0 at that
-   * time and counting each failed or cut-off run as it is retried. It may require the services, `State`, `Alarm`,
-   * `Event.Events` and a `Scope`, closed when it ends. It runs through `run`, once the services
+   * time and counting each failed or cut-off run as it is retried. It may require the services,
+   * `State`, `Alarm`, `Tasks`, `Event.Events`, `Action.Idempotency` and a `Scope`, closed when it
+   * ends. It runs through `run`, once the services
    * and routes are built.
    *
    * **Gotchas**
@@ -182,8 +183,8 @@ export interface Options<
   readonly alarm?: ((info: AlarmInvocationInfo) => Effect.Effect<void, AE, AR>) | undefined;
   /**
    * Work the object does at least once, by name, such as telling another object of a change:
-   * `Tasks.run(name)` runs it at once and marks it in the object's storage, and the alarm runs it
-   * again until it succeeds. Each may require what `alarm` may.
+   * `Tasks.runAfter(name, change)` marks it in the object's storage, runs the change, then runs
+   * it, and the alarm runs it again until it succeeds. Each may require what `alarm` may.
    */
   readonly tasks?:
     | {
@@ -246,7 +247,7 @@ export interface Handlers<S = never> {
   alarm(...args: Parameters<HandlerOf<"alarm">>): Promise<void>;
   /**
    * Runs `effect` in the object, with the services the instance built, `State`, `Alarm`,
-   * `Event.Events` and a `Scope`, closed when it ends, once the services and routes are built:
+   * `Tasks`, `Event.Events`, `Action.Idempotency` and a `Scope`, closed when it ends, once the services and routes are built:
    * what the alarm runs through, and what the object's own methods run their Effects with, such
    * as a method a Worker calls over the object's stub. A Layer the effect provides itself, or an `Action.client` it
    * acquires, is built for that call alone: give what calls share as `services`.
@@ -549,12 +550,12 @@ const handlersOf = <S>(
 /**
  * The object's lifecycle, for a Durable Object class that cannot extend the one `make` returns:
  * given its `ctx`, the handlers that build `services`, then `calls`, with the stub's protocol,
- * and `routes`, with `Sockets`, once per instance, as it is constructed, with `State`, `Alarm` and
- * the object's own `Event.Events` provided, its logs kept in its storage, under
- * `effect-actions/log/`, and its current sources' revisions beside them, so a cursor outlives an
- * eviction, and share that one build across every event, which awaits it. `fetch` serves the
- * routes, the socket handlers dispatch through `Sockets`, `effectActionsRpc` through the calls'
- * server, `alarm` runs the times `Alarm` keeps and `run` runs an Effect in the object.
+ * and `routes`, with `Sockets`, once per instance, as it is constructed, with the object's own
+ * services provided, its `Event.Events`' logs kept in its storage, under `effect-actions/log/`,
+ * and its current sources' revisions beside them, so a cursor outlives an eviction, and share
+ * that one build across every event, which awaits it. `fetch` serves the routes, the socket
+ * handlers dispatch through `Sockets`, `effectActionsRpc` through the calls' server, `alarm` runs
+ * the times `Alarm` keeps and `run` runs an Effect in the object.
  * Delegate the handlers the class serves this way, as methods:
  * `effectActionsRpc(request: StubRequest)` returning the handlers' own.
  *

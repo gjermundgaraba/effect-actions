@@ -141,7 +141,7 @@ ActionDurableObject.make({
     "POST",
     "/tell",
     Effect.as(
-      ActionDurableObject.Tasks.use((tasks) => tasks.run("tell")),
+      ActionDurableObject.Tasks.use((tasks) => tasks.runAfter("tell", Effect.void)),
       HttpServerResponse.empty(),
     ),
   ),
@@ -415,3 +415,19 @@ ActionDurableObject.make({
     act: Effect.asVoid(Effect.service(Actions)),
   },
 });
+
+type RunServices<F> = F extends (effect: infer Run) => Promise<infer _>
+  ? Effect.Services<Run>
+  : never;
+
+expectTypeOf<
+  [
+    RunServices<ActionDurableObject.Instance<Builds>["run"]>,
+    Effect.Services<NonNullable<ActionDurableObject.Options<Builds>["tasks"]>[string]>,
+  ]
+>().toEqualTypeOf<
+  [
+    RunServices<ActionDurableObject.Handlers<Builds>["run"]>,
+    RunServices<ActionDurableObject.Handlers<Builds>["run"]>,
+  ]
+>();

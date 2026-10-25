@@ -1,9 +1,8 @@
 import { Effect, Layer } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
-import { layerHttpClient } from "./fetcher.js";
 
 const placing: unique symbol = Symbol.for("effect-actions-cloudflare/ActionDurableObject/placed");
 
@@ -84,17 +83,19 @@ const keyOf = (
 export const reaching = <H extends ActionHttp.Any>(
   placement: Placement<H>,
   namespace: () => DurableObjectNamespace,
-): ActionHttp.Placed<H> =>
-  ActionHttp.placed(placement.binding, (input, contract) =>
-    HttpClient.mapRequest(
-      Effect.runSync(
-        Effect.service(HttpClient.HttpClient).pipe(
-          Effect.provide(layerHttpClient(namespace().getByName(keyOf(placement, contract, input)))),
-        ),
-      ),
-      HttpClientRequest.prependUrl("https://object"),
-    ),
-  );
+): ActionHttp.Placed<H> => {
+  const fetching = Effect.runSync(
+    Effect.provide(Effect.service(HttpClient.HttpClient), FetchHttpClient.layer),
+  ).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("https://object")));
+
+  return ActionHttp.placed(placement.binding, (input, contract) => {
+    const stub = namespace().getByName(keyOf(placement, contract, input));
+
+    return HttpClient.transform(fetching, (sent) =>
+      Effect.provideService(sent, FetchHttpClient.Fetch, (url, init) => stub.fetch(url, init)),
+    );
+  });
+};
 
 /**
  * The input check of an object named `name`, given `placement`: an input of one of its contracts

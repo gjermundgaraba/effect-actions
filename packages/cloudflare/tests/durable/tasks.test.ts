@@ -1,9 +1,10 @@
-import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber } from "effect";
 import { TestClock } from "effect/testing";
 import { alarmPrefix, makeSchedule } from "../../src/durable/alarm.js";
 import { makeTasks, taskOwner } from "../../src/durable/tasks.js";
+import { runAlarmDue } from "../support/alarm.js";
 
 let objects = 0;
 
@@ -41,7 +42,7 @@ describe("an object's tasks", () => {
         tasksOver(
           state,
           Effect.sync(() => void ran++),
-        ).run("tell"),
+        ).runAfter("tell", Effect.void),
       );
 
       expect(result).toEqual(Exit.void);
@@ -62,7 +63,7 @@ describe("an object's tasks", () => {
             return attempts.length < 3 ? Effect.fail("unreachable") : Effect.void;
           });
 
-          yield* tasksOver(state, told).run("tell");
+          yield* tasksOver(state, told).runAfter("tell", Effect.void);
 
           const marked = yield* Effect.promise(() => state.storage.getAlarm());
           const schedule = makeSchedule(state);
@@ -98,7 +99,7 @@ describe("an object's tasks", () => {
             tasksOver(
               state,
               Effect.andThen(Deferred.succeed(started, undefined), Effect.never),
-            ).run("tell"),
+            ).runAfter("tell", Effect.void),
           );
 
           yield* Deferred.await(started);
@@ -146,13 +147,15 @@ describe("an object's tasks", () => {
           });
 
           const tasks = tasksOver(state, told);
-          const first = yield* Effect.forkChild(tasks.run("tell"));
+          const first = yield* Effect.forkChild(tasks.runAfter("tell", Effect.void));
 
           yield* Deferred.await(started);
           current = 2;
 
           const waiting = yield* Effect.forkChild(
-            Effect.all([tasks.run("tell"), tasks.run("tell")], { concurrency: "unbounded" }),
+            Effect.all([tasks.runAfter("tell", Effect.void), tasks.runAfter("tell", Effect.void)], {
+              concurrency: "unbounded",
+            }),
           );
 
           yield* settled;
@@ -181,11 +184,11 @@ describe("an object's tasks", () => {
           ];
 
           const tasks = makeTasks(makeSchedule(state), new Set(["tell"]), () => runs.shift()).tasks;
-          const first = yield* Effect.forkChild(tasks.run("tell"));
+          const first = yield* Effect.forkChild(tasks.runAfter("tell", Effect.void));
 
           yield* Deferred.await(started);
 
-          const waiting = yield* Effect.forkChild(tasks.run("tell"));
+          const waiting = yield* Effect.forkChild(tasks.runAfter("tell", Effect.void));
 
           yield* settled;
           yield* Deferred.succeed(gate, undefined);
@@ -291,7 +294,7 @@ describe("an object's tasks", () => {
             Effect.andThen(Deferred.succeed(started, undefined), Deferred.await(gate)),
           );
 
-          const first = yield* Effect.forkChild(tasks.run("tell"));
+          const first = yield* Effect.forkChild(tasks.runAfter("tell", Effect.void));
 
           yield* Deferred.await(started);
 
@@ -329,7 +332,7 @@ describe("an object's tasks", () => {
           );
 
           yield* Deferred.await(changing);
-          yield* tasks.run("tell");
+          yield* tasks.runAfter("tell", Effect.void);
           yield* Fiber.interrupt(change);
         }),
       );
@@ -368,7 +371,9 @@ describe("an object's tasks", () => {
 
   it.effect("only marks a task run before the instance is built", () =>
     Effect.gen(function* () {
-      const { result, marks } = yield* inObject((state) => tasksOver(state, undefined).run("tell"));
+      const { result, marks } = yield* inObject((state) =>
+        tasksOver(state, undefined).runAfter("tell", Effect.void),
+      );
 
       expect(result).toEqual(Exit.void);
       expect(marks).toEqual([`${alarmPrefix}${owner}`]);
@@ -377,7 +382,9 @@ describe("an object's tasks", () => {
 
   it.effect("dies naming the tasks option for a task the object has none of", () =>
     Effect.gen(function* () {
-      const { result } = yield* inObject((state) => tasksOver(state, Effect.void).run("unknown"));
+      const { result } = yield* inObject((state) =>
+        tasksOver(state, Effect.void).runAfter("unknown", Effect.void),
+      );
 
       expect(Exit.isFailure(result) && Cause.squash(result.cause)).toEqual(
         new Error(
@@ -401,7 +408,7 @@ describe("an object's tasks", () => {
 
       yield* Effect.promise(() => retried.down(false));
 
-      const ran = yield* Effect.promise(() => runDurableObjectAlarm(retried));
+      const ran = yield* runAlarmDue(retried);
 
       expect(yield* Effect.promise(() => told.told())).toBe(1);
       expect([before, ran, yield* Effect.promise(() => retried.told())]).toEqual([0, true, 1]);
@@ -431,7 +438,7 @@ describe("an object's tasks", () => {
         yield* Effect.promise(() => tasked.down(false));
         yield* Effect.promise(() => tasked.hold());
 
-        const alarm = yield* Effect.forkChild(Effect.promise(() => runDurableObjectAlarm(tasked)));
+        const alarm = yield* Effect.forkChild(runAlarmDue(tasked));
 
         yield* Effect.sleep("100 millis");
 

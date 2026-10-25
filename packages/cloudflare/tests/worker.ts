@@ -260,13 +260,17 @@ const stored = (key: string) =>
     Effect.promise(() => storage.get<number | boolean>(key)),
   );
 
-const changed = Effect.gen(function* () {
-  const { storage } = yield* ActionDurableObject.State;
-  const changes = Number((yield* stored("changes")) ?? 0);
+const changed = ActionDurableObject.Tasks.use((tasks) =>
+  tasks.runAfter(
+    "tell",
+    Effect.gen(function* () {
+      const { storage } = yield* ActionDurableObject.State;
+      const changes = Number((yield* stored("changes")) ?? 0);
 
-  yield* Effect.promise(() => storage.put("changes", changes + 1));
-  yield* ActionDurableObject.Tasks.use((tasks) => tasks.run("tell"));
-});
+      yield* Effect.promise(() => storage.put("changes", changes + 1));
+    }),
+  ),
+);
 
 export class Tasked extends ActionDurableObject.make({
   routes: HttpRouter.add("POST", "/change", Effect.as(changed, HttpServerResponse.empty())),

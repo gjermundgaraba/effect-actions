@@ -9,29 +9,27 @@ export const taskOwner = (name: string) => `task:${name}`;
 const grace = 10_000;
 
 /**
- * Runs the object's tasks, `make`'s or `handlers`' `tasks`, by name: each run now, in the caller's
- * fiber, and again on the object's alarm until it succeeds, so the work it does, such as telling
- * another object of a change, is done at least once. A startup service, as `Alarm` is.
+ * Runs the object's tasks, `make`'s or `handlers`' `tasks`, by name, after a change: each run in
+ * the caller's fiber as the change ends, and again on the object's alarm until it succeeds, so
+ * the work it does, such as telling another object of the change, is done at least once. A
+ * startup service, as `Alarm` is.
  *
  * **Gotchas**
  *
  * - A task reads what it sends as it runs, such as the state it announces: one run covers every change before it, so it may repeat, and the object it calls ignores what it already holds.
  * - Runs of one task take turns, the alarm's among them: a run asked for while another is under way waits for it, so a run never sends older state after a newer one, and a call running a task waits as long as the run before it takes.
  * - A task taking a lock its callers hold as they run it, such as a semaphore every action takes, hangs both for good: the alarm's run waits for the lock, and the caller holding it waits for that run. Take no lock in a task that its callers hold.
- * - `run` marks the task as it is called: a crash between the change it announces and that call loses the announcement until the next change, which `runAfter` closes by marking it before the change.
- * - `runAfter`'s mark is due 10 seconds on, so a change running longer has the alarm run its task every 10 seconds until the change ends, each over the state as it is then.
+ * - The mark is due 10 seconds on, so a change running longer has the alarm run its task every 10 seconds until the change ends, each over the state as it is then.
  * - A run that fails is logged, not the caller's failure, and retried on the alarm 10 seconds later, then as the alarm retries an owner: 2 seconds, doubling, six times, then hourly.
  * - A task run as the services build is only marked, and runs on the alarm.
  */
 export class Tasks extends Context.Service<
   Tasks,
   {
-    /** Runs the task `name` now, and again on the alarm until it succeeds. */
-    readonly run: (name: string) => Effect.Effect<void>;
     /**
-     * Marks the task `name`, runs `change`, then runs the task as `run` does, however `change`
-     * ended: a crash at any point leaves the mark, so the alarm runs it. Interrupted, the task is
-     * left to the alarm.
+     * Marks the task `name`, runs `change`, then runs the task, however `change` ended, and again
+     * on the alarm until it succeeds: a crash at any point leaves the mark, so the alarm runs it.
+     * Interrupted, the task is left to the alarm.
      */
     readonly runAfter: <A, E, R>(
       name: string,
@@ -136,7 +134,6 @@ export const makeTasks = (
     });
 
   const tasks = Tasks.of({
-    run,
     runAfter: (name, change) =>
       Effect.gen(function* () {
         const turn = yield* turnFor(name);
