@@ -11,7 +11,6 @@ import {
   Stream,
 } from "effect";
 import type * as Event from "./Event.js";
-import type { ErasedRule } from "./authorizer.js";
 import { attachmentsOf, type Checking, Events } from "./hub.js";
 import type { Entry, Log, Logged, Read } from "./log.js";
 import { Anyone } from "./caller.js";
@@ -19,6 +18,7 @@ import { canonicalInput } from "./canonical.js";
 import { Unauthenticated } from "./errors.js";
 import {
   builderLayer,
+  type ErasedAuthorize,
   type Memoized,
   memoized,
   notMadeHere,
@@ -498,13 +498,13 @@ export class EventImplementation<
   declare readonly "~eventAuthorizeBuildServices": RAX;
 
   readonly #running: Running<EX, RX>;
-  readonly #authorizer: Memoized<ErasedRule<Event.Any>, EAX, RAX>;
+  readonly #authorizer: Memoized<ErasedAuthorize<Event.Any>, EAX, RAX>;
 
   constructor(
     /** The event types this implementation answers. */
     readonly events: ReadonlyArray<E>,
     running: Running<EX, RX>,
-    authorizer: Memoized<ErasedRule<Event.Any>, EAX, RAX>,
+    authorizer: Memoized<ErasedAuthorize<Event.Any>, EAX, RAX>,
   ) {
     this.#running = running;
     this.#authorizer = authorizer;
@@ -570,7 +570,7 @@ export type AnyEventImplementation<E extends Event.Any = Event.Any> = EventImple
   unknown
 >;
 
-const guarded = (event: Event.Any, run: Run, before: ErasedRule<Event.Any>): Feed => {
+const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>): Feed => {
   const attributes = { "event.name": event.name };
 
   const admitted =

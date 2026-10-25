@@ -4,6 +4,12 @@
 
 ### Breaking changes
 
+**`watch` is not an action name.** `Action.make` refuses it as it refuses `then`, since every
+client watches events through a method of that name, beside one per action:
+`Invalid action name: <name> (use [A-Za-z0-9_-]{1,128}, other than "then", which would make a client a thenable, awaited as a promise, and "watch", every client's method for events)`.
+
+- Migrate: rename an action called `watch`, and update code matching the old message.
+
 **A verifier or a handler reading `HttpServerRequest` over `ActionRpc` reads one holding the
 message's headers**, a socket's upgrade headers before its own, at `/`, with no query or body, on
 every protocol, and `ActionRpc.layer` no longer owes it. A protocol that gives a call no request, a

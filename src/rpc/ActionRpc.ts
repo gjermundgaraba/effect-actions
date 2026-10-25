@@ -75,6 +75,7 @@ import { servingOf } from "../contract/serving.js";
 import type { Codec } from "../contract/codec.js";
 import { answerFrom, elementsFrom, Progressed, type Reporting } from "../contract/progress.js";
 import { type Answer, elementOf, type StreamOf } from "../contract/stream.js";
+import { reservedNames } from "../contract/names.js";
 
 type BindingError = Action.Errors[number];
 
@@ -321,9 +322,9 @@ export function make(actions: ReadonlyArray<Action.Any>, options: Options = {}):
   const given = options.rpcs === undefined ? RpcGroup.make() : nativeOf(options.rpcs);
 
   for (const tag of given.requests.keys()) {
-    if (tag === "then" || actions.some((action) => action.name === tag)) {
+    if (reservedNames.includes(tag) || actions.some((action) => action.name === tag)) {
       throw new Error(
-        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action or a name the client keeps, "then" (rename it)`,
+        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action or a name the client keeps, "then" or "watch" (rename it)`,
       );
     }
   }

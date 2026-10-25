@@ -4,9 +4,22 @@ const namePattern = "[A-Za-z0-9_-]{1,128}";
 
 const validName = new RegExp(`^${namePattern}$`);
 
+// Why: Every client is keyed by action name, so a name a client already answers to would
+// shadow it.
+const reserved = [
+  ["then", "which would make a client a thenable, awaited as a promise"],
+  ["watch", "every client's method for events"],
+] as const;
+
+export const reservedNames: ReadonlyArray<string> = reserved.map(([name]) => name);
+
 export const assertName = (name: string): void => {
-  if (!validName.test(name) || name === "then") {
-    throw new Error(`Invalid action name: ${name} (use ${namePattern}, other than "then")`);
+  if (!validName.test(name) || reservedNames.includes(name)) {
+    throw new Error(
+      `Invalid action name: ${name} (use ${namePattern}, other than ${reserved
+        .map(([reservedName, why]) => `"${reservedName}", ${why}`)
+        .join(", and ")})`,
+    );
   }
 };
 

@@ -347,10 +347,10 @@ describe("ActionRpc native rpcs", () => {
       }),
   );
 
-  it("refuses a native rpc named after an action or then", () => {
-    for (const tag of ["status", "then"]) {
+  it("refuses a native rpc named after an action, then or the client's watch", () => {
+    for (const tag of ["status", "then", "watch"]) {
       expect(() => ActionRpc.make([Status], { rpcs: RpcGroup.make(Rpc.make(tag)) })).toThrow(
-        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action or a name the client keeps, "then" (rename it)`,
+        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action or a name the client keeps, "then" or "watch" (rename it)`,
       );
     }
   });
