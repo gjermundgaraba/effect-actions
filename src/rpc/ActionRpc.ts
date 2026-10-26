@@ -278,8 +278,11 @@ class InternalError extends Error {
 // takes none. It prints as its JSON, which is what a trace of the server's span shows.
 class DeclaredFailure {
   readonly [ErrorReporter.ignore] = true;
+  readonly json: Schema.Json;
 
-  constructor(readonly json: Schema.Json) {}
+  constructor(json: Schema.Json) {
+    this.json = json;
+  }
 
   toString() {
     return Predicate.isString(this.json) ? this.json : JSON.stringify(this.json);

@@ -82,17 +82,19 @@ export class Implementation<
   /** Type-only: what building its authorizer needs. */
   declare readonly "~authorizeBuildServices": RAX;
 
+  /** The contracts this implementation answers. */
+  readonly actions: ReadonlyArray<A>;
   readonly #handlers: Memoized<Bound, EX, RX>;
   readonly #authorizer: Memoized<ErasedAuthorize, EAX, RAX>;
 
   constructor(
-    /** The contracts this implementation answers. */
-    readonly actions: ReadonlyArray<A>,
+    actions: ReadonlyArray<A>,
     /** Builds each action paired with its handler: its own builder, or the one it shares. */
     handlers: Memoized<Bound, EX, RX>,
     /** Builds its authorizer. */
     authorizer: Memoized<ErasedAuthorize, EAX, RAX>,
   ) {
+    this.actions = actions;
     this.#handlers = handlers;
     this.#authorizer = authorizer;
   }

@@ -301,7 +301,7 @@ it.each([
     const scalar = await call("count", { from: 41 });
 
     expect(scalar).toMatchObject({ result: { content: [{ type: "text", text: "42" }] } });
-    expect(scalar.result).not.toHaveProperty("structuredContent");
+    expect(scalar["result"]).not.toHaveProperty("structuredContent");
     expect(Object.keys(await call("count", { from: "x" }))).toContain(refusal);
   },
 );
@@ -736,7 +736,7 @@ describe("projection boundaries", () => {
       expect(tool.inputSchema.type).toBe("object");
 
       const definitions = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.JsonObject))(
-        tool.inputSchema.$defs,
+        tool.inputSchema["$defs"],
       );
 
       expect(definitions[identifier]).toMatchObject({ type: "object" });

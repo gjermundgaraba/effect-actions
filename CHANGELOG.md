@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.20.0
+
+### Breaking changes
+
+**Node 26 or later.** `engines.node` is `>=26`, where it accepted Node 22.12 and 24 as well. The
+package is built, typed and tested against Node 26 alone.
+
 ## 0.19.0
 
 ### Breaking changes

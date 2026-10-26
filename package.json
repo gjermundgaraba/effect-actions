@@ -1,6 +1,6 @@
 {
   "name": "@gjermundgaraba/effect-actions",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Define Effect action contracts once and project them onto HTTP, MCP, Effect RPC, native Toolkits, and CLIs.",
   "keywords": [
     "ai-agents",
@@ -68,7 +68,8 @@
     "prepare": "vp config",
     "example": "vpx examples/notes-service/src/server.ts",
     "test:package": "vp run build && vpx scripts/test-package.ts",
-    "docs:sync": "vpx scripts/sync-skill.ts"
+    "docs:sync": "vpx scripts/sync-skill.ts",
+    "ready": "vp check && vp test && vp run test:package"
   },
   "devDependencies": {
     "@effect/platform-node": "4.0.5",
@@ -88,16 +89,11 @@
   "devEngines": {
     "packageManager": {
       "name": "pnpm",
-      "version": "12.14.0",
+      "version": "12.15.0",
       "onFail": "download"
-    },
-    "runtime": {
-      "name": "node",
-      "version": "^22.18.0 || ^24.11.0 || >=26.0.0",
-      "onFail": "error"
     }
   },
   "engines": {
-    "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
+    "node": ">=26"
   }
 }

@@ -160,8 +160,8 @@ const toolJsonSchema = (schema: Schema.Top, strict: boolean): JsonSchema.JsonSch
     onExcessProperty: strict ? "error" : "ignore",
   });
 
-  const [scope, key] = Predicate.isString(document.schema.$ref)
-    ? (JsonPointer.parseUriFragment(document.schema.$ref) ?? [])
+  const [scope, key] = Predicate.isString(document.schema["$ref"])
+    ? (JsonPointer.parseUriFragment(document.schema["$ref"]) ?? [])
     : [];
 
   const root = scope === "$defs" && key !== undefined ? document.definitions[key] : document.schema;

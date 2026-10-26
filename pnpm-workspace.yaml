@@ -16,6 +16,7 @@ peerDependencyRules:
 allowBuilds:
   esbuild: true
 catalogMode: prefer
+saveExact: true
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - vite-plus

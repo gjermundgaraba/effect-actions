@@ -309,9 +309,9 @@ describe("media fields over MCP", () => {
 
       const schemas = outputSchemas(listed);
 
-      expect(schemas.shot).toEqual(schemas.plain);
-      expect(schemas.maybe).toEqual(schemas.title);
-      expect(schemas.pages).toEqual(schemas.total);
+      expect(schemas["shot"]).toEqual(schemas["plain"]);
+      expect(schemas["maybe"]).toEqual(schemas["title"]);
+      expect(schemas["pages"]).toEqual(schemas["total"]);
 
       expect(Object.keys(schemas)).toEqual(actions.map(({ name }) => name));
 
@@ -333,7 +333,7 @@ describe("media fields over MCP", () => {
 
         const schemas = outputSchemas(listed);
 
-        expect(schemas.shot).toEqual(schemas.plain);
+        expect(schemas["shot"]).toEqual(schemas["plain"]);
 
         for (const name of ["picture", "album", "pair"]) expect(schemas[name]).toBeUndefined();
       }),

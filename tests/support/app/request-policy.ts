@@ -11,7 +11,7 @@ export const requestPolicy = HttpRouter.middleware(
         return HttpServerResponse.text("Host not allowed", { status: 403 });
       }
 
-      const origin = request.headers.origin;
+      const origin = request.headers["origin"];
 
       if (origin !== undefined && origin !== url.value.origin) {
         return HttpServerResponse.text("Origin not allowed", { status: 403 });

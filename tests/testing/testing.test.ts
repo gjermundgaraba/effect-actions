@@ -172,7 +172,7 @@ describe("layer", () => {
         "GET",
         "/host",
         Effect.map(HttpServerRequest.HttpServerRequest, ({ headers }) =>
-          HttpServerResponse.text(headers.host ?? "none"),
+          HttpServerResponse.text(headers["host"] ?? "none"),
         ),
       );
 

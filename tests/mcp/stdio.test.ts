@@ -567,7 +567,7 @@ describe("runStdio's input schemas", () => {
 
         const [tool] = Schema.decodeUnknownSync(Listed)(listed).result.tools;
 
-        expect(tool?.inputSchema.properties).toEqual({
+        expect(tool?.inputSchema["properties"]).toEqual({
           unicode: { type: "string", pattern: "^[a-z]+$" },
           plain: { type: "string" },
           describedFirst: { type: "string", description: "Some text." },

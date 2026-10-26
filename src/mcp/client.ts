@@ -30,7 +30,7 @@ export interface Params {
 /** The routing headers and JSON-RPC body of the request `request` builds. */
 export const statelessRequest = (method: string, params: Params) => {
   const { protocolVersion } = httpProtocol;
-  const name = method === "resources/read" ? params.uri : params.name;
+  const name = method === "resources/read" ? params["uri"] : params["name"];
 
   return {
     headers: {

@@ -12,7 +12,7 @@ export class Tenant extends Context.Service<Tenant, string>()("example/Tenant") 
 
 const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-    Effect.provideService(route, Tenant, request.headers.host?.split(".")[0] ?? ""),
+    Effect.provideService(route, Tenant, request.headers["host"]?.split(".")[0] ?? ""),
   ),
 );
 
