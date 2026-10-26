@@ -12,6 +12,10 @@ served through the internals of Effect's MCP server as 4.0.5 and 4.0.6 have them
 
 - Migrate: install `effect` and every `@effect/*` package at `~4.0.5`.
 
+**Node 26.12 or later.** `engines.node` is `>=26.12.0`, where it accepted any Node 26.
+
+- Migrate: run on Node 26.12 or a later release.
+
 **`watch` is not an action name.** `Action.make` refuses it as it refuses `then`, since every
 client watches events through a method of that name, beside one per action:
 `Invalid action name: <name> (use [A-Za-z0-9_-]{1,128}, other than "then", which would make a client a thenable, awaited as a promise, and "watch", every client's method for events)`.

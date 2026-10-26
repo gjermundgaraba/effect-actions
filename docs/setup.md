@@ -25,7 +25,7 @@ minor release: a minor release may change the unstable Effect modules the surfac
 Keep the tilde in `package.json`: `^4.0.5`, which npm writes for `effect@4.0.5`, admits a minor
 release outside the peer range. `npm install effect@~4.0.5` keeps it.
 
-Node `>=26`: the package's `engines`, the Node the library is developed and tested on. TypeScript 7 or newer. ESM only. The repository checks the
+Node `>=26.12.0`: the package's `engines`, the Node the library is developed and tested on. TypeScript 7 or newer. ESM only. The repository checks the
 examples with a stricter `tsconfig.json`; this is the minimum a project needs. The package's modules resolve only through its
 `exports`, which `"module": "nodenext"` reads, as a bundler project's
 `"moduleResolution": "bundler"` does. `"strict": true` is required, by Effect:

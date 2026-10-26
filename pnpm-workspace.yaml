@@ -1,8 +1,8 @@
 packages:
   - packages/*
 catalog:
-  "@cloudflare/vitest-plugin": ^1.4.4
-  "@cloudflare/workers-types": ^5.20261016.1
+  "@cloudflare/vitest-plugin": 1.4.7
+  "@cloudflare/workers-types": 5.20261025.1
   "@effect/platform-node": 4.0.6
   "@effect/vitest": 4.0.6
   effect: 4.0.6

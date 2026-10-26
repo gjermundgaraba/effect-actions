@@ -51,7 +51,7 @@
     "effect": "catalog:"
   },
   "peerDependencies": {
-    "@gjermundgaraba/effect-actions": "workspace:~",
+    "@gjermundgaraba/effect-actions": "workspace:^",
     "effect": "~4.0.5"
   }
 }

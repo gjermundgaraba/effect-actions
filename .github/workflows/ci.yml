@@ -29,5 +29,5 @@ jobs:
           run-install: false
       - run: vp install --frozen-lockfile
       - run: vp run ready
-      - name: Check that each package.json's exports are the build's
-        run: git diff --exit-code -- package.json packages/cloudflare/package.json
+      - name: Check that the build left the tree clean
+        run: git diff --exit-code

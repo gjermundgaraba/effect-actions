@@ -82,7 +82,7 @@ The readers are coding agents, and they read two ways. Each fact has one home, c
 
 - To release: bump the version in `package.json` and `packages/cloudflare/package.json`, which carry one, commit, tag `v<version>` and push the tag. `.github/workflows/npm.yml` publishes both, the core first, skipping a version npm already has. A new package's first version is published by hand, as the workflow's header says.
 - After adding, renaming or removing public modules, run `vp run -r build` and include each package's generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
-- `package.json`'s `engines` (`>=26`) is the floor stated to consumers. CI builds and tests on `.node-version`, inside that range; raising the floor is a breaking change.
+- `package.json`'s `engines` (`>=26.12.0`) is the floor stated to consumers. CI builds and tests on `.node-version`, inside that range; raising the floor is a breaking change.
 - Upgrade Effect development packages together, in the catalog of `pnpm-workspace.yaml` both packages read, and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
 
 ## Effect

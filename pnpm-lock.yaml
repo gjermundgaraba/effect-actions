@@ -165,10 +165,10 @@ settings:
 catalogs:
   default:
     '@cloudflare/vitest-plugin':
-      specifier: ^1.4.4
+      specifier: 1.4.7
       version: 1.4.7
     '@cloudflare/workers-types':
-      specifier: ^5.20261016.1
+      specifier: 5.20261025.1
       version: 5.20261025.1
     '@effect/platform-node':
       specifier: 4.0.6
