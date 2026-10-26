@@ -331,23 +331,12 @@ export class Unsupported extends Schema.TaggedError<Unsupported>()("Unsupported"
   value: Schema.optional(Schema.String),
 }) {}
 
-/**
- * The server refuses another subscription, at a limit of its own: `limit` names it, such as
- * `subscriptions`, and `max` the ceiling where the server gives it.
- */
-export class LimitReached extends Schema.TaggedError<LimitReached>()("LimitReached", {
-  limit: Schema.String,
-  max: Schema.optional(Schema.Number),
-}) {}
-
-const Reason = Schema.Union([NotServed, Unsupported, LimitReached]);
+const Reason = Schema.Union([NotServed, Unsupported]);
 
 const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
   NotServed: () => "is not served",
   Unsupported: ({ feature, value }) =>
     `is not served with this ${feature}${value === undefined ? "" : `: ${value}`}`,
-  LimitReached: ({ limit, max }) =>
-    `is refused at the server's limit of ${limit}${max === undefined ? "" : `: at most ${max}`}`,
 });
 
 /**

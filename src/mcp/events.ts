@@ -18,7 +18,6 @@ export const codes = {
   headerMismatch: -32020,
   notFound: -32023,
   forbidden: -32024,
-  resourceExhausted: -32025,
   unsupported: -32026,
   invalidParams: -32602,
   internal: -32603,
@@ -42,10 +41,6 @@ const decodeUnsupported = Schema.decodeUnknownOption(
   Schema.Struct({ feature: Schema.String, value: Schema.optional(Schema.String) }),
 );
 
-const decodeLimit = Schema.decodeUnknownOption(
-  Schema.Struct({ limit: Schema.String, max: Schema.optional(Schema.Number) }),
-);
-
 /**
  * What a SEP-3415 error of the event `name` names, as a subscription's request fails with one and
  * its termination carries one: a reason of `Event.SubscriptionError`, or the refusal; `undefined`
@@ -62,12 +57,6 @@ export const reasonOf = (
       return Option.getOrElse(
         decodeRefusal(error.data),
         () => new Forbidden({ message: error.message }),
-      );
-    case codes.resourceExhausted:
-      return Option.getOrUndefined(
-        Option.map(decodeLimit(error.data), (limit) =>
-          Event.SubscriptionError.of(name, new Event.LimitReached(limit)),
-        ),
       );
     case codes.unsupported:
       return Option.getOrUndefined(

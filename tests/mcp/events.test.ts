@@ -1596,34 +1596,11 @@ describe("ActionMcp.client's watch, refused in SEP-3415's codes", () => {
     return Response.json({ jsonrpc: "2.0", id, error });
   };
 
-  const exhausted = answering({
-    code: -32025,
-    message: "ResourceExhausted",
-    data: { limit: "subscriptions", max: 10 },
-  });
-
-  it.effect("fails with LimitReached where the server answers ResourceExhausted", () =>
-    Effect.gen(function* () {
-      const client = yield* ActionMcp.client([Posted]);
-
-      const refused = yield* client
-        .watch(Posted, {}, { cursor: "0", mode: "poll" })
-        .pipe(Stream.runDrain, Effect.flip);
-
-      expect(refused).toMatchObject({
-        _tag: "SubscriptionError",
-        event: "message.posted",
-        reason: { _tag: "LimitReached", limit: "subscriptions", max: 10 },
-        message: `Event "message.posted" is refused at the server's limit of subscriptions: at most 10`,
-      });
-    }).pipe(Effect.provide(Testing.layer(exhausted))),
-  );
-
   it.effect(
-    "fails with McpCallError's ProtocolError where a ResourceExhausted or Unsupported error's data does not say what it names",
+    "fails with McpCallError's ProtocolError where an Unsupported error's data does not say what it names, or the code is none SEP-3415 reads",
     () =>
       Effect.gen(function* () {
-        const refusals = yield* Effect.forEach([-32025, -32026], (code) =>
+        const refusals = yield* Effect.forEach([-32026, -32025], (code) =>
           ActionMcp.client([Posted]).pipe(
             Effect.flatMap((client) =>
               client.watch(Posted, {}, { cursor: "0", mode: "poll" }).pipe(Stream.runDrain),
@@ -1634,8 +1611,8 @@ describe("ActionMcp.client's watch, refused in SEP-3415's codes", () => {
         );
 
         expect(refusals).toMatchObject([
-          { _tag: "McpCallError", reason: { _tag: "ProtocolError", code: -32025 } },
           { _tag: "McpCallError", reason: { _tag: "ProtocolError", code: -32026 } },
+          { _tag: "McpCallError", reason: { _tag: "ProtocolError", code: -32025 } },
         ]);
       }),
   );

@@ -115,8 +115,7 @@ reconnecting with a backoff after a transient failure, a silent stream or a requ
 `mode`, left out, streams where the surface can and polls where it serves events by poll alone,
 which a watch learns from `Event.SubscriptionError`'s reason `Unsupported` (`feature`, `value`).
 The client reads SEP-3415's codes: `-32602` as `InvalidInput`, `-32023` as the reason
-`NotServed`, `-32025` as `LimitReached`
-(`limit`, `max`), `-32026` as `Unsupported`, each `McpCallError`'s `ProtocolError` where its `data`
+`NotServed`, `-32026` as `Unsupported`, or `McpCallError`'s `ProtocolError` where its `data`
 does not say what it names, and `-32024` as the refusal its `data` carries,
 `Action.Forbidden` where it carries none, which a subscriber whose access is revoked also gets, with
 no reason of its own. A
