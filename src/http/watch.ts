@@ -59,21 +59,20 @@ export const transportOf = <R>(
 ): Transport<unknown, R | Receiving> => {
   const notServed = Effect.fail(Event.SubscriptionError.of(event.name, new Event.NotServed()));
 
+  const answered = <A, R2>(request: Effect.Effect<A, unknown, R2>) =>
+    request.pipe(
+      failingWhenUnanswered,
+      Effect.catchIf(isNotFound, () => notServed),
+    );
+
   const webhooks: WebhookTransport<unknown, R | Receiving> | undefined =
     webhook === undefined
       ? undefined
       : {
           receiver: Effect.service(Receiving),
-          subscribe: (request) =>
-            webhook.subscribe({ payload: { input, ...request } }).pipe(
-              failingWhenUnanswered,
-              Effect.catchIf(isNotFound, () => notServed),
-            ),
+          subscribe: (request) => answered(webhook.subscribe({ payload: { input, ...request } })),
           unsubscribe: (request) =>
-            webhook.unsubscribe({ payload: { input, ...request } }).pipe(
-              failingWhenUnanswered,
-              Effect.catchIf(isNotFound, () => notServed),
-            ),
+            answered(webhook.unsubscribe({ payload: { input, ...request } })),
           read: webhookFed(event),
         };
 
@@ -88,18 +87,12 @@ export const transportOf = <R>(
 
   return {
     name: event.name,
-    poll: (cursor) =>
-      poll({ payload: { input, cursor } }).pipe(
-        failingWhenUnanswered,
-        Effect.catchIf(isNotFound, () => notServed),
-      ),
+    poll: (cursor) => answered(poll({ payload: { input, cursor } })),
     // Why: A page answering a stream's request, from a proxy dropping its `Accept`, is read as a
     // stream that ends, so the watch asks again a second later.
     stream: (cursor) =>
       Stream.unwrap(
-        stream({ payload: { input, cursor } }).pipe(
-          failingWhenUnanswered,
-          Effect.catchIf(isNotFound, () => notServed),
+        answered(stream({ payload: { input, cursor } })).pipe(
           Effect.map((answer) =>
             Stream.isStream(answer)
               ? read(answer)

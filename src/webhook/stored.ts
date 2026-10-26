@@ -7,13 +7,13 @@ import { DeliveryStatus } from "../contract/subscribe.js";
 /**
  * A webhook subscription as `persist` keeps it, enough to start delivering again after a
  * restart: its callback, event, encoded input and identity, secret, expiry, watermark and
- * status. Its callback and secret are decoded again as it is read, as a request's are.
+ * status. Its callback and secret are decoded again as it is read, as a request's are, and its
+ * subscriber's principal is derived again from the identity.
  */
 export const Stored = Schema.Struct({
   url: CallbackUrl,
   event: Schema.String,
   input: Schema.Json,
-  principal: Schema.String,
   identity: Schema.Json,
   secret: WebhookSecret,
   expiresAt: Schema.Finite,

@@ -1,4 +1,4 @@
-import { Duration, Effect, Layer, type Scope } from "effect";
+import { Duration, Effect, Layer } from "effect";
 import { type HttpClient, HttpRouter } from "effect/http";
 import { Dns } from "effect/net";
 import { KeyValueStore } from "effect/persistence";
@@ -6,7 +6,7 @@ import * as Event from "../contract/Event.js";
 import { Receiving } from "../contract/receiving.js";
 import { Webhooks } from "../contract/webhooks.js";
 import { makeReceiver } from "./receiver.js";
-import { makeStorage, type Storage } from "./stored.js";
+import { makeStorage } from "./stored.js";
 import { makeWebhooks } from "./subscriptions.js";
 
 /** How `layer` grants, verifies and retries webhook subscriptions. */
@@ -138,29 +138,24 @@ export function layer(
   const allowedCallbacks = (options.allowedCallbacks ?? []).map(trustedOf);
   const maxTtl = maxTtlOf(options.maxTtl ?? "1 hour");
 
-  const dns: Effect.Effect<Dns.Dns["Service"] | undefined, never, Dns.Dns> =
-    options.resolveCallbacks === false ? Effect.succeed(undefined) : Effect.service(Dns.Dns);
-
-  const storage: Effect.Effect<
-    Storage | undefined,
-    never,
-    KeyValueStore.KeyValueStore | Scope.Scope
-  > =
-    options.persist === true
-      ? Effect.flatMap(KeyValueStore.KeyValueStore, makeStorage)
-      : Effect.succeed(undefined);
-
   return Layer.effect(
     Webhooks,
-    Effect.flatMap(Effect.all([dns, storage]), ([resolver, kept]) =>
-      makeWebhooks({
+    Effect.gen(function* () {
+      const dns = options.resolveCallbacks === false ? undefined : yield* Dns.Dns;
+
+      const storage =
+        options.persist === true
+          ? yield* Effect.flatMap(KeyValueStore.KeyValueStore, makeStorage)
+          : undefined;
+
+      return yield* makeWebhooks({
         maxTtl,
         allowedCallbacks,
         retryFor: Duration.fromInputUnsafe(options.retryFor ?? "1 hour"),
-        storage: kept,
-        dns: resolver,
-      }),
-    ),
+        storage,
+        dns,
+      });
+    }),
   );
 }
 

@@ -9,7 +9,6 @@ const record: Stored = {
   url: new URL("https://hooks.example.com/alice"),
   event: "user.changed",
   input: {},
-  principal: "alice",
   identity: { id: "alice" },
   secret: Schema.decodeSync(WebhookSecret)(secretOf(1)),
   expiresAt: 60 * 60 * 1000,

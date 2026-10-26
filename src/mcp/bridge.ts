@@ -31,7 +31,7 @@ import { sentError } from "../contract/codes.js";
 import {
   offersWebhook,
   servedWebhooks,
-  type Subscribing,
+  type Subscriber,
   Webhooks,
   webhookSubscriber,
 } from "../contract/webhooks.js";
@@ -307,11 +307,7 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
 
       const asWebhook = <A, R>(
         feed: Feed,
-        run: (
-          subscriber: Pick<Subscribing, "feed" | "keyed" | "principal"> & {
-            readonly webhooks: Webhooks["Service"];
-          },
-        ) => Effect.Effect<A, unknown, R>,
+        run: (subscriber: Subscriber) => Effect.Effect<A, unknown, R>,
       ) =>
         Effect.catchCause(
           asSubscriber(

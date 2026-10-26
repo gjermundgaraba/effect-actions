@@ -54,12 +54,15 @@ interface Watched<R = unknown> {
   readonly refusedWith: Action.Errors;
 }
 
-const PollReply = Schema.Union([
-  Schema.Struct({ result: PollEvents.successSchema }),
-  Schema.Struct({ error: WireError }),
-]);
+/** Reads one message as a request's reply: its result, by `success`, or its error. */
+const replyOf = <A, I>(success: Schema.Codec<A, I>) =>
+  Schema.decodeUnknownOption(
+    Schema.fromJsonString(
+      Schema.Union([Schema.Struct({ result: success }), Schema.Struct({ error: WireError })]),
+    ),
+  );
 
-const pollReplyOf = Schema.decodeUnknownOption(Schema.fromJsonString(PollReply));
+const pollReplyOf = replyOf(PollEvents.successSchema);
 
 // Why: A frame is read as a reply, or as a notification whose params its method's rpc decodes, so
 // the methods a push stream carries are the `Notifications` group's alone.
@@ -87,19 +90,9 @@ const reading = <N extends Notified>(
   return (params) => Option.map(decode(params), read);
 };
 
-const SubscribeReply = Schema.Union([
-  Schema.Struct({ result: SubscribeEvents.successSchema }),
-  Schema.Struct({ error: WireError }),
-]);
+const subscribeReplyOf = replyOf(SubscribeEvents.successSchema);
 
-const subscribeReplyOf = Schema.decodeUnknownOption(Schema.fromJsonString(SubscribeReply));
-
-const UnsubscribeReply = Schema.Union([
-  Schema.Struct({ result: UnsubscribeEvents.successSchema }),
-  Schema.Struct({ error: WireError }),
-]);
-
-const unsubscribeReplyOf = Schema.decodeUnknownOption(Schema.fromJsonString(UnsubscribeReply));
+const unsubscribeReplyOf = replyOf(UnsubscribeEvents.successSchema);
 
 const encodeCallback = Schema.encodeSync(WebhookCallback);
 
@@ -167,14 +160,14 @@ export const transportOf = <R>(
   const answered = <A>(
     method: string,
     params: { readonly [key: string]: Schema.Json },
-    replyOf: (
+    decodeReply: (
       message: string,
     ) => Option.Option<{ readonly result: A } | { readonly error: WireError }>,
   ): Effect.Effect<A, unknown, R> =>
     Effect.gen(function* () {
       const messages = yield* bodyOf(method, name, yield* sent(method, params));
 
-      const reply = messages.flatMap((message) => Option.toArray(replyOf(message))).at(-1);
+      const reply = messages.flatMap((message) => Option.toArray(decodeReply(message))).at(-1);
 
       if (reply === undefined)
         return yield* Effect.fail(

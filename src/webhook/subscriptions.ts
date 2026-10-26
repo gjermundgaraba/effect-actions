@@ -33,7 +33,7 @@ import { reported } from "../contract/reported.js";
 import type { DeliveryStatus, Subscribed } from "../contract/subscribe.js";
 import type { Subscribing, Subscription, WebhookFeed, Webhooks } from "../contract/webhooks.js";
 import { checkedHost } from "./address.js";
-import { type AttemptFailed, attempt, challenged, type Posting } from "./attempt.js";
+import { type AttemptFailed, attempt, challenged } from "./attempt.js";
 import { randomToken, subscriptionId } from "./signing.js";
 import type { Storage, Stored } from "./stored.js";
 
@@ -65,8 +65,9 @@ interface Held {
   readonly id: string;
   readonly url: URL;
   readonly feed: WebhookFeed;
+  readonly principal: string;
   readonly verifiedAs: string;
-  kept: Pick<Stored, "principal" | "input" | "identity">;
+  kept: Pick<Stored, "input" | "identity">;
   secret: SigningSecret;
   previous: { readonly key: Uint8Array; readonly until: number } | undefined;
   context: Context.Context<unknown>;
@@ -74,6 +75,9 @@ interface Held {
   status: DeliveryStatus;
   watermark: string | null;
 }
+
+/** What each grant, a subscribe's or a refresh's, gives its subscription anew. */
+type Granted = Pick<Held, "secret" | "context" | "kept" | "expiresAt">;
 
 interface Confirmed {
   readonly cursor: string | null;
@@ -202,29 +206,26 @@ export const makeWebhooks = (
 
     // Why: A callback `allowedCallbacks` trusts skips the address check too, as SEP-3415 lets a
     // server configured to allow it deliver to an address not globally reachable.
-    const posted = (posting: Posting) =>
-      Effect.provideContext(
-        attempt(
-          posting,
-          trusted(posting.url, policy.allowedCallbacks)
-            ? Effect.void
-            : checkedHost(posting.url, policy.dns),
-        ),
-        built,
-      );
-
     const post = (subscription: Held, webhookId: string, body: string) =>
       Effect.flatMap(Clock.currentTimeMillis, (now) =>
-        posted({
-          url: subscription.url,
-          subscriptionId: subscription.id,
-          webhookId,
-          body,
-          keys:
-            subscription.previous !== undefined && now < subscription.previous.until
-              ? [subscription.secret.key, subscription.previous.key]
-              : [subscription.secret.key],
-        }),
+        Effect.provideContext(
+          attempt(
+            {
+              url: subscription.url,
+              subscriptionId: subscription.id,
+              webhookId,
+              body,
+              keys:
+                subscription.previous !== undefined && now < subscription.previous.until
+                  ? [subscription.secret.key, subscription.previous.key]
+                  : [subscription.secret.key],
+            },
+            trusted(subscription.url, policy.allowedCallbacks)
+              ? Effect.void
+              : checkedHost(subscription.url, policy.dns),
+          ),
+          built,
+        ),
       );
 
     const recorded = (subscription: Held, failure: AttemptFailed | undefined) =>
@@ -433,21 +434,14 @@ export const makeWebhooks = (
 
     // Why: A verified callback stays verified for as long as a subscription to it is granted, as
     // SEP-3415's soft state; entries past it are dropped as another is kept.
-    const remembered = (verifiedAs: string, until: number, now: number) =>
+    const remembered = ({ verifiedAs, expiresAt }: Held, now: number) =>
       Effect.sync(() => {
         for (const [each, expiry] of verified) if (expiry <= now) verified.delete(each);
 
-        verified.set(verifiedAs, Math.max(until, verified.get(verifiedAs) ?? 0));
+        verified.set(verifiedAs, Math.max(expiresAt, verified.get(verifiedAs) ?? 0));
       });
 
-    const verify = (
-      verifiedAs: string,
-      url: URL,
-      id: string,
-      key: Uint8Array,
-      feed: WebhookFeed,
-      now: number,
-    ) => {
+    const verify = ({ verifiedAs, url, id, secret, feed }: Held, now: number) => {
       if ((verified.get(verifiedAs) ?? 0) > now || trusted(url, policy.allowedCallbacks))
         return Effect.void;
 
@@ -461,7 +455,7 @@ export const makeWebhooks = (
               subscriptionId: id,
               webhookId: `msg_verification_${yield* randomToken()}`,
               body: JSON.stringify({ type: "verification", challenge }),
-              keys: [key],
+              keys: [secret.key],
             },
             checkedHost(url, policy.dns),
           ),
@@ -514,73 +508,60 @@ export const makeWebhooks = (
     // its new deadline.
     const refreshed = (
       subscription: Held,
-      secret: SigningSecret,
-      context: Context.Context<unknown>,
-      keptAs: Held["kept"],
+      granted: Granted,
       input: Event.Any["input"]["Type"],
       now: number,
-      expiresAt: number,
     ) =>
       Effect.gen(function* () {
         const { status, watermark } = subscription;
 
         const renewed: Held = {
           ...subscription,
-          ...(secret.text === subscription.secret.text
+          ...granted,
+          ...(granted.secret.text === subscription.secret.text
             ? {}
             : {
-                secret,
                 previous: {
                   key: subscription.secret.key,
                   until: now + Duration.toMillis(rotationGrace),
                 },
               }),
-          context,
-          kept: keptAs,
-          expiresAt,
           status: active(status),
         };
 
         const confirmation = yield* confirmedAt(watermark);
 
         yield* handover(renewed.id, renewed, workerOf(renewed, input, watermark, confirmation));
-        yield* remembered(renewed.verifiedAs, expiresAt, now);
+        yield* remembered(renewed, now);
         yield* kept(renewed);
 
         return {
           id: renewed.id,
-          refreshBefore: iso(expiresAt),
+          refreshBefore: iso(renewed.expiresAt),
           cursor: watermark,
           truncated: false,
           deliveryStatus: status,
         };
       });
 
-    const heldOf = (
-      fields: Pick<
-        Held,
-        "id" | "url" | "feed" | "kept" | "secret" | "context" | "expiresAt" | "status" | "watermark"
-      >,
-    ): Held => ({
+    const heldOf = (fields: Omit<Held, "verifiedAs" | "previous">): Held => ({
       ...fields,
-      verifiedAs: `${fields.kept.principal}\u0000${fields.url.href}`,
+      verifiedAs: `${fields.principal}\u0000${fields.url.href}`,
       previous: undefined,
     });
 
     // Why: What a store keeps of a subscriber is its identity, the event's `caller`, by its
     // authentication's schema, encoded at each grant, so a restart restores the latest one; a
     // surface with a store and no schema refused to serve the event.
-    const keptOf = ({ feed, keyed, principal, input }: Subscribing) =>
+    const keptOf = ({ feed, keyed, input }: Subscribing) =>
       Effect.gen(function* () {
         const { schema } = keyed;
 
-        if (storage === undefined || schema === undefined)
-          return { principal, input: null, identity: null };
+        if (storage === undefined || schema === undefined) return { input: null, identity: null };
 
         const identity = yield* Effect.service(feed.event.caller);
 
         return {
-          principal,
           input: yield* Effect.orDie(
             Schema.encodeUnknownEffect(Schema.toCodecJson(feed.event.input))(input),
           ),
@@ -604,11 +585,11 @@ export const makeWebhooks = (
       id: string,
     ) =>
       Effect.gen(function* () {
-        const found = yield* storage.get(id);
-        const record = Option.getOrUndefined(found);
-        const feed = feeds.find(({ event }) => event.name === record?.event);
+        const record = Option.getOrUndefined(yield* storage.get(id));
 
         if (record === undefined) return yield* dropped(id);
+
+        const feed = feeds.find(({ event }) => event.name === record.event);
 
         if (feed === undefined) return;
 
@@ -635,7 +616,8 @@ export const makeWebhooks = (
           id: current,
           url,
           feed,
-          kept: { principal, input: record.input, identity: record.identity },
+          principal,
+          kept: { input: record.input, identity: record.identity },
           secret,
           context: Context.add(built, feed.event.caller, identity),
           expiresAt,
@@ -734,6 +716,7 @@ export const makeWebhooks = (
       Effect.gen(function* () {
         const {
           feed,
+          principal,
           input,
           delivery: { url, secret },
           cursor,
@@ -747,30 +730,33 @@ export const makeWebhooks = (
             yield* Effect.catchCause(feed.admit, (cause) => refused(id, cause));
 
             const now = yield* Clock.currentTimeMillis;
-            const expiresAt = now + Duration.toMillis(grantOf(ttlMs, policy));
-            const context = Context.merge(built, snapshotOf(yield* Effect.context<unknown>()));
-            const keptAs = yield* keptOf(subscribing);
+
+            const granted: Granted = {
+              secret,
+              context: Context.merge(built, snapshotOf(yield* Effect.context<unknown>())),
+              kept: yield* keptOf(subscribing),
+              expiresAt: now + Duration.toMillis(grantOf(ttlMs, policy)),
+            };
+
             const existing = held.get(id);
 
             // Why: A subscription lapses at its grant, whether or not its worker has ended yet,
             // so a refresh at that instant subscribes afresh from its cursor, as after a restart.
             if (existing !== undefined && now < existing.expiresAt)
-              return yield* refreshed(existing, secret, context, keptAs, input, now, expiresAt);
+              return yield* refreshed(existing, granted, input, now);
 
             const subscription = heldOf({
+              ...granted,
               id,
               url,
               feed,
-              kept: keptAs,
-              secret,
-              context,
-              expiresAt,
+              principal,
               status: { active: true, lastDeliveryAt: null, lastError: null },
               watermark: cursor,
             });
 
-            yield* verify(subscription.verifiedAs, url, id, secret.key, feed, now);
-            yield* remembered(subscription.verifiedAs, expiresAt, now);
+            yield* verify(subscription, now);
+            yield* remembered(subscription, now);
 
             const confirmation = yield* Deferred.make<Confirmed, unknown>();
 
@@ -782,7 +768,7 @@ export const makeWebhooks = (
 
             return {
               id,
-              refreshBefore: iso(expiresAt),
+              refreshBefore: iso(subscription.expiresAt),
               cursor: started.cursor,
               truncated: started.truncated,
             };

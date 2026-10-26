@@ -83,25 +83,21 @@ export const servedWebhooks = (
     return { webhooks, offered };
   });
 
+/** The calling subscriber of a webhook request, its feed and authentication, and the service. */
+export interface Subscriber extends Pick<Subscribing, "feed" | "keyed" | "principal"> {
+  readonly webhooks: Webhooks["Service"];
+}
+
 /**
- * The webhook service, the feed and the calling subscriber's principal, for a subscribe or
- * unsubscribe of `feed`'s event on a surface given `webhooks`, its subscribers `keyed`;
- * `Unsupported` where the surface does not offer it by webhook.
+ * The webhook subscriber calling a subscribe or unsubscribe of `feed`'s event on a surface given
+ * `webhooks`, its subscribers `keyed`; `Unsupported` where the surface does not offer it by
+ * webhook.
  */
 export const webhookSubscriber = (
   feed: Feed,
   keyed: Keyed | undefined,
   webhooks: Option.Option<Webhooks["Service"]>,
-): Effect.Effect<
-  {
-    readonly webhooks: Webhooks["Service"];
-    readonly feed: WebhookFeed;
-    readonly keyed: Named;
-    readonly principal: string;
-  },
-  Event.SubscriptionError,
-  unknown
-> => {
+): Effect.Effect<Subscriber, Event.SubscriptionError, unknown> => {
   const { event } = feed;
 
   if (Option.isNone(webhooks) || !isNamed(keyed) || !isProtected(event))

@@ -125,10 +125,10 @@ export const reasonOf = (
   if (error.code === eventCodes.forbidden) return refusalOf(error);
 
   for (const { code, data } of Object.values(sent)) {
-    const reason = code === error.code ? Schema.decodeUnknownOption(data)(error.data) : undefined;
+    const reason =
+      code === error.code ? Schema.decodeUnknownOption(data)(error.data) : Option.none();
 
-    if (reason !== undefined && Option.isSome(reason))
-      return Event.SubscriptionError.of(name, reason.value);
+    if (Option.isSome(reason)) return Event.SubscriptionError.of(name, reason.value);
   }
 
   return undefined;
