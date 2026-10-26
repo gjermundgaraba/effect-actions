@@ -9,10 +9,10 @@ import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../../src/Api.js";
 import { GetAttachment } from "../../src/attachments/Attachments.js";
 import { RateLimited } from "../../src/issues/Issues.js";
-import { memory } from "../../src/memory.js";
+import { services } from "../support/services.js";
 import { publicRoutes } from "../../src/routes.js";
 
-const served = Testing.layer(publicRoutes).pipe(Layer.provide(memory));
+const served = Testing.layer(publicRoutes).pipe(Layer.provide(services()));
 
 const signedIn = (token: string, workspace: string) =>
   flow(HttpClientRequest.bearerToken(token), HttpClientRequest.setHeader("x-workspace", workspace));

@@ -1,28 +1,91 @@
-import { Array as Arr, Cause, Context, Effect, Exit, Layer, Option, Schema } from "effect";
+import {
+  Array as Arr,
+  Cause,
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  References,
+  Schema,
+  Stream,
+} from "effect";
 import type { Scope } from "effect";
 import type * as Action from "./Action.js";
-import { Anyone, assertAuthentication, type Proving } from "./caller.js";
+import type * as Event from "./Event.js";
+import { checkInput } from "./input-check.js";
+import { Anyone, CallerKeyed, type Keyed } from "./caller.js";
 import { projectedErrors } from "./declared.js";
-import { assertDistinct, assertOnce, heldOnce } from "./names.js";
+import { assertOnce, heldOnce } from "./names.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
+import type { AnyEventImplementation, EventOf } from "./feed.js";
+import { type Reporting, reportedTo, streamReportedTo } from "./progress.js";
+import { elementOf } from "./stream.js";
 
 // Why: Random, not a counter: two installed copies of this module would each count from zero and
 // repeat each other's keys.
-const uniqueKey = (): string => Math.random().toString(36).slice(2);
+export const uniqueKey = (): string => Math.random().toString(36).slice(2);
 
 /** Decoded values at the dispatch boundary every surface shares. */
 export type ErasedValue = Action.Any["input"]["Type"];
 
 /**
- * A handler, erased. Method extraction makes the argument bivariant: a surface selects the
- * action before it invokes a handler, so its decoded input is the matching handler input, and
- * handlers are not widened at their public API.
+ * A handler as written, erased: its answer, or the stream of an action answering one. Method
+ * extraction makes the argument bivariant: a surface selects the action before it invokes a
+ * handler, so its decoded input is the matching handler input, and handlers are not widened at
+ * their public API.
  */
-export type ErasedHandler<R> = {
-  handle(input: ErasedValue): Effect.Effect<ErasedValue, ErasedValue, R>;
+export type WrittenHandler<R> = {
+  handle(
+    input: ErasedValue,
+    reporting?: Reporting,
+  ): Effect.Effect<ErasedValue, ErasedValue, R> | Stream.Stream<ErasedValue, ErasedValue, R>;
 }["handle"];
 
-export type Handlers<R> = Readonly<Record<string, ErasedHandler<R>>>;
+export type Handlers<R> = Readonly<Record<string, WrittenHandler<R>>>;
+
+/**
+ * A handler behind its action's authentication, authorization and declared errors, as a surface
+ * calls it. For an action answering a stream it succeeds at once with the call's stream, which
+ * `elementsOf` reads, the refusals included. `reporting` is where its progress goes, ignored for
+ * an action declaring no `progress`, so a surface may hand one to every call.
+ */
+export type ErasedHandler<R> = (
+  input: ErasedValue,
+  reporting?: Reporting,
+) => Effect.Effect<ErasedValue, ErasedValue, R>;
+
+/** The stream of a call of an action answering one, from its `ErasedHandler`'s answer. */
+export const elementsOf = (
+  answer: Effect.Effect<ErasedValue, ErasedValue, unknown>,
+): Stream.Stream<ErasedValue, ErasedValue, unknown> =>
+  Stream.unwrap(
+    Effect.flatMap(answer, (stream) =>
+      Stream.isStream(stream) ? Effect.succeed(stream) : Effect.die(notAStream),
+    ),
+  );
+
+// Why: Only a handler the types were bypassed for answers otherwise than its contract says.
+const notAStream = new Error("A handler answered otherwise than its action's success declares");
+
+/** The answer of a handler of an action answering one value, a stream refused as a defect. */
+export const answered = (
+  answer: ReturnType<WrittenHandler<unknown>>,
+): Effect.Effect<ErasedValue, ErasedValue, unknown> =>
+  Stream.isStream(answer) ? Effect.die(notAStream) : answer;
+
+/**
+ * `run` as a tool calls it, a tool answering one result: the elements of an action answering a
+ * stream collected, in order, into one array once the stream ends.
+ */
+export const answeringWhole = (
+  action: Action.Any,
+  run: ErasedHandler<unknown>,
+): ErasedHandler<unknown> =>
+  elementOf(action.success) === undefined
+    ? run
+    : (input, reporting) => Stream.runCollect(elementsOf(run(input, reporting)));
 
 /**
  * Authorization for protected contracts: it refuses, and fails with nothing else. It runs only for
@@ -32,13 +95,19 @@ export type Authorize<A extends Action.Any, R = never> = (
   action: A,
 ) => Effect.Effect<void, Refusal, R>;
 
-/** An implementation's authorizer, erased. */
-export type ErasedAuthorize = (action: Action.Any) => Effect.Effect<void, unknown, unknown>;
+/** An authorization rule over contracts `C`, erased: it refuses, or lets the call run. */
+export type ErasedAuthorize<C = Action.Any> = (
+  contract: C,
+) => Effect.Effect<void, unknown, unknown>;
 
-/** Each action of an implementation with its handler, as its builder made them. */
+/** Each action of an implementation with its handler, as `dispatch` makes it. */
 export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
 
-interface Memoized<S, E, R> {
+/** Each action of an implementation with its handler as written, as its builder made them. */
+export type Written = ReadonlyArray<readonly [Action.Any, WrittenHandler<unknown>]>;
+
+/** A build shared by every layer an implementation reaches, through the one key it is provided under. */
+export interface Memoized<S, E, R> {
   readonly key: Context.Key<S, S>;
   readonly layer: Layer.Layer<S, E, R>;
 }
@@ -50,6 +119,25 @@ export const memoized = <S, E, R>(
 
   return { key, layer: Layer.effect(key, build) };
 };
+
+/**
+ * The builders of an implementation of `contracts` as one layer: what its builder made, and its
+ * authorizer where a contract is protected, as only those need one.
+ */
+export const builderLayer = <S, E, R, SA, EA, RA>(
+  contracts: ReadonlyArray<Pick<Action.Any, "caller">>,
+  built: Pick<Memoized<S, E, R>, "layer">,
+  authorizer: Memoized<SA, EA, RA>,
+): Layer.Layer<never, E | EA, R | RA> =>
+  contracts.some((contract) => contract.caller !== Anyone)
+    ? Layer.merge(built.layer, authorizer.layer)
+    : built.layer;
+
+/** What a surface throws for an implementation some other copy of this module made. */
+export const notMadeHere = (module: "Action" | "Event"): Error =>
+  new Error(
+    `Not an implementation made by this ${module}.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice`,
+  );
 
 /**
  * Actions bound to their handlers and their authorizer: everything one `Action.implement` call
@@ -84,13 +172,13 @@ export class Implementation<
 
   /** The contracts this implementation answers. */
   readonly actions: ReadonlyArray<A>;
-  readonly #handlers: Memoized<Bound, EX, RX>;
+  readonly #handlers: Memoized<Written, EX, RX>;
   readonly #authorizer: Memoized<ErasedAuthorize, EAX, RAX>;
 
   constructor(
     actions: ReadonlyArray<A>,
     /** Builds each action paired with its handler: its own builder, or the one it shares. */
-    handlers: Memoized<Bound, EX, RX>,
+    handlers: Memoized<Written, EX, RX>,
     /** Builds its authorizer. */
     authorizer: Memoized<ErasedAuthorize, EAX, RAX>,
   ) {
@@ -122,16 +210,17 @@ export class Implementation<
   static layerOf(app: AnyImplementation): Layer.Layer<never, unknown, unknown> {
     const source = Implementation.own(app);
 
-    return app.actions.some((action) => action.caller !== Anyone)
-      ? Layer.merge(source.#handlers.layer, source.#authorizer.layer)
-      : source.#handlers.layer;
+    return builderLayer(app.actions, source.#handlers, source.#authorizer);
   }
 
   /**
    * The actions of `app` with their handlers, behind its authorizer, from the context
    * `layerOf(app)` provides.
    */
-  static boundOf(app: AnyImplementation): Effect.Effect<Bound, never, unknown> {
+  static boundOf(
+    app: AnyImplementation,
+    keyed: Keyed | undefined,
+  ): Effect.Effect<Bound, never, unknown> {
     const { actions } = app;
     const source = Implementation.own(app);
 
@@ -144,7 +233,7 @@ export class Implementation<
 
       return actions.flatMap((action) =>
         bound.flatMap(([held, handle]) =>
-          held === action ? [[action, dispatch(action, handle, before)] as const] : [],
+          held === action ? [[action, dispatch(action, handle, before, keyed)] as const] : [],
         ),
       );
     });
@@ -152,11 +241,7 @@ export class Implementation<
 
   /** `app`, if this copy of the module made it; another installed copy's cannot be read. */
   private static own<App extends AnyImplementation>(app: App): App {
-    if (!(#handlers in app)) {
-      throw new Error(
-        "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice",
-      );
-    }
+    if (!(#handlers in app)) throw notMadeHere("Action");
 
     return app;
   }
@@ -180,26 +265,43 @@ export type AnyImplementation<A extends Action.Any = Action.Any> = Implementatio
   unknown
 >;
 
-/** What a surface serves: one implementation, or a list of them. */
-export type Served = AnyImplementation | ReadonlyArray<AnyImplementation>;
+/** What a surface serves: one implementation, of actions or of events, or a list of them. */
+export type Served =
+  | AnyImplementation
+  | AnyEventImplementation
+  | ReadonlyArray<AnyImplementation | AnyEventImplementation>;
+
+/** What a surface serving no events takes: one action implementation, or a list of them. */
+export type ServedActions = AnyImplementation | ReadonlyArray<AnyImplementation>;
 
 /** The implementations `S` stands for. */
 export type Member<S> = S extends ReadonlyArray<infer App> ? App : S;
 
-/** Options that may list actions of `A`, the shape every selecting surface's options share. */
-export interface Selection<A extends Action.Any> {
-  readonly actions?: ReadonlyArray<A> | undefined;
+/**
+ * Options that may list actions and event types of `C`, the shape every selecting surface's
+ * options share.
+ */
+export interface Selection<C extends Action.Any | Event.Any> {
+  readonly actions?: ReadonlyArray<C> | undefined;
 }
 
 /**
  * The actions options `O` select, of `All`: those its `actions` lists when it always lists
- * them, and every one otherwise. Options whose `actions` may be absent, being optional or
- * a union with options lacking it, select every action at run time, so they narrow nothing.
+ * them, none where it lists event types alone, and every one otherwise. Options whose `actions`
+ * may be absent, being optional or a union with options lacking it, select every action at run
+ * time, so they narrow nothing.
  */
 export type Selected<O, All extends Action.Any> = O extends {
-  readonly actions: ReadonlyArray<infer A extends Action.Any>;
+  readonly actions: ReadonlyArray<infer C>;
 }
-  ? A
+  ? Extract<C, Action.Any>
+  : All;
+
+/** The event types options `O` select, of `All`, as `Selected` selects actions. */
+export type SelectedEvents<O, All extends Event.Any> = O extends {
+  readonly actions: ReadonlyArray<infer C>;
+}
+  ? Extract<C, Event.Any>
   : All;
 
 /**
@@ -220,14 +322,17 @@ export type MiddlewareOf<O, L extends ReadonlyArray<unknown>> = O extends {
 /** The actions options `O` select of the implementations `Apps` stand for. */
 export type SelectedOf<O, Apps extends Served> = Selected<O, ActionOf<Member<Apps>>>;
 
+/** The event types options `O` select of the implementations `Apps` stand for. */
+export type SelectedEventsOf<O, Apps extends Served> = SelectedEvents<O, EventOf<Member<Apps>>>;
+
 /**
- * The actions a client of options `O` offers methods for, of `All`: those `actions` may
+ * The actions or event types a client of options `O` offers, of `All`: those `actions` may
  * list, wherever some member of `O` may list them, as each is present whether the list is
  * given or not; every one where no member lists any.
  */
-export type Offered<O, All extends Action.Any> = [Listing<O>] extends [never]
+export type Offered<O, All extends Action.Any | Event.Any> = [Listing<O>] extends [never]
   ? All
-  : Extract<All, Listing<O> extends ReadonlyArray<infer A extends Action.Any> ? A : never>;
+  : Extract<All, Listing<O> extends ReadonlyArray<infer C> ? C : never>;
 
 type Listing<O> = O extends unknown ? NonNullable<O["actions" & keyof O]> : never;
 
@@ -247,7 +352,14 @@ export type Known<O, Keys> = {
  */
 export type OptionalUnless<O, Given> = {} extends O ? [options?: Given] : [options: Given];
 
-export const toList = (served: Served): ReadonlyArray<AnyImplementation> => Arr.ensure(served);
+/**
+ * The action implementations among what a surface is given; `eventsOf` reads the event
+ * implementations, by their tag.
+ */
+export const toList = (served: Served): ReadonlyArray<AnyImplementation> =>
+  Arr.ensure(served).filter(
+    (app): app is AnyImplementation => !Predicate.isTagged(app, "EventImplementation"),
+  );
 
 /** The actions of the implementations a surface serves. */
 export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;
@@ -314,13 +426,15 @@ export const notHeld = {
 } as const;
 
 /** The actions' names, joined; one whose name another listed contract shares is marked `(another contract)`. */
-const markingOthers = (actions: ReadonlyArray<Action.Any>, names: ReadonlySet<string>) =>
-  actions.map(({ name }) => (names.has(name) ? `${name} (another contract)` : name)).join(", ");
+export const markingOthers = (
+  actions: ReadonlyArray<Pick<Action.Any, "name">>,
+  names: ReadonlySet<string>,
+) => actions.map(({ name }) => (names.has(name) ? `${name} (another contract)` : name)).join(", ");
 
-export const assertHeld = (
+export const assertHeld = <C extends Pick<Action.Any, "name">>(
   { why, fix, holder }: (typeof notHeld)[keyof typeof notHeld],
-  listed: ReadonlyArray<Action.Any>,
-  held: ReadonlyArray<Action.Any>,
+  listed: ReadonlyArray<C>,
+  held: ReadonlyArray<C>,
 ): void => {
   const missing = listed.filter((action) => !held.includes(action));
 
@@ -334,28 +448,43 @@ export const assertHeld = (
   }
 };
 
-export const select = (
-  apps: ReadonlyArray<AnyImplementation>,
-  listed: ReadonlyArray<Action.Any> | undefined,
-): ReadonlyArray<AnyImplementation> => {
+/**
+ * The implementations among `apps` holding what `listed` lists, each sharing its builder to hold
+ * those alone, or every one where it lists none: action and event implementations alike, by the
+ * contracts each `holds` and how it `share`s them.
+ */
+export const selectHeld = <App, C extends Pick<Action.Any, "name">>(
+  apps: ReadonlyArray<App>,
+  listed: ReadonlyArray<C> | undefined,
+  holds: (app: App) => ReadonlyArray<C>,
+  share: (own: ReadonlyArray<C>, app: App) => App,
+): ReadonlyArray<App> => {
   if (listed === undefined) return apps;
 
-  assertHeld(
-    notHeld.byImplementation,
-    listed,
-    apps.flatMap((app) => app.actions),
-  );
+  assertHeld(notHeld.byImplementation, listed, apps.flatMap(holds));
 
   return apps.flatMap((app) => {
-    const own = app.actions.filter((action) => listed.includes(action));
+    const held = holds(app);
+    const own = held.filter((contract) => listed.includes(contract));
 
     if (own.length === 0) return [];
 
-    return own.length === app.actions.length ? [app] : [Implementation.share(own, app)];
+    return own.length === held.length ? [app] : [share(own, app)];
   });
 };
 
-const servedBy = (
+export const select = (
+  apps: ReadonlyArray<AnyImplementation>,
+  listed: ReadonlyArray<Action.Any> | undefined,
+): ReadonlyArray<AnyImplementation> =>
+  selectHeld(
+    apps,
+    listed,
+    (app) => app.actions,
+    (own, app) => Implementation.share(own, app),
+  );
+
+export const servedBy = (
   what: string,
   bound: ReadonlyArray<Action.Any>,
   apps: ReadonlyArray<AnyImplementation>,
@@ -383,43 +512,8 @@ const servedBy = (
   return served;
 };
 
-/**
- * What `ActionHttp.layer` and `ActionRpc.layer` serve, with the checks they share;
- * `authentication` is the binding's where a served action is protected.
- */
-export const servingOf = <D extends Proving>(
-  what: string,
-  binding: {
-    readonly actions: ReadonlyArray<Action.Any>;
-    readonly authentication?: D | undefined;
-  },
-  served: Served,
-  options: {
-    readonly actions?: ReadonlyArray<Action.Any> | undefined;
-    readonly middleware?: ReadonlyArray<{ readonly key: string }> | undefined;
-  },
-) => {
-  const apps = servedBy(what, binding.actions, toList(served), options.actions);
-  const actions = apps.flatMap((app) => app.actions);
-
-  // Why: A binding spread with another descriptor, `{ ...binding, authentication }`, type-checks,
-  // so what `make` checked no longer holds for it.
-  assertAuthentication(actions, binding.authentication);
-  assertDistinct("middleware", options.middleware ?? [], (key) => key.key, {
-    fix: "list each middleware once",
-  });
-
-  return {
-    apps,
-    actions,
-    authentication: actions.some((action) => action.caller !== Anyone)
-      ? binding.authentication
-      : undefined,
-  };
-};
-
-/** The protected members of a contract union. */
-export type Protected<A extends Action.Any> = A extends unknown
+/** The protected members of a contract union, of actions or of events. */
+export type Protected<A extends Pick<Action.Any, "caller">> = A extends unknown
   ? A["caller"] extends typeof Anyone
     ? never
     : A
@@ -477,34 +571,39 @@ export type BuildServices<App, Listed extends Action.Any = OwnActions<App>> = Ap
   ? RX | ([Protected<Serving<App, Listed>>] extends [never] ? never : RAX)
   : never;
 
-export const provideHandlers =
-  (apps: ReadonlyArray<AnyImplementation>) =>
+/** Provide `builders`, implementations' builder layers, to a surface's layer. */
+export const provideBuilders =
+  (builders: ReadonlyArray<Layer.Layer<never, unknown, unknown>>) =>
   <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, unknown, unknown> => {
-    const [first, ...rest] = apps.map((app) => Implementation.layerOf(app));
+    const [first, ...rest] = builders;
 
     return first === undefined ? layer : Layer.provide(layer, Layer.mergeAll(first, ...rest));
   };
 
-export const builders = (
-  apps: ReadonlyArray<AnyImplementation>,
-): Layer.Layer<never, unknown, unknown> => Layer.empty.pipe(provideHandlers(apps));
+export const provideHandlers = (apps: ReadonlyArray<AnyImplementation>) =>
+  provideBuilders(apps.map((app) => Implementation.layerOf(app)));
 
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,
+  keyed: Keyed | undefined,
 ): Effect.Effect<Bound, never, unknown> =>
   Effect.map(
-    Effect.forEach(apps, (app) => Implementation.boundOf(app)),
+    Effect.forEach(apps, (app) => Implementation.boundOf(app, keyed)),
     (bound) => bound.flat(),
   );
 
-export const built = (
-  apps: ReadonlyArray<AnyImplementation>,
-): Effect.Effect<Bound, unknown, unknown> => {
-  const layers = apps.map((app) => Implementation.layerOf(app));
-  const [first, ...rest] = layers;
+/**
+ * What `acquisition` reads, once `builders` are built into the layer graph around the caller, and
+ * held by its scope.
+ */
+export const builtWith = <A>(
+  builders: ReadonlyArray<Layer.Layer<never, unknown, unknown>>,
+  acquisition: Effect.Effect<A, never, unknown>,
+): Effect.Effect<A, unknown, unknown> => {
+  const [first, ...rest] = builders;
 
   return Effect.gen(function* () {
-    if (first === undefined) return [];
+    if (first === undefined) return yield* acquisition;
 
     // Why: `Layer.build` forks the memo map of the layer graph around the caller, and what a fork
     // builds first the surfaces of that graph build again. Built into the map itself, as
@@ -514,14 +613,15 @@ export const built = (
     const scope = yield* Effect.scope;
     const context = yield* Layer.buildWithMemoMap(Layer.mergeAll(first, ...rest), memoMap, scope);
 
-    return yield* Effect.provideContext(acquire(apps), context);
+    return yield* Effect.provideContext(acquisition, context);
   });
 };
 
 const dispatch = (
   action: Action.Any,
-  handle: ErasedHandler<unknown>,
+  handle: WrittenHandler<unknown>,
   before: ErasedAuthorize,
+  keyed: Keyed | undefined,
 ): ErasedHandler<unknown> => {
   const actionAttributes = {
     "action.name": action.name,
@@ -573,15 +673,47 @@ const dispatch = (
     return yield* Effect.failCause(Cause.fromReasons(reasons));
   });
 
-  return (input) =>
+  const admitted = (input: ErasedValue) =>
+    Effect.andThen(authentication, Effect.andThen(checkInput(action, input), authorization));
+
+  const span = { attributes: actionAttributes };
+  const trace = { captureStackTrace: false };
+
+  if (elementOf(action.success) !== undefined) {
+    const streamed = (answer: ReturnType<WrittenHandler<unknown>>) =>
+      Stream.isStream(answer) ? Stream.scoped(answer) : Stream.die(notAStream);
+
+    return (input, sink) =>
+      Effect.succeed(
+        Stream.unwrap(
+          Effect.map(admitted(input), () =>
+            streamReportedTo(action.progress, sink, (reporting) =>
+              streamed(handle(input, reporting)),
+            ),
+          ),
+        ).pipe(
+          Stream.catchCause((cause) => Stream.fromEffect(declaredOrDefect(cause))),
+          Stream.updateService(References.CurrentLogAnnotations, (annotations) => ({
+            ...annotations,
+            ...actionAttributes,
+          })),
+          Stream.withSpan(action.name, { ...span, ...trace }),
+        ),
+      );
+  }
+
+  // Why: Provided whatever it is, an in-process call's `undefined` included, so a call made in a
+  // handler is named by its own surface, not by the one its caller came through.
+  return (input, sink) =>
     Effect.scoped(
-      authentication.pipe(
-        Effect.andThen(authorization),
-        Effect.andThen(Effect.suspend(() => handle(input))),
+      admitted(input).pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            reportedTo(action.progress, sink, (reporting) => answered(handle(input, reporting))),
+          ),
+        ),
+        Effect.provideService(CallerKeyed, keyed),
         Effect.catchCause(declaredOrDefect),
       ),
-    ).pipe(
-      Effect.annotateLogs(actionAttributes),
-      Effect.withSpan(action.name, { attributes: actionAttributes }, { captureStackTrace: false }),
-    );
+    ).pipe(Effect.annotateLogs(actionAttributes), Effect.withSpan(action.name, span, trace));
 };

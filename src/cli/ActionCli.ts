@@ -1,16 +1,40 @@
-import { Cause, Effect, Logger, Runtime } from "effect";
+import { Cause, Effect, Logger, Runtime, Stream } from "effect";
 import { type CliError, Command } from "effect/cli";
 import type { HttpClient } from "effect/http";
-import type * as Action from "../contract/Action.js";
-import { projectedErrors, bindingErrors, type Declaring } from "../contract/declared.js";
+import * as Action from "../contract/Action.js";
+import type * as Event from "../contract/Event.js";
+import type {
+  EventBuildError,
+  EventBuildServices,
+  EventOf,
+  EventRequestOf,
+  ServingEvents,
+} from "../contract/feed.js";
+import { selection } from "../contract/listed.js";
+import { selectFrom } from "../contract/serving.js";
+import type { Receiving } from "../contract/receiving.js";
+import type { WatchArgs } from "../contract/watch.js";
+import {
+  projectedErrors,
+  bindingErrors,
+  type Declaring,
+  eventErrors,
+} from "../contract/declared.js";
 import { assertDistinct, assertKnown } from "../contract/names.js";
+import { type CallOptions, progressSink } from "../contract/progress.js";
 import {
   type UserError,
   command as makeCommand,
   failingAsDerived,
   type Options as CommandOptions,
+  watchCommand,
 } from "./commands.js";
-import { type Any as AnyHttp, type Client, client as httpClient } from "../http/ActionHttp.js";
+import {
+  type Any as AnyHttp,
+  type Client,
+  client as httpClient,
+  type WatchError,
+} from "../http/ActionHttp.js";
 import {
   acquire,
   type ActionOf,
@@ -23,14 +47,18 @@ import {
   type Holding,
   type Member,
   type RequestOf,
-  select,
   type Known,
   type Selected,
+  type SelectedEvents,
+  type SelectedEventsOf,
   type SelectedOf,
   type Selection,
   type Served,
+  type ServedActions,
   toList,
+  elementsOf,
 } from "../contract/implementation.js";
+import { elementOf } from "../contract/stream.js";
 
 export type { Options as CommandOptions } from "./commands.js";
 
@@ -65,19 +93,26 @@ export const toUserError = (calls: AnyBinding | ReadonlyArray<Action.Any>) =>
  * An aggregate command of the actions `A`: its name, the actions that are its subcommands,
  * and their options.
  */
-export interface Options<A extends Action.Any = Action.Any> {
+export interface Options<A extends Action.Any | Event.Any = Action.Any | Event.Any> {
   /** The aggregate command's name. */
   readonly name: string;
   /**
-   * The actions that are subcommands, among the binding's or the implementations' actions:
-   * `[GetUser, RenameUser]`. Defaults to every action of them.
+   * The actions that are subcommands and the event types that have a `watch`, among the
+   * binding's or the implementations': `[GetUser, RenameUser, UserRenamed]`, exactly those.
+   * Defaults to every one of them.
+   *
+   * **Gotchas**
+   *
+   * - A list naming actions alone adds no `watch`: list the event types beside them.
    */
   readonly actions?: ReadonlyArray<A> | undefined;
   /**
    * The options of each subcommand, keyed by its action's name, as `command` takes them:
    * `{ readFile: { positional: ["path"], render } }`.
    */
-  readonly commands?: { readonly [K in A as K["name"]]?: CommandOptions<K> };
+  readonly commands?: {
+    readonly [K in Extract<A, Action.Any> as K["name"]]?: CommandOptions<K>;
+  };
   /**
    * Commands of your own beside the derived ones, as `Command.withSubcommands` takes them:
    * `[importLinks]`, each made with Effect CLI's `Command.make` and printing its output itself,
@@ -151,16 +186,27 @@ const runWithBuildOfItsOwn = <App extends AnyImplementation, A extends Action.An
   app: App,
   action: A,
   input: A["input"]["Type"],
+  onProgress: CallOptions<unknown>["onProgress"],
 ): Local<App, A> => {
   const thisActionOnly = Implementation.share([action], app);
 
-  const call = Effect.flatMap(acquire([thisActionOnly]), (bound) => {
+  const call = Effect.flatMap(acquire([thisActionOnly], undefined), (bound) => {
     const [, run] = bound.find(([candidate]) => candidate === action) ?? [];
 
-    return run === undefined ? Effect.die(new Error(`No handler for ${action.name}`)) : run(input);
+    return run === undefined
+      ? Effect.die(new Error(`No handler for ${action.name}`))
+      : run(input, progressSink(onProgress));
   });
 
-  const built = call.pipe(Effect.provide(Implementation.layerOf(thisActionOnly), { local: true }));
+  const builder = Implementation.layerOf(thisActionOnly);
+
+  // Why: A stream is read after its call succeeds with it, so the build is the stream's, open
+  // while it is read: provided around the call alone, it would close first, and a handler
+  // reading what its builder acquired would read it released.
+  const built =
+    elementOf(action.success) === undefined
+      ? call.pipe(Effect.provide(builder, { local: true }))
+      : Effect.succeed(elementsOf(call).pipe(Stream.provide(builder, { local: true })));
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased handler boundary: the builders' failures and services are the implementation's `EX` and `RX`, the handler's and authorization's services its entry of `R`; the handler fails with the action's errors or a `BuiltIn`, authorization with a refusal.
   return built as Local<App, A>;
@@ -194,7 +240,7 @@ const inProcess = <A extends Action.Any>(
 
   return makeCommand(
     action,
-    (input) => runWithBuildOfItsOwn(app, action, input),
+    (input, onProgress) => runWithBuildOfItsOwn(app, action, input, onProgress),
     options,
     projectedErrors(action),
   );
@@ -214,7 +260,7 @@ const overHttp = <A extends Action.Any>(
 
   return makeCommand(
     action,
-    (input) =>
+    (input, onProgress) =>
       Effect.flatMap(client ?? httpClient(binding), (methods) => {
         const method = methods[action.name];
 
@@ -224,12 +270,68 @@ const overHttp = <A extends Action.Any>(
           );
         }
 
-        return method(input);
+        const answer = method(input, { onProgress });
+
+        // Why: A stream method answers its `Stream` itself, which the command reads as the value.
+        return Stream.isStream(answer) ? Effect.succeed(answer) : answer;
       }),
     options,
     bindingErrors(action, binding),
   );
 };
+
+// Why: None where the selection holds no action, so an aggregate of event types alone requires
+// no action's services.
+type LocalCall<Apps extends Served, O> = [SelectedOf<O, Apps>] extends [never]
+  ? never
+  : Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>;
+
+// Why: None where the selection holds no event type, so an aggregate of actions alone requires as
+// it did.
+type LocalWatch<App, Listed extends Event.Any> = [ServingEvents<App, Listed>] extends [never]
+  ? never
+  : Effect.Effect<
+      void,
+      Event.SubscriptionError | Action.BuiltIn | EventBuildError<App, Listed>,
+      EventRequestOf<App, ServingEvents<App, Listed>> | EventBuildServices<App, Listed>
+    >;
+
+// Why: Read from the client's `watch` as a command calls it, so a client given with its own
+// `transformClient` adds what its watch fails with and requires, as a call's does; a command
+// watches by stream or poll, so never needs the receiver a webhook delivery does.
+type Watched<M, E extends Event.Any> = M extends {
+  readonly watch: (
+    event: E,
+    ...args: WatchArgs<E, never>
+  ) => Stream.Stream<unknown, infer WE, infer WR>;
+}
+  ? { readonly error: WE; readonly services: Exclude<WR, Receiving> }
+  : { readonly error: never; readonly services: never };
+
+type WatchFailure<H extends AnyHttp, C, E extends Event.Any> = [E] extends [never]
+  ? never
+  : C extends Effect.Effect<infer M, infer CE, unknown>
+    ? CE | Watched<M, E>["error"]
+    : WatchError<E, H>;
+
+type WatchServices<C, E extends Event.Any> = [E] extends [never]
+  ? never
+  : C extends Effect.Effect<infer M, unknown, infer CR>
+    ? CR | Watched<M, E>["services"]
+    : HttpClient.HttpClient;
+
+/** The command watching `event` through the `watch` of each client `client` makes as it runs. */
+const watched = (
+  event: Event.Any,
+  client: Effect.Effect<Pick<Client<AnyHttp, unknown, unknown>, "watch">, unknown, unknown>,
+  errors: Action.Errors,
+) =>
+  watchCommand(
+    event,
+    (input, cursor) =>
+      Stream.unwrap(Effect.map(client, (methods) => methods.watch(event, input, { cursor }))),
+    errors,
+  );
 
 const aggregateCommand = (
   name: string,
@@ -240,14 +342,28 @@ const aggregateCommand = (
     action: Action.Any,
     options: CommandOptions<Action.Any> | undefined,
   ) => Command.Command<string, never, {}, unknown, unknown>,
+  watched: ReadonlyArray<Command.Command<string, never, {}, unknown, unknown>>,
 ) => {
-  const derived = actions.map((action) => ({
-    claimant: `action ${action.name}`,
-    command: project(
-      action,
-      Object.hasOwn(commands, action.name) ? commands[action.name] : undefined,
-    ),
-  }));
+  const derived = [
+    ...actions.map((action) => ({
+      claimant: `action ${action.name}`,
+      command: project(
+        action,
+        Object.hasOwn(commands, action.name) ? commands[action.name] : undefined,
+      ),
+    })),
+    ...(watched.length === 0
+      ? []
+      : [
+          {
+            claimant: "the event types",
+            command: Command.make("watch").pipe(
+              Command.withDescription("Watch an event type, each occurrence a line of JSON"),
+              Command.withSubcommands(watched),
+            ),
+          },
+        ]),
+  ];
 
   assertDistinct(
     "command",
@@ -297,6 +413,8 @@ const checkedCommandsOf = (
  * **Gotchas**
  *
  * - A success is its JSON on stdout, indented by two spaces, or `render`'s text; nothing for an action without `success`. Its Effect logs and `Console` output go to stderr; other writes as `logToStderr` says.
+ * - Each value an action declaring `progress` reports is one line of compact JSON on stderr, as it arrives, so stdout holds the answer alone; `remoteCommand` asks the server for them too.
+ * - An action answering a stream prints each element on stdout as it arrives, one line of compact JSON, or `render`'s text of it; a declared failure ends the command after the elements before it.
  * - A declared error is its JSON on stderr, under Effect CLI's `ERROR` heading, the command failing with a `UserError` whose `cause` is the error, exit 1 or its `Runtime.errorExitCode`; a refusal as `Action.Unauthenticated` and `Action.Forbidden` say; input that does not decode, in `--input` or a flag's JSON value, is `InvalidInput`'s JSON there, while a missing flag or a rejected choice is Effect CLI's own parse error.
  * - Effect CLI styles what it prints, a failure's JSON included, on a terminal and, from Effect 4.0.6, wherever `FORCE_COLOR` forces colour: for plain text there, set `NO_COLOR` or provide `TerminalCapabilities.TerminalCapabilities` with `canColor: false`.
  * - A failure no schema encodes, a builder's or an accepted error that does not encode, is a `UserError` printed as its tag or name and its message, then its causes, never its other fields; a defect, an undeclared failure, or a success that does not encode is the command's defect, which `runMain` reports as `logToStderr` says.
@@ -304,7 +422,11 @@ const checkedCommandsOf = (
  * - Each run builds the action's implementation, its builder and an authorizer an Effect builds, and releases them after the call, even where the host already built them; implementations passed beside it are not built.
  * - A field named like a global flag (`help`, `version`, `log-level`) is no clash: its flag shadows the global one on this command.
  */
-export function command<const Apps extends Served, A extends ActionOf<Member<Apps>>, const O = {}>(
+export function command<
+  const Apps extends ServedActions,
+  A extends ActionOf<Member<Apps>>,
+  const O = {},
+>(
   implementations: Apps,
   action: A,
   options?: O & NoInfer<CommandOptions<A>> & NoInfer<Known<O, CommandOptions<Action.Any>>>,
@@ -348,7 +470,7 @@ export function remoteCommand(
   return overHttp(binding, action, options === undefined ? undefined : syntax, client);
 }
 
-// Why: One declaration of `client` for `remote` and `remoteCommand`, so its JSDoc has one home.
+/** The `client` option of `remote` and `remoteCommand`, declared once for both. */
 export interface Calling<C> {
   /**
    * The connection: an Effect of the binding's client, such as
@@ -368,27 +490,37 @@ export interface Calling<C> {
   readonly client?: C;
 }
 
-type ClientOf<H extends AnyHttp, A extends Action.Any> = Effect.Effect<
-  Pick<Client<H, unknown, unknown>, A["name"]>,
+// Why: `watch` is needed only where an event type is selected, as each action's method is.
+type ClientOf<H extends AnyHttp, A extends Action.Any, E extends Event.Any = never> = Effect.Effect<
+  Pick<Client<H, unknown, unknown>, A["name"] | ([E] extends [never] ? never : "watch")>,
   unknown,
   unknown
 >;
 
-type ErasedClient = ClientOf<AnyHttp, Action.Any>;
+type ErasedClient = Effect.Effect<Client<AnyHttp, unknown, unknown>, unknown, unknown>;
 
 // Why: TypeScript first checks a call without its unannotated arrows, such as an inline `render`,
 // and an options literal holding one is not yet inferred into `O` then; `L`, inferred from
 // `actions` alone, holds the selection meanwhile. Checked against `Selected` alone, a client
 // narrowed to the listed actions is rejected as lacking every other action's method.
-type Needed<O, L extends ReadonlyArray<Action.Any>, All extends Action.Any> = "actions" extends (
+type Needed<O, L extends ReadonlyArray<unknown>, All extends Action.Any> = "actions" extends (
   O extends unknown ? keyof O : never
 )
   ? Selected<O, All>
-  : L[number];
+  : Extract<L[number], All>;
+
+type NeededEvents<O, L extends ReadonlyArray<unknown>, All extends Event.Any> = "actions" extends (
+  O extends unknown ? keyof O : never
+)
+  ? SelectedEvents<O, All>
+  : Extract<L[number], All>;
 
 type RemoteKeys<Keys> = Keys & { readonly client?: unknown };
 
-type Failing<F> = UserError<Exclude<F, CliError.CliError>> | Extract<F, CliError.CliError>;
+// Why: None for no failure, so a CLI whose implementations hold no event type fails as it did.
+type Failing<F> = [F] extends [never]
+  ? never
+  : UserError<Exclude<F, CliError.CliError>> | Extract<F, CliError.CliError>;
 
 // Why: Distributive over the action, so an aggregate's call is any of its methods'.
 type Called<M, A extends Action.Any> = A extends unknown
@@ -399,37 +531,47 @@ type Called<M, A extends Action.Any> = A extends unknown
     : never
   : never;
 
+// Why: A call answers one value or a stream, so both carry its failures and requirements.
+type CallError<Call> = Effect.Error<Call> | Stream.Error<Call>;
+
+type CallRequirements<Call> = Effect.Services<Call> | Stream.Services<Call>;
+
 // Why: Distributive over the client, so one that may be `undefined` also fails and requires as
 // its omission does: as `ActionHttp.client(binding)` on the host's `HttpClient`.
 type CallFailure<H extends AnyHttp, C, A extends Action.Any> =
   C extends Effect.Effect<infer M, infer CE, unknown>
-    ? CE | Effect.Error<Called<M, A>>
-    : Effect.Error<Called<Client<H>, A>>;
+    ? CE | CallError<Called<M, A>>
+    : CallError<Called<Client<H>, A>>;
 
 type CallServices<C, A extends Action.Any> =
   C extends Effect.Effect<infer M, unknown, infer CR>
-    ? CR | Effect.Services<Called<M, A>>
+    ? CR | CallRequirements<Called<M, A>>
     : HttpClient.HttpClient;
 
 /**
  * Project the implemented actions, every one or those `actions` selects, as subcommands of one
  * aggregate command, each derived as `command` derives it and run in process. `commands` gives a
  * subcommand the options `command` takes, by action name; `subcommands` adds commands of your
- * own. `remote` calls a server instead. A test runs it in memory, with no process: `Command.runWith(command, { version })(args)`.
+ * own. `remote` calls a server instead. Each event type among the implementations, or each
+ * `actions` lists, adds `watch <event>`, a flag per input field and `--cursor`, printing each
+ * occurrence, or a `Gap`, as one line of JSON, its `cursor` included, until it is stopped. A test
+ * runs it in memory, with no process: `Command.runWith(command, { version })(args)`.
  * Guide: `docs/ActionCli.md` in this package; in an application: `examples/assistant/src/commands.ts`.
  *
  * **Gotchas**
  *
  * - Services provided on it with `Command.provide` are also built when it runs with no subcommand, before it shows its help.
+ * - An event input field named `cursor` throws when `make` or `remote` is called, `--cursor` claiming its flag: rename the field.
+ * - A watch's refusal, when it starts or later, or `Event.SubscriptionError`, ends the command as its `UserError`, exit 1, after the lines it printed.
  */
 export function make<
   const Apps extends Served,
-  const O extends Selection<ActionOf<Member<Apps>>> = {},
+  const O extends Selection<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> = {},
   const Own extends Subcommands = [],
 >(
   implementations: Apps,
   options: O &
-    NoInfer<Options<ActionOf<Member<Apps>>>> &
+    NoInfer<Options<ActionOf<Member<Apps>> | EventOf<Member<Apps>>>> &
     NoInfer<KnownOptions<O, Options, ActionOf<Member<Apps>>>> & {
       readonly subcommands?: Own | undefined;
     },
@@ -437,19 +579,18 @@ export function make<
   string,
   {},
   {},
-  | Failing<Effect.Error<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>>
+  | Failing<Effect.Error<LocalCall<Apps, O> | LocalWatch<Member<Apps>, SelectedEventsOf<O, Apps>>>>
   | Command.Error<OwnCommand<Own>>,
-  | Effect.Services<Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>>
+  | Effect.Services<LocalCall<Apps, O> | LocalWatch<Member<Apps>, SelectedEventsOf<O, Apps>>>
   | Command.Services<OwnCommand<Own>>
 > {
   const apps = toList(implementations);
+  const { apps: served, events } = selectFrom(implementations, options.actions);
 
   const commands = checkedCommandsOf(
     options.commands,
     apps.flatMap((app) => app.actions),
   );
-
-  const served = select(apps, options.actions);
 
   const group = aggregateCommand(
     options.name,
@@ -457,6 +598,13 @@ export function make<
     commands,
     options.subcommands ?? [],
     (action, syntax) => inProcess(served, action, syntax),
+    // Why: Each run builds the one implementation holding the event, as each run of an action's
+    // command builds its own, and releases it as the watch ends.
+    events.flatMap((app) =>
+      app.events.map((event) =>
+        watched(event, Action.client(app), eventErrors(event, { error: [] })),
+      ),
+    ),
   );
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic subcommand list: each runs one action by its implementation, so the aggregate's channels are the unions of what `Local` states over them.
@@ -468,44 +616,65 @@ export function make<
  * one aggregate command, derived as `make` derives them, each calling its action through
  * `client`'s method, as `remoteCommand` does. `commands` gives one the options `command` takes;
  * `subcommands` adds commands of your own, which call through the same client by yielding the
- * Effect given as `client`.
- * In an application: `examples/notes-service/src/commands.ts`.
+ * Effect given as `client`. Each event type of the binding, or each `actions` lists, adds
+ * `watch <event>`, as `make` adds it, watching through `client`'s `watch`, which reconnects as
+ * `ActionHttp.client`'s does.
+ * In an application: `examples/notes-service/src/commands.ts`, and for events,
+ * `examples/build-events/src/commands.ts`.
  */
 export function remote<
   const H extends AnyHttp,
-  const O extends Selection<H["actions"][number]> = {},
+  const O extends Selection<H["actions"][number] | H["events"][number]> = {},
   const Own extends Subcommands = [],
-  const L extends ReadonlyArray<H["actions"][number]> = H["actions"],
-  C extends ClientOf<H, Needed<O, L, H["actions"][number]>> | undefined = undefined,
+  const L extends ReadonlyArray<H["actions"][number] | H["events"][number]> = [
+    ...H["actions"],
+    ...H["events"],
+  ],
+  C extends
+    | ClientOf<H, Needed<O, L, H["actions"][number]>, NeededEvents<O, L, H["events"][number]>>
+    | undefined = undefined,
 >(
   binding: H,
   options: O &
-    NoInfer<Options<H["actions"][number]>> &
-    NoInfer<KnownOptions<O, RemoteKeys<Options<Action.Any>>, H["actions"][number]>> &
+    NoInfer<Options<H["actions"][number] | H["events"][number]>> &
+    NoInfer<KnownOptions<O, RemoteKeys<Options>, H["actions"][number]>> &
     Calling<C> & { readonly actions?: L | undefined; readonly subcommands?: Own | undefined },
 ): Command.Command<
   string,
   {},
   {},
-  Failing<CallFailure<H, C, Selected<O, H["actions"][number]>>> | Command.Error<OwnCommand<Own>>,
-  CallServices<C, Selected<O, H["actions"][number]>> | Command.Services<OwnCommand<Own>>
+  | Failing<
+      | CallFailure<H, C, Selected<O, H["actions"][number]>>
+      | WatchFailure<H, C, SelectedEvents<O, H["events"][number]>>
+    >
+  | Command.Error<OwnCommand<Own>>,
+  | CallServices<C, Selected<O, H["actions"][number]>>
+  | WatchServices<C, SelectedEvents<O, H["events"][number]>>
+  | Command.Services<OwnCommand<Own>>
 >;
 export function remote(
   binding: AnyHttp,
   options: Options & { readonly client?: ErasedClient | undefined },
 ): Command.Command<string, {}, {}, unknown, unknown> {
-  const listed = options.actions;
+  const listed = selection(options.actions);
 
-  if (listed !== undefined) assertHeld(notHeld.byBinding, listed, binding.actions);
+  if (listed.actions !== undefined) assertHeld(notHeld.byBinding, listed.actions, binding.actions);
+
+  if (listed.events !== undefined) assertHeld(notHeld.byBinding, listed.events, binding.events);
 
   const commands = checkedCommandsOf(options.commands, binding.actions);
 
   const group = aggregateCommand(
     options.name,
-    binding.actions.filter((action) => listed?.includes(action) ?? true),
+    binding.actions.filter((action) => listed.actions?.includes(action) ?? true),
     commands,
     options.subcommands ?? [],
     (action, syntax) => overHttp(binding, action, syntax, options.client),
+    binding.events
+      .filter((event) => listed.events?.includes(event) ?? true)
+      .map((event) =>
+        watched(event, options.client ?? httpClient(binding), eventErrors(event, binding)),
+      ),
   );
 
   return group;

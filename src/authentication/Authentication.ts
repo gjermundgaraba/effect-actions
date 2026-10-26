@@ -7,6 +7,7 @@ import {
   Option,
   Predicate,
   Redacted,
+  type Schema,
   type Scope,
 } from "effect";
 import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -23,6 +24,7 @@ import {
   type VerifierFailure,
 } from "./provider.js";
 import type { Errors } from "../contract/Action.js";
+import type { Codec } from "../contract/codec.js";
 import { assertDistinctTags, errorList, type ErrorsOf } from "../contract/declared.js";
 import { builtIns, type Refusal, scopeToken, Unauthenticated } from "../contract/errors.js";
 import type { Known, OptionalUnless } from "../contract/implementation.js";
@@ -308,8 +310,8 @@ const nonBearerChallengeOf = (security: Security, name: string): string | undefi
     Match.exhaustive,
   );
 
-/** What `make` takes besides the name and the identity. */
-export interface Options {
+/** What `make` takes besides the name and the identity `A`. */
+export interface Options<A = unknown> {
   /**
    * The one native scheme a caller proves the identity by, Bearer when left out: an API key in a
    * cookie, a header or the query, such as `HttpApiSecurity.apiKey({ in: "cookie", key: "session" })`,
@@ -330,7 +332,42 @@ export interface Options {
    * - A failure that is not the caller's, such as an issuer the verifier cannot reach, belongs here with `{ httpApiStatus: 503 }`: an `Unauthenticated` would have the caller sign in again.
    */
   readonly error?: Errors | Errors[number];
+  /**
+   * The stable id of an identity, such as its user id: what tells subscribers apart where a
+   * surface keeps a subscription between requests, such as an MCP poll subscription's lease.
+   *
+   * **Gotchas**
+   *
+   * - A surface serving a protected event type whose source has a `subscription` hook refuses to start without it, its message naming this option.
+   * - Two identities with one principal share those subscriptions, so give each its own: a tenant's id alone merges its users.
+   * - Without it no surface offers a protected event by webhook, which a subscription keys by its principal: the listing names no webhook, and a webhook subscription fails with `Event.SubscriptionError`, reason `Unsupported`.
+   * - Without it every caller shares one idempotency key space: another caller sending a key with the same input is given the first call's answer, as `Action.Options.idempotencyKey` says.
+   */
+  readonly principal?: ((identity: A) => string) | undefined;
+  /**
+   * The identity's schema, its `Type` the identity: how a surface keeps an identity past a
+   * restart, as `Webhook.layer` with `persist` keeps each webhook subscriber's, its JSON in the
+   * store.
+   *
+   * **Gotchas**
+   *
+   * - `Webhook.layer` with `persist` refuses to serve a protected event by webhook without it, its message naming this option.
+   */
+  readonly schema?: Codec | undefined;
 }
+
+// Why: `principal` is checked apart from the inferred options, against the identity `make` was
+// given, which also types its parameter: inferred with them, it would take an `any` identity.
+type PrincipalOf<A> = NoInfer<Pick<Options<A>, "principal">>;
+
+// Why: A given `schema` is checked against the identity here, both ways, since `Options` cannot
+// type it: the options are bounded by `Options<never>`, which fixes the identity as `never` before
+// `make` knows it. One way alone would take a schema of a wider or a narrower type.
+type SchemaOf<O, A> = O extends { readonly schema: infer S extends Schema.Top }
+  ? [S["Type"], A] extends [A, S["Type"]]
+    ? unknown
+    : { readonly schema: "a schema whose Type is the identity's" }
+  : unknown;
 
 type SecurityOf<O> = O extends { readonly security: infer S extends Security }
   ? S
@@ -345,13 +382,15 @@ type SecurityOf<O> = O extends { readonly security: infer S extends Security }
  * one name only for one declaration, whose values a server and a client may hold as `layer` says.
  * Guide: `docs/Authentication.md` in this package; in an application: `examples/notes-service/src/identity/`.
  */
-export const make = <const Name extends string, I, A, const O extends Options = {}>(
+export const make = <const Name extends string, I, A, const O extends Options<never> = {}>(
   name: Name,
   identity: Context.Key<I, A>,
-  ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>>>
+  ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>> & PrincipalOf<A> & SchemaOf<O, A>>
 ): Descriptor<I, A, SecurityOf<O>, Name, ErrorsOf<O>> => {
   const security: Security = options[0]?.security ?? HttpApiSecurity.bearer;
   const error = errorList(options[0]?.error);
+  const principal = options[0]?.principal;
+  const schema = options[0]?.schema;
 
   // Why: The name keys its scheme in the OpenAPI document as it is, so one that is no key throws.
   // Rejected: replacing other characters with `_`, which gives `app/Login` and `app:Login` one key,
@@ -381,6 +420,8 @@ export const make = <const Name extends string, I, A, const O extends Options = 
     security: security as SecurityOf<O>,
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A type read from the options: `ErrorsOf` is the list given, one schema as a list of one, or none.
     error: error as ErrorsOf<O>,
+    ...(principal === undefined ? {} : { principal }),
+    ...(schema === undefined ? {} : { schema }),
     "~provider": Context.Service<Provider<I, Name>, Runtime>(
       `effect-actions/Authentication/Provider/${name}`,
     ),
@@ -457,6 +498,7 @@ type Resource =
  * **Gotchas**
  *
  * - Call it once per descriptor, and provide that value to every layer serving a protected action: nothing else satisfies the provider they require, neither the identity nor another descriptor's provider, which type-checks under the same name and identity, then dies when the layer builds; only a client may hold another descriptor of the name, such as one of a cookie name the server decides at startup.
+ * - Over `ActionRpc` a verifier reading `HttpServerRequest` reads one holding the message's headers alone, a socket's upgrade headers before its own, at `/` with no query or body, on every protocol: one judging the URL or query sees none of the client's.
  */
 export function layer<
   const Name extends string,

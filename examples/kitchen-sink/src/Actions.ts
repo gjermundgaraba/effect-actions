@@ -1,18 +1,26 @@
 import { Assistant } from "./assistant/Assistant.js";
 import { AttachImage, GetAttachment } from "./attachments/Attachments.js";
 import { WhoAmI } from "./identity/Identity.js";
-import { Issues } from "./issues/Issues.js";
+import { ExportIssues, Issues } from "./issues/Issues.js";
 import { GetStatus } from "./workspaces/Workspaces.js";
 
 // Which actions each surface gets. A contract says nothing about where it is served: each
 // surface takes a list, and these are the lists, built from the contracts themselves.
 
 /** What a signed-in member may call: every protected action of the public port. */
-export const MemberActions = [WhoAmI, ...Issues, AttachImage, GetAttachment, ...Assistant] as const;
+export const MemberActions = [
+  WhoAmI,
+  ...Issues,
+  ExportIssues,
+  AttachImage,
+  GetAttachment,
+  ...Assistant,
+] as const;
 
 /**
  * The MCP tools, for the HTTP endpoint and the stdio server alike. `attachImage` is left out:
  * listing it throws, since MCP takes no image as input. So is the assistant: it is a model
- * itself, and its tools are already here.
+ * itself, and its tools are already here. So is `exportIssues`: a tool collects its stream
+ * whole before answering, every issue of the workspace at once in a model's context.
  */
 export const Tools = [GetStatus, WhoAmI, ...Issues, GetAttachment] as const;

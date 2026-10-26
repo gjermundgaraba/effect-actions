@@ -20,6 +20,7 @@ import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
+import * as Event from "../../src/contract/Event.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { authenticate } from "../support/app/authentication.js";
 import { actors, CurrentActor } from "../support/app/authorization.js";
@@ -671,7 +672,7 @@ it("keeps same-contract implementations apart over MCP", async () => {
   }
 });
 
-it("records a tool call's arguments on its span, a Schema.Redacted value included, where HTTP records no body", async () => {
+it("keeps a tool call's arguments off its spans over MCP, as HTTP keeps its body, where Effect's toolkit records them, a Schema.Redacted value included", async () => {
   const SignIn = Action.make("login", {
     description: "",
     readOnly: false,
@@ -729,8 +730,9 @@ it("records a tool call's arguments on its span, a Schema.Redacted value include
   );
 
   expect(http).toContain("login");
-  expect(http).not.toContainEqual(sent);
-  expect(mcp).toContainEqual(sent);
+  expect(mcp).toContain("login");
+  expect(JSON.stringify(http)).not.toContain("hunter2");
+  expect(JSON.stringify(mcp)).not.toContain("hunter2");
   expect(toolkit).toContainEqual(sent);
 });
 
@@ -1005,6 +1007,77 @@ it("refuses a binding error with a built-in error's tag, on each binding", () =>
   ]);
 });
 
+it("refuses a binding error with a built-in error's tag where it binds an event type alone, on each binding", () => {
+  class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+
+  const Ticked = Event.make("clock.ticked", {
+    description: "",
+    payload: {},
+    caller: Action.Anyone,
+  });
+
+  const refusal = 'binding of event "clock.ticked": error _tag "Forbidden" names two error schemas';
+
+  expect(() => ActionHttp.make([Ticked], { error: [Forbidden] })).toThrow(`ActionHttp ${refusal}`);
+  expect(() => ActionRpc.make([Ticked], { error: [Forbidden] })).toThrow(`ActionRpc ${refusal}`);
+});
+
+it("refuses a binding error tagged SubscriptionError where it offers an event type's webhook routes", () => {
+  const Changed = Event.make("user.changed", {
+    description: "",
+    payload: {},
+    caller: CurrentActor,
+  });
+
+  const Principal = Authentication.make("bindings.Principal", CurrentActor, {
+    principal: (actor) => actor.id,
+  });
+
+  const Shadow = Schema.TaggedStruct("SubscriptionError", { message: Schema.String });
+
+  expect(() => ActionHttp.make([Changed], { authentication: Principal, error: Shadow })).toThrow(
+    `ActionHttp binding of event "user.changed"'s webhook routes: error _tag "SubscriptionError" names two error schemas`,
+  );
+  expect(ActionRpc.make([Changed], { authentication: Principal, error: Shadow }).events).toEqual([
+    Changed,
+  ]);
+});
+
+it("refuses at serving a binding spread with another descriptor than its protected event type names, on each binding", () => {
+  class Stranger extends Context.Service<Stranger, { readonly id: string }>()(
+    "bindings/Stranger",
+  ) {}
+
+  const Changed = Event.make("user.changed", {
+    description: "",
+    payload: {},
+    caller: CurrentActor,
+  });
+
+  const Elsewhere = Authentication.make("bindings.Elsewhere", Stranger);
+
+  const changes = Event.implement(
+    Changed,
+    { check: () => Effect.succeed({ cursor: "0", events: [] }) },
+    { authorize: Event.allowAll },
+  );
+
+  const refusal = "Protected event 'user.changed' requires its matching authentication descriptor";
+
+  expect(() =>
+    ActionHttp.layer(
+      { ...ActionHttp.make([Changed], { authentication: Login }), authentication: Elsewhere },
+      changes,
+    ),
+  ).toThrow(refusal);
+  expect(() =>
+    ActionRpc.layer(
+      { ...ActionRpc.make([Changed], { authentication: Login }), authentication: Elsewhere },
+      changes,
+    ),
+  ).toThrow(refusal);
+});
+
 it("refuses a binding where a call's errors share a _tag across their sources, on each binding", () => {
   class Down extends Schema.TaggedError<Down>()("Down", {}) {}
 
@@ -1207,7 +1280,7 @@ describe("HTTP bindings", () => {
       "Listed in actions, but the binding does not hold it: alpha (another contract) (add it to the binding's actions; one marked (another contract) is a contract of that name it does not hold: list the one it holds)",
     );
     expect(() => ActionHttp.layer(bound, apps, { actions: [Audit] })).toThrow(
-      "Listed in actions, but no implementation holds it: audit (pass the implementation holding it, or list the contract it implements)",
+      "no implementation holds it: audit",
     );
   });
 

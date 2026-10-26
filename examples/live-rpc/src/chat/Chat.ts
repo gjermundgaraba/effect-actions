@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { CurrentMember } from "../identity/Identity.js";
 
 // A message's `id` counts up within its room, so a client asks for what came after the last
@@ -54,8 +55,8 @@ export const ListRooms = Action.make("listRooms", {
 
 const signedIn = { caller: CurrentMember } as const;
 
-// Actions are unary: nothing streams. A page keeps up by calling this again on its open
-// socket, passing the last id it has seen.
+// Reads once: a page opening a room reads what is there, then watches `MessagePosted` below from
+// the last id it read.
 export const ReadMessages = Action.make("readMessages", {
   ...signedIn,
   description: "Read the room's messages after the given id; 0 reads them all.",
@@ -81,3 +82,12 @@ export const DeleteMessage = Action.make("deleteMessage", {
 });
 
 export const Messages = [ReadMessages, PostMessage, DeleteMessage] as const;
+
+// Each message posted to the room, as it is posted: a page watches it on its open socket,
+// about the room its header names, as the actions are. Signed-in, so each watch authenticates
+// and runs `authorize` as it starts, refused for a member outside the room.
+export const MessagePosted = Event.make("message.posted", {
+  description: "A message posted to the room.",
+  payload: Message,
+  caller: CurrentMember,
+});

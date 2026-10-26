@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { CurrentMember } from "../identity/Identity.js";
 
 export const Status = Schema.Literals(["open", "closed"]);
@@ -109,3 +110,49 @@ export const CloseIssue = Action.make("closeIssue", {
 });
 
 export const Issues = [ListIssues, GetIssue, CreateIssue, CommentOnIssue, CloseIssue] as const;
+
+// An action answering a stream: its handler returns a `Stream` of issues, and every client's
+// call returns one, each issue read as the server sends it. It reports how far it is, too.
+// `Issues` leaves it out, so MCP's `Tools` and the assistant's tools do: a tool answers one
+// result, so it would collect the whole export before answering, every issue at once in a
+// model's context. HTTP, RPC and the CLI serve it.
+export const ExportIssues = Action.make("exportIssues", {
+  description: "Stream every issue of your workspace, oldest first, with bodies and comments.",
+  input: {
+    status: Schema.optional(Status).annotate({ description: "Only issues of this status." }),
+  },
+  success: Action.Stream(Issue),
+  progress: {
+    exported: Schema.Finite.annotate({ description: "How many issues were sent." }),
+    total: Schema.Finite.annotate({ description: "How many the export holds." }),
+  },
+  // An export is costly, so it is limited too: refused before its first issue, a 429.
+  error: RateLimited,
+  readOnly: true,
+  caller: CurrentMember,
+});
+
+/** What changed about an issue, as `issue.changed` carries it. */
+export const IssueChange = Schema.Struct({
+  workspace: Schema.String,
+  id: Schema.String,
+  title: Schema.String,
+  status: Status,
+  change: Schema.Literals(["filed", "commented", "closed"]),
+  // The comment a change added; a subscriber asking `comments: false` receives none.
+  comment: Schema.optional(Comment),
+});
+
+// An event type: what a subscription takes, what each occurrence carries, and who may
+// subscribe. `input` both filters the occurrences, by `status`, and shapes them, by `comments`.
+export const IssueChanged = Event.make("issue.changed", {
+  description: "An issue in your workspace was filed, commented on or closed.",
+  input: {
+    status: Schema.optional(Status).annotate({ description: "Only issues now of this status." }),
+    comments: Schema.optional(Schema.Boolean).annotate({
+      description: "Whether a change carries the comment it added; omitted, it does.",
+    }),
+  },
+  payload: IssueChange,
+  caller: CurrentMember,
+});

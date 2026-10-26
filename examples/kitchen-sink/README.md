@@ -22,6 +22,8 @@ node --import tsx examples/kitchen-sink/src/cli.ts list-issues -n 5
 node --import tsx examples/kitchen-sink/src/cli.ts get-issue ACME-1
 echo "It crashes on an empty draft" | node --import tsx examples/kitchen-sink/src/cli.ts create-issue --title Crash
 node --import tsx examples/kitchen-sink/src/cli.ts ask-assistant --prompt "Close what is done."   # answers with a call to approve
+node --import tsx examples/kitchen-sink/src/cli.ts export-issues      # each issue as it arrives, with progress on stderr
+node --import tsx examples/kitchen-sink/src/cli.ts watch issue.changed   # each change, until stopped
 
 # The admin port takes an operator key, not a member's token.
 curl -s 127.0.0.1:3001/admin/suspendWorkspace -H 'Content-Type: application/json' \
@@ -71,10 +73,12 @@ src/
 │   ├── tenant.ts          Tenant, and the router middleware that resolves it per request
 │   └── handlers.ts
 ├── issues/
-│   ├── Issues.ts          contract: schemas, errors, five actions
-│   ├── store.ts           IssueStore, scoped by workspace
-│   ├── write-limit.ts     the write limit, wrapped around handlers
+│   ├── Issues.ts          contract: schemas, errors, five actions, exportIssues, issue.changed
+│   ├── store.ts           IssueStore, scoped by workspace, and its changes
+│   ├── write-limit.ts     the write and export limits, wrapped around handlers
 │   ├── handlers.ts        Action.implement over the store
+│   ├── export.ts          exportIssues: a stream, with progress
+│   ├── events.ts          issue.changed: a log source fed by the store's changes
 │   ├── guide.ts           a native MCP resource and prompt
 │   └── assistant.ts       the actions as a model's Toolkit, with approval
 ├── assistant/             the model loop, served: a turn per request
@@ -112,9 +116,10 @@ src/
 test/
 ├── routes.test.ts         the host's surfaces: one port over HTTP and MCP, then both ports
 ├── request-policy.test.ts raw requests to each port as a web handler
-├── issues/                in process, with Action.client; the assistant's tools
+├── issues/                in process, with Action.client; the assistant's tools; the export over
+│                          HTTP and RPC; issue.changed in process and by webhook
 ├── assistant/             the assistant over HTTP, with a scripted model
-├── support/               the scripted model the assistant's tests give the routes
+├── support/               the scripted model; the services the public routes need in memory
 ├── identity/              what authentication adds: tokens over HTTP, sessions over RPC
 ├── attachments/           images over HTTP and MCP; the download route
 └── admin/                 the operators' grants; the trusted operator
@@ -151,6 +156,8 @@ search for in the file.
 | `make`: errors with `httpApiStatus`                            | `src/issues/Issues.ts` (`IssueNotFound`, `RateLimited`)                              |
 | `make`: a shared error list                                    | `src/issues/Issues.ts` (`IssueWriteErrors`), `src/attachments/Attachments.ts`        |
 | `make`: an option bundle, spread                               | `src/issues/Issues.ts` (`change`), `src/admin/Admin.ts` (`onWorkspace`)              |
+| `make`: `progress`, and `Stream`, a success answering a stream | `src/issues/Issues.ts` (`ExportIssues`)                                              |
+| A handler returning a `Stream`, reporting progress             | `src/issues/export.ts`                                                               |
 | `Image`, in a success and in an input                          | `src/attachments/Attachments.ts`                                                     |
 | `byName`                                                       | `src/issues/guide.ts` (`tools`)                                                      |
 | `implement`: one action, a plain handler                       | `src/identity/handlers.ts`                                                           |
@@ -185,6 +192,24 @@ search for in the file.
 | A trusted identity no verifier returns                         | `src/admin/Admin.ts`, `src/admin/authenticate.ts`, `src/ops.ts` |
 | A verifier's declared error over MCP                           | `test/identity/identity.test.ts`                                |
 | A test replacing a verifier's service                          | `test/identity/identity.test.ts` (`issuerDown`)                 |
+| `make`: `principal`, one subscriber per workspace              | `src/identity/Identity.ts` (`Login`)                            |
+
+### Event
+
+| Export or option                                                                                          | File                                    |
+| --------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `make`: `description`, `input` that filters and shapes, `payload`, `caller`                               | `src/issues/Issues.ts` (`IssueChanged`) |
+| `implement`: a log source fed by a keyed `emit`, `key` reading the caller, `match`, `transform`, `maxAge` | `src/issues/events.ts`                  |
+| `implement`: `authorize`, one rule for actions and events                                                 | `src/identity/authorize.ts`             |
+| `watch` in process, `Forbidden` for a subscriber                                                          | `test/issues/events.test.ts`            |
+
+### Webhook
+
+| Export or option                          | File                                        |
+| ----------------------------------------- | ------------------------------------------- |
+| `layer`, for MCP and HTTP alike           | `src/routes.ts` (`publicRoutes`)            |
+| The `HttpClient` and `Dns` delivery needs | `src/server.ts`, `test/support/services.ts` |
+| A delivery, as the subscriber sees it     | `test/issues/events.test.ts`                |
 
 ### ActionHttp
 
@@ -202,23 +227,28 @@ search for in the file.
 | `client`: `baseUrl`, `transformClient`                         | `src/seed.ts`                                                               |
 | `fetchClient`                                                  | `src/sdk.ts`                                                                |
 | Declared errors handled by tag                                 | `src/seed.ts`, `src/sdk.ts`                                                 |
+| An event at `events/<name>`, polled or streamed                | `src/Api.ts`                                                                |
+| `layer`: an event given to one layer of a binding              | `src/routes.ts` (`events`, `api`)                                           |
+| A stream action's route and method, with `onProgress`          | `test/issues/export.test.ts`                                                |
+| An event's `subscribe` route                                   | `test/issues/events.test.ts`                                                |
 
 ### ActionMcp
 
-| Export or option                                 | File                                                          |
-| ------------------------------------------------ | ------------------------------------------------------------- |
-| `layerHttp`, public and protected tools together | `src/routes.ts` (`mcp`)                                       |
-| `layerHttp`: `authentication`, `instructions`    | `src/routes.ts` (`mcp`)                                       |
-| `layerHttp`: `actions`, one action left off      | `src/routes.ts` (`mcp`), `src/Actions.ts` (`Tools`)           |
-| `layerHttp`: `allowedOrigins`                    | `src/routes.ts` (`mcp`), `test/routes.test.ts`                |
-| `layerHttp`: `features`, a resource and a prompt | `src/issues/guide.ts`                                         |
-| CORS for a browser MCP client                    | `src/request-policy.ts` (`cors`)                              |
-| `runStdio`, the host naming the caller           | `src/stdio.ts`                                                |
-| An image block from a media field                | `src/attachments/Attachments.ts` (`GetAttachment`)            |
-| `client`: `transformClient`                      | `test/routes.test.ts`                                         |
-| `client`, decoding an image                      | `test/attachments/attachments.test.ts`                        |
-| `client`: `authentication`, a verifier's error   | `test/identity/identity.test.ts`                              |
-| `request`: `headers`, `url`                      | `test/attachments/attachments.test.ts`, `test/routes.test.ts` |
+| Export or option                                      | File                                                          |
+| ----------------------------------------------------- | ------------------------------------------------------------- |
+| `layerHttp`, public and protected tools together      | `src/routes.ts` (`mcp`)                                       |
+| `layerHttp`: `authentication`, `instructions`         | `src/routes.ts` (`mcp`)                                       |
+| `layerHttp`: `actions`, one action left off           | `src/routes.ts` (`mcp`), `src/Actions.ts` (`Tools`)           |
+| `layerHttp`: `allowedOrigins`                         | `src/routes.ts` (`mcp`), `test/routes.test.ts`                |
+| `layerHttp`: `features`, a resource and a prompt      | `src/issues/guide.ts`                                         |
+| CORS for a browser MCP client                         | `src/request-policy.ts` (`cors`)                              |
+| `runStdio`, the host naming the caller                | `src/stdio.ts`                                                |
+| An image block from a media field                     | `src/attachments/Attachments.ts` (`GetAttachment`)            |
+| `client`: `transformClient`                           | `test/routes.test.ts`                                         |
+| `client`, decoding an image                           | `test/attachments/attachments.test.ts`                        |
+| `client`: `authentication`, a verifier's error        | `test/identity/identity.test.ts`                              |
+| `request`: `headers`, `url`                           | `test/attachments/attachments.test.ts`, `test/routes.test.ts` |
+| `layerHttp`: an event, polled, streamed or by webhook | `src/routes.ts` (`mcp`)                                       |
 
 ### ActionRpc
 
@@ -229,6 +259,8 @@ search for in the file.
 | A WebSocket protocol              | `src/server.ts` (`socket`)                                    |
 | `client`, over a WebSocket        | `src/browser.ts`                                              |
 | A credential per message          | `test/identity/session.test.ts` (`as`)                        |
+| An event as a stream rpc          | `src/Rpc.ts`                                                  |
+| A stream action's method          | `test/issues/export.test.ts`                                  |
 
 ### ActionToolkit
 
@@ -251,6 +283,8 @@ search for in the file.
 | A client from `Config`, its credentials optional                              | `src/cli.ts`                               |
 | `make`, with a trusted identity the host supplies                             | `src/ops.ts`                               |
 | `logToStderr`                                                                 | `src/cli.ts`, `src/ops.ts`, `src/stdio.ts` |
+| `render` of each element of a stream action                                   | `src/cli.ts` (`exportIssues`)              |
+| `watch <event>`, derived from the binding                                     | `src/cli.ts`                               |
 
 ### Testing
 
@@ -292,5 +326,9 @@ Left out because this application has no honest place for them:
   `BuildServices`, `ActionHttp.Client`, `Authentication.Any`.
 - A handler sending MCP notifications through `McpServer.McpServer`, and one reading
   `McpSchema.McpRequestContext`.
+- An event's `check` source and `subscription`, and a watch's `resume` and `mode`; and
+  `Webhook.delivery`, `layerReceiver` and `persist`: [build-events](../build-events/) has them.
+  No example sets a `subscription`'s `lease` or an occurrence's `timestamp`: the defaults (5
+  minutes, and when the occurrence arrived) serve both.
 - A tenant taken from a subdomain. The workspace is a header, so the OAuth resource the server
   publishes is one fixed URL.

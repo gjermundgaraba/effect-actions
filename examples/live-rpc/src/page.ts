@@ -1,4 +1,6 @@
-import { Context, Effect, Layer, ManagedRuntime } from "effect";
+import { Context, Effect, Exit, Layer, ManagedRuntime, Stream } from "effect";
+import type * as Event from "@gjermundgaraba/effect-actions/Event";
+import type { MessagePosted } from "./chat/Chat.js";
 import { RpcClient } from "effect/rpc";
 import { Socket } from "effect/socket";
 import { connection, openChat } from "./browser.js";
@@ -22,6 +24,29 @@ export const chatOver = <E>(protocol: Layer.Layer<RpcClient.Protocol, E>) => {
       read: (after: number) => call((chat) => chat.room(name, token).read(after)),
       post: (text: string) => call((chat) => chat.room(name, token).post(text)),
       remove: (id: number) => call((chat) => chat.room(name, token).remove(id)),
+      // Calls `receive` with each message posted after `after`, the id of the last message the
+      // page holds, and each gap, as `messages` streams them, until the page calls the function
+      // it returns. `ended` is told why it stopped: a refusal, such as a token that expired by
+      // the time the watch connected again, or anything else, the page's own call included.
+      watch: (
+        after: number,
+        receive: (received: Event.Received<typeof MessagePosted>) => void,
+        ended: (why: "signed-out" | "not-a-member" | "stopped") => void,
+      ) =>
+        runtime.runCallback(
+          Effect.flatMap(Chat, (chat) =>
+            Stream.runForEach(chat.room(name, token).messages(after), (received) =>
+              Effect.sync(() => receive(received)),
+            ),
+          ).pipe(
+            Effect.as("stopped" as const),
+            Effect.catchTags({
+              Unauthenticated: () => Effect.succeed("signed-out" as const),
+              Forbidden: () => Effect.succeed("not-a-member" as const),
+            }),
+          ),
+          { onExit: (exit) => ended(Exit.isSuccess(exit) ? exit.value : "stopped") },
+        ),
     }),
 
     close: () => runtime.dispose(),

@@ -7,7 +7,7 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../../src/Api.js";
 import { AssistantFailed, ConversationNotFound } from "../../src/assistant/Assistant.js";
-import { memory } from "../../src/memory.js";
+import { services } from "../support/services.js";
 import { publicRoutes } from "../../src/routes.js";
 import { down, scripted } from "../support/scripted.js";
 
@@ -15,7 +15,7 @@ import { down, scripted } from "../support/scripted.js";
 // memory. Each test gives the routes the model it is about, in place of the demo one: the
 // first `Layer.provide` is what the routes get.
 const served = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
-  Effect.provide(Testing.layer(publicRoutes).pipe(Layer.provide(model), Layer.provide(memory)));
+  Effect.provide(Testing.layer(publicRoutes).pipe(Layer.provide(model), Layer.provide(services())));
 
 const signedIn = (token: string) => ({
   transformClient: HttpClient.mapRequest(
@@ -336,7 +336,7 @@ describe("the assistant, behind a route", () => {
 
       expect(again.waiting.map(({ tool }) => tool)).toEqual(["closeIssue"]);
       expect(answered).toMatchObject({ ran: [{ tool: "closeIssue" }], waiting: [] });
-    }).pipe(Effect.provide(Testing.layer(publicRoutes).pipe(Layer.provide(memory)))),
+    }).pipe(Effect.provide(Testing.layer(publicRoutes).pipe(Layer.provide(services())))),
   );
 
   it.effect("refuses a request answering one approval twice, and runs nothing of it", () =>

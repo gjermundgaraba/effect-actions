@@ -1,9 +1,15 @@
-import { Context, Effect, Layer } from "effect";
-import { type Comment, type Issue, IssueNotFound, type Status } from "./Issues.js";
+import { Context, Effect, Layer, PubSub, Stream } from "effect";
+import {
+  type Comment,
+  type Issue,
+  type IssueChange,
+  IssueNotFound,
+  type Status,
+} from "./Issues.js";
 
 /**
- * Where issues live, each in one workspace. Every method takes the workspace, so tenant
- * isolation is the data access's: no surface and no handler can skip it, and an issue of
+ * Where issues live, each in one workspace. Every method but `changes` takes the workspace, so
+ * tenant isolation is the data access's: no surface and no handler can skip it, and an issue of
  * another workspace is simply not found.
  */
 export class IssueStore extends Context.Service<
@@ -14,6 +20,15 @@ export class IssueStore extends Context.Service<
       status: typeof Status.Type | undefined,
       limit: number,
     ) => Effect.Effect<ReadonlyArray<Issue>>;
+    /** Every issue, oldest first. */
+    readonly all: (
+      workspace: string,
+      status: typeof Status.Type | undefined,
+    ) => Stream.Stream<Issue>;
+    readonly count: (
+      workspace: string,
+      status: typeof Status.Type | undefined,
+    ) => Effect.Effect<number>;
     readonly get: (workspace: string, id: string) => Effect.Effect<Issue, IssueNotFound>;
     readonly create: (
       workspace: string,
@@ -25,72 +40,122 @@ export class IssueStore extends Context.Service<
       comment: typeof Comment.Type,
     ) => Effect.Effect<Issue, IssueNotFound>;
     readonly close: (workspace: string, id: string) => Effect.Effect<Issue, IssueNotFound>;
+    /**
+     * Every change from now on, in the order the store makes them, of every workspace: whatever
+     * reads it filters by workspace itself, as `issueEvents`' `match` does.
+     */
+    readonly changes: Stream.Stream<typeof IssueChange.Type>;
   }
 >()("tracker/IssueStore") {
   // DEMO ONLY: memory, lost when the process stops. A real store is another Layer of this
   // service, chosen by the entrypoint.
-  static readonly layerMemory = Layer.sync(IssueStore, () => {
-    const issues = new Map<string, Array<Issue>>();
+  static readonly layerMemory = Layer.effect(
+    IssueStore,
+    Effect.gen(function* () {
+      const issues = new Map<string, Array<Issue>>();
+      const changed = yield* PubSub.unbounded<typeof IssueChange.Type>();
 
-    const of = (workspace: string) => issues.get(workspace) ?? [];
+      // Published in the step of the write, after it, so a subscriber never sees a change the
+      // store did not make, and sees them in the order they were made. A database publishes
+      // from its own change feed, or an outbox written in the same transaction.
+      const publish = (
+        workspace: string,
+        issue: Issue,
+        change: (typeof IssueChange.Type)["change"],
+        comment?: typeof Comment.Type,
+      ) =>
+        PubSub.publishUnsafe(changed, {
+          workspace,
+          id: issue.id,
+          title: issue.title,
+          status: issue.status,
+          change,
+          ...(comment === undefined ? {} : { comment }),
+        });
 
-    const get = Effect.fn("IssueStore.get")(function* (workspace: string, id: string) {
-      const issue = of(workspace).find((candidate) => candidate.id === id);
+      const of = (workspace: string) => issues.get(workspace) ?? [];
 
-      if (issue === undefined) return yield* new IssueNotFound({ id });
+      const having = (workspace: string, status: typeof Status.Type | undefined) =>
+        of(workspace).filter((issue) => status === undefined || issue.status === status);
 
-      return issue;
-    });
+      const get = Effect.fn("IssueStore.get")(function* (workspace: string, id: string) {
+        const issue = of(workspace).find((candidate) => candidate.id === id);
 
-    // No `yield*` between the read and the write: a fiber may be set aside at one, and two
-    // changes that each read the issue before either wrote would keep only the second. A
-    // database does this in one statement or a transaction.
-    const change = Effect.fn("IssueStore.change")(function* (
-      workspace: string,
-      id: string,
-      to: (issue: Issue) => Issue,
-    ) {
-      const issue = of(workspace).find((candidate) => candidate.id === id);
+        if (issue === undefined) return yield* new IssueNotFound({ id });
 
-      if (issue === undefined) return yield* new IssueNotFound({ id });
+        return issue;
+      });
 
-      const changed = to(issue);
+      // No `yield*` between the read and the write: a fiber may be set aside at one, and two
+      // changes that each read the issue before either wrote would keep only the second. A
+      // database does this in one statement or a transaction.
+      // A change `to` answers with the same issue for is no change, and is not published.
+      const change = Effect.fn("IssueStore.change")(function* (
+        workspace: string,
+        id: string,
+        to: (issue: Issue) => Issue,
+        kind: (typeof IssueChange.Type)["change"],
+        comment?: typeof Comment.Type,
+      ) {
+        const issue = of(workspace).find((candidate) => candidate.id === id);
 
-      issues.set(
-        workspace,
-        of(workspace).map((current) => (current === issue ? changed : current)),
-      );
+        if (issue === undefined) return yield* new IssueNotFound({ id });
 
-      return changed;
-    });
+        const changed = to(issue);
 
-    return IssueStore.of({
-      list: (workspace, status, limit) =>
-        Effect.sync(() =>
-          of(workspace)
-            .filter((issue) => status === undefined || issue.status === status)
-            .toReversed()
-            .slice(0, limit),
-        ),
-      get,
-      create: (workspace, draft) =>
-        Effect.sync(() => {
-          const existing = of(workspace);
+        if (changed === issue) return issue;
 
-          const issue: Issue = {
-            ...draft,
-            id: `${workspace.toUpperCase()}-${existing.length + 1}`,
-            status: "open",
-            comments: [],
-          };
+        issues.set(
+          workspace,
+          of(workspace).map((current) => (current === issue ? changed : current)),
+        );
 
-          issues.set(workspace, [...existing, issue]);
+        publish(workspace, changed, kind, comment);
 
-          return issue;
-        }),
-      comment: (workspace, id, comment) =>
-        change(workspace, id, (issue) => ({ ...issue, comments: [...issue.comments, comment] })),
-      close: (workspace, id) => change(workspace, id, (issue) => ({ ...issue, status: "closed" })),
-    });
-  });
+        return changed;
+      });
+
+      return IssueStore.of({
+        list: (workspace, status, limit) =>
+          Effect.sync(() => having(workspace, status).toReversed().slice(0, limit)),
+        // A database reads it in pages, by id, so an export never holds the workspace whole.
+        all: (workspace, status) =>
+          Stream.suspend(() => Stream.fromIterable(having(workspace, status))),
+        count: (workspace, status) => Effect.sync(() => having(workspace, status).length),
+        get,
+        create: (workspace, draft) =>
+          Effect.sync(() => {
+            const existing = of(workspace);
+
+            const issue: Issue = {
+              ...draft,
+              id: `${workspace.toUpperCase()}-${existing.length + 1}`,
+              status: "open",
+              comments: [],
+            };
+
+            issues.set(workspace, [...existing, issue]);
+            publish(workspace, issue, "filed");
+
+            return issue;
+          }),
+        comment: (workspace, id, comment) =>
+          change(
+            workspace,
+            id,
+            (issue) => ({ ...issue, comments: [...issue.comments, comment] }),
+            "commented",
+            comment,
+          ),
+        close: (workspace, id) =>
+          change(
+            workspace,
+            id,
+            (issue) => (issue.status === "closed" ? issue : { ...issue, status: "closed" }),
+            "closed",
+          ),
+        changes: Stream.fromPubSub(changed),
+      });
+    }),
+  );
 }

@@ -1,5 +1,6 @@
 import { Layer } from "effect";
 import { RateLimiter } from "effect/persistence";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { Grants } from "./admin/grants.js";
 import { Conversations } from "./assistant/conversations.js";
 import { demoModel } from "./assistant/demo-model.js";
@@ -27,4 +28,7 @@ export const memory = Layer.mergeAll(
   Grants.layerDemo,
   Conversations.layerMemory,
   demoModel,
+  // The issue changes' log, kept in this process for the subscribers its sockets and streams
+  // hold.
+  Event.layerMemory,
 );

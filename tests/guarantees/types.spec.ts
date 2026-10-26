@@ -389,9 +389,10 @@ export const builtInErrorTypes = () => {
   const bound = ActionHttp.make([Echo]);
 
   expectTypeOf<keyof typeof bound>().toEqualTypeOf<
-    "actions" | "error" | "prefix" | "api" | "authentication"
+    "actions" | "events" | "error" | "prefix" | "api" | "authentication"
   >();
   expectTypeOf(bound.authentication).toBeUndefined();
+  expectTypeOf(bound.events).toEqualTypeOf<readonly []>();
 
   const native = HttpApiClient.make(bound.api);
 
@@ -1630,7 +1631,8 @@ export const servedRequirementTypes = () => {
 };
 
 export const actionMcpClientTypes = Effect.gen(function* () {
-  const mcp = yield* ActionMcp.client([Double, WhoAmI, GetUser]);
+  const made = ActionMcp.client([Double, WhoAmI, GetUser]);
+  const mcp = yield* made;
   const call = mcp.double({ value: 2 });
 
   expectTypeOf<typeof call>().toEqualTypeOf<
@@ -1640,9 +1642,7 @@ export const actionMcpClientTypes = Effect.gen(function* () {
     >
   >();
 
-  expectTypeOf<
-    Effect.Services<ReturnType<typeof ActionMcp.client>>
-  >().toEqualTypeOf<HttpClient.HttpClient>();
+  expectTypeOf<Effect.Services<typeof made>>().toEqualTypeOf<HttpClient.HttpClient>();
 
   // @ts-expect-error -- The input is the action's decoded input.
   void mcp.double({ value: "2" });

@@ -1,0 +1,15 @@
+{
+  "name": "chat-rooms",
+  "main": "./src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHAT_ROOM", "class_name": "ChatRoom" },
+      { "name": "CHAT_LOBBY", "class_name": "ChatLobby" },
+    ],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ChatRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["ChatLobby"] },
+  ],
+}

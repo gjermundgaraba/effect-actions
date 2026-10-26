@@ -1,4 +1,11 @@
+packages:
+  - packages/*
 catalog:
+  "@cloudflare/vitest-plugin": ^1.4.4
+  "@cloudflare/workers-types": ^5.20261016.1
+  "@effect/platform-node": 4.0.6
+  "@effect/vitest": 4.0.6
+  effect: 4.0.6
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vite-plus: 1.4.0
   vitest: 5.0.5
@@ -15,6 +22,7 @@ peerDependencyRules:
 
 allowBuilds:
   esbuild: true
+  workerd: true
 catalogMode: prefer
 saveExact: true
 minimumReleaseAge: 1440

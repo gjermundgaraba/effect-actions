@@ -8,7 +8,9 @@ process.
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search
 [Action-failures.md](Action-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`:
 each declaration's JSDoc carries its rules and gotchas, and this page only what an example
-cannot show.
+cannot show. An action reporting progress or answering a stream is on
+[Action-streams.md](Action-streams.md); what happens apart from a call, which a subscriber
+watches, is an event type, on [Event.md](Event.md).
 
 ## Define a contract
 
@@ -40,8 +42,8 @@ are on `Action.make`. The list each surface takes lives in one file beside the c
 ([kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts)).
 
 - **List an action as a tool only where a model may hold what it takes and returns.** A tool
-  call passes both through the model's context and records its arguments on the current span,
-  a `Schema.Redacted` value included.
+  call passes both through the model's context, and `ActionToolkit`, through Effect's toolkit,
+  records its arguments on the current span, a `Schema.Redacted` value included.
 
 ## Say who may call an action
 
@@ -188,6 +190,17 @@ does.
 - **Internal failures are never sent** over HTTP, MCP and RPC: what reaches the log and the
   call's `ErrorReporter`s is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `ActionRpc.layer`;
   a Toolkit and a CLI make a defect the call's.
+
+## Answer a retried call once
+
+A write a caller may send again, after a dropped connection or a timeout, names a string field
+of its input as its `idempotencyKey`. The caller makes the key at random for the call and sends
+it again on each retry: a repeat with the same input is answered as the first call was, its
+handler run once, on every surface, since the key travels with the input. An implementation of
+such an action requires `Action.Idempotency` at startup, where the answers are kept: provide
+`Action.layerIdempotency` around the surfaces, as `Event.layerMemory` is provided; in a Durable
+Object, the Cloudflare package's `ActionDurableObject.make` provides it. What is kept, whose a key is, and what a repeat
+with another input answers, are on the option.
 
 ## Call actions in process
 

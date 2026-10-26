@@ -18,6 +18,11 @@ import { literalValues, members, unsuspended } from "../contract/ast.js";
 import { withStderrConsole } from "../stdio/console.js";
 import { InvalidInput } from "../contract/errors.js";
 import { decodeInput } from "../contract/call.js";
+import type { CallOptions } from "../contract/progress.js";
+import * as Event from "../contract/Event.js";
+import { type ErasedValue, elementsOf } from "../contract/implementation.js";
+import { type Each, elementOf } from "../contract/stream.js";
+import { ReceivedOf } from "../contract/occurrence.js";
 import { errorSchemas } from "../contract/declared.js";
 
 type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
@@ -50,10 +55,12 @@ export interface Options<A extends Action.Any> {
    */
   readonly description?: string;
   /**
-   * Human output: the decoded success to text for a person. Adds a `--json` flag to the
-   * command that selects JSON instead.
+   * Human output: the decoded success to text for a person, or of an action answering a stream
+   * each element to its line. Adds a `--json` flag to the command that selects JSON instead.
    */
-  readonly render?: (output: A["success"]["Type"]) => string;
+  // Why: A method, so a command of one action is an `Options<Action.Any>`, as a record of
+  // commands keyed by action needs; its parameter is then checked bivariantly.
+  render?(this: void, output: Each<A["success"]>): string;
   /**
    * Input fields taken as positional arguments instead of flags, in this order: `["id"]` takes
    * `get-note 7` for `--id 7`. An optional field is an optional argument, and an array field
@@ -466,10 +473,12 @@ const wholeInputFlag = (encoded: SchemaAST.AST) =>
     Flag.optional,
   );
 
-const printedOutput = <A extends Action.Any>(
-  action: A,
-  value: A["success"]["Type"],
-  render: ((output: A["success"]["Type"]) => string) | undefined,
+type Render = Options<Action.Any>["render"];
+
+const printedOutput = (
+  action: Action.Any,
+  value: ErasedValue,
+  render: Render,
 ): Effect.Effect<Option.Option<string>> =>
   Effect.map(
     Effect.orDie(Schema.encodeEffect(Schema.toCodecJson(action.success))(value)),
@@ -600,14 +609,14 @@ const stdinTextOf = (field: string) =>
     return text.replace(/[\r\n]+$/, "");
   });
 
-interface InputConfig<A extends Action.Any> {
+interface InputConfig<A extends Pick<Action.Any, "input">> {
   readonly flags: Readonly<Record<string, Param.Param<Kind, Option.Option<unknown>>>>;
   readonly positional: ReadonlyArray<FieldParam>;
   readonly decode: (parsed: Parsed) => Effect.Effect<A["input"]["Type"], InvalidInput>;
   readonly stdinHelp: string | undefined;
 }
 
-const inputConfig = <A extends Action.Any>(
+const inputConfig = <A extends Pick<Action.Any, "input">>(
   action: A,
   positional: ReadonlyArray<string>,
   aliases: Readonly<Record<string, string | undefined>>,
@@ -705,9 +714,48 @@ const inputConfig = <A extends Action.Any>(
 // one-character alias as `-n`, every other flag as `--name`.
 const aliasFlag = (alias: string) => (alias.length === 1 ? `-${alias}` : `--${alias}`);
 
+// Why: On stderr, so stdout holds the answer alone, as a pipe reads it.
+const progressLinesOf = (progress: Action.Any["progress"]): CallOptions<unknown>["onProgress"] => {
+  if (progress === undefined) return undefined;
+
+  const encode = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(progress)));
+
+  return (value) => Effect.flatMap(Effect.orDie(encode(value)), Console.log);
+};
+
+// Why: A stream's elements are printed as they arrive, one compact line each, as JSON Lines, so
+// a pipe reads each before the stream ends; an answer is printed once, indented.
+// Each element is encoded whether or not `render` prints it, so one breaking its schema is the
+// call's defect, as an answer is.
+const printedOf = (action: Action.Any) => {
+  const element = elementOf(action.success);
+
+  if (element === undefined)
+    return (value: ErasedValue, render: Render, print: (line: string) => void) =>
+      Effect.flatMap(
+        printedOutput(action, value, render),
+        Option.match({
+          onNone: () => Effect.void,
+          onSome: (line) => Effect.sync(() => print(line)),
+        }),
+      );
+
+  const encode = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(element)));
+
+  return (value: ErasedValue, render: Render, print: (line: string) => void) =>
+    Stream.runForEach(elementsOf(Effect.succeed(value)), (each) =>
+      Effect.map(Effect.orDie(encode(each)), (json) =>
+        print(render === undefined ? json : render(each)),
+      ),
+    );
+};
+
 export const command = <A extends Action.Any, E, R>(
   action: A,
-  execute: (input: A["input"]["Type"]) => Effect.Effect<A["success"]["Type"], E, R>,
+  execute: (
+    input: A["input"]["Type"],
+    onProgress: CallOptions<unknown>["onProgress"],
+  ) => Effect.Effect<A["success"]["Type"], E, R>,
   options: Options<A> | undefined,
   errors: Action.Errors,
 ) => {
@@ -759,13 +807,17 @@ export const command = <A extends Action.Any, E, R>(
     ),
   });
 
-  const run = (parsed: Parsed, rendered: ((output: A["success"]["Type"]) => string) | undefined) =>
-    decode(parsed).pipe(
-      Effect.flatMap(execute),
-      failing,
-      Effect.flatMap((value) => printedOutput(action, value, rendered)),
-      withStderrConsole,
-      Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: Console.log })),
+  const progressLines = progressLinesOf(action.progress);
+  const printed = printedOf(action);
+
+  const run = (parsed: Parsed, rendered: Render) =>
+    Console.consoleWith((stdout) =>
+      decode(parsed).pipe(
+        Effect.flatMap((input) => execute(input, progressLines)),
+        Effect.flatMap((value) => printed(value, rendered, (line) => stdout.log(line))),
+        failing,
+        withStderrConsole,
+      ),
     );
 
   const command =
@@ -786,4 +838,57 @@ export const command = <A extends Action.Any, E, R>(
         Command.withDescription(`${description}\n\n${stdinHelp}`),
         Command.withShortDescription(description),
       );
+};
+
+/**
+ * The command watching `event`, named after it, with one flag per field of its input as an
+ * action's command has, and `--cursor` to resume from: it prints each occurrence and gap `watch`
+ * yields as one line of compact JSON on stdout, until it is interrupted or the watch fails.
+ */
+export const watchCommand = <E, R>(
+  event: Event.Any,
+  watch: (
+    input: ErasedValue,
+    cursor: string | undefined,
+  ) => Stream.Stream<Event.Received<Event.Any>, E, R>,
+  errors: Action.Errors,
+) => {
+  const { flags, decode } = inputConfig(event, [], {}, undefined);
+  const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.toCodecJson(ReceivedOf(event))));
+  const failing = failingAsDerived([...errors, Event.SubscriptionError]);
+
+  assertDistinct(
+    "flag",
+    [
+      ...Object.keys(flags).map((field) => [kebab(field), `field ${field}`] as const),
+      ["cursor", "--cursor"] as const,
+    ],
+    ([key]) => key,
+    {
+      labelOf: ([key]) => `--${key}`,
+      claimantOf: ([, claimant]) => claimant,
+      fix: "rename the field",
+    },
+  );
+
+  const cursor = Flag.String("cursor").pipe(
+    Flag.withDescription("Where to resume: a cursor an earlier line carried; omitted, from now"),
+    Flag.optional,
+  );
+
+  return Command.make(event.name, { input: flags, cursor }, ({ input, cursor: from }) =>
+    Console.consoleWith((stdout) =>
+      decode(input).pipe(
+        Effect.flatMap((value) =>
+          Stream.runForEach(watch(value, Option.getOrUndefined(from)), (received) =>
+            Effect.flatMap(Effect.orDie(encode(received)), (line) =>
+              Effect.sync(() => stdout.log(line)),
+            ),
+          ),
+        ),
+        failing,
+        withStderrConsole,
+      ),
+    ),
+  ).pipe(Command.withDescription(event.description));
 };

@@ -42,7 +42,7 @@ const modulesOf = (entry: string): ReadonlyMap<string, ReadonlyArray<string>> =>
 
 const importMapEffectSpecifiers = ["effect", "effect/http", "effect/http-api", "effect/rpc"];
 
-it.each(["Action", "ActionHttp", "ActionRpc", "Authentication"] as const)(
+it.each(["Action", "Event", "ActionHttp", "ActionRpc", "Authentication"] as const)(
   "%s, which a browser client imports, imports no Node or server module, and Effect only through its browser barrels",
   (module) => {
     const entry = manifest.exports[`./${module}`].slice(2);

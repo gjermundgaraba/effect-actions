@@ -1,13 +1,17 @@
-import { type Context, Effect, type Layer, Schema } from "effect";
+import { type Context, Effect, type Layer, Schema, SchemaGetter } from "effect";
 import { type Prompt, Tool, Toolkit } from "effect/ai";
 import type * as Action from "../contract/Action.js";
 import type { BuiltIns } from "../contract/errors.js";
 import { projectedErrors } from "../contract/declared.js";
 import { hintsOf } from "../contract/hints.js";
+import type { Codec } from "../contract/codec.js";
+import { progressSink } from "../contract/progress.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
+import { type ToolSuccess, toolSuccessOf } from "../contract/stream.js";
 import {
   acquire,
   type ActionOf,
+  answeringWhole,
   type AnyImplementation,
   type BuildServices,
   type BuildError,
@@ -21,16 +25,21 @@ import {
   type RequestOf,
   select,
   type SelectedOf,
-  type Served,
+  type ServedActions,
   type Serving,
   toList,
+  type ErasedValue,
 } from "../contract/implementation.js";
 
 type NativeTool<A extends Action.Any, R> = Tool.Tool<
   A["name"],
   {
     readonly parameters: Schema.toCodecJson<A["input"]>;
-    readonly success: Schema.toCodecJson<A["success"]>;
+    readonly success: A["progress"] extends Codec
+      ? Schema.toCodecJson<
+          Schema.Union<readonly [ProgressOf<A["progress"]>, ToolSuccess<A["success"]>]>
+        >
+      : Schema.toCodecJson<ToolSuccess<A["success"]>>;
     readonly failure: Schema.toCodecJson<
       Schema.Union<ReadonlyArray<A["error"][number] | BuiltIns>>
     >;
@@ -142,14 +151,58 @@ const annotateFromContract = (tool: Tool.Any, action: Action.Any) => {
   );
 };
 
-const jsonToolOf = (action: Action.Any) =>
-  Tool.make(action.name, {
+/** A value an action reported, as a toolkit's preliminary result holds it. */
+class Reported<A> {
+  readonly _tag = "Progress";
+  readonly value: A;
+
+  constructor(value: A) {
+    this.value = value;
+  }
+}
+
+// Why: Progress tagged, and tried first: a preliminary result is encoded with the tool's one
+// success schema, where an untagged value the success also accepts would be encoded as a success,
+// cut to its fields, or as `null` against a `Void` one. Its member accepts only a `Reported`, so
+// a success shaped `{ _tag: "Progress", value }` itself is encoded as the success, however its
+// fields overlap a progress value's.
+/** A preliminary result of a tool whose action declares `progress`: one value it reported. */
+const ProgressOf = (progress: Codec) =>
+  Schema.TaggedStruct("Progress", { value: progress }).pipe(
+    Schema.decodeTo(
+      Schema.declare((input): input is Reported<unknown> => input instanceof Reported),
+      {
+        decode: SchemaGetter.transform(({ value }) => new Reported(value)),
+        encode: SchemaGetter.transform((reported) => ({
+          _tag: "Progress" as const,
+          value: reported.value,
+        })),
+      },
+    ),
+  );
+
+type ProgressOf<P> = P extends Codec
+  ? Schema.decodeTo<
+      Schema.declare<Reported<P["Type"]>>,
+      Schema.TaggedStruct<"Progress", { readonly value: P }>
+    >
+  : never;
+
+const jsonToolOf = (action: Action.Any) => {
+  const success = toolSuccessOf(action.success);
+
+  return Tool.make(action.name, {
     description: action.description,
     parameters: Schema.toCodecJson(action.input),
-    success: Schema.toCodecJson(action.success),
+    success: Schema.toCodecJson(
+      action.progress === undefined
+        ? success
+        : Schema.Union([ProgressOf(action.progress), success]),
+    ),
     failure: Schema.toCodecJson(Schema.Union(projectedErrors(action))),
     failureMode: "return",
   });
+};
 
 type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
 
@@ -163,12 +216,14 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
  *
  * **Gotchas**
  *
+ * - An action answering a stream, `Action.Stream`, answers its elements collected into one array once the stream ends, its tool's success that array.
+ * - An action declaring `progress` streams each value as a result with `preliminary: true` before its success, its `result` `{ _tag: "Progress", value }`, so its tool's success schema is that or `success`; a model reads the success alone.
  * - A success is a result with `isFailure: false`, `result` the value and `encodedResult` its JSON; a declared error a result with `isFailure: true` and `result` the error, which the model reads, never a raised failure; a refusal as `Action.Unauthenticated` and `Action.Forbidden` say.
  * - Arguments that do not decode are a result with `isFailure: true` whose `result` is an `AiError` with `reason` a `ToolParameterValidationError`, never `InvalidInput`, and neither `authorize` nor the handler runs; undeclared arguments are dropped and the call runs.
  * - A defect, or a failure the action's errors reject, is the call's defect; a success or an error that does not encode fails the call with an `AiError`, `Failed to encode result for tool …`.
  */
 export function make<
-  const Apps extends Served,
+  const Apps extends ServedActions,
   const O extends Options<ActionOf<Member<Apps>>> = {},
 >(
   implementations: Apps,
@@ -183,8 +238,9 @@ export function make<
   BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>,
   BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
 >;
-export function make(apps: Served, options?: ErasedOptions): ErasedTools {
+export function make(apps: ServedActions, options?: ErasedOptions): ErasedTools {
   const served = select(toList(apps), options?.actions);
+
   const needsApproval = options?.needsApproval;
 
   assertOnce(
@@ -220,8 +276,21 @@ export function make(apps: Served, options?: ErasedOptions): ErasedTools {
   );
 
   const layer = toolkit.toLayer(
-    Effect.map(acquire(served), (bound) =>
-      Object.fromEntries(bound.map(([action, run]) => [action.name, run])),
+    Effect.map(acquire(served, undefined), (bound) =>
+      Object.fromEntries(
+        bound.map(([action, handler]) => {
+          const run = answeringWhole(action, handler);
+
+          return [
+            action.name,
+            (input: ErasedValue, { preliminary }: Toolkit.HandlerContext<Tool.Any>) =>
+              run(
+                input,
+                progressSink((value) => preliminary(new Reported(value))),
+              ),
+          ];
+        }),
+      ),
     ),
   );
 

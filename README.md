@@ -2,7 +2,9 @@
 
 Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to a model as a
 native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients
-underneath.
+underneath. Events go the same way: watched over HTTP, MCP, Effect RPC and the CLI, or delivered
+by webhook. A companion package,
+[effect-actions-cloudflare](packages/cloudflare/), serves the HTTP, MCP and RPC routes, events and webhooks included, from Cloudflare Durable Objects.
 
 **If you are a coding agent**, start at [docs/README.md](docs/README.md), not here. It routes
 every task, protecting an action and limiting request bodies included, to its page and its
@@ -81,11 +83,11 @@ Effect.gen(function* () {
 ## Install
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions effect@~4.0.4
+pnpm add @gjermundgaraba/effect-actions effect@~4.0.5
 ```
 
 It needs TypeScript 7 or newer and is ESM only
-([docs/setup.md](docs/setup.md#install)). Add `@effect/platform-node@~4.0.4` to serve or run a CLI from Node, and `@types/node` for its `node:` imports. Every module is a
+([docs/setup.md](docs/setup.md#install)). Add `@effect/platform-node@~4.0.5` to serve or run a CLI from Node, and `@types/node` for its `node:` imports. Every module is a
 subpath import (`.../Action`, `.../ActionHttp`, ...); there is no package root, so a
 contracts-only bundle never loads a server.
 
@@ -103,6 +105,8 @@ type-checked and tested with the library and ship in the package.
 - [assistant](examples/assistant/): no server, the same implementations as a model's tools
   and as local commands.
 - [live-rpc](examples/live-rpc/): Effect RPC over a WebSocket.
+- [build-events](examples/build-events/): events watched over MCP, HTTP, RPC, a command line and
+  webhooks, and actions reporting progress and answering a stream.
 - [kitchen-sink](examples/kitchen-sink/): every module and nearly every option in one
   application, with an index from each to the file that shows it.
 

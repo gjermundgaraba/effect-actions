@@ -1,9 +1,8 @@
 import { Predicate, Schema, SchemaAST, type Types } from "effect";
 import type * as Action from "./Action.js";
 import { literalValues, members } from "./ast.js";
-import { Anyone, assertAuthentication, type Proving } from "./caller.js";
+import { Anyone, assertAuthentication, type Called, type Proving } from "./caller.js";
 import { builtIns } from "./errors.js";
-import { assertOnce } from "./names.js";
 import { httpApiStatusOf } from "./status.js";
 
 export const errorList = (
@@ -69,8 +68,10 @@ export const errorSchemas = (errors: Action.Errors): Action.Errors => {
   return [...schemas.values()];
 };
 
-export const projectedErrors = (action: Action.Any, surface: Action.Errors = []): Action.Errors =>
-  errorSchemas([...builtIns, ...action.error, ...surface]);
+export const projectedErrors = (
+  action: Pick<Action.Any, "error">,
+  surface: Action.Errors = [],
+): Action.Errors => errorSchemas([...builtIns, ...action.error, ...surface]);
 
 /** The errors a binding declares for every call, and its protected actions' authentication's. */
 export interface Declaring {
@@ -85,13 +86,23 @@ export interface Declaring {
  * Every error a binding's call of `action` declares: the built-in ones, the action's, the
  * binding's and, where `action` is protected, its authentication's.
  */
-export const bindingErrors = (action: Action.Any, binding: Declaring): Action.Errors =>
+export const bindingErrors = (
+  action: Pick<Action.Any, "error" | "caller">,
+  binding: Declaring,
+): Action.Errors =>
   projectedErrors(
     action,
     action.caller === Anyone || binding.authentication === undefined
       ? binding.error
       : [...binding.error, ...binding.authentication.error],
   );
+
+/**
+ * Every error a binding's subscription to `event` declares: the built-in ones, the binding's and,
+ * where `event` is protected, its authentication's. An event type declares none of its own.
+ */
+export const eventErrors = (event: Pick<Called, "caller">, binding: Declaring): Action.Errors =>
+  bindingErrors({ error: [], caller: event.caller }, binding);
 
 const encodedTags = (ast: SchemaAST.AST): ReadonlyArray<string> =>
   members(SchemaAST.toEncoded(ast)).flatMap((member) => {
@@ -128,27 +139,32 @@ export const assertDistinctTags = (what: string, errors: Action.Errors): void =>
 };
 
 /**
- * The checks `ActionHttp.make` and `ActionRpc.make` share: each action once, the descriptor every
- * protected action names, and each call's errors distinct by `_tag`. Returns the binding's `error`, as a list, and `authentication`.
+ * The checks `ActionHttp.make` and `ActionRpc.make` share: the descriptor every protected action
+ * and event type names, and each call's and each subscription's errors distinct by `_tag`.
+ * Returns the binding's `error`, as a list, and `authentication`.
  */
 export const bindingOf = <D extends Proving & { readonly error: Action.Errors }>(
   what: string,
   actions: ReadonlyArray<Action.Any>,
+  events: ReadonlyArray<Called>,
   options: {
     readonly error?: Action.Errors | Action.Errors[number] | undefined;
     readonly authentication?: D | undefined;
   },
 ) => {
-  assertOnce("action", actions);
-
   const error = errorList(options.error);
 
   const bound = { error, authentication: options.authentication };
 
   assertAuthentication(actions, bound.authentication);
+  assertAuthentication(events, bound.authentication, "event");
 
   for (const action of actions) {
     assertDistinctTags(`${what} of "${action.name}"`, bindingErrors(action, bound));
+  }
+
+  for (const event of events) {
+    assertDistinctTags(`${what} of event "${event.name}"`, eventErrors(event, bound));
   }
 
   return bound;

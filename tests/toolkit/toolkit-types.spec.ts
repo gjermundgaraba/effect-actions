@@ -313,3 +313,35 @@ expectTypeOf<
     >["layer"]
   >
 >().toBeUnknown();
+
+const Imported = Action.make("imported", {
+  description: "Reports progress.",
+  readOnly: false,
+  caller: Action.Anyone,
+  success: { imported: Schema.Finite },
+  progress: { done: Schema.Finite },
+});
+
+const imported = ActionToolkit.make(
+  Action.implement(Imported, (_input, { progress }) =>
+    Effect.as(progress({ done: 1 }), { imported: 1 }),
+  ),
+);
+
+expectTypeOf<Tool.Success<(typeof imported.toolkit.tools)["imported"]>>().toEqualTypeOf<
+  | { readonly imported: number }
+  | { readonly _tag: "Progress"; readonly value: { readonly done: number } }
+>();
+
+const Tailed = Action.make("tailed", {
+  description: "Answers a stream.",
+  readOnly: true,
+  caller: Action.Anyone,
+  success: Action.Stream(Schema.String),
+});
+
+const tailing = ActionToolkit.make(Action.implement(Tailed, () => Stream.empty));
+
+expectTypeOf<Tool.Success<(typeof tailing.toolkit.tools)["tailed"]>>().toEqualTypeOf<
+  ReadonlyArray<string>
+>();

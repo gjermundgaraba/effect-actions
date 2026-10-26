@@ -1,5 +1,5 @@
-import { Predicate, Schema, SchemaAST } from "effect";
-import { McpProtocol, type McpSchema } from "effect/ai";
+import { JsonPointer, type JsonSchema, Predicate, Schema, SchemaAST } from "effect";
+import { McpProtocol, McpSchema } from "effect/ai";
 import { Base64 } from "effect/encoding";
 import type * as Action from "../contract/Action.js";
 import type { ErasedValue } from "../contract/implementation.js";
@@ -26,6 +26,73 @@ export const protocols = [
 ] as const;
 
 export const defaultPath = "/mcp";
+
+export const isObjectSchema = Schema.is(McpSchema.ToolJson);
+
+const isJson = Schema.is(Schema.Json);
+
+const definitionsReferenced = (value: Schema.Json): ReadonlyArray<string> => {
+  if (
+    value === null ||
+    Predicate.isString(value) ||
+    Predicate.isNumber(value) ||
+    Predicate.isBoolean(value)
+  )
+    return [];
+
+  if (Array.isArray(value)) return value.flatMap(definitionsReferenced);
+
+  return Object.entries(value).flatMap(([field, nested]) => {
+    if (field !== "$ref") return definitionsReferenced(nested);
+
+    const [scope, key] = Predicate.isString(nested)
+      ? (JsonPointer.parseUriFragment(nested) ?? [])
+      : [];
+
+    return scope === "$defs" && key !== undefined ? [key] : [];
+  });
+};
+
+// Why: MCP requires an object root, so a top-level `$ref` is inlined, and the inlined root's
+// definition is dropped unless something still refers to it (a recursive root, or one used again
+// inside itself), as Effect's private `toolJsonSchema` does for `registerToolkit` from 4.0.6;
+// tests/mcp/media.test.ts compares the listings.
+export const toolJsonSchema = (
+  schema: Schema.Top,
+  strict: boolean,
+): JsonSchema.JsonSchema | undefined => {
+  const document = Schema.toJsonSchemaDocument(schema, {
+    onExcessProperty: strict ? "error" : "ignore",
+  });
+
+  const [scope, key] = Predicate.isString(document.schema["$ref"])
+    ? (JsonPointer.parseUriFragment(document.schema["$ref"]) ?? [])
+    : [];
+
+  const inlined = scope === "$defs" && key !== undefined ? key : undefined;
+
+  const root = inlined === undefined ? document.schema : document.definitions[inlined];
+
+  if (root === undefined) return undefined;
+
+  const definitions =
+    inlined !== undefined &&
+    ![root, ...Object.values(document.definitions)]
+      .flatMap((schema) => (isJson(schema) ? definitionsReferenced(schema) : []))
+      .includes(inlined)
+      ? Object.fromEntries(
+          Object.entries(document.definitions).filter(([name]) => name !== inlined),
+        )
+      : document.definitions;
+
+  return Object.keys(definitions).length === 0 ? root : { ...root, $defs: definitions };
+};
+
+/** The forms an MCP routing header may carry `name` in: as sent, or base64-encoded in its sentinel. */
+export const routingFormsOf = (name: string): ReadonlyArray<string> => [
+  name,
+  `=?base64?${Base64.encode(name)}?=`,
+];
 
 type Codec = Action.Any["success"];
 

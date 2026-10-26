@@ -1,4 +1,4 @@
-import { Effect, flow } from "effect";
+import { Effect, flow, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Http } from "./Api.js";
@@ -42,5 +42,9 @@ export const connect = (options: {
     // Left unhandled, a declared error rejects the promise as its decoded value, so a caller's
     // `catch` may test `error instanceof RateLimited`.
     file: (title: string, body: string) => Effect.runPromise(api.createIssue({ title, body })),
+
+    // A stream action's method returns a `Stream`; as an async iterable, `for await` reads each
+    // issue as the server sends it.
+    exportAll: (): AsyncIterable<Issue> => Stream.toAsyncIterable(api.exportIssues({})),
   };
 };

@@ -197,6 +197,60 @@ sends headers and handles errors by tag. `ActionMcp.client` takes the same `tran
   ([Testing.md](Testing.md#test-routes-in-memory),
   [notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts)).
 
+## Serve and watch events
+
+List [event types](Event.md) in the binding beside the actions, and their implementations in
+`layer`'s list, and in its `actions` where it is given: each is served at
+`POST <prefix>/events/<name>`, which answers a page of JSON, or
+an SSE stream to a request that accepts `text/event-stream`. Experimental, as [events](Event.md) are.
+
+```ts example=build-events/src/Api.ts
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import {
+  BuildFinished,
+  FinishBuild,
+  PipelineStatus,
+  StartBuild,
+  TailLog,
+} from "./builds/Builds.js";
+import { DeployRequested, RequestDeploy } from "./deploys/Deploys.js";
+import { Login } from "./identity/Identity.js";
+
+// The HTTP binding: each action at `POST /api/<name>`, and each event at
+// `POST /api/events/<name>`, which answers a page of JSON, or, asked for `text/event-stream`,
+// holds a stream open. It imports no server code, so a client imports it with the contracts.
+export const Http = ActionHttp.make(
+  [FinishBuild, StartBuild, TailLog, BuildFinished, PipelineStatus, RequestDeploy, DeployRequested],
+  { authentication: Login },
+);
+```
+
+[build-events/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/routes.ts) serves the same
+implementations over HTTP, MCP and RPC. A client of the binding has `watch(event, input, options)`, as
+`Action.client`'s: [build-events/test/http.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/test/http.test.ts)
+watches by stream and by poll. What a route answers is on `layer`; what a watch fails with is on
+`client`. A protected event's binding also has `/subscribe` and `/unsubscribe` routes, for
+webhook delivery ([Webhook.md](Webhook.md)), which `make` says when it adds.
+
+- **Not a browser `EventSource`.** It sends neither a JSON body nor a header credential, so a page
+  watches with `fetchClient`, whose `watch` reads the stream through `fetch`.
+
+- **Which deployment.** As over MCP, a log source and a `subscription` hook need one server that
+  outlives a request.
+
+## Serve what another server serves
+
+`ActionHttp.placed(binding, client)` stands, in a surface's list of implementations, for the
+binding's actions and event types where another server serves them, such as a Worker in front of
+the Durable Object that holds the data: each call and subscription is sent on, with the caller's
+headers, to the server `client` reaches for its input and its contract, which serves them in its own
+`ActionHttp.layer` of the binding, and its answer is passed back. `ActionHttp.layer`,
+`ActionMcp.layerHttp` and `ActionRpc.layer` take it beside their own implementations. Both servers
+verify the credential, so both are given the verifier; the server reached authorizes. Its rules
+are on `ActionHttp.placed`. An application doing it, a Worker sending each room's calls to its
+Durable Object, is `@gjermundgaraba/effect-actions-cloudflare`'s chat-rooms, through
+`ActionDurableObject.placed`: that package's `docs/ActionDurableObject-placement.md`.
+
 ## Call the API from a browser
 
 Code outside an Effect builds the client once with `ActionHttp.fetchClient` and runs each call

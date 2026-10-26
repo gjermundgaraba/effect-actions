@@ -1,26 +1,29 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Fiber, Layer, Stream } from "effect";
+import { TestClock } from "effect/testing";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { roomHeader } from "../src/chat/Chat.js";
+import { MessagePosted, roomHeader } from "../src/chat/Chat.js";
 import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
 import { Rpc } from "../src/Rpc.js";
 
 // What the wire adds: the real rpcs, behind their real authentication and middleware,
 // answering in memory. The test gives them Effect's HTTP protocol, not the server's WebSocket,
-// because `Testing.layer` answers HTTP requests; no port is opened.
+// because `Testing.layer` answers HTTP requests; no port is opened. NDJSON, not JSON: over
+// HTTP, JSON sends a response once all its streams end, so a watch would never answer.
 const server = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(RpcSerialization.layerNdjson),
 );
 
 const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(RpcSerialization.layerNdjson),
   Layer.provide(Testing.layer(server)),
-  Layer.provide(MessageStore.layerMemory),
+  Layer.provide([MessageStore.layerMemory, Event.layerMemory]),
 );
 
 // Each call carries its caller's token, so one client serves every caller of a test.
@@ -85,6 +88,38 @@ describe("the chat, over RPC", () => {
 
       expect(refused).toBeInstanceOf(Action.Forbidden);
       expect(refused.message).toBe("Not a member of ops.");
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("streams a room's posts to a member watching it, the room named by its header", () =>
+    Effect.gen(function* () {
+      const client = yield* ActionRpc.client(Rpc);
+
+      const watching = yield* client
+        .watch(MessagePosted, {})
+        .pipe(Stream.take(1), Stream.runCollect, as("grace"), inRoom("lobby"), Effect.forkChild);
+
+      // Let the watch take its position through the in-memory socket before anyone posts.
+      yield* Effect.repeat(TestClock.adjust("0 millis"), { times: 10 });
+      yield* client.postMessage({ text: "Disk is full." }).pipe(as("ada"), inRoom("ops"));
+      yield* client.postMessage({ text: "Ready." }).pipe(as("ada"), inRoom("lobby"));
+
+      expect(yield* Fiber.join(watching)).toMatchObject([
+        { _tag: "Occurrence", data: { id: 1, author: "ada", text: "Ready." } },
+      ]);
+    }).pipe(Effect.provide(served)),
+  );
+
+  it.effect("refuses a watch of a room the member has not joined, as it starts", () =>
+    Effect.gen(function* () {
+      const client = yield* ActionRpc.client(Rpc);
+
+      const refused = yield* Effect.flip(
+        Stream.runDrain(client.watch(MessagePosted, {})).pipe(as("grace"), inRoom("ops")),
+      );
+
+      expect(refused).toBeInstanceOf(Action.Forbidden);
+      expect(refused).toMatchObject({ message: "Not a member of ops." });
     }).pipe(Effect.provide(served)),
   );
 

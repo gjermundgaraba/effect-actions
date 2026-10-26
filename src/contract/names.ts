@@ -4,9 +4,37 @@ const namePattern = "[A-Za-z0-9_-]{1,128}";
 
 const validName = new RegExp(`^${namePattern}$`);
 
+// Why: Every client is keyed by action name, so a name a client already answers to would
+// shadow it.
+const reserved = [
+  ["then", "which would make a client a thenable, awaited as a promise"],
+  ["watch", "every client's method for events"],
+] as const;
+
+export const reservedNames: ReadonlyArray<string> = reserved.map(([name]) => name);
+
+/** The reserved names as a message lists them: `"then" or "watch"`. */
+export const reservedList = reservedNames.map((name) => `"${name}"`).join(" or ");
+
 export const assertName = (name: string): void => {
-  if (!validName.test(name) || name === "then") {
-    throw new Error(`Invalid action name: ${name} (use ${namePattern}, other than "then")`);
+  if (!validName.test(name) || reservedNames.includes(name)) {
+    throw new Error(
+      `Invalid action name: ${name} (use ${namePattern}, other than ${reserved
+        .map(([reservedName, why]) => `"${reservedName}", ${why}`)
+        .join(", and ")})`,
+    );
+  }
+};
+
+const eventNamePattern = "[a-z0-9_-]+(\\.[a-z0-9_-]+)*";
+
+const validEventName = new RegExp(`^${eventNamePattern}$`);
+
+export const assertEventName = (name: string): void => {
+  if (name.length > 128 || !validEventName.test(name)) {
+    throw new Error(
+      `Invalid event name: ${name} (use lowercase dot-separated segments of [a-z0-9_-], at most 128 characters)`,
+    );
   }
 };
 
@@ -45,7 +73,7 @@ export const heldOnce = "pass one implementation of it, or rename one";
 
 export const assertOnce = (
   what: string,
-  actions: ReadonlyArray<Action.Any>,
+  actions: ReadonlyArray<Pick<Action.Any, "name">>,
   fix: string = "list it once, or rename one",
 ): void => assertDistinct(what, actions, (action) => action.name, { fix });
 

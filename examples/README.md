@@ -6,7 +6,8 @@ linted and tested with the library, and they ship in the package, at
 `node_modules/@gjermundgaraba/effect-actions/examples`.
 
 [quickstart](quickstart/), [notes-service](notes-service/), [mcp-tools](mcp-tools/),
-[assistant](assistant/), [live-rpc](live-rpc/) and [kitchen-sink](kitchen-sink/): which to start
+[assistant](assistant/), [live-rpc](live-rpc/), [build-events](build-events/) and
+[kitchen-sink](kitchen-sink/): which to start
 from, by what you are building, is the table in [docs/README.md](../docs/README.md#examples).
 
 ## Run one

@@ -1138,7 +1138,7 @@ describe("MCP registration", () => {
     const First = same();
     const Second = same();
 
-    expect(() => ActionHttp.make([First, Second])).toThrow("Duplicate action: same");
+    expect(() => ActionHttp.make([First, Second])).toThrow("Duplicate action or event: same");
 
     const apps = [
       Action.implement(First, () => Effect.succeed("a")),

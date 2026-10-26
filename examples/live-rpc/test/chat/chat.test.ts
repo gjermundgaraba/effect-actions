@@ -1,7 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, flow } from "effect";
+import { Effect, Fiber, flow, Stream } from "effect";
+import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import { NotAuthor } from "../../src/chat/Chat.js";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { MessagePosted, NotAuthor } from "../../src/chat/Chat.js";
+import { messageEvents } from "../../src/chat/events.js";
 import { messages } from "../../src/chat/handlers.js";
 import { CurrentRoom } from "../../src/chat/room.js";
 import { MessageStore } from "../../src/chat/store.js";
@@ -33,7 +36,7 @@ describe("messages, in process", () => {
       expect(yield* client.readMessages({ after: 0 }).pipe(as("ada", "ops"))).toEqual({
         messages: [{ id: 1, author: "ada", text: "Disk is full." }],
       });
-    }).pipe(Effect.provide(MessageStore.layerMemory)),
+    }).pipe(Effect.provide([MessageStore.layerMemory, Event.layerMemory])),
   );
 
   it.effect("lets only its author delete a message", () =>
@@ -50,7 +53,7 @@ describe("messages, in process", () => {
       expect(yield* client.readMessages({ after: 0 }).pipe(as("grace", "lobby"))).toEqual({
         messages: [],
       });
-    }).pipe(Effect.provide(MessageStore.layerMemory)),
+    }).pipe(Effect.provide([MessageStore.layerMemory, Event.layerMemory])),
   );
 
   it.effect("refuses a member a room they have not joined, before the handler runs", () =>
@@ -64,6 +67,135 @@ describe("messages, in process", () => {
       expect(yield* client.readMessages({ after: 0 }).pipe(as("ada", "ops"))).toEqual({
         messages: [],
       });
-    }).pipe(Effect.provide(MessageStore.layerMemory)),
+    }).pipe(Effect.provide([MessageStore.layerMemory, Event.layerMemory])),
+  );
+
+  it.effect(
+    "delivers each message posted to a watched room as it is posted, and none of another",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* Action.client([messages, messageEvents]);
+        const { epoch } = yield* MessageStore;
+
+        const watching = yield* client
+          .watch(MessagePosted, {})
+          .pipe(Stream.take(1), Stream.runCollect, as("grace", "lobby"), Effect.forkChild);
+
+        // The watch starts from now: let it take its first position before anyone posts.
+        yield* TestClock.adjust("0 millis");
+        yield* client.postMessage({ text: "Disk is full." }).pipe(as("ada", "ops"));
+        yield* client.postMessage({ text: "Ready." }).pipe(as("ada", "lobby"));
+
+        // `postMessage` notifies: the watch reads at once, with no wait for its next read.
+        expect(yield* Fiber.join(watching)).toMatchObject([
+          {
+            _tag: "Occurrence",
+            eventId: `${epoch}:lobby:1`,
+            data: { id: 1, author: "ada", text: "Ready." },
+          },
+        ]);
+      }).pipe(Effect.provide([MessageStore.layerMemory, Event.layerMemory])),
+  );
+
+  it.effect("names the first message after a restart apart from the one before it", () =>
+    Effect.gen(function* () {
+      const firstReceived = Effect.gen(function* () {
+        const client = yield* Action.client([messages, messageEvents]);
+
+        const watching = yield* client
+          .watch(MessagePosted, {})
+          .pipe(Stream.take(1), Stream.runCollect, as("grace", "lobby"), Effect.forkChild);
+
+        yield* TestClock.adjust("0 millis");
+        yield* client.postMessage({ text: "Ready." }).pipe(as("ada", "lobby"));
+
+        return yield* Fiber.join(watching);
+      }).pipe(Effect.provide([MessageStore.layerMemory, Event.layerMemory]));
+
+      const received = [...(yield* firstReceived), ...(yield* firstReceived)];
+
+      // Both are the room's message 1, and a watch that saw the first still reads the second.
+      expect(received).toMatchObject([{ data: { id: 1 } }, { data: { id: 1 } }]);
+      expect(
+        new Set(received.map((each) => (each._tag === "Occurrence" ? each.eventId : ""))).size,
+      ).toBe(2);
+    }),
+  );
+
+  it.effect("refuses a watch of a room the member has not joined", () =>
+    Effect.gen(function* () {
+      const client = yield* Action.client([messages, messageEvents]);
+
+      const refused = yield* Effect.flip(
+        Stream.runDrain(client.watch(MessagePosted, {})).pipe(as("grace", "ops")),
+      );
+
+      expect(refused).toBeInstanceOf(Action.Forbidden);
+    }).pipe(Effect.provide([MessageStore.layerMemory, Event.layerMemory])),
+  );
+
+  it.effect("answers a cursor that names no id of the room with a gap, then reads on", () =>
+    Effect.gen(function* () {
+      const client = yield* Action.client([messages, messageEvents]);
+      const { epoch } = yield* MessageStore;
+
+      yield* client.postMessage({ text: "Ready." }).pipe(as("ada", "lobby"));
+
+      // An event's id, such as `<epoch>:lobby:1`, is no cursor: the cursor is `<epoch>:<id>`.
+      const received = yield* client
+        .watch(MessagePosted, {}, { cursor: "lobby:1" })
+        .pipe(Stream.take(1), Stream.runCollect, as("grace", "lobby"));
+
+      expect(received).toMatchObject([{ _tag: "Gap", cursor: `${epoch}:1` }]);
+    }).pipe(Effect.provide([MessageStore.layerMemory, Event.layerMemory])),
+  );
+
+  it.effect("answers a cursor with more parts than `<epoch>:<id>` with a gap", () =>
+    Effect.gen(function* () {
+      const client = yield* Action.client([messages, messageEvents]);
+      const { epoch } = yield* MessageStore;
+
+      yield* client.postMessage({ text: "Disk is full." }).pipe(as("ada", "lobby"));
+      yield* client.postMessage({ text: "Ready." }).pipe(as("ada", "lobby"));
+
+      const received = yield* client
+        .watch(MessagePosted, {}, { cursor: `${epoch}:1:lobby` })
+        .pipe(Stream.take(1), Stream.runCollect, as("grace", "lobby"));
+
+      expect(received).toMatchObject([{ _tag: "Gap", cursor: `${epoch}:2` }]);
+    }).pipe(Effect.provide([MessageStore.layerMemory, Event.layerMemory])),
+  );
+
+  it.effect(
+    "answers a cursor from before a restart with a gap, however far the store has counted",
+    () =>
+      Effect.gen(function* () {
+        const posted = (text: string) =>
+          Effect.flatMap(Action.client([messages, messageEvents]), (client) =>
+            client.postMessage({ text }).pipe(as("ada", "lobby")),
+          );
+
+        const watchedFrom = (cursor: string) =>
+          Effect.flatMap(Action.client([messages, messageEvents]), (client) =>
+            client
+              .watch(MessagePosted, {}, { cursor })
+              .pipe(Stream.take(1), Stream.runCollect, as("grace", "lobby")),
+          );
+
+        const run = Effect.provide([MessageStore.layerMemory, Event.layerMemory]);
+
+        const [before] = yield* Effect.andThen(
+          posted("Before the restart."),
+          watchedFrom("0"),
+        ).pipe(run);
+
+        const after = yield* Effect.andThen(
+          posted("After the restart."),
+          watchedFrom(before?._tag === "Occurrence" ? (before.cursor ?? "") : ""),
+        ).pipe(run);
+
+        expect(before).toMatchObject({ _tag: "Occurrence", data: { id: 1 } });
+        expect(after).toMatchObject([{ _tag: "Gap" }]);
+      }),
   );
 });
