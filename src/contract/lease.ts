@@ -3,11 +3,15 @@ import type { ErasedValue } from "./implementation.js";
 
 /** A poll subscription's key, held with the context of the poll that first acquired it. */
 class Lease implements Equal.Equal {
-  constructor(
-    readonly key: string,
-    readonly input: ErasedValue,
-    readonly context: Context.Context<never>,
-  ) {}
+  readonly key: string;
+  readonly input: ErasedValue;
+  readonly context: Context.Context<never>;
+
+  constructor(key: string, input: ErasedValue, context: Context.Context<never>) {
+    this.key = key;
+    this.input = input;
+    this.context = context;
+  }
 
   [Equal.symbol](that: Equal.Equal): boolean {
     return that instanceof Lease && that.key === this.key;

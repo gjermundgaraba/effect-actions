@@ -499,15 +499,17 @@ export class EventImplementation<
   /** Type-only: what building its authorizer needs. */
   declare readonly "~eventAuthorizeBuildServices": RAX;
 
+  /** The event types this implementation answers. */
+  readonly events: ReadonlyArray<E>;
   readonly #running: Running<EX, RX>;
   readonly #authorizer: Memoized<ErasedAuthorize<Event.Any>, EAX, RAX>;
 
   constructor(
-    /** The event types this implementation answers. */
-    readonly events: ReadonlyArray<E>,
+    events: ReadonlyArray<E>,
     running: Running<EX, RX>,
     authorizer: Memoized<ErasedAuthorize<Event.Any>, EAX, RAX>,
   ) {
+    this.events = events;
     this.#running = running;
     this.#authorizer = authorizer;
   }
