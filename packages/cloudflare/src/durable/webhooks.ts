@@ -2,7 +2,7 @@ import { Clock, Deferred, Duration, Effect, Exit, Layer, Option, Schema, Semapho
 import type { HttpClient } from "effect/http";
 import { KeyValueStore } from "effect/persistence";
 import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
-import { makeSchedule } from "./alarm.js";
+import { makeSchedule, type Schedule } from "./alarm.js";
 import { batches } from "./batches.js";
 import { State } from "./state.js";
 
@@ -25,33 +25,38 @@ interface Wait {
 interface Waiting {
   readonly waits: Set<Wait>;
   readonly arming: Semaphore.Semaphore;
+  readonly schedule: Schedule;
 }
 
 // Why: the waits belong to the instance, as its fibers do, and the alarm handler that ends them
 // is the object's, reached by `State` alone: a new instance starts with none, its webhook layer
-// restoring each subscription from storage as it builds.
+// restoring each subscription from storage as it builds. Their time is set on the instance's
+// schedule, which `handlers` gives them as it makes it, so a wait armed as the alarm runs takes
+// turns with that run; on a schedule of its own, the run's end could delete the time it set.
 const waiting = new WeakMap<DurableObjectState, Waiting>();
 
-const waitingOf = (state: DurableObjectState) => {
-  const found = waiting.get(state);
-
-  if (found !== undefined) return found;
-
-  const made: Waiting = { waits: new Set(), arming: Semaphore.makeUnsafe(1) };
+/** The instance's waits, their time set on `schedule`, the one its `alarm` handler runs. */
+export const makeWaiting = (state: DurableObjectState, schedule: Schedule) => {
+  const made: Waiting = { waits: new Set(), arming: Semaphore.makeUnsafe(1), schedule };
 
   waiting.set(state, made);
 
   return made;
 };
 
+// Why: outside `handlers` and `make`, whose `alarm` alone ends the waits, the layer sets their
+// time on a schedule of its own, as `Alarm.layer` does.
+const waitingOf = (state: DurableObjectState) =>
+  waiting.get(state) ?? makeWaiting(state, makeSchedule(state));
+
 // Why: the time is read from the waits as it is written, one write at a time, so the alarm is set
 // for the earliest wait held then, whichever order the writes of several waits are run in.
-const armed = (state: DurableObjectState, { waits, arming }: Waiting) =>
+const armed = ({ waits, arming, schedule }: Waiting) =>
   arming.withPermits(1)(
     Effect.suspend(() =>
       waits.size === 0
         ? Effect.void
-        : makeSchedule(state).set(clockOwner, Math.min(...[...waits].map(({ at }) => at))),
+        : schedule.set(clockOwner, Math.min(...[...waits].map(({ at }) => at))),
     ),
   );
 
@@ -87,7 +92,7 @@ const alarmClock = (state: DurableObjectState, base: Clock.Clock): Clock.Clock =
 
             held.waits.add(wait);
 
-            return Effect.andThen(armed(state, held), Deferred.await(wait.woken)).pipe(
+            return Effect.andThen(armed(held), Deferred.await(wait.woken)).pipe(
               Effect.ensuring(Effect.sync(() => held.waits.delete(wait))),
             );
           }),
@@ -110,7 +115,7 @@ export const wakeDue = (state: DurableObjectState) =>
       }
     }
 
-    yield* armed(state, held);
+    yield* armed(held);
   });
 
 // Why: a value under these keys is one the webhook layer wrote, a string; any other reads as none.

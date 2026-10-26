@@ -10,7 +10,7 @@ import {
 import { type RpcMessage, RpcServer } from "effect/rpc";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import { Alarm, alarmOf, applicationOwner, makeSchedule } from "./alarm.js";
-import { clockOwner, wakeDue } from "./webhooks.js";
+import { clockOwner, makeWaiting, wakeDue } from "./webhooks.js";
 import { makeStubProtocol, type StubRequest } from "./calls.js";
 import { layerEvents } from "./events.js";
 import { Sockets } from "./sockets.js";
@@ -253,6 +253,8 @@ const handlersOf = <S>(
   const state = Layer.succeed(State, ctx);
 
   const schedule = makeSchedule(ctx);
+
+  makeWaiting(ctx, schedule);
 
   const build = Effect.gen(function* () {
     // Why: an implementation of the core is shared through the memo map of the graph it is

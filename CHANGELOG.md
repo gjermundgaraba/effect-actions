@@ -335,9 +335,9 @@ object's storage and resuming it when the object next wakes; `layerEvents`, whic
 `make` provide, is the object's `Event.Events`, its logs kept in its storage, and `layerWebhooks`
 the core's `Webhook.layer` in an object, its subscriptions kept in its storage and its long waits
 ended by the object's alarm. `layerStubClient` and `client` call an object's rpcs over its stub,
-`layerHttpClient` calls its routes, and `State`, `name` and `Alarm` are
-what the object is and when its `alarm` runs. Each option's and declaration's rules are in its
-JSDoc. Guide: `packages/cloudflare/docs/README.md`.
+`layerHttpClient` calls its routes, and `State`, `name` and `Alarm` are what the object is and when
+its `alarm` runs. Each option's and declaration's rules are in its JSDoc. Guide:
+`packages/cloudflare/docs/README.md`.
 
 ### Other changes
 
