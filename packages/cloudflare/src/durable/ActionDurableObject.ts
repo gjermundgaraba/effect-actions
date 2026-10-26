@@ -246,10 +246,11 @@ export interface Handlers<S = never> {
   alarm(...args: Parameters<HandlerOf<"alarm">>): Promise<void>;
   /**
    * Runs `effect` in the object, with the services the instance built, `State`, `Alarm`,
-   * `Tasks`, `Event.Events`, `Action.Idempotency` and a `Scope`, closed when it ends, once the services and routes are built:
-   * what the alarm runs through, and what the object's own methods run their Effects with, such
-   * as a method a Worker calls over the object's stub. A Layer the effect provides itself, or an `Action.client` it
-   * acquires, is built for that call alone: give what calls share as `services`.
+   * `Tasks`, `Event.Events`, `Action.Idempotency` and a `Scope`, closed when it ends, once the
+   * services and routes are built: what the alarm runs through, and what the object's own methods
+   * run their Effects with, such as a method a Worker calls over the object's stub. A Layer the
+   * effect provides itself, or an `Action.client` it acquires, is built for that call alone: give
+   * what calls share as `services`.
    *
    * **Gotchas**
    *
