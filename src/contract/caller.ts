@@ -23,6 +23,14 @@ export interface Keyed {
   readonly schema?: Codec | undefined;
 }
 
+/** A surface's authentication that names each caller: its `principal` given. */
+export interface Named extends Keyed {
+  principal(identity: Action.Any["input"]["Type"]): string;
+}
+
+/** Whether `keyed` names each caller, its `principal` given. */
+export const isNamed = (keyed: Keyed | undefined): keyed is Named => keyed?.principal !== undefined;
+
 /**
  * The principal of the caller of `called`, as `keyed` names it: a poll's subscriber, for its
  * `subscription` hook. None where `called` is public or `keyed` has no `principal`: every caller

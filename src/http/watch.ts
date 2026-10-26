@@ -10,8 +10,13 @@ import {
   isTransient,
   receivedFrom,
 } from "../contract/transient.js";
+import { Receiving, webhookFed } from "../contract/receiving.js";
+import type {
+  AnyWebhookCancellation,
+  AnyWebhookSubscription,
+  Subscribed,
+} from "../contract/subscribe.js";
 import type { Transport, WebhookTransport } from "../contract/watch.js";
-import { type Subscribed, webhookFed } from "../contract/webhooks.js";
 
 interface Subscription {
   readonly payload: AnySubscription;
@@ -33,15 +38,10 @@ const isNotFound = Predicate.compose(
 /** The native client's methods of one event's webhook routes, where its binding has them. */
 export interface WebhookMethods<R> {
   readonly subscribe: (request: {
-    readonly payload: {
-      readonly input: ErasedValue;
-      readonly delivery: { readonly url: string; readonly secret: string };
-      readonly cursor: string | null;
-      readonly ttlMs?: number | undefined;
-    };
+    readonly payload: AnyWebhookSubscription;
   }) => Effect.Effect<Subscribed, unknown, R>;
   readonly unsubscribe: (request: {
-    readonly payload: { readonly input: ErasedValue; readonly delivery: { readonly url: string } };
+    readonly payload: AnyWebhookCancellation;
   }) => Effect.Effect<void, unknown, R>;
 }
 
@@ -56,29 +56,21 @@ export const transportOf = <R>(
   stream: StreamMethod<R>,
   webhook: WebhookMethods<R> | undefined,
   input: ErasedValue,
-): Transport<unknown, R> => {
+): Transport<unknown, R | Receiving> => {
   const notServed = Effect.fail(Event.SubscriptionError.of(event.name, new Event.NotServed()));
 
-  const webhooks: WebhookTransport<unknown, R> | undefined =
+  const webhooks: WebhookTransport<unknown, R | Receiving> | undefined =
     webhook === undefined
       ? undefined
       : {
-          subscribe: ({ url, secret, cursor, ttlMs }) =>
-            webhook
-              .subscribe({
-                payload: {
-                  input,
-                  delivery: { url, secret },
-                  cursor,
-                  ...(ttlMs === undefined ? {} : { ttlMs }),
-                },
-              })
-              .pipe(
-                failingWhenUnanswered,
-                Effect.catchIf(isNotFound, () => notServed),
-              ),
-          unsubscribe: (url) =>
-            webhook.unsubscribe({ payload: { input, delivery: { url } } }).pipe(
+          receiver: Effect.service(Receiving),
+          subscribe: (request) =>
+            webhook.subscribe({ payload: { input, ...request } }).pipe(
+              failingWhenUnanswered,
+              Effect.catchIf(isNotFound, () => notServed),
+            ),
+          unsubscribe: (request) =>
+            webhook.unsubscribe({ payload: { input, ...request } }).pipe(
               failingWhenUnanswered,
               Effect.catchIf(isNotFound, () => notServed),
             ),

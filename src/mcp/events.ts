@@ -1,7 +1,13 @@
-import { ErrorReporter, Schema } from "effect";
+import { ErrorReporter, Schema, Struct } from "effect";
 import { McpSchema } from "effect/ai";
 import { Rpc, RpcGroup } from "effect/rpc";
-import { CallbackUrl, eventCodes, Subscribed, WebhookSecret } from "../contract/webhooks.js";
+import { eventCodes } from "../contract/codes.js";
+import {
+  Subscribed,
+  WebhookCallback,
+  webhookFields,
+  WebhookTarget,
+} from "../contract/subscribe.js";
 
 /** The extension's identifier, its key in `capabilities.extensions`. */
 export const extension = "io.modelcontextprotocol/events";
@@ -106,12 +112,8 @@ export class StreamEvents extends Rpc.make("events/stream", {
 export class SubscribeEvents extends Rpc.make("events/subscribe", {
   payload: {
     ...subscription,
-    delivery: Schema.Struct({
-      mode: Schema.Literal("webhook"),
-      url: CallbackUrl,
-      secret: WebhookSecret,
-    }),
-    ttlMs: Schema.optional(Schema.NullOr(Schema.Finite)),
+    delivery: WebhookCallback.mapFields(Struct.assign({ mode: Schema.Literal("webhook") })),
+    ttlMs: webhookFields.ttlMs,
   },
   success: Schema.Struct({
     resultType: Schema.Literal("complete"),
@@ -126,7 +128,7 @@ export class UnsubscribeEvents extends Rpc.make("events/unsubscribe", {
     _meta: Meta,
     name: Schema.String,
     arguments: Arguments,
-    delivery: Schema.Struct({ url: CallbackUrl }),
+    delivery: WebhookTarget,
   },
   success: Schema.Struct({ resultType: Schema.Literal("complete"), _meta: Meta }),
   error: EventsError,

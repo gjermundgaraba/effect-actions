@@ -1,47 +1,36 @@
-import {
-  Cause,
-  Clock,
-  Duration,
-  Effect,
-  Option,
-  Predicate,
-  Queue,
-  Schedule,
-  Schema,
-  Stream,
-} from "effect";
+import { Cause, Clock, Duration, Effect, Predicate, Queue, Schedule, Schema, Stream } from "effect";
+import { CallbackUrl } from "./callback.js";
 import * as Event from "./Event.js";
 import { Checked, Gap } from "./occurrence.js";
 import { type Fed, type Page, paged } from "./pages.js";
+import { type Delivered, type Receiving, watchParameter } from "./receiving.js";
 import { makeRecent } from "./recent.js";
-import { type Delivered, Receiving, type Subscribed, watchParameter } from "./webhooks.js";
+import type { AnyWebhookCancellation, AnyWebhookSubscription, Subscribed } from "./subscribe.js";
 
 /** A webhook subscription a watch asks for: where to POST, signed how, from where, for how long. */
-export interface WebhookRequest {
-  readonly url: string;
-  readonly secret: string;
-  readonly cursor: string | null;
-  readonly ttlMs?: number | undefined;
-}
+export type WebhookRequest = Omit<AnyWebhookSubscription, "input">;
 
 /** What a subscribe answers a watch: when to refresh by, and where delivery starts. */
 export type Grant = Pick<Subscribed, "refreshBefore" | "cursor" | "truncated">;
 
 /**
- * How a client keeps one webhook subscription: subscribing, or refreshing, and unsubscribing at
- * its surface, and reading each body delivered to it.
+ * How a client keeps one webhook subscription: the receiver its deliveries reach, subscribing, or
+ * refreshing, and unsubscribing at its surface, and reading each body delivered to it.
  */
 export interface WebhookTransport<E, R> {
+  readonly receiver: Effect.Effect<Receiving["Service"], never, R>;
   readonly subscribe: (request: WebhookRequest) => Effect.Effect<Grant, E, R>;
-  readonly unsubscribe: (url: string) => Effect.Effect<void, E, R>;
+  readonly unsubscribe: (
+    request: Omit<AnyWebhookCancellation, "input">,
+  ) => Effect.Effect<void, E, R>;
   readonly read: (body: Delivered) => Effect.Effect<ReadonlyArray<Fed>, E>;
 }
 
 /**
  * How a client reaches one subscription to the event `name`: a poll from a cursor, a stream from
  * one, each failing with `Unsupported` where its surface serves no such mode, and a webhook
- * subscription where it delivers by webhook. Each answers decoded occurrences. Where the stream crosses a network, `transient`
- * says which of its failures a reconnect may outlast.
+ * subscription where it delivers by webhook. Each answers decoded occurrences. Where the stream
+ * crosses a network, `transient` says which of its failures a reconnect may outlast.
  */
 export interface Transport<E, R> {
   readonly name: string;
@@ -94,7 +83,11 @@ const dedupeWindow = 1000;
 export const watching = <E, R, SE>(
   transport: Transport<E, R>,
   { cursor: given, mode, resume }: Event.WatchOptions<SE> = {},
-): Stream.Stream<Event.Received<Event.Any>, E | SE | Event.SubscriptionError, R> =>
+): Stream.Stream<
+  Event.Received<Event.Any>,
+  E | SE | Event.SubscriptionError | Schema.SchemaError,
+  R
+> =>
   Stream.suspend(() => {
     const seen = makeRecent(dedupeWindow);
     let pending: string | null = null;
@@ -176,7 +169,8 @@ export const watching = <E, R, SE>(
 
     // Why: A watch keeps one place at the receiver, and one subscription, for as long as it runs:
     // a reconnect refreshes it, and what the receiver accepted waits for the watch through it.
-    const webhooked = ({ url, ttl }: Event.WebhookDelivery, cursor: string | null) =>
+    // Its callback is checked before it takes a place, so one the server would refuse fails here.
+    const webhooked = ({ baseUrl, ttl }: Event.WebhookDelivery, cursor: string | null) =>
       Stream.unwrap(
         Effect.gen(function* () {
           const { webhook } = transport;
@@ -189,30 +183,28 @@ export const watching = <E, R, SE>(
               ),
             );
 
-          const receiving = yield* Effect.serviceOption(Receiving);
-
-          if (Option.isNone(receiving)) return yield* noReceiver;
-
+          const base = yield* Schema.decodeUnknownEffect(CallbackUrl)(baseUrl);
+          const receiving = yield* webhook.receiver;
           const received = yield* Queue.unbounded<Effect.Effect<ReadonlyArray<Fed>, E>>();
 
-          const { id, secret } = yield* receiving.value.register(
+          const { id, secret } = yield* receiving.register(
             (body) =>
               Queue.sizeUnsafe(received) < capacity &&
               Queue.offerUnsafe(received, webhook.read(body)),
           );
 
-          const callback = new URL(url);
-          callback.searchParams.set(watchParameter, id);
+          const url = new URL(`${base.pathname.replace(/\/$/u, "")}${receiving.path}`, base);
+
+          url.searchParams.set(watchParameter, id);
 
           const request = {
-            url: callback.href,
-            secret,
+            delivery: { url, secret },
             ttlMs: ttl === undefined ? undefined : Duration.toMillis(Duration.fromInputUnsafe(ttl)),
           };
 
           yield* Effect.addFinalizer(() =>
             webhook
-              .unsubscribe(request.url)
+              .unsubscribe({ delivery: { url } })
               .pipe(Effect.timeout(unsubscribeTimeout), Effect.ignore),
           );
 
@@ -240,12 +232,6 @@ export const watching = <E, R, SE>(
       Stream.flattenIterable,
     );
   });
-
-const noReceiver = Effect.die(
-  new Error(
-    "A watch by webhook found no receiver (provide Webhook.layerReceiver to the watch, and serve its route at the delivery's url)",
-  ),
-);
 
 // Why: A watch holds what its receiver accepted until its consumer reads it, so a consumer
 // behind by this many has the next POST answered 503, which the server retries, rather than
@@ -319,9 +305,23 @@ const delivered = <E, R>(
 
 /**
  * The arguments of `watch(event, ...)` after the event: its input, which may be left out when
- * `{}` is a valid encoded input, as for an action's call, and the watch's options, whose `resume`
- * store may fail with `SE`.
+ * `{}` is a valid encoded input, as for an action's call, and the watch's options `O`, whose
+ * `resume` store may fail with `SE`.
  */
-export type WatchArgs<E extends Event.Any, SE> = {} extends E["input"]["Encoded"]
-  ? [input?: E["input"]["Type"], options?: Event.WatchOptions<SE>]
-  : [input: E["input"]["Type"], options?: Event.WatchOptions<SE>];
+export type WatchArgs<
+  E extends Event.Any,
+  SE,
+  O extends Event.WatchOptions<unknown> = Event.WatchOptions<SE>,
+> = {} extends E["input"]["Encoded"]
+  ? [input?: E["input"]["Type"], options?: O & Event.WatchOptions<SE>]
+  : [input: E["input"]["Type"], options?: O & Event.WatchOptions<SE>];
+
+/**
+ * What a watch given the options `O` requires beyond its client's: the receiver, where its `mode`
+ * may be a `Webhook.delivery`.
+ */
+export type WatchRequirement<O> = O extends { readonly mode?: infer M }
+  ? [Extract<M, Event.WebhookDelivery>] extends [never]
+    ? never
+    : Receiving
+  : never;

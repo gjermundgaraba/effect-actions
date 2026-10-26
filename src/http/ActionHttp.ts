@@ -3,7 +3,6 @@ import {
   Effect,
   type FileSystem,
   Layer,
-  Option,
   type Path,
   type Schema,
   Scope,
@@ -23,7 +22,7 @@ import {
 import type * as Action from "../contract/Action.js";
 import type * as Event from "../contract/Event.js";
 import { listed, type Only } from "../contract/listed.js";
-import { offersWebhook, Webhooks } from "../contract/webhooks.js";
+import { offersWebhook, servedWebhooks } from "../contract/webhooks.js";
 import type { SubscriptionOf } from "../contract/push.js";
 import {
   answering,
@@ -616,15 +615,10 @@ export function layer(
       const bound = yield* acquire(apps);
       const feeds = yield* acquireFeeds(events);
       const refusal = unkeyedHook("ActionHttp", feeds, authentication?.principal !== undefined);
-      const webhooks = yield* Effect.serviceOption(Webhooks);
 
       if (refusal !== undefined) return yield* Effect.die(new Error(refusal));
 
-      if (Option.isSome(webhooks))
-        yield* webhooks.value.serve(
-          feeds.filter((feed) => offersWebhook(feed.event, authentication)),
-          authentication,
-        );
+      const { webhooks, offered } = yield* servedWebhooks(feeds, authentication);
 
       const security =
         authentication === undefined
@@ -640,9 +634,9 @@ export function layer(
         Effect.map(Effect.service(key), (service) => Layer.succeed(key, service)),
       );
 
-      const webhookAnswered = feeds
-        .filter((feed) => offersWebhook(feed.event, authentication))
-        .map((feed) => [feed.event.name, webhookAnswers(feed, authentication, webhooks)] as const);
+      const webhookAnswered = offered.map(
+        (feed) => [feed.event.name, webhookAnswers(feed, authentication, webhooks)] as const,
+      );
 
       const byName = {
         ...Object.fromEntries(

@@ -1,15 +1,17 @@
 import { expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Option, Scope } from "effect";
+import { Deferred, Effect, Exit, Option, Schema, Scope } from "effect";
 import { KeyValueStore } from "effect/persistence";
+import { WebhookSecret } from "../../src/contract/callback.js";
 import { makeStorage, type Stored } from "../../src/webhook/stored.js";
+import { secretOf, settled } from "../support/webhook.js";
 
 const record: Stored = {
-  url: "https://hooks.example.com/alice",
+  url: new URL("https://hooks.example.com/alice"),
   event: "user.changed",
   input: {},
   principal: "alice",
   identity: { id: "alice" },
-  secret: "whsec_c2VjcmV0",
+  secret: Schema.decodeSync(WebhookSecret)(secretOf(1)),
   expiresAt: 60 * 60 * 1000,
   watermark: "3",
   status: { active: true, lastDeliveryAt: null, lastError: null },
@@ -70,9 +72,6 @@ const failingWhileDown = (store: KeyValueStore.KeyValueStore) => {
   };
 };
 
-const settled = (until: () => boolean) =>
-  Effect.yieldNow.pipe(Effect.repeat({ until, times: 1000 }));
-
 it.effect("writes a removal again whose write failed, once a later mark or the close comes", () =>
   Effect.gen(function* () {
     const memory = yield* KeyValueStore.KeyValueStore;
@@ -88,7 +87,7 @@ it.effect("writes a removal again whose write failed, once a later mark or the c
     storage.mark("sub_alice", undefined);
 
     yield* settled(() => state.writes === 3);
-    yield* settled(() => false);
+    yield* settled();
 
     const once = state.writes;
 

@@ -15,7 +15,8 @@ import {
 } from "../contract/call.js";
 import type { BuiltIns } from "../contract/errors.js";
 import type { ErasedValue } from "../contract/implementation.js";
-import { type WatchArgs, watching } from "../contract/watch.js";
+import type { Receiving } from "../contract/receiving.js";
+import { type WatchArgs, type WatchRequirement, watching } from "../contract/watch.js";
 import type { sentOf } from "./events.js";
 import { readElements, readWithProgress } from "./streamed.js";
 import { type Answer, elementOf, type StreamOf } from "../contract/stream.js";
@@ -115,10 +116,14 @@ export type WatchError<W extends Event.Any, H extends AnyHttp> =
 type Watching<H extends AnyHttp, E, R> = [H["events"][number]] extends [never]
   ? unknown
   : {
-      readonly watch: <W extends H["events"][number], SE = never>(
+      readonly watch: <
+        W extends H["events"][number],
+        SE = never,
+        const O extends Event.WatchOptions<unknown> = {},
+      >(
         event: W,
-        ...args: WatchArgs<W, SE>
-      ) => Stream.Stream<Event.Received<W>, WatchError<W, H> | E | SE, R>;
+        ...args: WatchArgs<W, SE, O>
+      ) => Stream.Stream<Event.Received<W>, WatchError<W, H> | E | SE, R | WatchRequirement<O>>;
     };
 
 /**
@@ -146,7 +151,7 @@ type ErasedWatch<R> = (
   event: Event.Any,
   input?: ErasedValue,
   options?: Event.WatchOptions<unknown>,
-) => Stream.Stream<Event.Received<Event.Any>, unknown, R>;
+) => Stream.Stream<Event.Received<Event.Any>, unknown, R | Receiving>;
 
 /** A client's methods by name, and `watch` where its binding lists event types. */
 export type Methods<R> = {

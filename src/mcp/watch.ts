@@ -14,8 +14,10 @@ import {
   isTransient,
   isTransientStatus,
 } from "../contract/transient.js";
+import { reasonOf } from "../contract/codes.js";
+import { Receiving, webhookFed } from "../contract/receiving.js";
+import { WebhookCallback, WebhookTarget } from "../contract/subscribe.js";
 import type { Transport, WebhookTransport } from "../contract/watch.js";
-import { reasonOf, webhookFed } from "../contract/webhooks.js";
 import {
   Active,
   codes,
@@ -99,6 +101,10 @@ const UnsubscribeReply = Schema.Union([
 
 const unsubscribeReplyOf = Schema.decodeUnknownOption(Schema.fromJsonString(UnsubscribeReply));
 
+const encodeCallback = Schema.encodeSync(WebhookCallback);
+
+const encodeTarget = Schema.encodeSync(WebhookTarget);
+
 // Why: An endpoint's transient status, and an internal error answering a poll or a stream, which
 // `layerHttp` answers for a source's failure, are what a 5xx is to an HTTP watch: a reconnect may
 // outlast them. The client reads a status itself, so it is an `McpCallError`, not an
@@ -124,7 +130,7 @@ const transient = Predicate.or(
 export const transportOf = <R>(
   { http, url, event, refusedWith }: Watched<R>,
   input: Schema.Json,
-): Transport<unknown, R> => {
+): Transport<unknown, R | Receiving> => {
   const { name } = event;
   const untagged = untaggedOccurrenceOf(event);
 
@@ -255,20 +261,21 @@ export const transportOf = <R>(
       ),
     ).pipe(readOn("MCP", name));
 
-  const webhook: WebhookTransport<unknown, R> = {
-    subscribe: ({ url: callback, secret, cursor, ttlMs }) =>
+  const webhook: WebhookTransport<unknown, R | Receiving> = {
+    receiver: Effect.service(Receiving),
+    subscribe: ({ delivery, cursor, ttlMs }) =>
       answered(
         "events/subscribe",
         {
-          delivery: { mode: "webhook", url: callback, secret },
+          delivery: { mode: "webhook", ...encodeCallback(delivery) },
           cursor,
           ...(ttlMs === undefined ? {} : { ttlMs }),
         },
         subscribeReplyOf,
       ),
-    unsubscribe: (callback) =>
+    unsubscribe: ({ delivery }) =>
       Effect.asVoid(
-        answered("events/unsubscribe", { delivery: { url: callback } }, unsubscribeReplyOf),
+        answered("events/unsubscribe", { delivery: encodeTarget(delivery) }, unsubscribeReplyOf),
       ),
     read: webhookFed(event),
   };

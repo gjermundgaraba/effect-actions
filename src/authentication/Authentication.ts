@@ -24,6 +24,7 @@ import {
   type VerifierFailure,
 } from "./provider.js";
 import type { Errors } from "../contract/Action.js";
+import type { Codec } from "../contract/codec.js";
 import { assertDistinctTags, errorList, type ErrorsOf } from "../contract/declared.js";
 import { builtIns, type Refusal, scopeToken, Unauthenticated } from "../contract/errors.js";
 import type { Known, OptionalUnless } from "../contract/implementation.js";
@@ -351,7 +352,7 @@ export interface Options<A = unknown> {
    *
    * - `Webhook.layer` with `persist` refuses to serve a protected event by webhook without it, its message naming this option.
    */
-  readonly schema?: Schema.Codec<unknown, unknown, never, never> | undefined;
+  readonly schema?: Codec | undefined;
 }
 
 // Why: `principal` is checked apart from the inferred options, against the identity `make` was

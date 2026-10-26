@@ -29,10 +29,26 @@ const endless = (start: string) =>
 describe("a delivery attempt", () => {
   it.live("succeeds at a 2xx without reading its body, one that never ends included", () =>
     Effect.gen(function* () {
-      yield* attempt(posting, Effect.void).pipe(
-        Effect.provide(endless("")),
-        Effect.timeout("1 second"),
+      let pulled = 0;
+
+      const server = Testing.layer(
+        async () =>
+          new Response(
+            new ReadableStream(
+              {
+                pull: (controller) => {
+                  pulled += 1;
+                  controller.enqueue(new TextEncoder().encode(" ".repeat(1024)));
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+          ),
       );
+
+      yield* attempt(posting, Effect.void).pipe(Effect.provide(server), Effect.timeout("1 second"));
+
+      expect(pulled).toBe(0);
     }),
   );
 
@@ -90,8 +106,13 @@ describe("a delivery attempt", () => {
       );
 
       yield* Deferred.await(asked);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust("4999 millis");
 
+      const before = attempting.pollUnsafe();
+
+      yield* TestClock.adjust("1 millis");
+
+      expect(before).toBeUndefined();
       expect(yield* Fiber.join(attempting)).toMatchObject({ category: "timeout", final: false });
     }),
   );

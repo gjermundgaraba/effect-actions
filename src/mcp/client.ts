@@ -15,7 +15,7 @@ import {
 import { type BuiltIn, Refusal } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
 import { type CallOptions, progressSink, type Reporting } from "../contract/progress.js";
-import { type WatchArgs, watching } from "../contract/watch.js";
+import { type WatchArgs, type WatchRequirement, watching } from "../contract/watch.js";
 import { Anyone } from "../contract/caller.js";
 import { projectedErrors } from "../contract/declared.js";
 import { split } from "../contract/listed.js";
@@ -103,10 +103,14 @@ export type Client<
 type Watching<Listed extends Event.Any, D, E, R> = [Listed] extends [never]
   ? unknown
   : {
-      readonly watch: <W extends Listed, SE = never>(
+      readonly watch: <
+        W extends Listed,
+        SE = never,
+        const O extends Event.WatchOptions<unknown> = {},
+      >(
         event: W,
-        ...args: WatchArgs<W, SE>
-      ) => Stream.Stream<Event.Received<W>, WatchError<W, D> | E | SE, R>;
+        ...args: WatchArgs<W, SE, O>
+      ) => Stream.Stream<Event.Received<W>, WatchError<W, D> | E | SE, R | WatchRequirement<O>>;
     };
 
 type Block = McpSchema.CallToolResult["content"][number];

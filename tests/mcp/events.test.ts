@@ -350,7 +350,11 @@ describe("MCP events over HTTP", () => {
         );
 
         expect(unknown.reply).toMatchObject({
-          error: { code: -32023, message: "Unknown event: nothing.here", data: { kind: "event" } },
+          error: {
+            code: -32023,
+            message: `Event "nothing.here" is not served`,
+            data: { kind: "event" },
+          },
         });
         expect(refused.reply).toMatchObject({ error: { code: -32602 } });
         expect(JSON.stringify(refused.reply)).toContain(

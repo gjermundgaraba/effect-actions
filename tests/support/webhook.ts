@@ -1,6 +1,12 @@
-import { vi } from "@effect/vitest";
+import { afterAll, vi } from "@effect/vitest";
 import { Effect, Layer, Option, type Queue, Redacted, Schema, Stream } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpServerRequest } from "effect/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  type HttpRouter,
+  HttpServerRequest,
+} from "effect/http";
 import { Dns } from "effect/net";
 import { KeyValueStore } from "effect/persistence";
 import { TestClock } from "effect/testing";
@@ -13,7 +19,7 @@ import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { type Actor as Identity, actors, CurrentActor } from "./app/authorization.js";
 
-const Changed = Event.make("user.changed", {
+export const Changed = Event.make("user.changed", {
   description: "A user changed.",
   payload: { id: Schema.String, by: Schema.String },
   caller: CurrentActor,
@@ -25,12 +31,12 @@ const Actor = Schema.Struct({
   permissions: Schema.Array(Schema.Literals(["users:read", "users:write"])),
 });
 
-const Login = Authentication.make("webhook-delivery.Login", CurrentActor, {
+export const Login = Authentication.make("webhook-delivery.Login", CurrentActor, {
   principal: (actor) => actor.id,
   schema: Actor,
 });
 
-const Http = ActionHttp.make([Changed], { authentication: Login });
+export const Http = ActionHttp.make([Changed], { authentication: Login });
 
 export interface Delivery {
   readonly id: string | null;
@@ -50,7 +56,13 @@ export const bodyOf = (delivery: Delivery) => Schema.decodeUnknownSync(Body)(del
 export const secretOf = (seed: number) =>
   `whsec_${Buffer.from(Array.from({ length: 32 }, (_, index) => (seed + index) % 256)).toString("base64")}`;
 
-export const signedBy = async (secret: string, delivery: Delivery) => {
+/** Standard Webhooks' `v1,` signature of `id.timestamp.body` under `secret`, written apart. */
+export const signatureOf = async (
+  secret: string,
+  id: string | null,
+  timestamp: string | number | null,
+  body: string,
+) => {
   const key = await crypto.subtle.importKey(
     "raw",
     Buffer.from(secret.slice("whsec_".length), "base64"),
@@ -59,16 +71,19 @@ export const signedBy = async (secret: string, delivery: Delivery) => {
     ["sign"],
   );
 
-  const expected = Buffer.from(
-    await crypto.subtle.sign(
-      "HMAC",
-      key,
-      new TextEncoder().encode(`${delivery.id}.${delivery.timestamp}.${delivery.body}`),
-    ),
-  ).toString("base64");
+  const mac = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${id}.${timestamp}.${body}`),
+  );
 
-  return (delivery.signature ?? "").split(" ").includes(`v1,${expected}`);
+  return `v1,${Buffer.from(mac).toString("base64")}`;
 };
+
+export const signedBy = async (secret: string, delivery: Delivery) =>
+  (delivery.signature ?? "")
+    .split(" ")
+    .includes(await signatureOf(secret, delivery.id, delivery.timestamp, delivery.body));
 
 type Answer = (body: Record<string, Schema.Json>) => Response;
 
@@ -81,12 +96,28 @@ interface Change {
   readonly onlyTenant?: string | undefined;
 }
 
-export const makeWorld = (
-  options: Webhook.Options & { readonly persist?: false | undefined } = {},
-  emitted?: Queue.Queue<Change>,
-  kept?: KeyValueStore.KeyValueStore,
-  over: "HTTP" | "MCP" | "both" = "HTTP",
-) => {
+/** How a world serves its event, beside `Webhook.layer`'s options. */
+export interface WorldOptions extends Webhook.Options {
+  readonly persist?: false | undefined;
+  /** A log source fed from this queue, in place of the check source. */
+  readonly emitted?: Queue.Queue<Change> | undefined;
+  /** The store `persist` keeps subscriptions in, where they are kept. */
+  readonly kept?: KeyValueStore.KeyValueStore | undefined;
+  readonly over?: "HTTP" | "MCP" | "both" | undefined;
+  /** What answers each POST to a callback, in place of the world's recording receiver. */
+  readonly callbacks?: Layer.Layer<never, never, HttpRouter.HttpRouter> | undefined;
+  /** Whether the surfaces are given `Webhook.layer`; `true` by default. */
+  readonly delivering?: boolean | undefined;
+}
+
+export const makeWorld = ({
+  emitted,
+  kept,
+  over = "HTTP",
+  callbacks,
+  delivering = true,
+  ...options
+}: WorldOptions = {}) => {
   const changes: Array<Change> = [];
   const received: Array<Delivery> = [];
   const revoked = new Set<string>();
@@ -99,6 +130,7 @@ export const makeWorld = (
     revoked,
     requested,
     known,
+    checks: 0,
     failures: 0,
     authorizerDown: 0,
     answer: acknowledging,
@@ -135,22 +167,25 @@ export const makeWorld = (
           Changed,
           {
             check: (_input, cursor) =>
-              world.failures > 0
-                ? Effect.suspend(() => {
-                    world.failures -= 1;
+              Effect.suspend(() => {
+                world.checks += 1;
 
-                    return Effect.die(new Error("The source is down."));
-                  })
-                : Effect.map(CurrentActor, (actor) => ({
-                    cursor: String(changes.length),
-                    events: changes
-                      .slice(cursor === null ? changes.length : Number(cursor))
-                      .filter(
-                        ({ onlyTenant }) =>
-                          onlyTenant === undefined || onlyTenant === actor.tenantId,
-                      )
-                      .map((data) => ({ eventId: data.id, data })),
-                  })),
+                if (world.failures > 0) {
+                  world.failures -= 1;
+
+                  return Effect.die(new Error("The source is down."));
+                }
+
+                return Effect.map(CurrentActor, (actor) => ({
+                  cursor: String(changes.length),
+                  events: changes
+                    .slice(cursor === null ? changes.length : Number(cursor))
+                    .filter(
+                      ({ onlyTenant }) => onlyTenant === undefined || onlyTenant === actor.tenantId,
+                    )
+                    .map((data) => ({ eventId: data.id, data })),
+                }));
+              }),
           },
           { authorize },
         )
@@ -200,12 +235,12 @@ export const makeWorld = (
 
   const surface = { HTTP: overHttp, MCP: overMcp, both: Layer.mergeAll(overHttp, overMcp) }[over];
 
-  const routes = surface.pipe(
-    Layer.provide(Authentication.layer(Login, verify)),
-    Layer.provide(webhooks),
+  const authenticated = surface.pipe(Layer.provide(Authentication.layer(Login, verify)));
+
+  const routes = (delivering ? authenticated.pipe(Layer.provide(webhooks)) : authenticated).pipe(
     Layer.provide([
       Event.layerMemory,
-      counting(Testing.layer(receiver)),
+      counting(callbacks === undefined ? Testing.layer(receiver) : Testing.layer(callbacks)),
       Dns.layerStatic({
         hosts: {
           "hooks.example.com": ["93.184.216.34"],
@@ -276,11 +311,15 @@ const sign = crypto.subtle.sign.bind(crypto.subtle);
 
 const digest = crypto.subtle.digest.bind(crypto.subtle);
 
-vi.spyOn(crypto.subtle, "importKey").mockImplementation((...args) => counted(importKey(...args)));
+const spies = [
+  vi.spyOn(crypto.subtle, "importKey").mockImplementation((...args) => counted(importKey(...args))),
+  vi.spyOn(crypto.subtle, "sign").mockImplementation((...args) => counted(sign(...args))),
+  vi.spyOn(crypto.subtle, "digest").mockImplementation((...args) => counted(digest(...args))),
+];
 
-vi.spyOn(crypto.subtle, "sign").mockImplementation((...args) => counted(sign(...args)));
-
-vi.spyOn(crypto.subtle, "digest").mockImplementation((...args) => counted(digest(...args)));
+afterAll(() => {
+  for (const spy of spies) spy.mockRestore();
+});
 
 export const counting = <E, R>(client: Layer.Layer<HttpClient.HttpClient, E, R>) =>
   Layer.effect(HttpClient.HttpClient)(
@@ -305,27 +344,45 @@ const turn = Effect.promise(() => new Promise<void>((resolve) => setImmediate(re
 
 const quietTurns = 3;
 
-const quietFor = (turns: number): Effect.Effect<void> =>
-  turns === 0
-    ? Effect.void
-    : Effect.flatMap(turn, () => quietFor(inFlight === 0 ? turns - 1 : quietTurns));
+const maxTurns = 10_000;
 
 /**
- * Waits, in real time, until no signing or in-process POST has been in flight for three scheduler
- * turns: the test clock cannot see that work, and moved during it would let an attempt's 5-second
+ * Waits, in real time, until `done` holds once no signing or in-process POST has been in flight
+ * for three scheduler turns, dying with `done` named where it never does within 10,000 turns:
+ * the test clock cannot see that work, and moved during it would let an attempt's 5-second
  * timeout or a retry's wait elapse in time the work never took.
  */
-export const settled = quietFor(quietTurns);
-
-/** Steps the clock a second at a time, each step once `settled`, until `done` or `seconds` pass. */
-export const until = (done: () => boolean, seconds = Infinity): Effect.Effect<void> =>
-  Effect.flatMap(settled, () =>
-    done() || seconds <= 0
+export const settled = (done: () => boolean = () => true): Effect.Effect<void> => {
+  const waited = (quiet: number, turns: number): Effect.Effect<void> =>
+    quiet >= quietTurns && done()
       ? Effect.void
-      : Effect.andThen(TestClock.adjust("1 second"), until(done, seconds - 1)),
+      : turns === maxTurns
+        ? Effect.die(new Error(`Never settled with ${String(done)}`))
+        : Effect.flatMap(turn, () => waited(inFlight === 0 ? quiet + 1 : 0, turns + 1));
+
+  return waited(0, 0);
+};
+
+/**
+ * Steps the clock a second at a time, each step once `settled`, until `done`, dying with `done`
+ * named where it does not within `seconds`, by default 3 hours.
+ */
+export const until = (done: () => boolean, seconds = 3 * 60 * 60): Effect.Effect<void> =>
+  Effect.flatMap(settled(), () =>
+    done()
+      ? Effect.void
+      : seconds <= 0
+        ? Effect.die(new Error(`Never held with the clock moved on: ${String(done)}`))
+        : Effect.andThen(TestClock.adjust("1 second"), until(done, seconds - 1)),
   );
 
-export const passed = (seconds = 60) => until(() => false, seconds);
+/** Lets `seconds` pass, a second at a time, each step once `settled`, and settles once more. */
+export const passed = (seconds = 60): Effect.Effect<void> =>
+  seconds <= 0
+    ? settled()
+    : Effect.flatMap(settled(), () =>
+        Effect.andThen(TestClock.adjust("1 second"), passed(seconds - 1)),
+      );
 
 export const events = (received: ReadonlyArray<Delivery>) =>
   received.map(bodyOf).filter(({ type }) => type === undefined);

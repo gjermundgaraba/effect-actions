@@ -12,119 +12,78 @@ import {
   Stream,
 } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { Dns } from "effect/net";
 import { TestClock } from "effect/testing";
 import * as Action from "../../src/contract/Action.js";
-import * as Authentication from "../../src/authentication/Authentication.js";
+import { WebhookSecret } from "../../src/contract/callback.js";
 import * as Event from "../../src/contract/Event.js";
-import {
-  type Delivered,
-  Receiving,
-  type Registered,
-  webhookFed,
-} from "../../src/contract/webhooks.js";
-import { transportOf as mcpTransportOf } from "../../src/mcp/watch.js";
+import { type Delivered, Receiving, type Registered } from "../../src/contract/receiving.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
-import { verify } from "../support/app/authentication.js";
 import { actors, CurrentActor } from "../support/app/authorization.js";
-import { counting, passed, until } from "../support/webhook.js";
+import {
+  Changed,
+  counting,
+  Http,
+  Login,
+  makeWorld,
+  passed,
+  secretOf,
+  signatureOf,
+  until,
+} from "../support/webhook.js";
 
-const Changed = Event.make("user.changed", {
-  description: "A user changed.",
-  payload: { id: Schema.String },
-  caller: CurrentActor,
-});
-
-const Login = Authentication.make("webhook-receiving.Login", CurrentActor, {
-  principal: (actor) => actor.id,
-});
-
-const Http = ActionHttp.make([Changed], { authentication: Login });
-
-const url = "https://hooks.example.com/alice";
+const publicUrl = "https://hooks.example.com";
 
 const bearer = HttpClient.mapRequest(HttpClientRequest.bearerToken("alice"));
 
 type Received = Event.Received<typeof Changed>;
 
-interface World {
-  readonly changes: Array<{ readonly id: string }>;
-  readonly revoked: Set<string>;
-  checks: number;
-}
-
-const makeWorld = (): World => ({ changes: [], revoked: new Set(), checks: 0 });
-
-const implementationOf = (world: World) =>
-  Event.implement(
-    Changed,
-    {
-      check: (_input, cursor) =>
-        Effect.sync(() => {
-          world.checks += 1;
-
-          return {
-            cursor: String(world.changes.length),
-            events: world.changes
-              .slice(cursor === null ? world.changes.length : Number(cursor))
-              .map((data) => ({ eventId: data.id, data })),
-          };
-        }),
-    },
-    {
-      authorize: () =>
-        Effect.flatMap(CurrentActor, (actor) =>
-          world.revoked.has(actor.id)
-            ? Effect.fail(new Action.Forbidden({ message: "Revoked." }))
-            : Effect.void,
-        ),
-    },
-  );
-
-type Watching = (http: HttpClient.HttpClient) => Stream.Stream<Received, unknown>;
+type Watching = (http: HttpClient.HttpClient) => Stream.Stream<Received, unknown, Receiving>;
 
 const overHttp =
-  (ttl?: Duration.Input, callback = url): Watching =>
+  (ttl?: Duration.Input, baseUrl = publicUrl): Watching =>
   (http) =>
     Stream.unwrap(
       Effect.map(
         ActionHttp.client(Http, { transformClient: bearer }).pipe(
           Effect.provideService(HttpClient.HttpClient, http),
         ),
-        (client) => client.watch(Changed, {}, { mode: Webhook.delivery({ url: callback, ttl }) }),
+        (client) => client.watch(Changed, {}, { mode: Webhook.delivery({ baseUrl, ttl }) }),
       ),
     );
 
 const overMcp =
-  (callback = url): Watching =>
+  (baseUrl = publicUrl): Watching =>
   (http) =>
     Stream.unwrap(
       Effect.map(
         ActionMcp.client([Changed], { authentication: Login, transformClient: bearer }).pipe(
           Effect.provideService(HttpClient.HttpClient, http),
         ),
-        (client) => client.watch(Changed, {}, { mode: Webhook.delivery({ url: callback }) }),
+        (client) => client.watch(Changed, {}, { mode: Webhook.delivery({ baseUrl }) }),
       ),
     );
 
-const routesOf = (world: World) =>
-  Layer.mergeAll(
-    ActionHttp.layer(Http, implementationOf(world)),
-    ActionMcp.layerHttp(implementationOf(world), {
-      name: "receiving",
-      version: "1.0.0",
-      authentication: Login,
-    }),
-  ).pipe(Layer.provide(Authentication.layer(Login, verify)));
+const stubReceiving = () => {
+  const places = { registered: 0 };
 
-const publicName = Dns.layerStatic({ hosts: { "hooks.example.com": ["93.184.216.34"] } });
+  const layer = Layer.succeed(Receiving, {
+    path: "/alice",
+    register: () =>
+      Effect.sync(() => {
+        places.registered += 1;
+
+        return { id: "stub", secret: Schema.decodeSync(WebhookSecret)(secretOf(7)) };
+      }),
+  });
+
+  return { places, layer };
+};
 
 const served = (...watchings: ReadonlyArray<Watching>) =>
   Effect.gen(function* () {
-    const world = makeWorld();
     const registry = yield* Deferred.make<Receiving["Service"]>();
     const seens = yield* Effect.forEach(watchings, () => Queue.unbounded<Received>());
     const ended = yield* Deferred.make<Exit.Exit<void, unknown>>();
@@ -135,19 +94,20 @@ const served = (...watchings: ReadonlyArray<Watching>) =>
       Effect.flatMap(Receiving, (receiving) => Deferred.succeed(registry, receiving)),
     ).pipe(Layer.provide(receiver));
 
-    const server = routesOf(world).pipe(
-      Layer.provide(Webhook.layer()),
-      Layer.provide([counting(Testing.layer(Layer.mergeAll(receiver, captured))), publicName]),
-    );
+    const { world, server } = makeWorld({
+      over: "both",
+      callbacks: Layer.mergeAll(receiver, captured),
+    });
 
     const started = Effect.gen(function* () {
       const receiving = yield* Deferred.await(registry);
       const http = yield* HttpClient.HttpClient;
 
       const recorded = Receiving.of({
+        path: receiving.path,
         register: (deliver) =>
           Effect.tap(receiving.register(deliver), ({ id }) =>
-            Effect.sync(() => callbacks.push(`${url}?watch=${id}`)),
+            Effect.sync(() => callbacks.push(`${publicUrl}/alice?watch=${id}`)),
           ),
       });
 
@@ -167,36 +127,35 @@ const served = (...watchings: ReadonlyArray<Watching>) =>
       yield* until(() => world.checks >= watchings.length);
     });
 
-    return {
-      world,
-      seen: seens[0]!,
-      seens,
-      ended,
-      callbacks,
-      server: counting(Testing.layer(server)),
-      started,
-    };
+    return { world, seen: seens[0]!, seens, ended, callbacks, server: counting(server), started };
   });
 
 const ids = (received: Iterable<Received>) =>
   Array.from(received, (each) => (each._tag === "Occurrence" ? each.eventId : "gap"));
 
+const Reply = Schema.fromJsonString(Schema.Json);
+
 const unsubscribedOverHttp = (callback: string) =>
-  HttpClient.execute(
-    HttpClientRequest.post("http://localhost/api/events/user.changed/unsubscribe").pipe(
-      HttpClientRequest.bearerToken("alice"),
-      HttpClientRequest.bodyJsonUnsafe({ input: {}, delivery: { url: callback } }),
+  Effect.map(
+    HttpClient.execute(
+      HttpClientRequest.post("http://localhost/api/events/user.changed/unsubscribe").pipe(
+        HttpClientRequest.bearerToken("alice"),
+        HttpClientRequest.bodyJsonUnsafe({ input: {}, delivery: { url: callback } }),
+      ),
     ),
+    ({ status }) => status,
   );
 
 const unsubscribedOverMcp = (callback: string) =>
-  Effect.flatMap(HttpClient.HttpClient, (http) =>
-    Effect.flip(
-      mcpTransportOf(
-        { http: bearer(http), url: "/mcp", event: Changed, refusedWith: [] },
-        {},
-      ).webhook?.unsubscribe(callback) ?? Effect.die(new Error("MCP has no webhook transport")),
+  Effect.flatMap(
+    HttpClient.execute(
+      ActionMcp.request(
+        "events/unsubscribe",
+        { name: Changed.name, arguments: {}, delivery: { url: callback } },
+        { headers: { authorization: "Bearer alice" } },
+      ),
     ),
+    (response) => Effect.map(response.text, Schema.decodeUnknownSync(Reply)),
   );
 
 describe("watching by webhook", () => {
@@ -207,13 +166,13 @@ describe("watching by webhook", () => {
       yield* Effect.gen(function* () {
         yield* started;
 
-        world.changes.push({ id: "c1" }, { id: "c2" });
+        world.changes.push({ id: "c1", by: "bob" }, { id: "c2", by: "bob" });
 
-        yield* TestClock.adjust("5 seconds");
+        yield* passed(10);
 
-        expect(ids(yield* Queue.takeN(seen, 2))).toEqual(["c1", "c2"]);
+        expect(ids(yield* Queue.takeAll(seen))).toEqual(["c1", "c2"]);
       }).pipe(Effect.scoped, Effect.provide(server));
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }),
   );
 
   it.effect("receives what the server POSTs after MCP's events/subscribe", () =>
@@ -223,13 +182,13 @@ describe("watching by webhook", () => {
       yield* Effect.gen(function* () {
         yield* started;
 
-        world.changes.push({ id: "c1" });
+        world.changes.push({ id: "c1", by: "bob" });
 
         yield* TestClock.adjust("5 seconds");
 
         expect(ids(yield* Queue.takeN(seen, 1))).toEqual(["c1"]);
       }).pipe(Effect.scoped, Effect.provide(server));
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }),
   );
 
   it.effect("delivers to each of two watches of one url and input, each its own subscription", () =>
@@ -239,7 +198,7 @@ describe("watching by webhook", () => {
       yield* Effect.gen(function* () {
         yield* started;
 
-        world.changes.push({ id: "c1" });
+        world.changes.push({ id: "c1", by: "bob" });
 
         yield* TestClock.adjust("5 seconds");
 
@@ -247,7 +206,7 @@ describe("watching by webhook", () => {
 
         expect(received.map(ids)).toEqual([["c1"], ["c1"]]);
       }).pipe(Effect.scoped, Effect.provide(server));
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }),
   );
 
   it.effect("refreshes its subscription while it is read, past its first grant", () =>
@@ -259,13 +218,13 @@ describe("watching by webhook", () => {
 
         yield* passed(10 * 60);
 
-        world.changes.push({ id: "late" });
+        world.changes.push({ id: "late", by: "bob" });
 
         yield* TestClock.adjust("5 seconds");
 
         expect(ids(yield* Queue.takeN(seen, 1))).toEqual(["late"]);
       }).pipe(Effect.scoped, Effect.provide(server));
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }),
   );
 
   it.effect("unsubscribes when the watch ends, over HTTP and MCP alike", () =>
@@ -279,13 +238,13 @@ describe("watching by webhook", () => {
           return yield* Effect.gen(function* () {
             yield* started;
 
-            world.changes.push({ id: "c1" });
+            world.changes.push({ id: "c1", by: "bob" });
 
             yield* TestClock.adjust("5 seconds");
             yield* Deferred.await(ended);
 
             return [
-              (yield* unsubscribedOverHttp(callbacks[0] ?? "")).status,
+              yield* unsubscribedOverHttp(callbacks[0] ?? ""),
               yield* unsubscribedOverMcp(callbacks[0] ?? ""),
             ];
           }).pipe(Effect.scoped, Effect.provide(server));
@@ -295,10 +254,10 @@ describe("watching by webhook", () => {
       expect(unsubscribedAgain).toMatchObject(
         Array.from({ length: 2 }, () => [
           409,
-          { _tag: "SubscriptionError", reason: { _tag: "NotSubscribed" } },
+          { error: { code: -32023, data: { kind: "subscription" } } },
         ]),
       );
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }),
   );
 
   it.effect("fails with the refusal a terminated envelope carries", () =>
@@ -309,7 +268,7 @@ describe("watching by webhook", () => {
         yield* started;
 
         world.revoked.add("alice");
-        world.changes.push({ id: "c1" });
+        world.changes.push({ id: "c1", by: "bob" });
 
         yield* TestClock.adjust("5 seconds");
 
@@ -320,45 +279,14 @@ describe("watching by webhook", () => {
           message: "Revoked.",
         });
       }).pipe(Effect.scoped, Effect.provide(server));
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }),
   );
 
   it.effect(
-    "fails with the reason a terminated envelope's code names, and the refusal for any other",
+    "subscribes again a second after a subscribe unanswered for 60 seconds, over HTTP and MCP alike",
     () =>
       Effect.gen(function* () {
-        const read = webhookFed(Changed);
-
-        const failures = yield* Effect.forEach(
-          [
-            { code: -32023, message: "Event removed", data: { kind: "event" } },
-            { code: -32026, message: "Schema changed", data: { feature: "schema" } },
-            { code: -32024, message: "Revoked.", data: { _tag: "Forbidden", message: "Revoked." } },
-            { code: -32000, message: "Ended." },
-          ],
-          (error) => Effect.flip(read({ type: "terminated", error })),
-        );
-
-        expect(failures).toMatchObject([
-          { _tag: "SubscriptionError", reason: { _tag: "NotServed" } },
-          { _tag: "SubscriptionError", reason: { _tag: "Unsupported", feature: "schema" } },
-          { _tag: "Forbidden", message: "Revoked." },
-          { _tag: "Forbidden", message: "Ended." },
-        ]);
-      }),
-  );
-
-  it.effect(
-    "subscribes again after a subscribe unanswered for 60 seconds, over HTTP and MCP alike",
-    () =>
-      Effect.gen(function* () {
-        const receiving = Layer.succeed(Receiving, {
-          register: () =>
-            Effect.succeed({
-              id: "stub",
-              secret: `whsec_${Buffer.alloc(32, 7).toString("base64")}`,
-            }),
-        });
+        const { layer } = stubReceiving();
 
         const requests = yield* Effect.forEach([overHttp(), overMcp()], (watching) =>
           Effect.gen(function* () {
@@ -374,30 +302,31 @@ describe("watching by webhook", () => {
 
             const fiber = yield* Effect.forkChild(Stream.runDrain(watching(unanswering)));
 
-            yield* TestClock.adjust("0 millis");
-            yield* TestClock.adjust("2 minutes");
-            const counted = sent;
+            yield* TestClock.adjust("60 seconds");
+            const unanswered = sent;
+            yield* TestClock.adjust("1 second");
+            const again = sent;
             const ending = yield* Effect.forkChild(Fiber.interrupt(fiber));
 
             yield* TestClock.adjust("2 minutes");
             yield* Fiber.join(ending);
 
-            return counted;
-          }).pipe(Effect.provide(receiving)),
+            return [unanswered, again];
+          }).pipe(Effect.provide(layer)),
         );
 
-        expect(requests).toEqual([2, 2]);
+        expect(requests).toEqual([
+          [1, 2],
+          [1, 2],
+        ]);
       }),
   );
 
   it.effect("fails with what the server refuses a subscription for, over HTTP and MCP alike", () =>
     Effect.gen(function* () {
-      const receiving = Layer.succeed(Receiving, {
-        register: () =>
-          Effect.succeed({ id: "stub", secret: `whsec_${Buffer.alloc(32, 7).toString("base64")}` }),
-      });
+      const { layer } = stubReceiving();
 
-      const refusedBy = <E, R>(server: Layer.Layer<never, E, R>) =>
+      const refusedBy = <E, R>(server: Layer.Layer<HttpClient.HttpClient, E, R>) =>
         Effect.forEach([overHttp(), overMcp()], (watching) =>
           Effect.gen(function* () {
             const exit = yield* watching(yield* HttpClient.HttpClient).pipe(
@@ -406,47 +335,37 @@ describe("watching by webhook", () => {
             );
 
             return Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
-          }).pipe(Effect.provide([Testing.layer(server), receiving])),
+          }).pipe(Effect.provide([server, layer])),
         );
 
-      const withoutWebhooks = routesOf(makeWorld());
+      const unanswered = makeWorld({ over: "both" });
 
-      const unanswered = routesOf(makeWorld()).pipe(
-        Layer.provide(Webhook.layer()),
-        Layer.provide([Testing.layer(async () => new Response(null, { status: 404 })), publicName]),
-      );
+      unanswered.world.answer = () => new Response(null, { status: 404 });
 
-      expect(yield* refusedBy(withoutWebhooks)).toMatchObject(
+      expect(yield* refusedBy(makeWorld({ over: "both", delivering: false }).server)).toMatchObject(
         Array.from({ length: 2 }, () => ({
           _tag: "SubscriptionError",
           reason: { _tag: "Unsupported", feature: "deliveryMode", value: "webhook" },
         })),
       );
-      expect(yield* refusedBy(unanswered)).toMatchObject(
+      expect(yield* refusedBy(unanswered.server)).toMatchObject(
         Array.from({ length: 2 }, () => ({
           _tag: "SubscriptionError",
           reason: { _tag: "CallbackFailed", category: "http_4xx" },
         })),
       );
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }),
   );
 
   it.effect(
-    "refuses a url that is not https, HTTP's client by its schema and MCP's endpoint as InvalidInput",
+    "fails a base url that is not an absolute https URL with a SchemaError, before it takes a place at the receiver",
     () =>
       Effect.gen(function* () {
-        const receiving = Layer.succeed(Receiving, {
-          register: () =>
-            Effect.succeed({
-              id: "stub",
-              secret: `whsec_${Buffer.alloc(32, 7).toString("base64")}`,
-            }),
-        });
-
-        const plain = "http://hooks.example.com/alice";
+        const { places, layer } = stubReceiving();
+        const bases = ["http://hooks.example.com", "hooks.example.com", "https://"];
 
         const refused = yield* Effect.forEach(
-          [overHttp(undefined, plain), overMcp(plain)],
+          bases.flatMap((base) => [overHttp(undefined, base), overMcp(base)]),
           (watching) =>
             Effect.gen(function* () {
               const exit = yield* watching(yield* HttpClient.HttpClient).pipe(
@@ -456,43 +375,27 @@ describe("watching by webhook", () => {
 
               return Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
             }),
-        ).pipe(
-          Effect.provide([
-            Testing.layer(
-              routesOf(makeWorld()).pipe(
-                Layer.provide(Webhook.layer()),
-                Layer.provide([Testing.layer(async () => new Response(null)), publicName]),
-              ),
-            ),
-            receiving,
-          ]),
+        ).pipe(Effect.provide([makeWorld({ over: "both" }).server, layer]));
+
+        expect(refused).toMatchObject(
+          bases.flatMap(() => [{ _tag: "SchemaError" }, { _tag: "SchemaError" }]),
         );
-
-        expect(refused).toMatchObject([{ _tag: "SchemaError" }, { _tag: "InvalidInput" }]);
-      }).pipe(Effect.provide(Event.layerMemory)),
-  );
-
-  it.effect("dies naming Webhook.layerReceiver where no receiver is provided", () =>
-    Effect.gen(function* () {
-      const exit = yield* overHttp()(yield* HttpClient.HttpClient).pipe(
-        Stream.runDrain,
-        Effect.exit,
-      );
-
-      expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
-        "A watch by webhook found no receiver",
-      );
-    })
-      .pipe(Effect.provide(Testing.layer(routesOf(makeWorld()))))
-      .pipe(Effect.provide(Event.layerMemory)),
+        expect(places.registered).toBe(0);
+      }),
   );
 
   it.effect("fails as Unsupported where the surface delivers no webhook", () =>
     Effect.gen(function* () {
-      const client = yield* Action.client(implementationOf(makeWorld()));
+      const client = yield* Action.client(
+        Event.implement(
+          Changed,
+          { check: () => Effect.succeed({ cursor: "0", events: [] }) },
+          { authorize: Event.allowAll },
+        ),
+      );
 
       const exit = yield* client
-        .watch(Changed, {}, { mode: Webhook.delivery({ url }) })
+        .watch(Changed, {}, { mode: Webhook.delivery({ baseUrl: publicUrl }) })
         .pipe(Stream.runDrain, Effect.provideService(CurrentActor, actors.alice), Effect.exit);
 
       expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toMatchObject({
@@ -502,24 +405,6 @@ describe("watching by webhook", () => {
     }).pipe(Effect.provide(Event.layerMemory)),
   );
 });
-
-const signed = async (secret: string, id: string, timestamp: number, body: string) => {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    Buffer.from(secret.slice("whsec_".length), "base64"),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-
-  const mac = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`${id}.${timestamp}.${body}`),
-  );
-
-  return `v1,${Buffer.from(mac).toString("base64")}`;
-};
 
 describe("Webhook.layerReceiver", () => {
   const receiving = Effect.gen(function* () {
@@ -563,7 +448,7 @@ describe("Webhook.layerReceiver", () => {
     signer = secret,
   ) =>
     Effect.flatMap(
-      Effect.promise(() => signed(signer, id, at, JSON.stringify(body))),
+      Effect.promise(() => signatureOf(signer, id, at, JSON.stringify(body))),
       (signature) =>
         HttpClient.execute(
           HttpClientRequest.post(`https://hooks.example.com/hooks${query}`).pipe(
@@ -588,21 +473,22 @@ describe("Webhook.layerReceiver", () => {
         yield* Effect.gen(function* () {
           const { id, secret } = yield* Deferred.await(registered);
           const named = `?watch=${id}`;
-          const stranger = `whsec_${Buffer.alloc(32, 9).toString("base64")}`;
+          const { text } = secret;
+          const stranger = secretOf(9);
 
           const statuses = [
-            (yield* posted(named, secret, "c1", 0, delivery)).status,
-            (yield* posted(named, secret, "c1", 0, delivery)).status,
-            (yield* posted(named, secret, "c2", 0, delivery, stranger)).status,
-            (yield* posted(named, secret, "c3", 301, delivery)).status,
-            (yield* posted(named, secret, "c4", -301, delivery)).status,
-            (yield* posted(named, secret, "c5", 0, [delivery])).status,
-            (yield* posted("?watch=ended", secret, "c6", 0, delivery)).status,
-            (yield* posted("", secret, "c7", 0, delivery)).status,
+            (yield* posted(named, text, "c1", 0, delivery)).status,
+            (yield* posted(named, text, "c1", 0, delivery)).status,
+            (yield* posted(named, text, "c2", 0, delivery, stranger)).status,
+            (yield* posted(named, text, "c3", 301, delivery)).status,
+            (yield* posted(named, text, "c4", -301, delivery)).status,
+            (yield* posted(named, text, "c5", 0, [delivery])).status,
+            (yield* posted("?watch=ended", text, "c6", 0, delivery)).status,
+            (yield* posted("", text, "c7", 0, delivery)).status,
           ];
 
           const challenge = yield* Effect.flatMap(
-            posted(named, secret, "msg_verification_1", 0, {
+            posted(named, text, "msg_verification_1", 0, {
               type: "verification",
               challenge: "abc",
             }),
@@ -625,11 +511,11 @@ describe("Webhook.layerReceiver", () => {
 
         room.left = false;
 
-        const full = (yield* posted(`?watch=${id}`, secret, "c1", 0, delivery)).status;
+        const full = (yield* posted(`?watch=${id}`, secret.text, "c1", 0, delivery)).status;
 
         room.left = true;
 
-        const retried = (yield* posted(`?watch=${id}`, secret, "c1", 0, delivery)).status;
+        const retried = (yield* posted(`?watch=${id}`, secret.text, "c1", 0, delivery)).status;
 
         expect([full, retried]).toEqual([503, 204]);
         expect(accepted).toEqual([delivery]);

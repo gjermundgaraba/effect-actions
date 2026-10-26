@@ -7,18 +7,18 @@ import type * as Action from "../contract/Action.js";
 import * as Event from "../contract/Event.js";
 import { principalOf } from "../contract/caller.js";
 import type { Feed } from "../contract/feed.js";
-import type { ErasedValue } from "../contract/implementation.js";
 import { OccurrenceOf } from "../contract/occurrence.js";
 import { type AnySubscription, PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import { assertDistinctTags } from "../contract/declared.js";
 import { declared } from "../contract/status.js";
 import {
-  CallbackUrl,
+  type AnyWebhookCancellation,
+  type AnyWebhookSubscription,
   Subscribed,
-  WebhookSecret,
-  type Webhooks,
-  webhookSubscriber,
-} from "../contract/webhooks.js";
+  WebhookCancellationOf,
+  WebhookSubscriptionOf,
+} from "../contract/subscribe.js";
+import { type Webhooks, webhookSubscriber } from "../contract/webhooks.js";
 
 /**
  * One poll's answer: the occurrences since the cursor, and when to ask again, sent as
@@ -67,25 +67,6 @@ export const eventEndpointOf = (
   }).annotate(OpenApi.Description, event.description);
 
 /**
- * What a webhook subscribe to `event` takes: a subscription's input and cursor, the callback,
- * and a lifetime.
- */
-export const WebhookSubscriptionOf = <E extends Event.Any>(event: E) =>
-  SubscriptionOf(event).pipe(
-    Schema.fieldsAssign({
-      delivery: Schema.Struct({ url: CallbackUrl, secret: WebhookSecret }),
-      ttlMs: Schema.optional(Schema.NullOr(Schema.Finite)).annotate({
-        description:
-          "The lifetime it suggests, in milliseconds; the answer's refreshBefore is the grant.",
-      }),
-    }),
-  );
-
-/** What a webhook unsubscribe from `event` takes: the input and callback it subscribed with. */
-export const WebhookCancellationOf = <E extends Event.Any>(event: E) =>
-  Schema.Struct({ input: event.input, delivery: Schema.Struct({ url: CallbackUrl }) });
-
-/**
  * The webhook routes of one protected event type at `path`: `/subscribe`, which starts or
  * refreshes a subscription and answers its grant, and `/unsubscribe`, which ends it.
  */
@@ -119,40 +100,16 @@ export const webhookAnswers = (
   authentication: Authentication | undefined,
   webhooks: Option.Option<Webhooks["Service"]>,
 ) => {
-  const served = webhookSubscriber(feed.event, authentication, webhooks);
+  const served = webhookSubscriber(feed, authentication, webhooks);
 
   return {
-    subscribe: ({
-      payload: { input, delivery, cursor, ttlMs },
-    }: {
-      readonly payload: {
-        readonly input: ErasedValue;
-        readonly delivery: { readonly url: string; readonly secret: string };
-        readonly cursor: string | null;
-        readonly ttlMs?: number | null | undefined;
-      };
-    }) =>
-      Effect.flatMap(served, ({ webhooks, principal }) =>
-        webhooks.subscribe({
-          feed,
-          principal,
-          input,
-          url: delivery.url,
-          secret: delivery.secret,
-          cursor,
-          ttlMs,
-        }),
+    subscribe: ({ payload }: { readonly payload: AnyWebhookSubscription }) =>
+      Effect.flatMap(served, ({ webhooks, ...subscriber }) =>
+        webhooks.subscribe({ ...payload, ...subscriber }),
       ),
-    unsubscribe: ({
-      payload: { input, delivery },
-    }: {
-      readonly payload: {
-        readonly input: ErasedValue;
-        readonly delivery: { readonly url: string };
-      };
-    }) =>
-      Effect.flatMap(served, ({ webhooks, principal }) =>
-        webhooks.unsubscribe({ feed, principal, input, url: delivery.url }),
+    unsubscribe: ({ payload }: { readonly payload: AnyWebhookCancellation }) =>
+      Effect.flatMap(served, ({ webhooks, feed, principal }) =>
+        webhooks.unsubscribe({ ...payload, feed, principal }),
       ),
   };
 };

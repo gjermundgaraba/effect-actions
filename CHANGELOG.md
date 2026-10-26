@@ -220,7 +220,10 @@ as the refreshed subscriber; a refusal, of a delivery or of a refresh, ends it w
 address not globally reachable is never POSTed to, unless `allowedCallbacks` trusts it, no redirect is followed by fetch's client, and no trace header
 is sent. One layer holds the subscriptions of every surface it is provided to.
 A subscribe or unsubscribe fails with `Event.SubscriptionError`'s reasons `CallbackFailed`
-(`category`) and `NotSubscribed`, a 409 over HTTP. The layer needs an `HttpClient` and `Dns`, unless
+(`category`) and `NotSubscribed`, a 409 over HTTP. Over MCP, every `events/*` request answers an
+`Event.SubscriptionError` with its reason's SEP-3415 code and data and the error's own message,
+an unknown event's `-32023` and an endpoint's refused push `-32026` included, whose messages
+were `Unknown event: <name>` and `This endpoint serves events by poll alone`. The layer needs an `HttpClient` and `Dns`, unless
 `resolveCallbacks: false` checks a literal callback address alone and leaves a name to the
 platform's egress, for a host with no resolver such as Cloudflare Workers.
 Subscriptions live in memory, unless `persist: true` writes each, its secret, watermark, status
@@ -238,9 +241,12 @@ honored. Guide: `docs/Webhook.md`; example: `examples/build-events`, which keeps
 subscriptions with `persist`.
 
 **Watching by webhook (experimental).** `ActionHttp.client` and `ActionMcp.client` watch with
-`mode: Webhook.delivery({ url, ttl })`: the watch keeps a place at `Webhook.layerReceiver({ path
-})`, subscribes `url` with that place's `watch` query parameter and secret, over the binding's
-`/subscribe` route or `events/subscribe`, reads what the server POSTs there, keeps each grant's
+`mode: Webhook.delivery({ baseUrl, ttl })`, such a watch requiring `Webhook.layerReceiver({ path
+})` in its type: it keeps a place at the receiver, subscribes the receiver's `path` under
+`baseUrl`, the https URL the server reaches the process at, with that place's `watch` query
+parameter and secret, over the binding's `/subscribe` route or `events/subscribe`, failing with
+a `SchemaError` before it takes a place where `baseUrl` is not an absolute https URL, reads what
+the server POSTs there, keeps each grant's
 position in order behind what came before it, refreshes the subscription when half its grant is
 left and through a reconnect, fails with what a `terminated` envelope's code names, as an MCP
 watch does, `NotServed`, `Unsupported` or the refusal it carries, and

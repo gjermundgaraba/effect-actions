@@ -3,7 +3,8 @@ import { type HttpClient, HttpRouter } from "effect/http";
 import { Dns } from "effect/net";
 import { KeyValueStore } from "effect/persistence";
 import * as Event from "../contract/Event.js";
-import { Receiving, Webhooks } from "../contract/webhooks.js";
+import { Receiving } from "../contract/receiving.js";
+import { Webhooks } from "../contract/webhooks.js";
 import { makeReceiver } from "./receiver.js";
 import { makeStorage, type Storage } from "./stored.js";
 import { makeWebhooks } from "./subscriptions.js";
@@ -168,17 +169,18 @@ export type DeliveryOptions = ConstructorParameters<typeof Event.WebhookDelivery
 
 /**
  * A watch's `mode` delivering by webhook: `client.watch(event, input, { mode:
- * Webhook.delivery({ url }) })` keeps a place at this process's `layerReceiver`, subscribes `url`
- * with that place's id and secret, reads what the server POSTs there, refreshes the subscription
- * when half its grant is left, also through a reconnect, and unsubscribes when the watch ends.
- * Over MCP and HTTP; elsewhere the watch fails with `Event.SubscriptionError`, reason
- * `Unsupported`.
+ * Webhook.delivery({ baseUrl }) })` requires this process's `layerReceiver`, keeps a place there,
+ * subscribes the receiver's `path` under `baseUrl` with that place's id and secret, reads what
+ * the server POSTs there, refreshes the subscription when half its grant is left, also through a
+ * reconnect, and unsubscribes when the watch ends. Over MCP and HTTP; elsewhere the watch fails
+ * with `Event.SubscriptionError`, reason `Unsupported`.
  *
  * **Gotchas**
  *
- * - The watch needs `layerReceiver` provided to it, and its route served at `url`: without the layer it dies with a message naming it, and without the route the subscribe fails with `CallbackFailed`.
- * - A server refuses a callback that is not globally reachable, so `url` is a public name of this process, such as a tunnel's in development.
- * - The URL subscribed is `url` with a `watch` query parameter, one per watch, so watches never share a subscription: a proxy in front of the route must pass the query on.
+ * - The receiver's route must be reached at `baseUrl` and its `path`: served elsewhere, or by another `layerReceiver` than the one the watch is given, the subscribe fails with `CallbackFailed`.
+ * - A `baseUrl` that is not an absolute https URL fails the watch with a `SchemaError` before it takes a place at the receiver.
+ * - A server refuses a callback that is not globally reachable, so `baseUrl` is a public name of this process, such as a tunnel's in development.
+ * - The URL subscribed carries a `watch` query parameter, one per watch, so watches never share a subscription: a proxy in front of the route must pass the query on.
  * - A restarted process subscribes afresh from the cursor `resume` kept, so the server sends again what the last process accepted and never handed on; the old subscription lapses at its grant, each delivery to it answered 410.
  */
 export const delivery = (options: DeliveryOptions): Event.WebhookDelivery =>
@@ -186,7 +188,7 @@ export const delivery = (options: DeliveryOptions): Event.WebhookDelivery =>
 
 /** Where `layerReceiver` serves its route. */
 export interface ReceiverOptions {
-  /** The route's path, `/hooks/builds`: the path of each watch's `delivery` URL. */
+  /** The route's path, `/hooks/builds`, which each watch's `delivery` appends to its `baseUrl`. */
   readonly path: `/${string}`;
 }
 
@@ -211,7 +213,7 @@ export const layerReceiver = ({
   path,
 }: ReceiverOptions): Layer.Layer<Receiving, never, HttpRouter.HttpRouter> =>
   Layer.unwrap(
-    Effect.map(makeReceiver, ({ receiving, handler }) =>
+    Effect.map(makeReceiver(path), ({ receiving, handler }) =>
       Layer.merge(Layer.succeed(Receiving, receiving), HttpRouter.add("POST", path, handler)),
     ),
   );

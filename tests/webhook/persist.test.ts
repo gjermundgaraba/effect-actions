@@ -9,7 +9,6 @@ import * as Event from "../../src/contract/Event.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { Stored } from "../../src/webhook/stored.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
 import { type Actor, CurrentActor } from "../support/app/authorization.js";
@@ -43,8 +42,8 @@ describe("webhook subscriptions kept by persist", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
-        const before = makeWorld({}, undefined, store);
-        const after = makeWorld({}, undefined, store);
+        const before = makeWorld({ kept: store });
+        const after = makeWorld({ kept: store });
 
         const grant = yield* Effect.gen(function* () {
           const grant = yield* subscribed(secretOf(1));
@@ -76,8 +75,8 @@ describe("webhook subscriptions kept by persist", () => {
   it.effect("restores over MCP a subscription made over HTTP, as the MCP endpoint builds", () =>
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({}, undefined, store);
-      const after = makeWorld({}, undefined, store, "MCP");
+      const before = makeWorld({ kept: store });
+      const after = makeWorld({ kept: store, over: "MCP" });
 
       const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
 
@@ -96,8 +95,8 @@ describe("webhook subscriptions kept by persist", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
-        const before = makeWorld({}, undefined, store);
-        const after = makeWorld({}, undefined, store);
+        const before = makeWorld({ kept: store });
+        const after = makeWorld({ kept: store });
 
         yield* Effect.gen(function* () {
           yield* subscribed(secretOf(1), 60_000);
@@ -134,8 +133,8 @@ describe("webhook subscriptions kept by persist", () => {
               : memory.set(key, value),
         };
 
-        const before = makeWorld({}, undefined, failingFirstIndexWrite);
-        const after = makeWorld({}, undefined, memory);
+        const before = makeWorld({ kept: failingFirstIndexWrite });
+        const after = makeWorld({ kept: memory });
 
         const grant = yield* Effect.gen(function* () {
           const grant = yield* subscribed(secretOf(1));
@@ -161,7 +160,7 @@ describe("webhook subscriptions kept by persist", () => {
   it.effect("removes a subscription its own expiry ends while the layer runs", () =>
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
-      const { server } = makeWorld({}, undefined, store);
+      const { server } = makeWorld({ kept: store });
 
       const keptLive = yield* Effect.gen(function* () {
         yield* subscribed(secretOf(1), 60_000);
@@ -184,7 +183,7 @@ describe("webhook subscriptions kept by persist", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
-        const { world, server } = makeWorld({ retryFor: "10 seconds" }, undefined, store);
+        const { world, server } = makeWorld({ retryFor: "10 seconds", kept: store });
 
         const [grant, suspended] = yield* Effect.gen(function* () {
           const grant = yield* subscribed(secretOf(1), null);
@@ -195,14 +194,8 @@ describe("webhook subscriptions kept by persist", () => {
 
           yield* passed();
 
-          const kept = yield* store.get(`${index}/${grant.id}`);
-
-          const suspended = [
-            yield* keptIds(store),
-            kept === undefined
-              ? kept
-              : Schema.decodeUnknownSync(Schema.fromJsonString(Stored))(kept).status.active,
-          ];
+          const refresh = yield* subscribed(secretOf(1), null);
+          const suspended = [yield* keptIds(store), refresh.deliveryStatus?.active];
 
           yield* TestClock.adjust("1 hour");
           yield* passed();
@@ -221,8 +214,8 @@ describe("webhook subscriptions kept by persist", () => {
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
         const reported: Array<string> = [];
-        const before = makeWorld({}, undefined, store);
-        const after = makeWorld({}, undefined, store);
+        const before = makeWorld({ kept: store });
+        const after = makeWorld({ kept: store });
 
         const [alice, bob] = yield* Effect.all([
           subscribed(secretOf(1)),
@@ -260,8 +253,8 @@ describe("webhook subscriptions kept by persist", () => {
   it.effect("posts terminated to a subscriber refused as its subscription is restored", () =>
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({}, undefined, store);
-      const after = makeWorld({}, undefined, store);
+      const before = makeWorld({ kept: store });
+      const after = makeWorld({ kept: store });
 
       yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
 
@@ -276,49 +269,30 @@ describe("webhook subscriptions kept by persist", () => {
     }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
 
-  it.effect("resumes a restored subscription whose source fails its first read", () =>
-    Effect.gen(function* () {
-      const store = yield* KeyValueStore.KeyValueStore;
-      const reported: Array<string> = [];
-      const before = makeWorld({}, undefined, store);
-      const after = makeWorld({}, undefined, store);
+  it.effect(
+    "keeps and resumes a restored subscription whose authorizer and source fail its first reads with no refusal",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+        const reported: Array<string> = [];
+        const before = makeWorld({ kept: store });
+        const after = makeWorld({ kept: store });
 
-      yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
+        const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
 
-      after.world.failures = 1;
-      after.world.changes.push({ id: "c1", by: "bob" });
+        after.world.authorizerDown = 1;
+        after.world.failures = 1;
+        after.world.changes.push({ id: "c1", by: "bob" });
 
-      yield* until(() => events(after.world.received).length === 1).pipe(
-        Effect.provide(after.server),
-        Effect.provide(ErrorReporter.layer([recorder(reported)])),
-      );
+        yield* until(() => events(after.world.received).length === 1).pipe(
+          Effect.provide(after.server),
+          Effect.provide(ErrorReporter.layer([recorder(reported)])),
+        );
 
-      expect(events(after.world.received)).toMatchObject([{ eventId: "c1" }]);
-      expect(reported).toHaveLength(1);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
-  );
-
-  it.effect("keeps and resumes a restored subscription whose authorizer fails as it starts", () =>
-    Effect.gen(function* () {
-      const store = yield* KeyValueStore.KeyValueStore;
-      const reported: Array<string> = [];
-      const before = makeWorld({}, undefined, store);
-      const after = makeWorld({}, undefined, store);
-
-      const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
-
-      after.world.authorizerDown = 1;
-      after.world.changes.push({ id: "c1", by: "bob" });
-
-      yield* until(() => events(after.world.received).length === 1).pipe(
-        Effect.provide(after.server),
-        Effect.provide(ErrorReporter.layer([recorder(reported)])),
-      );
-
-      expect(events(after.world.received)).toMatchObject([{ eventId: "c1" }]);
-      expect(reported).toHaveLength(1);
-      expect(yield* keptIds(store)).toEqual([grant.id]);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(events(after.world.received)).toMatchObject([{ eventId: "c1" }]);
+        expect(reported).toHaveLength(2);
+        expect(yield* keptIds(store)).toEqual([grant.id]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
 
   it.effect(
@@ -327,8 +301,8 @@ describe("webhook subscriptions kept by persist", () => {
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
         const callback = "https://hooks.example.com:443/alice";
-        const before = makeWorld({}, undefined, store);
-        const after = makeWorld({}, undefined, store);
+        const before = makeWorld({ kept: store });
+        const after = makeWorld({ kept: store });
 
         const grant = yield* subscribed(secretOf(1), undefined, { callback }).pipe(
           Effect.provide(before.server),
@@ -356,7 +330,7 @@ describe("webhook subscriptions kept by persist", () => {
       Effect.gen(function* () {
         const memory = yield* KeyValueStore.KeyValueStore;
         const reported: Array<string> = [];
-        const before = makeWorld({}, undefined, memory);
+        const before = makeWorld({ kept: memory });
 
         const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
 
@@ -370,7 +344,7 @@ describe("webhook subscriptions kept by persist", () => {
               : memory.get(key),
         };
 
-        const after = makeWorld({}, undefined, failingReads);
+        const after = makeWorld({ kept: failingReads });
 
         yield* passed().pipe(
           Effect.provide(after.server),
@@ -387,8 +361,8 @@ describe("webhook subscriptions kept by persist", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
-        const before = makeWorld({ retryFor: "90 seconds" }, undefined, store);
-        const after = makeWorld({ retryFor: "90 seconds" }, undefined, store);
+        const before = makeWorld({ retryFor: "90 seconds", kept: store });
+        const after = makeWorld({ retryFor: "90 seconds", kept: store });
 
         const failing: typeof before.world.answer = (body) =>
           body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
@@ -419,8 +393,8 @@ describe("webhook subscriptions kept by persist", () => {
   it.effect("restores a suspended subscription suspended, delivering again at its refresh", () =>
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({ retryFor: "10 seconds" }, undefined, store);
-      const after = makeWorld({ retryFor: "10 seconds" }, undefined, store);
+      const before = makeWorld({ retryFor: "10 seconds", kept: store });
+      const after = makeWorld({ retryFor: "10 seconds", kept: store });
 
       yield* Effect.gen(function* () {
         yield* subscribed(secretOf(1));
@@ -455,8 +429,8 @@ describe("webhook subscriptions kept by persist", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
-        const before = makeWorld({ retryFor: "10 seconds" }, undefined, store);
-        const after = makeWorld({ retryFor: "10 seconds" }, undefined, store);
+        const before = makeWorld({ retryFor: "10 seconds", kept: store });
+        const after = makeWorld({ retryFor: "10 seconds", kept: store });
 
         yield* Effect.gen(function* () {
           yield* subscribed(secretOf(1));
@@ -483,25 +457,32 @@ describe("webhook subscriptions kept by persist", () => {
       }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
 
-  it.effect("restores the identity its latest refresh was made with", () =>
+  it.effect("restores a subscription as the identity its latest refresh was made with", () =>
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
-      const { world, server } = makeWorld({}, undefined, store);
-      const narrowed: Actor = { id: "alice", tenantId: "acme", permissions: ["users:read"] };
+      const before = makeWorld({ kept: store });
+      const after = makeWorld({ kept: store });
+      const moved: Actor = { id: "alice", tenantId: "other", permissions: ["users:read"] };
 
-      const grant = yield* Effect.gen(function* () {
+      yield* Effect.gen(function* () {
         yield* subscribed(secretOf(1));
 
-        world.known.set("alice", narrowed);
+        before.world.known.set("alice", moved);
 
-        return yield* subscribed(secretOf(1));
-      }).pipe(Effect.provide(server));
+        yield* subscribed(secretOf(1));
+      }).pipe(Effect.provide(before.server));
 
-      const kept = Schema.decodeUnknownSync(
-        Schema.fromJsonString(Schema.Struct({ identity: Schema.Json })),
-      )(yield* store.get(`${index}/${grant.id}`));
+      after.world.changes.push(
+        { id: "for-acme", by: "bob", onlyTenant: "acme" },
+        { id: "for-other", by: "bob", onlyTenant: "other" },
+      );
 
-      expect(kept.identity).toEqual(narrowed);
+      yield* Effect.gen(function* () {
+        yield* until(() => events(after.world.received).length >= 1);
+        yield* passed(10);
+      }).pipe(Effect.provide(after.server));
+
+      expect(events(after.world.received).map(({ eventId }) => eventId)).toEqual(["for-other"]);
     }).pipe(Effect.provide(KeyValueStore.layerMemory)),
   );
 
@@ -509,7 +490,7 @@ describe("webhook subscriptions kept by persist", () => {
     Effect.gen(function* () {
       const memory = yield* KeyValueStore.KeyValueStore;
       const hanging = KeyValueStore.KeyValueStore.of({ ...memory, set: () => Effect.never });
-      const { world, server } = makeWorld({}, undefined, hanging);
+      const { world, server } = makeWorld({ kept: hanging });
       const scope = yield* Scope.make();
       const context = yield* Layer.buildWithScope(server, scope);
 
@@ -532,8 +513,8 @@ describe("webhook subscriptions kept by persist", () => {
   it.effect("restores a subscription once where two surfaces serve one layer", () =>
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({}, undefined, store);
-      const after = makeWorld({}, undefined, store, "both");
+      const before = makeWorld({ kept: store });
+      const after = makeWorld({ kept: store, over: "both" });
 
       yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
 
@@ -551,8 +532,8 @@ describe("webhook subscriptions kept by persist", () => {
   it.effect("carries a subscription's delivery status through a restore", () =>
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({}, undefined, store);
-      const after = makeWorld({}, undefined, store);
+      const before = makeWorld({ kept: store });
+      const after = makeWorld({ kept: store });
 
       const status = yield* Effect.gen(function* () {
         yield* subscribed(secretOf(1));
@@ -574,8 +555,8 @@ describe("webhook subscriptions kept by persist", () => {
   it.effect("moves a kept subscription to the id its subscriber now has", () =>
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({}, undefined, store);
-      const after = makeWorld({}, undefined, store);
+      const before = makeWorld({ kept: store });
+      const after = makeWorld({ kept: store });
 
       const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
 

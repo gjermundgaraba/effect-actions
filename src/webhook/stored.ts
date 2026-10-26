@@ -1,20 +1,21 @@
 import { Duration, Effect, Option, Queue, Schema, type Scope, Semaphore } from "effect";
 import { KeyValueStore } from "effect/persistence";
 import { reported } from "../contract/reported.js";
-import { DeliveryStatus } from "../contract/webhooks.js";
+import { CallbackUrl, WebhookSecret } from "../contract/callback.js";
+import { DeliveryStatus } from "../contract/subscribe.js";
 
 /**
  * A webhook subscription as `persist` keeps it, enough to start delivering again after a
- * restart: its callback, event, encoded input and identity, secret, expiry,
- * watermark and status.
+ * restart: its callback, event, encoded input and identity, secret, expiry, watermark and
+ * status. Its callback and secret are decoded again as it is read, as a request's are.
  */
 export const Stored = Schema.Struct({
-  url: Schema.String,
+  url: CallbackUrl,
   event: Schema.String,
   input: Schema.Json,
   principal: Schema.String,
   identity: Schema.Json,
-  secret: Schema.String,
+  secret: WebhookSecret,
   expiresAt: Schema.Finite,
   watermark: Schema.NullOr(Schema.String),
   status: DeliveryStatus,

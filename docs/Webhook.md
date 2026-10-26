@@ -233,10 +233,11 @@ describe("the service, by webhook", () => {
 ## Watch by webhook
 
 A client of an MCP endpoint or of HTTP routes watches by webhook with
-`mode: Webhook.delivery({ url })`: the watch keeps a place at `Webhook.layerReceiver`, a route
-this process serves, subscribes `url` with that place's id and secret, reads what the server
-POSTs there, refreshes the subscription while it is read, and unsubscribes when it ends. The
-receiver is built once, the watch given it beside the routes (`Layer.provideMerge`). It is
+`mode: Webhook.delivery({ baseUrl })`: the watch keeps a place at `Webhook.layerReceiver`, a
+route this process serves, subscribes that route's path under `baseUrl` with the place's id and
+secret, reads what the server POSTs there, refreshes the subscription while it is read, and
+unsubscribes when it ends. Such a watch requires the receiver in its type; it is built once, the
+watch given it beside the routes (`Layer.provideMerge`). It is
 served by the process that watches: behind an edge, route its path there, and where nothing can
 reach the process, watch by stream or poll instead.
 
@@ -258,7 +259,8 @@ export interface NotifierOptions {
   readonly publicUrl: string;
 }
 
-// The route build-events POSTs each failed build to, where the watch below reads them.
+// The route build-events POSTs each failed build to, where the watch below reads them: the
+// watch's delivery appends its path to this process's public URL.
 const receiver = Webhook.layerReceiver({ path: "/hooks/builds" });
 
 // A second service, the notifier: it watches build.finished for failures by webhook, the
@@ -279,7 +281,7 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
             BuildFinished,
             { status: "failed" },
             {
-              mode: Webhook.delivery({ url: `${publicUrl}/hooks/builds` }),
+              mode: Webhook.delivery({ baseUrl: publicUrl }),
               // Where it reached is kept, so a restart resumes there; failures the server no
               // longer keeps arrive as a Gap instead.
               resume: { store: yield* KeyValueStore.KeyValueStore, key: "failed-builds" },

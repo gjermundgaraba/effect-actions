@@ -12,6 +12,7 @@ import type {
 } from "../contract/feed.js";
 import { selection } from "../contract/listed.js";
 import { selectFrom } from "../contract/serving.js";
+import type { Receiving } from "../contract/receiving.js";
 import type { WatchArgs } from "../contract/watch.js";
 import {
   projectedErrors,
@@ -296,14 +297,15 @@ type LocalWatch<App, Listed extends Event.Any> = [ServingEvents<App, Listed>] ex
     >;
 
 // Why: Read from the client's `watch` as a command calls it, so a client given with its own
-// `transformClient` adds what its watch fails with and requires, as a call's does.
+// `transformClient` adds what its watch fails with and requires, as a call's does; a command
+// watches by stream or poll, so never needs the receiver a webhook delivery does.
 type Watched<M, E extends Event.Any> = M extends {
   readonly watch: (
     event: E,
     ...args: WatchArgs<E, never>
   ) => Stream.Stream<unknown, infer WE, infer WR>;
 }
-  ? { readonly error: WE; readonly services: WR }
+  ? { readonly error: WE; readonly services: Exclude<WR, Receiving> }
   : { readonly error: never; readonly services: never };
 
 type WatchFailure<H extends AnyHttp, C, E extends Event.Any> = [E] extends [never]

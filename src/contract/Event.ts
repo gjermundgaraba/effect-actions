@@ -399,12 +399,16 @@ export interface CursorStore<E = never> {
 
 /**
  * A watch delivered by webhook, which `Webhook.delivery` makes: the server POSTs each occurrence
- * to `url`, a route `Webhook.layerReceiver` serves in the watching process, for as long as the
- * watch is read, each grant asking for `ttl`.
+ * to the route `Webhook.layerReceiver` serves in the watching process, reached under `baseUrl`,
+ * for as long as the watch is read, each grant asking for `ttl`.
  */
 export class WebhookDelivery extends Data.TaggedClass("WebhookDelivery")<{
-  /** The https URL of the watching process's `layerReceiver` route, as the server reaches it. */
-  readonly url: string;
+  /**
+   * The https URL the server reaches the watching process at: its `layerReceiver` route's path
+   * is appended to it, `https://notifier.example.com` with `/hooks/builds` delivering to
+   * `https://notifier.example.com/hooks/builds`.
+   */
+  readonly baseUrl: string;
   /** The lifetime each subscribe asks for; omitted, the server's longest. */
   readonly ttl?: Duration.Input | undefined;
 }> {}
@@ -422,9 +426,9 @@ export interface WatchOptions<E = never> {
   readonly cursor?: string | null | undefined;
   /**
    * `"stream"` holds one subscription open, `"poll"` asks again and again, and a
-   * `Webhook.delivery` has the server POST each occurrence to a receiver this process serves;
-   * left out, a watch streams where its surface can and polls where the server serves the event
-   * by poll alone.
+   * `Webhook.delivery` has the server POST each occurrence to a receiver this process serves,
+   * which the watch then requires; left out, a watch streams where its surface can and polls
+   * where the server serves the event by poll alone.
    */
   readonly mode?: "stream" | "poll" | WebhookDelivery | undefined;
   /**

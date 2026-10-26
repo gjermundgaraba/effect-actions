@@ -3,6 +3,7 @@ import { Data, Deferred, Effect, Exit, Fiber, Layer, Predicate, Schema, Stream }
 import { KeyValueStore } from "effect/persistence";
 import { TestClock } from "effect/testing";
 import * as Action from "../../src/contract/Action.js";
+import { WebhookSecret } from "../../src/contract/callback.js";
 import * as Event from "../../src/contract/Event.js";
 import {
   type Grant,
@@ -10,7 +11,8 @@ import {
   watching,
   type WebhookRequest,
 } from "../../src/contract/watch.js";
-import { type Delivered, Receiving, webhookFed } from "../../src/contract/webhooks.js";
+import { type Delivered, Receiving, webhookFed } from "../../src/contract/receiving.js";
+import { secretOf, settled } from "../support/webhook.js";
 
 const Changed = Event.make("user.changed", {
   description: "A user changed.",
@@ -45,20 +47,21 @@ const grant = (cursor: string, refreshInMs: number | null, truncated = false) =>
     refreshBefore: refreshInMs === null ? null : new Date(refreshInMs).toISOString(),
   });
 
-const transportOf = (server: Server): Transport<unknown, never> => ({
+const transportOf = (server: Server): Transport<unknown, Receiving> => ({
   name: Changed.name,
   poll: () => Effect.die("A watch by webhook polled"),
   stream: () => Stream.die("A watch by webhook streamed"),
   webhook: {
+    receiver: Effect.service(Receiving),
     subscribe: (request) =>
       Effect.suspend(() => {
         server.requests.push(request);
 
         return server.answers.shift() ?? grant(request.cursor ?? "0", null);
       }),
-    unsubscribe: (url) =>
+    unsubscribe: ({ delivery }) =>
       Effect.suspend(() => {
-        server.unsubscribed.push(url);
+        server.unsubscribed.push(delivery.url.href);
 
         return server.unsubscribe;
       }),
@@ -67,18 +70,21 @@ const transportOf = (server: Server): Transport<unknown, never> => ({
   transient: Predicate.isTagged("Blip"),
 });
 
+const secret = Schema.decodeSync(WebhookSecret)(secretOf(1));
+
 const receivingOf = (server: Server) =>
   Layer.succeed(Receiving, {
+    path: "/hooks",
     register: (deliver) =>
       Effect.sync(() => {
         server.deliver = deliver;
         server.registered += 1;
 
-        return { id: "w1", secret: "whsec_unused" };
+        return { id: "w1", secret };
       }),
   });
 
-const delivery = new Event.WebhookDelivery({ url: "https://hooks.example.com/hooks" });
+const delivery = new Event.WebhookDelivery({ baseUrl: "https://hooks.example.com" });
 
 const occurrence = (id: string, cursor: string) => ({
   eventId: id,
@@ -87,11 +93,6 @@ const occurrence = (id: string, cursor: string) => ({
   data: { id },
   cursor,
 });
-
-const settled = (done: () => boolean) =>
-  Effect.flatMap(Effect.repeat(Effect.yieldNow, { until: done, times: 100 }), () =>
-    done() ? Effect.void : Effect.die(new Error("The watch did not settle")),
-  );
 
 const ids = (received: Iterable<Event.Received<Event.Any>>) =>
   Array.from(received, (each) =>
@@ -121,7 +122,7 @@ describe("a watch by webhook", () => {
         yield* settled(() => server.requests.length === 2);
         yield* Effect.yieldNow;
 
-        expect(server.requests.map(({ url, cursor }) => [url, cursor])).toEqual([
+        expect(server.requests.map(({ delivery, cursor }) => [delivery.url.href, cursor])).toEqual([
           ["https://hooks.example.com/hooks?watch=w1", null],
           ["https://hooks.example.com/hooks?watch=w1", "1"],
         ]);
@@ -224,9 +225,7 @@ describe("a watch by webhook", () => {
       const sent = Array.from({ length: 20 }, (_, index) => `c${index}`);
       const accepted = sent.filter((id, index) => server.deliver(occurrence(id, String(index))));
 
-      expect(accepted.length).toBeGreaterThanOrEqual(16);
-      expect(accepted.length).toBeLessThan(20);
-      expect(accepted).toEqual(sent.slice(0, accepted.length));
+      expect(accepted).toEqual(sent.slice(0, 16));
 
       yield* Deferred.succeed(gate, undefined);
 

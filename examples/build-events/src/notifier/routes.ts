@@ -15,7 +15,8 @@ export interface NotifierOptions {
   readonly publicUrl: string;
 }
 
-// The route build-events POSTs each failed build to, where the watch below reads them.
+// The route build-events POSTs each failed build to, where the watch below reads them: the
+// watch's delivery appends its path to this process's public URL.
 const receiver = Webhook.layerReceiver({ path: "/hooks/builds" });
 
 // A second service, the notifier: it watches build.finished for failures by webhook, the
@@ -36,7 +37,7 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
             BuildFinished,
             { status: "failed" },
             {
-              mode: Webhook.delivery({ url: `${publicUrl}/hooks/builds` }),
+              mode: Webhook.delivery({ baseUrl: publicUrl }),
               // Where it reached is kept, so a restart resumes there; failures the server no
               // longer keeps arrive as a Gap instead.
               resume: { store: yield* KeyValueStore.KeyValueStore, key: "failed-builds" },
