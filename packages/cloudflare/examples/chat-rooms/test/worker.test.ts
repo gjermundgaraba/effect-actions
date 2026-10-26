@@ -1,6 +1,6 @@
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it, vi } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schedule, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { TestClock } from "effect/testing";
@@ -38,10 +38,18 @@ const agentAs = (token: string) =>
     transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
   });
 
-const arrivedIn = (received: ReadonlyArray<unknown>) => (count: number) =>
-  Effect.sync(() => received.length).pipe(
-    Effect.repeat({ until: (length) => length >= count, schedule: Schedule.spaced("10 millis") }),
+// What the runtime does after a call answers, such as a room's alarm, is waited for in real time:
+// a test using this runs under `it.live`, as under the test clock its sleeps never pass.
+const eventually = <A, E>(check: Effect.Effect<A, E>, until: (value: A) => boolean) =>
+  check.pipe(
+    Effect.repeat({ until, schedule: Schedule.spaced("10 millis") }),
     Effect.timeout("5 seconds"),
+  );
+
+const arrivedIn = (received: ReadonlyArray<unknown>) => (count: number) =>
+  eventually(
+    Effect.sync(() => received.length),
+    (length) => length >= count,
   );
 
 const pageIn = (room: RoomName, token: string, headers: Record<string, string> = {}) =>
@@ -275,16 +283,9 @@ describe("the Worker and its rooms", () => {
 
       // The room tells the lobby from its `lobby` task, which the room's alarm runs once the
       // post has answered: the lobby hears of it a moment later, not as the post returns.
-      yield* lobby.previews().pipe(
-        Effect.repeat({
-          until: ({ previews }) =>
-            previews.some(({ room, latestAt }) => room === "design" && latestAt === posted.at),
-          schedule: Schedule.spaced("10 millis"),
-        }),
-        Effect.timeout("5 seconds"),
+      const { previews } = yield* eventually(lobby.previews(), ({ previews }) =>
+        previews.some(({ room, latestAt }) => room === "design" && latestAt === posted.at),
       );
-
-      const { previews } = yield* lobby.previews();
 
       expect(previews.map(({ room }) => room)).toEqual(["general", "design"]);
       expect(previews).toContainEqual({ room: "design", latestAt: posted.at });
@@ -324,7 +325,7 @@ describe("the Worker and its rooms", () => {
       }).pipe(Effect.scoped, Effect.provide(worker)),
   );
 
-  it.effect(
+  it.live(
     "answers another Worker's call of RoomsEntrypoint as the lobby keeps it, and refuses a room it does not list",
     () =>
       Effect.gen(function* () {
@@ -338,14 +339,9 @@ describe("the Worker and its rooms", () => {
         );
 
         // The lobby hears of the post from the room's `lobby` task, a moment after it answered.
-        const latestAt = yield* Effect.promise(() =>
-          exports.RoomsEntrypoint.latestAt("general"),
-        ).pipe(
-          Effect.repeat({
-            until: (at) => at === posted.at,
-            schedule: Schedule.spaced("10 millis"),
-          }),
-          Effect.timeout("5 seconds"),
+        const latestAt = yield* eventually(
+          Effect.promise(() => exports.RoomsEntrypoint.latestAt("general")),
+          (at) => at === posted.at,
         );
 
         expect(latestAt).toBe(posted.at);
@@ -376,7 +372,7 @@ describe("the Worker and its rooms", () => {
       }),
   );
 
-  it.effect("expires a message a day old when the room's alarm runs, and sets the next", () =>
+  it.live("expires a message a day old when the room's alarm runs, and sets the next", () =>
     Effect.gen(function* () {
       const json = yield* jsonAs("ada");
       const stub = env.CHAT_ROOM.getByName("design");
@@ -399,14 +395,9 @@ describe("the Worker and its rooms", () => {
       // runtime runs it at once: the test waits until it has set the next, for the recent one's.
       const recent = yield* json.postMessage({ room: "design", text: "From today." });
 
-      yield* Effect.promise(() =>
-        vi.waitUntil(
-          () =>
-            runInDurableObject(stub, async (_, state) => {
-              return (await state.storage.getAlarm()) === recent.at + day;
-            }),
-          { timeout: 5_000, interval: 10 },
-        ),
+      yield* eventually(
+        Effect.promise(() => runInDurableObject(stub, (_, state) => state.storage.getAlarm())),
+        (alarm) => alarm === recent.at + day,
       );
 
       expect(yield* (yield* pageIn("design", "ada")).read(0)).toEqual([recent]);
