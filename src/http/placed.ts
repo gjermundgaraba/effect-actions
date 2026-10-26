@@ -2,7 +2,6 @@ import { Effect, Option, Predicate, Schema, Stream } from "effect";
 import { Headers, HttpClient, HttpClientRequest, HttpServerRequest } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import * as Event from "../contract/Event.js";
-import type { ErasedRule } from "../contract/authorizer.js";
 import { EventImplementation, type Run } from "../contract/feed.js";
 import {
   type ErasedAuthorize,
@@ -135,7 +134,6 @@ export const placed = <const H extends AnyHttp>(
       Effect.flatMap(sending(event, input), (http) => transportWith(binding, http, event, input));
 
     return {
-      emits: false,
       poll: (input, cursor) =>
         Effect.flatMap(transport(input), ({ poll }) => poll(cursor)).pipe(
           Effect.catchIf(isNotServed, () => Effect.die(notServedThere(event.name))),
@@ -178,7 +176,7 @@ export const placed = <const H extends AnyHttp>(
               (event) =>
                 [event, memoized<Run, never, never>(Effect.succeed(runOf(event)))] as const,
             ),
-            memoized<ErasedRule<Event.Any>, never, never>(Effect.succeed(() => Effect.void)),
+            memoized<ErasedAuthorize<Event.Any>, never, never>(Effect.succeed(() => Effect.void)),
           ),
         ]),
   ];

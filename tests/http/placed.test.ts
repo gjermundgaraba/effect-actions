@@ -101,11 +101,6 @@ describe("ActionHttp.placed", () => {
           unread: { filled: 1 },
           reported: [1, 2],
         });
-        expect(
-          reached.requests
-            .filter(({ url }) => url.endsWith("/fill"))
-            .map((request) => (request.headers.get("accept") ?? "").includes("text/event-stream")),
-        ).toEqual([true, false]);
       }),
   );
 

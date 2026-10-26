@@ -295,7 +295,7 @@ export const transportWith = <E, R>(
   Effect.map(
     Effect.all([
       endpointOf<PollMethod<R>, E, R>(http, httpClient, event.name),
-      endpointOf<StreamMethod<R>, E, R>(http, asksForStream(httpClient), event.name),
+      endpointOf<StreamMethod<R>, E, R>(http, acceptingStreams(httpClient), event.name),
     ]),
     ([polls, streams]) =>
       transportOf(
