@@ -17,10 +17,6 @@ import { isNotFound } from "./watch.js";
 type Contract<H extends AnyHttp> = H["actions"][number] | H["events"][number];
 
 /** A call's or a subscription's decoded input, beside its contract, one of `C`. */
-type Routed<C> = C extends Action.Any | Event.Any
-  ? [input: C["input"]["Type"], contract: C]
-  : never;
-
 /** What the contracts `C` require per request, by name: nothing. */
 type Nothing<C extends Action.Any | Event.Any> = { readonly [K in C["name"]]: never };
 
@@ -101,7 +97,7 @@ const notServedThere = (name: string) =>
  */
 export const placed = <const H extends AnyHttp>(
   binding: H,
-  client: (...routed: Routed<Contract<H>>) => HttpClient.HttpClient,
+  client: (input: Contract<H>["input"]["Type"], contract: Contract<H>) => HttpClient.HttpClient,
 ): Placed<H> => {
   // Why: Read as the erased signature a method's parameters are compared by, both ways: a
   // surface hands each contract its own decoded input.
