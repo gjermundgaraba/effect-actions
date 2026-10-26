@@ -2,8 +2,9 @@ import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { Effect, Option, Schema } from "effect";
 import { describe, expect, it, vi } from "@effect/vitest";
 import { TestClock } from "effect/testing";
-import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { wakeDue, webhookPrefix } from "../../src/durable/webhooks.js";
+import { alarmPrefix } from "../../src/durable/alarm.js";
+import { clockOwner, webhookPrefix } from "../../src/durable/webhooks.js";
+import { runAlarmDue } from "../support/alarm.js";
 import { answerKey, Hooked, receivedKey } from "../support/webhooks.js";
 import type { Hooking } from "../worker.js";
 
@@ -83,19 +84,13 @@ const failingSince = (stub: DurableObjectStub) =>
 
 const clockAlarm = (stub: DurableObjectStub) =>
   Effect.promise(() =>
-    runInDurableObject(stub, (_, state) => state.storage.get("effect-actions/alarm/webhooks")),
+    runInDurableObject(stub, (_, state) => state.storage.get(`${alarmPrefix}${clockOwner}`)),
   );
 
-const wokenAtAlarm = (stub: DurableObjectStub) =>
-  Effect.flatMap(clockAlarm(stub), (kept) =>
-    Effect.promise(() =>
-      runInDurableObject(stub, (instance: Hooking) =>
-        instance.run(
-          Effect.flatMap(ActionDurableObject.State, (state) =>
-            Effect.andThen(TestClock.setTime(Option.getOrThrow(timedOf(kept)).at), wakeDue(state)),
-          ).pipe(Effect.provide(TestClock.layer())),
-        ),
-      ),
+const heldClockMovedOn = (stub: DurableObjectStub, millis: number) =>
+  Effect.promise(() =>
+    runInDurableObject(stub, (instance: Hooking) =>
+      instance.run(TestClock.setTime(Date.now() + millis)),
     ),
   );
 
@@ -148,49 +143,63 @@ describe("layerWebhooks", () => {
       }),
   );
 
+  const retryingInTwoMinutes = (stub: ReturnType<typeof hooking>) =>
+    Effect.gen(function* () {
+      yield* subscribe(stub);
+      yield* failedFor(stub, 2 * 60 * 1000);
+      yield* evicted(stub);
+      yield* answering(stub, 500);
+      yield* Effect.promise(() => stub.hook("one"));
+      yield* untilPosted(stub, (texts) => texts.length === 1);
+      yield* Effect.promise(() =>
+        vi.waitUntil(
+          async () =>
+            Option.exists(
+              timedOf(await Effect.runPromise(clockAlarm(stub))),
+              ({ at }) => at < Date.now() + 10 * 60 * 1000,
+            ),
+          { timeout: 5_000, interval: 10 },
+        ),
+      );
+
+      const attempts = (yield* posted(stub)).length;
+
+      yield* answering(stub, 200);
+
+      return attempts;
+    });
+
+  const untilDelivering = (stub: DurableObjectStub) =>
+    Effect.promise(() =>
+      vi.waitUntil(async () => (await Effect.runPromise(failingSince(stub))).length === 0, {
+        timeout: 5_000,
+        interval: 10,
+      }),
+    );
+
+  it.live("ends a long retry's wait at the object's alarm, which retries the delivery", () =>
+    Effect.gen(function* () {
+      const stub = hooking("retried-at-alarm");
+      const attempts = yield* retryingInTwoMinutes(stub);
+
+      yield* heldClockMovedOn(stub, 10 * 60 * 1000);
+      yield* runAlarmDue(stub);
+      yield* untilPosted(stub, (texts) => texts.length > attempts);
+      yield* untilDelivering(stub);
+    }),
+  );
+
   it.live(
-    "waits for a long retry on the object's alarm, which retries it on the instance waiting, or on the next after an eviction",
+    "retries a delivery a long wait held on the instance its alarm builds after an eviction, as it restores the subscription",
     () =>
-      Effect.forEach(
-        [false, true],
-        (evicting) =>
-          Effect.gen(function* () {
-            const stub = hooking(evicting ? "retried-evicted" : "retried-live");
+      Effect.gen(function* () {
+        const stub = hooking("retried-evicted");
+        const attempts = yield* retryingInTwoMinutes(stub);
 
-            yield* subscribe(stub);
-            yield* failedFor(stub, 2 * 60 * 1000);
-            yield* evicted(stub);
-            yield* answering(stub, 500);
-            yield* Effect.promise(() => stub.hook("one"));
-            yield* untilPosted(stub, (texts) => texts.length === 1);
-            yield* Effect.promise(() =>
-              vi.waitUntil(
-                async () =>
-                  Option.exists(
-                    timedOf(await Effect.runPromise(clockAlarm(stub))),
-                    ({ at }) => at < Date.now() + 10 * 60 * 1000,
-                  ),
-                { timeout: 5_000, interval: 10 },
-              ),
-            );
-
-            const attempts = (yield* posted(stub)).length;
-
-            yield* answering(stub, 200);
-
-            if (evicting) yield* evicted(stub);
-
-            yield* wokenAtAlarm(stub);
-            yield* untilPosted(stub, (texts) => texts.length > attempts);
-            yield* Effect.promise(() =>
-              vi.waitUntil(async () => (await Effect.runPromise(failingSince(stub))).length === 0, {
-                timeout: 5_000,
-                interval: 10,
-              }),
-            );
-          }),
-        { discard: true },
-      ),
-    10_000,
+        yield* evicted(stub);
+        yield* runAlarmDue(stub);
+        yield* untilPosted(stub, (texts) => texts.length > attempts);
+        yield* untilDelivering(stub);
+      }),
   );
 });

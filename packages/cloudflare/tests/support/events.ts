@@ -117,7 +117,13 @@ const revocable = Authentication.layer(
   ),
 );
 
-export const watchedRoutes = ActionRpc.layer(Watched, [noted, said, statused]).pipe(
-  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
-  Layer.provide(revocable),
-);
+const sources = [noted, said, statused];
+
+export const watchedRoutes = Layer.mergeAll(
+  ActionRpc.layer(Watched, sources).pipe(
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+  ),
+  ActionRpc.layer(Watched, sources).pipe(
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/also" })),
+  ),
+).pipe(Layer.provide(revocable));

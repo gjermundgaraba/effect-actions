@@ -1,4 +1,5 @@
-import { Context, Effect, Layer, Option, Redacted, Schema } from "effect";
+import { Clock, Context, Effect, Layer, Option, Redacted, Schema } from "effect";
+import { TestClock } from "effect/testing";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
@@ -109,4 +110,19 @@ export const hookedRoutes = ActionHttp.layer(HookHttp, [hooked]).pipe(
       Effect.succeed(Redacted.value(token)),
     ),
   ),
+);
+
+/**
+ * A `TestClock` at the time the instance builds, standing still: a test moves it past a webhook
+ * wait's end, `TestClock.setTime` through `run`, before it runs the object's alarm, which ends
+ * the waits due then, as it would once their time came.
+ */
+export const heldTime = Layer.effectContext(
+  Effect.gen(function* () {
+    const clock = yield* TestClock.make();
+
+    yield* clock.setTime(Date.now());
+
+    return Context.make(Clock.Clock, clock);
+  }),
 );

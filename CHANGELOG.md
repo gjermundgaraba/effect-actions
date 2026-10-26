@@ -71,7 +71,7 @@ a process's memory, each log source's log included, beyond the builds attached t
 serving events, and `Action.client` watching them, need one, provided once around the handlers that
 announce and the surfaces that serve. `Event.makeEvents({ log, polls?, emits? })` builds one over
 log storage of a host's own, `Event.LogStorage` (its `position`, `put`, `list` from a sequence
-number and `delete`), the core keeping each log's cursors, bounds and expiry over it, and reads
+number, answering `Event.Listed` entries, and `delete`), the core keeping each log's cursors, bounds and expiry over it, and reads
 check sources when notified, and 5 seconds after a read fails, where `polls` is `false`, and refuses
 a log source fed by `emit` where `emits` is `false`. An occurrence whose data breaks its payload is
 reported and a gap sent in its place, and a read failing with no refusal is reported once and read
@@ -331,13 +331,13 @@ released with this package at the same version and requiring it at `~` that vers
 delegates to, `handlers`, building the object's startup `services`, its `routes` on `fetch`, its
 `calls` over the stub and its `alarm` once per instance. `layerWebSocket` serves `ActionRpc.layer`
 and Effect rpcs over hibernating WebSockets, keeping each `ActionRpc` event subscription in the
-object's storage and resuming it when the object next wakes; `layerEvents`, which `handlers` and
-`make` provide, is the object's `Event.Events`, its logs kept in its storage, and `layerWebhooks`
-the core's `Webhook.layer` in an object, its subscriptions kept in its storage and its long waits
-ended by the object's alarm. `layerStubClient` and `client` call an object's rpcs over its stub,
-`layerHttpClient` calls its routes, and `State`, `name` and `Alarm` are what the object is and when
-its `alarm` runs. Each option's and declaration's rules are in its JSDoc. Guide:
-`packages/cloudflare/docs/README.md`.
+object's storage and resuming it when the object next wakes; `handlers` and `make` provide the
+object's own `Event.Events`, its logs kept in its storage, and `layerWebhooks` is the core's
+`Webhook.layer` in an object, its subscriptions kept in its storage and its long waits ended by the
+object's alarm, through the instance's `Waits`, which `handlers` and `make` provide to the routes.
+`layerStubClient` and `client` call an object's rpcs over its stub, `layerHttpClient` calls its
+routes, and `State`, `name` and `Alarm` are what the object is and when its `alarm` runs. Each
+option's and declaration's rules are in its JSDoc. Guide: `packages/cloudflare/docs/README.md`.
 
 ### Other changes
 

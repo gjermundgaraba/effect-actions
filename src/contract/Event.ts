@@ -31,7 +31,7 @@ export { Events, layerMemory, makeEvents } from "./hub.js";
 
 export type { KeyOptions, MakeEventsOptions, RevisionStorage } from "./hub.js";
 
-export type { LogStorage } from "./log.js";
+export type { Listed, LogStorage } from "./log.js";
 
 export type { AnyEventImplementation as AnyImplementation } from "./feed.js";
 

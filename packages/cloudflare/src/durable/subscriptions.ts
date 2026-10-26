@@ -2,7 +2,7 @@ import { Effect, Match, Option, Predicate, Schema } from "effect";
 import type { RpcMessage } from "effect/rpc";
 import type * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { batches } from "./batches.js";
-import { closeQuietly, RequestId, socketTag } from "./frames.js";
+import { closeQuietly, groupTag, RequestId, socketIdOf } from "./frames.js";
 
 /** Where an object keeps its sockets' event subscriptions. */
 const keptPrefix = "effect-actions/subscription/";
@@ -25,10 +25,12 @@ const unresumable = "This server could not resume this socket's subscriptions: c
  * The event subscriptions of the sockets one `layerWebSocket` path accepted, kept in storage:
  * `keeper` stores each request as `ActionRpc.layer` admits it, `sent` stores the payload that
  * resumes it with each chunk sent and forgets it at its exit, `closed` forgets a socket's, and
- * `resumed` writes each kept one whose socket is still open to the server again, from there.
+ * `resumed` writes each kept one whose socket of this path is still open to the server again,
+ * from there.
  */
 export const makeSubscriptions = (state: DurableObjectState, path: string) => {
   const storage = state.storage;
+  const group = groupTag(path);
 
   // Why: the request, its headers included, is written once, as it is admitted, and only the
   // payload it resumes from is written again as the subscription moves.
@@ -42,6 +44,10 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
   const keysOf = (suffix: string) => [`${requests}${suffix}`, `${payloads}${suffix}`];
   const socketOf = (suffix: string) => Number(suffix.slice(0, suffix.indexOf("#")));
 
+  // Why: once `resumed` has run, as the build making the protocol runs it, storage holds this
+  // path's subscriptions exactly as this map does, every other one resumed or forgotten, so a
+  // close forgets a socket's from it, listing nothing: a socket that never subscribed costs no
+  // storage call.
   const live = new Map<string, ActionRpc.KeptSubscription["resumeFrom"]>();
 
   const deleted = (keys: ReadonlyArray<string>) =>
@@ -56,17 +62,12 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
     );
 
   const closed = (socket: number) =>
-    Effect.gen(function* () {
-      const owned = `${socket}#`;
+    Effect.suspend(() => {
+      const owned = [...live.keys()].filter((suffix) => socketOf(suffix) === socket);
 
-      for (const suffix of live.keys()) if (suffix.startsWith(owned)) live.delete(suffix);
+      for (const suffix of owned) live.delete(suffix);
 
-      const keys = [
-        ...(yield* listed(`${requests}${owned}`)).map(([rest]) => `${requests}${owned}${rest}`),
-        ...(yield* listed(`${payloads}${owned}`)).map(([rest]) => `${payloads}${owned}${rest}`),
-      ];
-
-      yield* deleted(keys);
+      return deleted(owned.flatMap(keysOf));
     });
 
   const keeper: ActionRpc.SubscriptionKeeper = {
@@ -122,62 +123,74 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
   // stores in another shape, would leave its watch waiting on an open socket for good, since the
   // runtime answers its pings: the socket is closed with 1000, outside the codes a watch ends at,
   // so the page connects again and subscribes anew.
-  const unresumed = (socket: number) =>
+  const unresumed = (socket: WebSocket) =>
     Effect.andThen(
       Effect.logWarning(
         `layerWebSocket at ${path} could not resume a socket's kept event subscriptions, and closes it`,
       ),
-      Effect.andThen(
-        closed(socket),
-        Effect.sync(() => {
-          for (const held of state.getWebSockets(socketTag(socket))) {
-            closeQuietly(held, 1000, unresumable);
-          }
-        }),
-      ),
+      Effect.sync(() => closeQuietly(socket, 1000, unresumable)),
     );
 
+  /**
+   * Writes each kept subscription of a socket of this path still open to the server, from where
+   * it reached, and forgets the rest: `held` answers whether a socket stays open, given whether
+   * one of its requests is a subscription kept for it, and closes one that does not.
+   */
   const resumed = (
     write: (socket: number, request: RpcMessage.FromClientEncoded) => Effect.Effect<void>,
+    held: (socket: WebSocket, kept: (requestId: string | number) => boolean) => boolean,
   ) =>
     Effect.gen(function* () {
       const kept = yield* listed(requests);
       const resumeFrom = new Map(yield* listed(payloads));
-      const unread = new Set<number>();
-      const gone: Array<string> = [];
+      const keptIds = new Set(kept.map(([suffix]) => suffix));
 
-      for (const [suffix, value] of kept) {
-        const socket = socketOf(suffix);
-        const request = requestOf(value);
-        const payload = payloadOf(resumeFrom.get(suffix));
+      // Why: matched by the path's group as well as the socket's id, as a socket's id is unique
+      // only among the sockets open, so a subscription this path kept while it was not served,
+      // such as across a deployment that dropped it, never resumes on another path's socket given
+      // that id since, authenticated with its first caller's headers.
+      const open = new Map<number, WebSocket>();
 
-        resumeFrom.delete(suffix);
+      for (const socket of state.getWebSockets(group)) {
+        const id = socketIdOf(state.getTags(socket));
 
-        if (state.getWebSockets(socketTag(socket)).length === 0) {
-          gone.push(...keysOf(suffix));
-        } else if (Option.isNone(request) || Option.isNone(payload)) {
-          unread.add(socket);
-        } else {
+        if (held(socket, (requestId) => keptIds.has(suffixOf(id, requestId)))) open.set(id, socket);
+      }
+
+      const entries = kept.map(([suffix, value]) => ({
+        suffix,
+        socket: socketOf(suffix),
+        request: Option.zipWith(
+          requestOf(value),
+          payloadOf(resumeFrom.get(suffix)),
+          (request, payload) => ({ ...request, payload }),
+        ),
+      }));
+
+      const unread = new Set(
+        entries.flatMap(({ socket, request }) =>
+          open.has(socket) && Option.isNone(request) ? [socket] : [],
+        ),
+      );
+
+      const gone = [...resumeFrom.keys()]
+        .filter((suffix) => !keptIds.has(suffix))
+        .map((suffix) => `${payloads}${suffix}`);
+
+      for (const { suffix, socket, request } of entries) {
+        if (open.has(socket) && !unread.has(socket) && Option.isSome(request)) {
           live.set(suffix, () => undefined);
 
-          yield* write(socket, { ...request.value, payload: payload.value });
+          yield* write(socket, request.value);
+        } else {
+          gone.push(...keysOf(suffix));
         }
       }
 
-      gone.push(...[...resumeFrom.keys()].map((suffix) => `${payloads}${suffix}`));
-
       yield* deleted(gone);
 
-      for (const socket of unread) yield* unresumed(socket);
+      for (const [id, socket] of open) if (unread.has(id)) yield* unresumed(socket);
     });
 
-  /** Whether every one of `ids`, requests the socket sent, is a subscription kept for it. */
-  const allKept = (socket: number, ids: ReadonlyArray<string | number>) =>
-    Effect.map(listed(`${requests}${socket}#`), (found) => {
-      const kept = new Set(found.map(([rest]) => `${socket}#${rest}`));
-
-      return ids.every((id) => kept.has(suffixOf(socket, id)));
-    });
-
-  return { keeper, sent, closed, resumed, allKept };
+  return { keeper, sent, closed, resumed };
 };

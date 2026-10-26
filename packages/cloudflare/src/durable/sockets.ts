@@ -1,4 +1,4 @@
-import { Context, Effect, Exit, Layer, Match, Option, Predicate, Queue, Schema } from "effect";
+import { Context, Effect, Exit, Layer, Match, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -22,11 +22,6 @@ interface Receiver {
   readonly close: (socket: WebSocket) => Effect.Effect<void>;
 }
 
-/** Where the object keeps the id its next socket is given, so no id is given twice. */
-const nextSocketKey = "effect-actions/socket/next";
-
-const storedIdOf = Schema.decodeUnknownOption(Schema.Int);
-
 /**
  * The object's dispatcher for the sockets the protocols of its routes accept, such as
  * `layerWebSocket`'s: each event method hands a socket's event to the protocol whose tag the
@@ -38,7 +33,6 @@ const storedIdOf = Schema.decodeUnknownOption(Schema.Int);
  * **Gotchas**
  *
  * - A socket accepted by an earlier version of the routes at another `path` carries a tag no protocol holds now, and is answered `false`: close it, or serve that `path` again.
- * - The socket-id counter is kept in the object's storage, under `effect-actions/socket/next`, beside the application's data.
  */
 export class Sockets extends Context.Service<
   Sockets,
@@ -58,7 +52,7 @@ export class Sockets extends Context.Service<
      * answers `false` when another protocol already holds that tag.
      */
     readonly register: (tag: string, receiver: Receiver) => boolean;
-    /** The next socket's id, never one an earlier socket of the object had. */
+    /** The next socket's id, never one an open socket has or this instance gave before. */
     readonly allocate: Effect.Effect<number>;
   }
 >()("effect-actions-cloudflare/ActionDurableObject/Sockets") {
@@ -68,28 +62,10 @@ export class Sockets extends Context.Service<
       const state = yield* State;
       const receivers = new Map<string, Receiver>();
 
-      // Why: a socket's id keys its event subscriptions in storage, so an id is never given
-      // twice, even after an eviction: a subscription a path kept while it was not served, such
-      // as across a deployment that dropped it, would otherwise resume, authenticated with its
-      // first caller's headers, on the socket of whoever was given that id since. The next one
-      // is kept in storage, one write per upgrade.
-      const stored = yield* Effect.promise(() => state.storage.get(nextSocketKey));
-
       let next = Math.max(
-        Option.getOrElse(storedIdOf(stored), () => 1),
+        1,
         ...state.getWebSockets().map((socket) => socketIdOf(state.getTags(socket)) + 1),
       );
-
-      // Why: stored as each id is given, before its socket is accepted, so no eviction, however
-      // soon, lets a later instance give that id again: an upgrade costs one storage write.
-      const allocate = Effect.suspend(() => {
-        const id = next++;
-
-        return Effect.as(
-          Effect.promise(() => state.storage.put(nextSocketKey, next)),
-          id,
-        );
-      });
 
       const dispatch = (socket: WebSocket, event: (receiver: Receiver) => Effect.Effect<void>) =>
         Effect.suspend(() => {
@@ -116,7 +92,7 @@ export class Sockets extends Context.Service<
 
           return true;
         },
-        allocate,
+        allocate: Effect.sync(() => next++),
       });
     }),
   );
@@ -331,27 +307,15 @@ const makeProtocol = (
       // it off is never answered, and its client would wait on an open socket for good, since the
       // runtime answers its pings: its socket is closed with 1012, a restart, so the client fails
       // the call and connects again. A kept subscription among them resumes instead.
-      const reset = Effect.forEach(
-        state.getWebSockets(group),
-        (socket) => {
-          const pending = pendingOf(socket);
-          const id = idOf(socket);
+      const resumed = subscriptions.resumed(write, (socket, kept) => {
+        if (pendingOf(socket).every(kept)) return true;
 
-          return pending.length === 0
-            ? Effect.void
-            : Effect.flatMap(subscriptions.allKept(id, pending), (kept) =>
-                kept
-                  ? Effect.void
-                  : Effect.andThen(
-                      subscriptions.closed(id),
-                      Effect.sync(() => closeQuietly(socket, 1012, lostCalls)),
-                    ),
-              );
-        },
-        { discard: true },
-      );
+        closeQuietly(socket, 1012, lostCalls);
 
-      return Effect.as(Effect.andThen(reset, subscriptions.resumed(write)), {
+        return false;
+      });
+
+      return Effect.as(resumed, {
         disconnects,
         send,
         end: (clientId) =>

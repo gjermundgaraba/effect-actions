@@ -10,17 +10,15 @@ import {
 import { type RpcMessage, RpcServer } from "effect/rpc";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import { Alarm, alarmOf, applicationOwner, makeSchedule } from "./alarm.js";
-import { clockOwner, makeWaiting, wakeDue } from "./webhooks.js";
 import { makeStubProtocol, type StubRequest } from "./calls.js";
 import { layerEvents } from "./events.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
+import { clockOwner, makeWaits, Waits } from "./webhooks.js";
 
 export { Alarm } from "./alarm.js";
 
 export type { StubRequest } from "./calls.js";
-
-export { layerEvents } from "./events.js";
 
 export {
   layerWebSocket,
@@ -29,7 +27,7 @@ export {
   type Sockets,
 } from "./sockets.js";
 
-export { layerWebhooks, type LayerWebhooksOptions } from "./webhooks.js";
+export { layerWebhooks, type LayerWebhooksOptions, type Waits } from "./webhooks.js";
 
 export { name, State } from "./state.js";
 
@@ -41,7 +39,7 @@ type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
 
 // Why: each request is served in the context the routes are built in, so a handler reads the
 // object's own services as the routes' Layers do.
-type ObjectServices = State | Alarm | Event.Events | Sockets;
+type ObjectServices = State | Alarm | Event.Events | Sockets | Waits;
 
 type Allowed<A, S> =
   | ObjectServices
@@ -109,7 +107,7 @@ export interface Options<
    * What `fetch` serves: routes, as `HttpRouter.toWebHandler` serves them, such as
    * `ActionRpc.layer` over `layerWebSocket` and `ActionHttp.layer`. Built after the services,
    * again after every eviction, and never finalized. They may require `State`, `Alarm`,
-   * `Event.Events`, `Sockets` and the services, as Layers and as
+   * `Event.Events`, `Sockets`, `Waits` and the services, as Layers and as
    * handlers; any other request-time requirement must be provided by their middleware or
    * authentication, or be a service they provide themselves. Without them, `fetch` answers 404, and
    * no protocol accepts a socket.
@@ -243,6 +241,7 @@ const handlersOf = <S>(
         | Alarm
         | Event.Events
         | Sockets
+        | Waits
         | HttpRouter.HttpRouter
         | Layer.Success<typeof HttpServer.layerServices>
       >
@@ -254,7 +253,7 @@ const handlersOf = <S>(
 
   const schedule = makeSchedule(ctx);
 
-  makeWaiting(ctx, schedule);
+  const { waits, wakeDue } = makeWaits(schedule);
 
   const build = Effect.gen(function* () {
     // Why: an implementation of the core is shared through the memo map of the graph it is
@@ -269,7 +268,13 @@ const handlersOf = <S>(
       // the instance lives, and a failed build leaves no fiber of its own running.
       const context = yield* Layer.buildWithMemoMap(
         services.pipe(
-          Layer.provideMerge(Layer.merge(Layer.succeed(Alarm)(alarmOf(schedule)), layerEvents)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Layer.succeed(Alarm)(alarmOf(schedule)),
+              Layer.succeed(Waits)(waits),
+              layerEvents,
+            ),
+          ),
           Layer.provideMerge(state),
           Layer.provideMerge(Layer.succeed(Scheduler.Scheduler)(scheduler)),
         ),
@@ -460,7 +465,7 @@ const handlersOf = <S>(
       run(
         schedule.runDue({
           [applicationOwner]: (info) => options.alarm?.(info) ?? Effect.void,
-          [clockOwner]: () => wakeDue(ctx),
+          [clockOwner]: () => wakeDue,
         }),
       ),
     run,
@@ -470,8 +475,10 @@ const handlersOf = <S>(
 /**
  * The object's lifecycle, for a Durable Object class that cannot extend the one `make` returns:
  * given its `ctx`, the handlers that build `services`, then `calls`, with the stub's protocol,
- * and `routes`, with `Sockets`, once per instance, as it is constructed, with `State` and `Alarm`
- * provided, and share that one build across every event, which awaits it. `fetch` serves the
+ * and `routes`, with `Sockets`, once per instance, as it is constructed, with `State`, `Alarm` and
+ * the object's own `Event.Events` provided, its logs kept in its storage, under
+ * `effect-actions/log/`, and its current sources' revisions beside them, so a cursor outlives an
+ * eviction, and share that one build across every event, which awaits it. `fetch` serves the
  * routes, the socket handlers dispatch through `Sockets`, `effectActionsRpc` through the calls'
  * server, `alarm` runs the times `Alarm` keeps and `run` runs an Effect in the object.
  * Delegate the handlers the class serves this way, as methods:
@@ -487,7 +494,16 @@ const handlersOf = <S>(
  * - Calls still interleave where a plain method's would: while one waits on I/O, another object or a timer, such as `Effect.sleep`, the next event runs, so serialize a read and the write that depends on it with a `Semaphore`, or make both one synchronous `storage.kv` or `storage.sql` step.
  * - Without `routes`, `fetch` answers 404; without `calls`, `effectActionsRpc` rejects once the object is built, naming the option.
  * - A socket the class accepts itself, with `State`'s `acceptWebSocket`, carries no protocol's tag: the socket handlers resolve for it, `webSocketClose` once it has replied to the client's close, so the class answers the sockets carrying its own tag in `webSocketMessage` and delegates the rest.
- * - Delegate `alarm` too: the object's one alarm is the package's, and workerd refuses `storage.setAlarm`, which `Alarm.set` calls, on a class without an `alarm` method, where celld 0.6.2 accepts it and drops the alarm when it is due.
+ * - Delegate `alarm` too: the object's one alarm is the package's, which also ends `layerWebhooks`' long waits, and workerd refuses `storage.setAlarm`, which `Alarm.set` calls, on a class without an `alarm` method, where celld 0.6.2 accepts it and drops the alarm when it is due.
+ * - Its `Event.Events` reads a check or current source when a subscriber subscribes and on each `notify`, never on its `nextPoll`, a timer that would keep the object from hibernating: an upstream outside the object notifies it through a call, such as a method a Worker calls over its stub.
+ * - Its `Event.Events` keeps a logged occurrence's data as its payload's JSON: one that does not encode as it is published is logged then, and one that no longer decodes, such as after a deployment changed the payload, is reported as it is read; each is sent as a gap.
+ * - Provide no other `Event.Events`, such as the core's `Event.layerMemory`, to the services or routes: it shadows the object's, its logs lost at each eviction and its check sources read on a timer that keeps the object awake.
+ * - A log's entries live beside the application's data: a store deleting every key deletes them too, and a subscriber resuming from one of their cursors receives a gap.
+ * - A current source's revisions live beside them, under `effect-actions/revisions/`: a store deleting every key starts them again, and until the object is evicted their ids repeat ones its watches have seen, which drop them.
+ * - Two log sources of event types sharing a name die as the second attaches, naming it: each log is kept under its event's name.
+ * - A log source fed by `emit` dies as it attaches, naming `publish`: an evicted object would miss what the stream sends meanwhile, with no gap, and its open stream would keep the object awake.
+ * - A subscriber's read that fails is tried again 5 seconds later, on a timer, until one succeeds: a source failing for good keeps the object awake, billed, and sends each subscriber a `Failed` each time.
+ * - A poll's `subscription` hook is held until 5 minutes after its last poll, on a timer that keeps the object awake, and an eviction tears down no hook: one it ends is set up again as its subscription resumes, its teardown never run.
  */
 export const handlers = <
   S = never,

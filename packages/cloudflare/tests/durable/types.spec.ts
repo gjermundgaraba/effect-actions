@@ -1,6 +1,6 @@
 import type { DurableObject } from "cloudflare:workers";
 import { Context, DateTime, Effect, Layer, type Scope } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/http";
+import { FetchHttpClient, type HttpClient, HttpRouter, HttpServerResponse } from "effect/http";
 import { RpcClient, type RpcClientError, type RpcMessage, RpcServer } from "effect/rpc";
 import { expectTypeOf } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -60,6 +60,22 @@ void Effect.runPromise(
   Layer.build(
     ActionDurableObject.layerWebSocket({ path: "/rpc" }).pipe(
       Layer.provide([Layer.succeed(ActionDurableObject.State, ctx), HttpRouter.layer]),
+    ),
+  ).pipe(Effect.scoped),
+);
+
+expectTypeOf<Layer.Services<ReturnType<typeof ActionDurableObject.layerWebhooks>>>().toEqualTypeOf<
+  HttpClient.HttpClient | ActionDurableObject.State | ActionDurableObject.Waits
+>();
+
+// @ts-expect-error -- The waits are a type alone: handlers and make provide them.
+void ActionDurableObject.Waits;
+
+void Effect.runPromise(
+  // @ts-expect-error -- The webhook layer's long waits are the instance's, which nothing here provides.
+  Layer.build(
+    ActionDurableObject.layerWebhooks().pipe(
+      Layer.provide([Layer.succeed(ActionDurableObject.State, ctx), FetchHttpClient.layer]),
     ),
   ).pipe(Effect.scoped),
 );

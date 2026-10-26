@@ -22,7 +22,7 @@ import {
   stubCalls,
 } from "./support/app.js";
 import { note, revokedKey, say, setStatus, watchedRoutes } from "./support/events.js";
-import { hook, hookedRoutes } from "./support/webhooks.js";
+import { heldTime, hook, hookedRoutes } from "./support/webhooks.js";
 import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./support/hosts.js";
 import { nativeCalls } from "./support/native.js";
 import { heldBuild } from "./support/latch.js";
@@ -239,7 +239,10 @@ export class Watching extends ActionDurableObject.make({ routes: watchedRoutes }
   }
 }
 
-export class Hooking extends ActionDurableObject.make({ routes: hookedRoutes }) {
+export class Hooking extends ActionDurableObject.make({
+  services: () => heldTime,
+  routes: hookedRoutes,
+}) {
   hook(text: string) {
     return this.run(hook(text));
   }

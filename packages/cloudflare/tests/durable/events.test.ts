@@ -7,8 +7,9 @@ import { RpcMessage } from "effect/rpc";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { layerEvents } from "../../src/durable/events.js";
+import { groupTag, socketIdOf } from "../../src/durable/frames.js";
 import { Noted, Said, Statused, Watched } from "../support/events.js";
-import { protocolOver, protocolUpgrading, upgradeToRpc } from "../support/socket.js";
+import { protocolOver, protocolUpgrading, upgradeTo, upgradeToRpc } from "../support/socket.js";
 
 const watching = (name: string) => env.WATCHING.getByName(name);
 
@@ -368,38 +369,44 @@ describe("layerEvents, fed", () => {
   );
 });
 
-describe("Sockets", () => {
-  const socketIds = (stub: DurableObjectStub) =>
+describe("layerWebSocket's kept subscriptions", () => {
+  const alsoSockets = (stub: DurableObjectStub) =>
     Effect.promise(() =>
       runInDurableObject(stub, (_, state) =>
-        state
-          .getWebSockets()
-          .flatMap((socket) => state.getTags(socket))
-          .filter((tag) => tag.startsWith("effect-actions/socket#")),
+        state.getWebSockets(groupTag("/also")).map((socket) => socketIdOf(state.getTags(socket))),
       ),
     );
 
-  it.live("never gives a new socket the id of one closed before the object was rebuilt", () =>
-    Effect.gen(function* () {
-      const stub = watching("socket-ids");
-      const first = yield* upgradeToRpc(stub, bearer("ada"));
-      const [firstId] = yield* socketIds(stub);
+  it.live(
+    "forgets, as it wakes, a subscription its path kept for a socket id another path's open socket has since",
+    () =>
+      Effect.gen(function* () {
+        const stub = watching("cross-path");
+        const kept = "effect-actions/subscription";
 
-      first.close(1000);
+        yield* upgradeTo(stub, "https://object/also", bearer("ada"));
 
-      yield* Effect.promise(() =>
-        vi.waitUntil(async () => (await Effect.runPromise(socketIds(stub))).length === 0, {
-          timeout: 5_000,
-          interval: 10,
-        }),
-      );
-      yield* evicted(stub);
-      yield* upgradeToRpc(stub, bearer("ada"));
+        const [other] = yield* alsoSockets(stub);
 
-      const [secondId] = yield* socketIds(stub);
+        yield* Effect.promise(() =>
+          runInDurableObject(stub, (_, state) =>
+            state.storage.put({
+              [`${kept}/request//rpc#${other}#n1`]: {
+                _tag: "Request",
+                id: 1,
+                tag: Noted.name,
+                headers: [["authorization", "Bearer ada"]],
+              },
+              [`${kept}/payload//rpc#${other}#n1`]: { input: {}, cursor: "0" },
+            }),
+          ),
+        );
 
-      expect(firstId).toBeDefined();
-      expect(secondId).not.toBe(firstId);
-    }),
+        yield* evicted(stub);
+        yield* Effect.promise(() => stub.note("one"));
+
+        expect(yield* alsoSockets(stub)).toEqual([other]);
+        expect(yield* keptCursors(stub)).toEqual([]);
+      }),
   );
 });

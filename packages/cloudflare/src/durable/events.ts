@@ -1,4 +1,4 @@
-import { DateTime, Effect, Layer, Option, Schema, Semaphore } from "effect";
+import { Effect, Layer, Option, Schema, Semaphore } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { batches } from "./batches.js";
 import { State } from "./state.js";
@@ -9,7 +9,7 @@ const Stored = Schema.Struct({
   at: Schema.Finite,
   key: Schema.optional(Schema.String),
   eventId: Schema.optional(Schema.String),
-  timestamp: Schema.optional(Schema.Finite),
+  timestamp: Schema.optional(Schema.DateTimeUtcFromMillis),
   data: Schema.optional(Schema.Json),
 });
 
@@ -17,17 +17,17 @@ const positionOf = Schema.decodeUnknownOption(Position);
 
 const storedOf = Schema.decodeUnknownOption(Stored);
 
+const encodeStored = Schema.encodeSync(Stored);
+
 const seqWidth = 16;
 
-type Storage = Event.LogStorage<Event.Emitted<Event.Any>>;
-
-type Kept = Effect.Success<ReturnType<Storage["list"]>>[number][1];
+type Emitted = Event.Emitted<Event.Any>;
 
 /**
  * A log's storage in the object's, under `effect-actions/log/<event>/`: its position, and each
  * entry by its sequence number, its data encoded as the event's payload JSON.
  */
-const storageLog = (storage: DurableObjectStorage, event: Event.Any): Storage => {
+const storageLog = (storage: DurableObjectStorage, event: Event.Any): Event.LogStorage<Emitted> => {
   const prefix = `effect-actions/log/${event.name}/`;
   const positionKey = `${prefix}meta`;
   const entries = `${prefix}entry/`;
@@ -40,28 +40,19 @@ const storageLog = (storage: DurableObjectStorage, event: Event.Any): Storage =>
   // Why: an entry that does not decode at all, or whose data no longer decodes as the event's
   // payload, such as one an earlier deployment wrote, is listed unread, which the core sends as a
   // gap at its cursor; one with no data was logged without it, as it did not encode.
-  const keptOf = (found: Option.Option<typeof Stored.Type>): Effect.Effect<Kept> =>
+  const listedOf = (
+    found: Option.Option<typeof Stored.Type>,
+  ): Effect.Effect<Event.Listed<Emitted>> =>
     Option.match(found, {
       onNone: () => Effect.succeed({ at: 0, logged: undefined }),
-      onSome: (stored) =>
+      onSome: ({ at, key, eventId, timestamp, data }) =>
         Effect.map(
-          stored.data === undefined
-            ? Effect.succeed(Option.none())
-            : Effect.option(decode(stored.data)),
-          (data) => ({
-            at: stored.at,
-            logged: Option.match(data, {
+          data === undefined ? Effect.succeed(Option.none()) : Effect.option(decode(data)),
+          (decoded) => ({
+            at,
+            logged: Option.match(decoded, {
               onNone: () => undefined,
-              onSome: (value) => ({
-                key: stored.key,
-                value: {
-                  data: value,
-                  ...(stored.eventId === undefined ? {} : { eventId: stored.eventId }),
-                  ...(stored.timestamp === undefined
-                    ? {}
-                    : { timestamp: DateTime.makeUnsafe(stored.timestamp) }),
-                },
-              }),
+              onSome: (payload) => ({ key, value: { data: payload, eventId, timestamp } }),
             }),
           }),
         ),
@@ -83,14 +74,13 @@ const storageLog = (storage: DurableObjectStorage, event: Event.Any): Storage =>
         // Why: an occurrence that does not encode is reported once, as it is appended, and kept
         // without its data, which each reader receives as a gap.
         const data = yield* encode(logged.value.data).pipe(
-          Effect.map(Option.some),
           Effect.catch((error) =>
             Effect.as(
               Effect.logError(
                 `An occurrence published to the log of event "${event.name}" does not encode as its payload, and is kept as a gap`,
                 error,
               ),
-              Option.none(),
+              undefined,
             ),
           ),
         );
@@ -98,14 +88,12 @@ const storageLog = (storage: DurableObjectStorage, event: Event.Any): Storage =>
         yield* Effect.promise(() =>
           storage.put({
             [positionKey]: position,
-            [entryKey(entry.seq)]: Stored.make({
+            [entryKey(entry.seq)]: encodeStored({
               at,
-              ...(logged.key === undefined ? {} : { key: logged.key }),
-              ...(logged.value.eventId === undefined ? {} : { eventId: logged.value.eventId }),
-              ...(logged.value.timestamp === undefined
-                ? {}
-                : { timestamp: DateTime.toEpochMillis(logged.value.timestamp) }),
-              ...(Option.isSome(data) ? { data: data.value } : {}),
+              key: logged.key,
+              eventId: logged.value.eventId,
+              timestamp: logged.value.timestamp,
+              data,
             }),
           }),
         );
@@ -117,7 +105,7 @@ const storageLog = (storage: DurableObjectStorage, event: Event.Any): Storage =>
         ),
         (listed) =>
           Effect.forEach(listed, ([key, value]) =>
-            Effect.map(keptOf(storedOf(value)), (kept) => [seqOfKey(key), kept] as const),
+            Effect.map(listedOf(storedOf(value)), (kept) => [seqOfKey(key), kept] as const),
           ),
       ),
     delete: (seqs) =>
@@ -187,19 +175,7 @@ const storageRevisions = (storage: DurableObjectStorage): Effect.Effect<Event.Re
  * routes: each log source's log kept in the object's storage, under `effect-actions/log/`, each
  * current source's revisions beside it, so a cursor outlives an eviction, and a check or current
  * source's subscribers read again when notified, not on its `nextPoll`, a timer that would keep the
- * object from hibernating.
- *
- * **Gotchas**
- *
- * - A check or current source is read when a subscriber subscribes and on each `notify`, never on its `nextPoll`: an upstream outside the object notifies it through a call, such as a method a Worker calls over its stub.
- * - A logged occurrence's data is kept as its payload's JSON: one that does not encode as it is published is logged then, and one that no longer decodes, such as after a deployment changed the payload, is reported as it is read; each is sent as a gap.
- * - Provide no other `Event.Events`, such as the core's `Event.layerMemory`, to the services or routes: it shadows this one, its logs lost at each eviction and its check sources read on a timer that keeps the object awake.
- * - A log's entries live beside the application's data: a store deleting every key deletes them too, and a subscriber resuming from one of their cursors receives a gap.
- * - A current source's revisions live beside them, under `effect-actions/revisions/`: a store deleting every key starts them again, and until the object is evicted their ids repeat ones its watches have seen, which drop them.
- * - Two log sources of event types sharing a name die as the second attaches, naming it: each log is kept under its event's name.
- * - A log source fed by `emit` dies as it attaches, naming `publish`: an evicted object would miss what the stream sends meanwhile, with no gap, and its open stream would keep the object awake.
- * - A subscriber's read that fails is tried again 5 seconds later, on a timer, until one succeeds: a source failing for good keeps the object awake, billed, and sends each subscriber a `Failed` each time.
- * - A poll's `subscription` hook is held until 5 minutes after its last poll, on a timer that keeps the object awake, and an eviction tears down no hook: one it ends is set up again as its subscription resumes, its teardown never run.
+ * object from hibernating. Its rules are on `handlers`.
  */
 export const layerEvents: Layer.Layer<Event.Events, never, State> = Layer.effect(Event.Events)(
   Effect.flatMap(State, ({ storage }) =>
@@ -214,7 +190,7 @@ export const layerEvents: Layer.Layer<Event.Events, never, State> = Layer.effect
 
           if (prior !== undefined && prior !== event)
             throw new Error(
-              `layerEvents keeps each log source's log in the object's storage by its event's name, and two event types are named "${event.name}" (give each event type a name of its own)`,
+              `An object's Event.Events keeps each log source's log in the object's storage by its event's name, and two event types are named "${event.name}" (give each event type a name of its own)`,
             );
 
           named.set(event.name, event);
