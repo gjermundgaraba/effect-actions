@@ -70,7 +70,7 @@ export const answering = (feed: Feed, authentication: Authentication | undefined
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
 
-      if ((request.headers.accept ?? "").includes("text/event-stream")) {
+      if ((request.headers["accept"] ?? "").includes("text/event-stream")) {
         const open = yield* feed.stream(input);
 
         return Stream.fromQueue(yield* queuedPush(open, cursor, encode));
