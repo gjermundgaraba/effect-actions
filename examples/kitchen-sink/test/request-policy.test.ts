@@ -139,7 +139,7 @@ describe("the request policy", () => {
     }).pipe(
       Effect.provide(
         HttpRouter.serve(publicRoutes, { disableLogger: true, disableListenLog: true }).pipe(
-          Layer.provide(memory),
+          Layer.provide(services()),
           Layer.provideMerge(NodeHttpServer.layerTest),
           Layer.provide(
             ConfigProvider.layer(
