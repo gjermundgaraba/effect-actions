@@ -37,9 +37,7 @@ type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
 type ObjectServices = State | Alarm | Sockets;
 
 type Allowed<A, S> =
-  | State
-  | Alarm
-  | Sockets
+  | ObjectServices
   | S
   | HttpRouter.HttpRouter
   | Layer.Success<typeof HttpServer.layerServices>
@@ -301,39 +299,36 @@ const handlersOf = <S>(
         scope,
       );
 
-      if (routes === undefined) {
-        return {
-          context,
-          call,
-          sockets: Context.get(sockets, Sockets),
-          serve: () => Promise.resolve(new Response(null, { status: 404 })),
-        };
-      }
+      const serve =
+        routes === undefined
+          ? () => Promise.resolve(new Response(null, { status: 404 }))
+          : yield* Effect.gen(function* () {
+              const routed = yield* Layer.buildWithMemoMap(
+                routes.pipe(
+                  Layer.provideMerge(
+                    Layer.succeedContext<ObjectServices>(Context.merge(context, sockets)),
+                  ),
+                  Layer.provide(HttpServer.layerServices),
+                  Layer.provideMerge(HttpRouter.layer),
+                ),
+                memoMap,
+                scope,
+              );
 
-      const routed = yield* Layer.buildWithMemoMap(
-        routes.pipe(
-          Layer.provideMerge(
-            Layer.succeedContext<State | Alarm | Sockets>(Context.merge(context, sockets)),
-          ),
-          Layer.provide(HttpServer.layerServices),
-          Layer.provideMerge(HttpRouter.layer),
-        ),
-        memoMap,
-        scope,
-      );
-
-      // Why: the handler is made here, as `HttpRouter.toWebHandler` makes it once its Layer is
-      // built, so a defect making it, such as global middleware throwing, fails this build,
-      // which closes its scope and is made again by the next event, where `toWebHandler` would
-      // hold the failed handler for every event of the instance.
-      const serve = yield* Effect.sync(() =>
-        HttpEffect.toWebHandlerWith<never, HttpServerRequest.HttpServerRequest | Scope.Scope>(
-          routed,
-        )(
-          Context.get(routed, HttpRouter.HttpRouter).asHttpEffect(),
-          options.disableLogger === true ? undefined : HttpMiddleware.logger,
-        ),
-      );
+              // Why: the handler is made here, as `HttpRouter.toWebHandler` makes it once its
+              // Layer is built, so a defect making it, such as global middleware throwing, fails
+              // this build, which closes its scope and is made again by the next event, where
+              // `toWebHandler` would hold the failed handler for every event of the instance.
+              return yield* Effect.sync(() =>
+                HttpEffect.toWebHandlerWith<
+                  never,
+                  HttpServerRequest.HttpServerRequest | Scope.Scope
+                >(routed)(
+                  Context.get(routed, HttpRouter.HttpRouter).asHttpEffect(),
+                  options.disableLogger === true ? undefined : HttpMiddleware.logger,
+                ),
+              );
+            });
 
       return { context, call, sockets: Context.get(sockets, Sockets), serve };
     });
@@ -359,11 +354,11 @@ const handlersOf = <S>(
   // runs once the gate opens, one after another: resumed together from one promise, calls
   // reading then writing storage each read before any wrote, a write lost. They run outside the
   // gate, as one calling another object that calls this one back would wait under it on its own
-  // callback until the runtime reset the object. A failed build's
-  // Layer would stay failed in a memo map whose scope stays open, and its protocols registered
-  // with its `Calls` and `Sockets`, so a failure closes its scope and drops it, rejects the
-  // events in line with it, and the next event builds from nothing; the gate's callback
-  // resolves either way, as a rejection under it would reset the object.
+  // callback until the runtime reset the object. A failed build's Layer would stay failed in a
+  // memo map whose scope stays open, and its protocols registered with its `Sockets`, so a
+  // failure closes its scope and drops it, rejects the events in line with it, and the next
+  // event builds from nothing; the gate's callback resolves either way, as a rejection under it
+  // would reset the object.
   const start = () => {
     building = true;
 
@@ -439,11 +434,7 @@ const handlersOf = <S>(
     withBuilt((built) => Effect.runPromise(provided(built, effect)));
 
   const dispatch = (event: (sockets: Sockets["Service"]) => Effect.Effect<boolean>) =>
-    withBuilt(async ({ sockets }) => {
-      await Effect.runPromise(event(sockets));
-    });
-
-  const onAlarm = options.alarm;
+    withBuilt(({ sockets }) => Effect.runPromise(Effect.asVoid(event(sockets))));
 
   return {
     fetch: (request) => withBuilt(({ serve }) => serve(request)),
@@ -455,7 +446,7 @@ const handlersOf = <S>(
     alarm: () =>
       run(
         schedule.runDue({
-          [applicationOwner]: (info) => onAlarm?.(info) ?? Effect.void,
+          [applicationOwner]: (info) => options.alarm?.(info) ?? Effect.void,
         }),
       ),
     run,

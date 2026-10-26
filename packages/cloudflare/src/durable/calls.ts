@@ -165,18 +165,17 @@ export const makeStubProtocol = Effect.gen(function* () {
     });
   });
 
-  const served = {
-    ...protocol,
-    run: (f) =>
-      Effect.suspend(() => {
-        running = true;
-
-        return protocol.run(f);
-      }),
-  } satisfies RpcServer.Protocol["Service"];
-
   return {
-    protocol: { ...served, [ActionRpc.unaryProtocol]: true },
+    protocol: {
+      ...protocol,
+      run: (f) =>
+        Effect.suspend(() => {
+          running = true;
+
+          return protocol.run(f);
+        }),
+      [ActionRpc.unaryProtocol]: true,
+    } satisfies RpcServer.Protocol["Service"] & { readonly [ActionRpc.unaryProtocol]: true },
     serve,
     // Why: Effect's protocol buffers what a call writes until a server runs, so calls served
     // by none, such as a group's handlers given without `RpcServer.layer(group)`, would wait

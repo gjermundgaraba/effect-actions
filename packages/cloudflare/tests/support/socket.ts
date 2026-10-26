@@ -4,11 +4,13 @@ import { Socket } from "effect/socket";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { Rpc } from "./app.js";
 
-export const upgradeToRpc = (stub: DurableObjectStub, headers: Record<string, string> = {}) =>
+export const upgradeTo = (
+  stub: DurableObjectStub,
+  url: string,
+  headers: Record<string, string> = {},
+) =>
   Effect.promise(async () => {
-    const response = await stub.fetch("https://object/rpc", {
-      headers: { ...headers, upgrade: "websocket" },
-    });
+    const response = await stub.fetch(url, { headers: { ...headers, upgrade: "websocket" } });
 
     const socket = response.webSocket;
 
@@ -18,6 +20,9 @@ export const upgradeToRpc = (stub: DurableObjectStub, headers: Record<string, st
 
     return socket;
   });
+
+export const upgradeToRpc = (stub: DurableObjectStub, headers: Record<string, string> = {}) =>
+  upgradeTo(stub, "https://object/rpc", headers);
 
 export const protocolOver = (socket: WebSocket) =>
   RpcClient.layerProtocolSocket().pipe(
@@ -35,17 +40,6 @@ export const scopedClientOver = (socket: WebSocket) =>
   Effect.flatMap(Layer.build(protocolOver(socket)), (protocol) =>
     ActionRpc.client(Rpc).pipe(Effect.provideContext(protocol)),
   );
-
-export const upgradeTo = (stub: DurableObjectStub, url: string) =>
-  Effect.promise(async () => {
-    const { webSocket } = await stub.fetch(url, { headers: { upgrade: "websocket" } });
-
-    if (webSocket === null) throw new Error("No WebSocket");
-
-    webSocket.accept();
-
-    return webSocket;
-  });
 
 export const nextMessage = (socket: WebSocket) =>
   Effect.promise(

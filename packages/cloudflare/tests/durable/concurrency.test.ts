@@ -1,7 +1,8 @@
 import { env } from "cloudflare:test";
-import { Effect } from "effect";
+import { Effect, Fiber } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import { latch } from "../support/latch.js";
 import { RacedRpcs } from "../support/raced.js";
 
 const calls = 20;
@@ -61,12 +62,23 @@ describe("calls in flight on one object, each reading then writing storage", () 
     ),
   );
 
-  it.effect("lose no write to one another arriving while the instance builds", () =>
-    Effect.map(
-      bumpedAtOnce((round) => env.SLOWLY_BUILT_RACED.getByName(`building-${round}`)),
-      (counts) => {
-        expect(counts).toEqual(Array.from({ length: rounds }, () => calls));
-      },
-    ),
+  it.live("wait behind the runtime's gate while the instance builds, then lose no write", () =>
+    Effect.gen(function* () {
+      const stub = env.LATCHED_RACED.getByName("held");
+      const raced = (yield* ActionDurableObject.client(RacedRpcs))(() => stub);
+
+      const bumps = yield* Effect.forkChild(
+        Effect.all([raced.bump(), raced.bump()], { concurrency: "unbounded" }),
+      );
+
+      yield* Effect.promise(() => latch.entered);
+      yield* Effect.sleep("50 millis");
+      expect(bumps.pollUnsafe()).toBeUndefined();
+
+      latch.release();
+      yield* Fiber.join(bumps);
+
+      expect(yield* raced.count()).toBe(2);
+    }).pipe(Effect.scoped),
   );
 });

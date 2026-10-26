@@ -1,7 +1,15 @@
 import { Context, Effect, Exit, Layer, Match, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
-import { closeQuietly, groupTag, RequestId, sendFrame, socketIdOf, socketTag } from "./frames.js";
+import {
+  closeQuietly,
+  groupTag,
+  parser,
+  RequestId,
+  sendFrame,
+  socketIdOf,
+  socketTag,
+} from "./frames.js";
 import { State } from "./state.js";
 
 /** What a protocol does with the events of the sockets carrying its tag. */
@@ -162,9 +170,7 @@ const lostCalls = "This server lost the calls it was answering on this socket: c
 const untracked =
   "This socket's attachment, its upgrade's headers and the ids of its calls under way, would pass the runtime's 16 KiB: send fewer calls at once, or fewer or smaller headers on the upgrade";
 
-const json = RpcSerialization.json;
-
-const encodeDefect = Schema.encodeSync(json.codecFor(Schema.Defect()));
+const encodeDefect = Schema.encodeSync(RpcSerialization.json.codecFor(Schema.Defect()));
 
 // Why: `HttpServerResponse.raw` takes its status from its options, not from the web `Response`
 // it carries, and the request logger and the server's span read that status: without it, every
@@ -185,7 +191,6 @@ const makeProtocol = (
   Effect.gen(function* () {
     const router = yield* HttpRouter.HttpRouter;
     const context = yield* Effect.context<never>();
-    const parser = json.makeUnsafe();
 
     const group = groupTag(path);
 
@@ -310,7 +315,7 @@ const makeProtocol = (
         supportsTransferables: false,
         supportsSpanPropagation: true,
         supportsNotifications: true,
-        codecFor: json.codecFor,
+        codecFor: RpcSerialization.json.codecFor,
       });
     });
 

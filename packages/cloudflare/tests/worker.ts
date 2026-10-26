@@ -23,6 +23,7 @@ import {
 } from "./support/app.js";
 import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./support/hosts.js";
 import { nativeCalls } from "./support/native.js";
+import { heldBuild } from "./support/latch.js";
 import { builtOnSecondTry, racedCalls, yieldsPastTimer } from "./support/raced.js";
 import { versionedRoutes } from "./support/versioned.js";
 
@@ -154,13 +155,13 @@ export class Raced extends ActionDurableObject.make({ calls: racedCalls }) {
   }
 }
 
-export class SlowlyBuiltRaced extends ActionDurableObject.make({
-  services: () => Layer.effectDiscard(Effect.sleep("30 millis")),
+export class BuiltAgainRaced extends ActionDurableObject.make({
+  services: () => builtOnSecondTry,
   calls: racedCalls,
 }) {}
 
-export class BuiltAgainRaced extends ActionDurableObject.make({
-  services: () => builtOnSecondTry,
+export class LatchedRaced extends ActionDurableObject.make({
+  services: () => heldBuild,
   calls: racedCalls,
 }) {}
 

@@ -21,7 +21,8 @@ export const groupTag = (path: string) => `effect-actions/rpc:${path}`;
 /** A request's id on the wire, a number or a string, which a client tells apart. */
 export const RequestId = Schema.Union([Schema.String, Schema.Number]);
 
-const parser = RpcSerialization.json.makeUnsafe();
+/** The object's JSON parser, which keeps no state between frames. */
+export const parser = RpcSerialization.json.makeUnsafe();
 
 /** Closes `socket` with `code`, or with none, unless it is already closing. */
 export const closeQuietly = (socket: WebSocket, code?: number, reason?: string) => {
