@@ -20,10 +20,18 @@ const reconnectDelay = Duration.seconds(1);
 
 const maxReconnectDelay = Duration.seconds(30);
 
-const isSubscriptionError = Schema.is(Event.SubscriptionError);
+const isSubscriptionError: Predicate.Refinement<unknown, Event.SubscriptionError> = Schema.is(
+  Event.SubscriptionError,
+);
 
-const pushRefused = ({ reason }: Event.SubscriptionError): boolean =>
-  Predicate.isTagged(reason, "Unsupported") && reason.feature === "deliveryMode";
+/** Whether a watch's failure says the server serves its event by poll alone, refusing to push it. */
+const pushRefused = Predicate.compose(
+  isSubscriptionError,
+  ({ reason }) =>
+    Predicate.isTagged(reason, "Unsupported") &&
+    reason.feature === "deliveryMode" &&
+    reason.value === "push",
+);
 
 // Why: Duplicates arrive within a reconnect or a replay of the last page, so the ids of the last
 // thousand occurrences are enough, and a long watch holds no more.
@@ -84,9 +92,11 @@ export const watching = <E, R, SE>(
     // position it reached, as long as the watch is read: a second after it ends, and after a
     // failure later each time, doubling to 30 seconds, until something arrives again. Each
     // reconnect is logged, and the watch's error channel keeps the failures it cannot outlast.
+    // One that refuses to push, where `polled` is given, polls instead from that position.
     const reconnecting = (
       open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
       cursor: string | null,
+      polled?: (cursor: string | null) => Stream.Stream<Fed, E, R>,
     ): Stream.Stream<Fed, E, R> => {
       const { transient } = transport;
       let at = cursor;
@@ -99,7 +109,12 @@ export const watching = <E, R, SE>(
         ),
       );
 
-      if (transient === undefined) return once;
+      const fallingBack = (reopened: Stream.Stream<Fed, E, R>) =>
+        polled === undefined
+          ? reopened
+          : reopened.pipe(Stream.catchIf(pushRefused, () => Stream.suspend(() => polled(at))));
+
+      if (transient === undefined) return fallingBack(once);
 
       // Why: `Stream.retry` starts its schedule again at the first element after a failure, so
       // the backoff counts only the failures since the stream last delivered.
@@ -117,32 +132,9 @@ export const watching = <E, R, SE>(
         ),
       );
 
-      return once.pipe(Stream.repeat(Schedule.spaced(reconnectDelay)), Stream.retry(afterFailures));
-    };
-
-    const streamed = (
-      open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
-      cursor: string | null,
-    ): Stream.Stream<Fed, E, R> => {
-      let at = cursor;
-
-      const reopened = reconnecting(open, cursor).pipe(
-        Stream.tap((fed) =>
-          Effect.sync(() => {
-            at = fed.cursor ?? at;
-          }),
-        ),
+      return fallingBack(
+        once.pipe(Stream.repeat(Schedule.spaced(reconnectDelay)), Stream.retry(afterFailures)),
       );
-
-      // Why: One the server serves by poll alone, left to the watch's choice, polls instead.
-      return mode === "stream"
-        ? reopened
-        : reopened.pipe(
-            Stream.catchIf(
-              (error) => isSubscriptionError(error) && pushRefused(error),
-              () => Stream.suspend(() => polled(at)),
-            ),
-          );
     };
 
     const polled = (cursor: string | null) =>
@@ -150,7 +142,9 @@ export const watching = <E, R, SE>(
 
     return Stream.unwrap(
       Effect.map(start, (cursor) =>
-        mode === "poll" ? polled(cursor) : streamed(transport.stream, cursor),
+        mode === "poll"
+          ? polled(cursor)
+          : reconnecting(transport.stream, cursor, mode === "stream" ? undefined : polled),
       ),
     ).pipe(
       Stream.rechunk(1),

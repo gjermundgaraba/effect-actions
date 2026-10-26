@@ -1,5 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Clock, Data, DateTime, Effect, Fiber, Logger, Predicate, Schema, Stream } from "effect";
+import {
+  Clock,
+  Data,
+  DateTime,
+  Duration,
+  Effect,
+  Fiber,
+  Logger,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
@@ -108,6 +119,72 @@ describe("a watch's reconnects", () => {
       const waits = opened.slice(1).map((at, index) => at - (opened[index] ?? 0));
 
       expect(waits).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+    }),
+  );
+});
+
+describe("a watch left to choose its mode", () => {
+  const refused = (value: string) =>
+    Event.SubscriptionError.of(
+      Changed.name,
+      new Event.Unsupported({ feature: "deliveryMode", value }),
+    );
+
+  const pushing = (
+    refusal: Event.SubscriptionError,
+    polledFrom: Array<string | null>,
+  ): Transport<Blip | Event.SubscriptionError, never> => ({
+    name: Changed.name,
+    poll: (cursor) =>
+      Effect.sync(() => {
+        polledFrom.push(cursor);
+
+        return {
+          events: [occurrence("u2")],
+          cursor: "u2",
+          truncated: false,
+          hasMore: false,
+          nextPoll: Duration.seconds(5),
+        };
+      }),
+    stream: () => Stream.make(occurrence("u1")).pipe(Stream.concat(Stream.fail(refusal))),
+    transient: Predicate.isTagged("Blip"),
+  });
+
+  it.effect("polls from the position its stream reached once the server refuses to push", () =>
+    Effect.gen(function* () {
+      const polledFrom: Array<string | null> = [];
+
+      const received = yield* watching(pushing(refused("push"), polledFrom), {
+        cursor: "u0",
+      }).pipe(Stream.take(2), Stream.runCollect);
+
+      expect(received.map((item) => (item._tag === "Gap" ? "gap" : item.eventId))).toEqual([
+        "u1",
+        "u2",
+      ]);
+      expect(polledFrom).toEqual(["u1"]);
+    }),
+  );
+
+  it.effect("fails, polling nothing, on another refusal or where it was told to stream", () =>
+    Effect.gen(function* () {
+      const polledFrom: Array<string | null> = [];
+
+      const failures = yield* Effect.forEach(
+        [
+          [refused("poll"), undefined],
+          [refused("push"), "stream"],
+        ] as const,
+        ([refusal, mode]) =>
+          watching(pushing(refusal, polledFrom), { cursor: "u0", mode }).pipe(
+            Stream.runDrain,
+            Effect.flip,
+          ),
+      );
+
+      expect(failures).toEqual([refused("poll"), refused("push")]);
+      expect(polledFrom).toEqual([]);
     }),
   );
 });

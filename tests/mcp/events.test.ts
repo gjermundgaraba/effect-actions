@@ -6,13 +6,16 @@ import {
   Exit,
   Fiber,
   Layer,
+  Logger,
+  Queue,
   Schema,
   Sink,
   Stdio,
   Stream,
 } from "effect";
+import { McpSchema } from "effect/ai";
 import { Sse } from "effect/encoding";
-import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { TestClock } from "effect/testing";
 import * as Action from "../../src/contract/Action.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
@@ -142,7 +145,7 @@ it("refuses an event type named starting with mcp., a prefix MCP keeps", () => {
       version: "0",
     }),
   ).toThrow(
-    `Invalid event name: mcp.task (use lowercase dot-separated segments of [a-z0-9_-], at most 128 characters, not starting with "mcp.")`,
+    `MCP event name starts with "mcp.", which MCP keeps for its own events: mcp.task (rename it, or serve it on another surface)`,
   );
 });
 
@@ -192,6 +195,49 @@ describe("MCP events over HTTP", () => {
         .pipe(Effect.provide(Event.layerMemory)),
   );
 
+  it.effect("names the server in each result's _meta whole, its title and icons included", () =>
+    Effect.gen(function* () {
+      const serverInfo = {
+        name: "events",
+        title: "Events",
+        version: "0",
+        description: "What happened.",
+        icons: [new McpSchema.Icon({ src: "https://example.com/icon.png", sizes: ["48x48"] })],
+      };
+
+      const replies = yield* Effect.all([
+        send("events/list"),
+        send("events/poll", { name: "message.posted", cursor: null }),
+      ]).pipe(
+        Effect.provide(
+          Testing.layer(
+            ActionMcp.layerHttp(makeLog().posted, {
+              ...serverInfo,
+              websiteUrl: "https://example.com",
+            }),
+          ),
+        ),
+      );
+
+      for (const { reply } of replies) {
+        expect(reply).toMatchObject({
+          result: {
+            _meta: {
+              "io.modelcontextprotocol/serverInfo": {
+                name: "events",
+                title: "Events",
+                version: "0",
+                description: "What happened.",
+                websiteUrl: "https://example.com",
+                icons: [{ src: "https://example.com/icon.png", sizes: ["48x48"] }],
+              },
+            },
+          },
+        });
+      }
+    }).pipe(Effect.provide(Event.layerMemory)),
+  );
+
   it.effect(
     "lists the event types its actions list alone, needing no authentication for the others",
     () =>
@@ -218,54 +264,56 @@ describe("MCP events over HTTP", () => {
         .pipe(Effect.provide(Event.layerMemory)),
   );
 
-  it.effect("polls from now, then answers what happened since with the page's cursor alone", () =>
-    Effect.gen(function* () {
-      const log = makeLog();
+  it.effect(
+    "polls from now, then answers what happened since, each occurrence with its cursor",
+    () =>
+      Effect.gen(function* () {
+        const log = makeLog();
 
-      const answers = yield* Effect.gen(function* () {
-        const first = yield* send("events/poll", { name: "message.posted", cursor: null });
+        const answers = yield* Effect.gen(function* () {
+          const first = yield* send("events/poll", { name: "message.posted", cursor: null });
 
-        yield* log.post("general", "hello");
+          yield* log.post("general", "hello");
 
-        const second = yield* send("events/poll", {
-          name: "message.posted",
-          arguments: { channel: "general" },
-          cursor: "0",
-        });
-
-        return [first.reply, second.reply];
-      }).pipe(
-        Effect.provide(
-          Testing.layer(ActionMcp.layerHttp(log.posted, { name: "events", version: "0" })),
-        ),
-      );
-
-      expect(answers).toMatchObject([
-        {
-          result: {
-            resultType: "complete",
-            events: [],
+          const second = yield* send("events/poll", {
+            name: "message.posted",
+            arguments: { channel: "general" },
             cursor: "0",
-            truncated: false,
-            hasMore: false,
-            nextPollMs: 5000,
+          });
+
+          return [first.reply, second.reply];
+        }).pipe(
+          Effect.provide(
+            Testing.layer(ActionMcp.layerHttp(log.posted, { name: "events", version: "0" })),
+          ),
+        );
+
+        expect(answers).toMatchObject([
+          {
+            result: {
+              resultType: "complete",
+              events: [],
+              cursor: "0",
+              truncated: false,
+              hasMore: false,
+              nextPollMs: 5000,
+            },
           },
-        },
-        {
-          result: {
-            events: [
-              {
-                eventId: "m1",
-                name: "message.posted",
-                data: { id: "m1", channel: "general", text: "hello" },
-              },
-            ],
-            cursor: "1",
+          {
+            result: {
+              events: [
+                {
+                  eventId: "m1",
+                  name: "message.posted",
+                  data: { id: "m1", channel: "general", text: "hello" },
+                  cursor: "1",
+                },
+              ],
+              cursor: "1",
+            },
           },
-        },
-      ]);
-      expect(answers[1]).not.toHaveProperty(["result", "events", 0, "cursor"]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory)),
   );
 
   it.effect("caps a log source's page at maxEvents, with more to come", () =>
@@ -661,52 +709,6 @@ describe("an MCP push stream's lifecycle", () => {
 });
 
 describe("ActionMcp.client's reconnecting watch", () => {
-  const transportFailure = (request: HttpClientRequest.HttpClientRequest) =>
-    new HttpClientError.HttpClientError({
-      reason: new HttpClientError.TransportError({ request, description: "connection reset" }),
-    });
-
-  it.effect("reconnects after the transport fails, waiting longer each time, and resumes", () =>
-    Effect.gen(function* () {
-      const log = makeLog();
-      const attempts: Array<number> = [];
-
-      const watched = yield* Effect.gen(function* () {
-        const client = yield* ActionMcp.client([Posted], {
-          transformClient: HttpClient.transform((response, request) =>
-            Effect.flatMap(
-              Effect.clockWith((clock) => clock.currentTimeMillis),
-              (now) => {
-                attempts.push(now);
-
-                return attempts.length <= 3 ? Effect.fail(transportFailure(request)) : response;
-              },
-            ),
-          ),
-        });
-
-        const fiber = yield* client
-          .watch(Posted, {}, { cursor: "0" })
-          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
-
-        yield* log.post("general", "hello");
-        yield* settle;
-        yield* TestClock.adjust("1 second");
-        yield* TestClock.adjust("2 seconds");
-        yield* TestClock.adjust("4 seconds");
-
-        return yield* Fiber.join(fiber);
-      }).pipe(
-        Effect.provide(
-          Testing.layer(ActionMcp.layerHttp(log.posted, { name: "events", version: "0" })),
-        ),
-      );
-
-      expect(attempts).toEqual([0, 1000, 3000, 7000]);
-      expect(watched).toMatchObject([{ eventId: "m1", data: { text: "hello" } }]);
-    }).pipe(Effect.provide(Event.layerMemory)),
-  );
-
   it.effect("reconnects after a 503 the default client reads, streaming and polling", () =>
     Effect.gen(function* () {
       const log = makeLog();
@@ -1086,7 +1088,7 @@ describe("ActionMcp.client's watch", () => {
     }).pipe(Effect.provide(Event.layerMemory)),
   );
 
-  it.effect("resumes an occurrence before a polled page's last from the cursor polled", () =>
+  it.effect("keeps the cursor each polled occurrence of a check source arrives with", () =>
     Effect.gen(function* () {
       const log = makeLog();
 
@@ -1108,6 +1110,103 @@ describe("ActionMcp.client's watch", () => {
         { eventId: "m1", cursor: "0" },
         { eventId: "m2", cursor: "2" },
       ]);
+    }).pipe(Effect.provide(Event.layerMemory)),
+  );
+
+  it.effect(
+    "keeps each polled occurrence of a log source at its own position, resuming after it",
+    () =>
+      Effect.gen(function* () {
+        const events = yield* Event.Events;
+        const published = Event.implement(Posted, { log: {} });
+
+        const Page = Schema.Struct({
+          result: Schema.Struct({
+            cursor: Schema.String,
+            events: Schema.Array(Schema.Struct({ eventId: Schema.String })),
+          }),
+        });
+
+        const [first, resumed] = yield* Effect.gen(function* () {
+          const before = Schema.decodeUnknownSync(Page)(
+            (yield* send("events/poll", { name: "message.posted", cursor: null })).reply,
+          ).result.cursor;
+
+          for (const id of ["m1", "m2"]) {
+            yield* events.publish(Posted, {
+              eventId: id,
+              data: { id, channel: "general", text: id },
+            });
+          }
+
+          const client = yield* ActionMcp.client([Posted]);
+
+          const [m1] = yield* client
+            .watch(Posted, {}, { cursor: before, mode: "poll" })
+            .pipe(Stream.take(1), Stream.runCollect);
+
+          const after = yield* send("events/poll", {
+            name: "message.posted",
+            cursor: m1?.cursor ?? null,
+          });
+
+          return [m1, Schema.decodeUnknownSync(Page)(after.reply).result.events] as const;
+        }).pipe(
+          Effect.provide(
+            Testing.layer(ActionMcp.layerHttp(published, { name: "events", version: "0" })),
+          ),
+        );
+
+        expect(first).toMatchObject({ eventId: "m1" });
+        expect(resumed).toEqual([{ eventId: "m2" }]);
+      }).pipe(Effect.provide(Event.layerMemory)),
+  );
+
+  it.effect("logs an error a stream reports as HTTP and RPC watches do, and reads on", () =>
+    Effect.gen(function* () {
+      let pages = 0;
+      const logged: Array<unknown> = [];
+      const data = { id: "m1", channel: "general", text: "after the outage" };
+
+      const flaky = Event.implement(Posted, {
+        check: () =>
+          Effect.suspend(() => {
+            pages += 1;
+
+            return pages === 2
+              ? Effect.die(new Error("The upstream answered 503."))
+              : Effect.succeed({
+                  cursor: String(pages),
+                  events: pages === 3 ? [{ eventId: data.id, data }] : [],
+                });
+          }),
+      });
+
+      const watched = yield* Effect.gen(function* () {
+        const client = yield* ActionMcp.client([Posted]);
+
+        const fiber = yield* client
+          .watch(Posted)
+          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+
+        yield* settle;
+        yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("5 seconds");
+
+        return yield* Fiber.join(fiber);
+      }).pipe(
+        Effect.provide(Testing.layer(ActionMcp.layerHttp(flaky, { name: "events", version: "0" }))),
+        Effect.provide(
+          Logger.layer([
+            Logger.make(({ message }) => {
+              logged.push(Array.isArray(message) ? message[0] : message);
+            }),
+          ]),
+        ),
+      );
+
+      expect(watched).toMatchObject([{ eventId: "m1" }]);
+      expect(logged).toContain('MCP event "message.posted" failed to read, and resumes');
     }).pipe(Effect.provide(Event.layerMemory)),
   );
 
@@ -1418,40 +1517,51 @@ describe("a protected MCP event", () => {
 });
 
 describe("a request-scoped MCP endpoint", () => {
-  it.effect("refuses to start with an event it cannot hold between requests", () =>
-    Effect.gen(function* () {
-      const emitted = Event.implement(Posted, { log: { emit: Stream.never } });
+  it.effect(
+    "polls a log source fed by emit and holds its subscription hook between requests, both built once with the endpoint",
+    () =>
+      Effect.gen(function* () {
+        const emitted = yield* Queue.unbounded<{
+          readonly eventId: string;
+          readonly data: typeof Posted.payload.Type;
+        }>();
 
-      const hooked = Event.implement(Posted, {
-        check: () => Effect.succeed({ cursor: "0", events: [] }),
-        subscription: () => Effect.void,
-      });
+        let hooks = 0;
 
-      const startWith = (implementation: typeof emitted) =>
-        Effect.map(
-          Effect.exit(
-            send("events/list").pipe(
-              Effect.provide(
-                Testing.layer(
-                  ActionMcp.layerHttp(implementation, {
-                    name: "events",
-                    version: "0",
-                    requestScoped: true,
-                  }),
-                ),
-              ),
+        const posted = Event.implement(Posted, {
+          log: { emit: Stream.fromQueue(emitted) },
+          subscription: () =>
+            Effect.sync(() => {
+              hooks += 1;
+            }),
+        });
+
+        const answer = yield* Effect.gen(function* () {
+          const first = yield* send("events/poll", { name: "message.posted", cursor: null });
+
+          const cursor = Schema.decodeUnknownSync(
+            Schema.Struct({ result: Schema.Struct({ cursor: Schema.String }) }),
+          )(first.reply).result.cursor;
+
+          const data = { id: "m1", channel: "general", text: "hello" };
+
+          yield* Queue.offer(emitted, { eventId: data.id, data });
+          yield* settle;
+
+          return (yield* send("events/poll", { name: "message.posted", cursor })).reply;
+        }).pipe(
+          Effect.provide(
+            Testing.layer(
+              ActionMcp.layerHttp(posted, { name: "events", version: "0", requestScoped: true }),
             ),
           ),
-          (exit) => (Exit.isFailure(exit) ? String(exit.cause) : "started"),
         );
 
-      expect(yield* startWith(emitted)).toContain(
-        'MCP event "message.posted" has a log source fed by emit, which a request-scoped endpoint reads only while a request lasts (serve it on an endpoint without requestScoped)',
-      );
-      expect(yield* startWith(hooked)).toContain(
-        'MCP event "message.posted" has a subscription hook, which a request-scoped endpoint cannot hold between requests (remove the hook, or serve it on an endpoint without requestScoped)',
-      );
-    }).pipe(Effect.provide(Event.layerMemory)),
+        expect(answer).toMatchObject({
+          result: { events: [{ eventId: "m1", data: { text: "hello" } }] },
+        });
+        expect(hooks).toBe(1);
+      }).pipe(Effect.provide(Event.layerMemory)),
   );
 
   it.effect("serves a log source published to between requests, its log kept by Events", () =>
@@ -1516,6 +1626,27 @@ describe("ActionMcp.client's watch, refused in SEP-3415's codes", () => {
         message: `Event "message.posted" is refused at the server's limit of subscriptions: at most 10`,
       });
     }).pipe(Effect.provide(Testing.layer(exhausted))),
+  );
+
+  it.effect(
+    "fails with McpCallError's ProtocolError where a ResourceExhausted or Unsupported error's data does not say what it names",
+    () =>
+      Effect.gen(function* () {
+        const refusals = yield* Effect.forEach([-32025, -32026], (code) =>
+          ActionMcp.client([Posted]).pipe(
+            Effect.flatMap((client) =>
+              client.watch(Posted, {}, { cursor: "0", mode: "poll" }).pipe(Stream.runDrain),
+            ),
+            Effect.flip,
+            Effect.provide(Testing.layer(answering({ code, message: "Refused." }))),
+          ),
+        );
+
+        expect(refusals).toMatchObject([
+          { _tag: "McpCallError", reason: { _tag: "ProtocolError", code: -32025 } },
+          { _tag: "McpCallError", reason: { _tag: "ProtocolError", code: -32026 } },
+        ]);
+      }),
   );
 
   it.effect("fails with InvalidInput where the server answers -32602", () =>

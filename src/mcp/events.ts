@@ -61,7 +61,7 @@ const decodeLimit = Schema.decodeUnknownOption(
 /**
  * What a SEP-3415 error of the event `name` names, as a subscription's request fails with one and
  * its termination carries one: a reason of `Event.SubscriptionError`, or the refusal; `undefined`
- * for a code SEP-3415 does not define.
+ * for a code SEP-3415 does not define, or one whose `data` does not say what it names.
  */
 export const reasonOf = (
   name: string,
@@ -73,17 +73,15 @@ export const reasonOf = (
     case eventCodes.forbidden:
       return refusalOf(error);
     case eventCodes.resourceExhausted:
-      return Event.SubscriptionError.of(
-        name,
-        new Event.LimitReached(
-          Option.getOrElse(decodeLimit(error.data), () => ({ limit: "unknown" })),
+      return Option.getOrUndefined(
+        Option.map(decodeLimit(error.data), (limit) =>
+          Event.SubscriptionError.of(name, new Event.LimitReached(limit)),
         ),
       );
     case eventCodes.unsupported:
-      return Event.SubscriptionError.of(
-        name,
-        new Event.Unsupported(
-          Option.getOrElse(decodeUnsupported(error.data), () => ({ feature: "unknown" })),
+      return Option.getOrUndefined(
+        Option.map(decodeUnsupported(error.data), (unsupported) =>
+          Event.SubscriptionError.of(name, new Event.Unsupported(unsupported)),
         ),
       );
     default:
@@ -199,12 +197,3 @@ export const Terminated = Rpc.make("notifications/events/terminated", {
 export const Requests = RpcGroup.make(ListEvents, PollEvents, StreamEvents);
 
 export const Notifications = RpcGroup.make(Active, Occurred, Heartbeat, Failed, Terminated);
-
-/** Any notification a push stream carries, as a client decodes its params by method. */
-export const Notification = Schema.Union([
-  Schema.Struct({ method: Schema.Literal(Active._tag), params: Active.payloadSchema }),
-  Schema.Struct({ method: Schema.Literal(Occurred._tag), params: Occurred.payloadSchema }),
-  Schema.Struct({ method: Schema.Literal(Heartbeat._tag), params: Heartbeat.payloadSchema }),
-  Schema.Struct({ method: Schema.Literal(Failed._tag), params: Failed.payloadSchema }),
-  Schema.Struct({ method: Schema.Literal(Terminated._tag), params: Terminated.payloadSchema }),
-]);

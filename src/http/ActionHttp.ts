@@ -530,7 +530,7 @@ const jsonContentType = () =>
  * - A source's failure no refusal explains is logged and reported once, sent as a bare `Failed`, and read again from where it reached after 5 seconds, before the stream's first `Checked` too; a poll's is a 500, which `client`'s `watch` reconnects after.
  * - A stream is read only as fast as its client reads it: a slow reader of a log source falls behind its log, and receives a `Gap`.
  * - A protected event with a `subscription` hook needs `principal` on its descriptor to key poll subscribers: without it the layer fails to build with a message naming the event.
- * - On a host with no lasting process, such as `HttpRouter.toWebHandler` on a serverless platform, serve check sources alone, without a `subscription` hook: nothing refuses the others, as MCP's `requestScoped` does, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a `Gap`, and its own leases, lost as it ends.
+ * - On a host with no lasting process, such as `HttpRouter.toWebHandler` on a serverless platform, serve check sources alone, without a `subscription` hook: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a `Gap`, and its own leases, lost as it ends.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   binding: H,

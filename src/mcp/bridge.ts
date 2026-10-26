@@ -1,5 +1,5 @@
 import { Cause, Context, Duration, Effect, Exit, Match, Option, Predicate, Schema } from "effect";
-import type { McpProtocol, McpSchema } from "effect/ai";
+import { type McpProtocol, McpSchema } from "effect/ai";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/http";
 import type { Rpc, RpcGroup, RpcMessage } from "effect/rpc";
 import { type Any as Authentication, promote } from "../authentication/provider.js";
@@ -32,9 +32,9 @@ import {
   subscriptionIdKey,
   Terminated,
   terminationError,
-  WireOccurrence,
+  type WireOccurrence,
 } from "./events.js";
-import { routingFormsOf } from "./protocol.js";
+import { isObjectSchema, routingFormsOf, toolJsonSchema } from "./protocol.js";
 
 type Adapter = McpProtocol.ProtocolAdapter<"2026-07-28", McpProtocol.StatelessRuntimeDescriptor>;
 
@@ -54,11 +54,7 @@ type Send = (
 interface Target {
   readonly context: {
     readonly sendNotification?: Send | undefined;
-    readonly serverInfo: {
-      readonly name: string;
-      readonly version: string;
-      readonly description?: string | undefined;
-      readonly websiteUrl?: string | undefined;
+    readonly serverInfo: Schema.Struct.Type<typeof McpSchema.Implementation.fields> & {
       readonly extensions?: McpSchema.ServerCapabilities["extensions"] | undefined;
     };
   };
@@ -96,11 +92,36 @@ const groupOf = (adapter: Adapter, key: string): RpcGroup.RpcGroup<Rpc.AnyWithPr
 /** How the bridge serves events: the implementations, and what the endpoint authenticates with. */
 export interface Serving {
   readonly events: ReadonlyArray<AnyEventImplementation>;
-  /** Each event type's JSON Schemas, by name, as `events/list` lists them. */
-  readonly schemas: ReadonlyMap<string, Pick<EventDescriptor, "inputSchema" | "payloadSchema">>;
   readonly authentication: Authentication | undefined;
-  readonly requestScoped: boolean;
 }
+
+/**
+ * The JSON Schemas `events/list` lists for `event`, refusing an input or a payload that is no
+ * object.
+ */
+export const eventSchemasOf = (
+  event: Event.Any,
+): Pick<EventDescriptor, "inputSchema" | "payloadSchema"> => {
+  const inputSchema = toolJsonSchema(Schema.toCodecJson(event.input), true);
+
+  if (!isObjectSchema(inputSchema)) {
+    throw new Error(
+      `MCP event input must be one object with keys, such as a struct: ${event.name} (wrap a union, an array or a scalar in a field, or omit input for no arguments)`,
+    );
+  }
+
+  const payloadSchema = toolJsonSchema(Schema.toCodecJson(event.payload), false);
+
+  if (!isObjectSchema(payloadSchema)) {
+    throw new Error(
+      `MCP event payload must be one object, such as a struct: ${event.name} (wrap an array or a scalar in a field)`,
+    );
+  }
+
+  return { inputSchema, payloadSchema };
+};
+
+const encodeServerInfo = Schema.encodeEffect(McpSchema.Implementation);
 
 type Notified = RpcGroup.Rpcs<typeof Notifications>;
 
@@ -143,28 +164,16 @@ const routedTo = (name: string) =>
       : headerMismatch(request.value),
   );
 
-const wireOccurrence = (event: Event.Any) => {
-  const encode = encodeUntaggedOf(event);
-  const wire = Schema.decodeUnknownEffect(WireOccurrence);
-
-  return (occurrence: Event.Occurrence<Event.Any>): Effect.Effect<WireOccurrence> =>
-    Effect.orDie(Effect.flatMap(encode(occurrence), wire));
-};
-
 type Arguments = (typeof PollEvents.payloadSchema.Type)["arguments"];
 
 interface Served {
   readonly feed: Feed;
   readonly decode: (args: Arguments) => Effect.Effect<Event.Any["input"]["Type"], EventsError>;
-  readonly wire: ReturnType<typeof wireOccurrence>;
+  readonly wire: (occurrence: Event.Occurrence<Event.Any>) => Effect.Effect<WireOccurrence>;
   readonly listing: EventDescriptor;
 }
 
-const servedOf = (
-  feed: Feed,
-  delivery: EventDescriptor["delivery"],
-  schemas: Pick<EventDescriptor, "inputSchema" | "payloadSchema">,
-): Served => {
+const servedOf = (feed: Feed, delivery: EventDescriptor["delivery"]): Served => {
   const { event } = feed;
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(event.input), inputParseOptions);
 
@@ -179,44 +188,35 @@ const servedOf = (
             message: `Invalid arguments for event '${event.name}': ${message}`,
           }),
       ),
-    wire: wireOccurrence(event),
-    listing: { name: event.name, description: event.description, delivery, ...schemas },
+    wire: encodeUntaggedOf(event),
+    listing: {
+      name: event.name,
+      description: event.description,
+      delivery,
+      ...eventSchemasOf(event),
+    },
   };
 };
 
-const refusalOf = (
-  feeds: ReadonlyArray<Feed>,
-  { authentication, requestScoped }: Serving,
-): string | undefined =>
-  feeds.flatMap(({ event, emits, release }) => [
-    ...(requestScoped && emits
-      ? [
-          `MCP event "${event.name}" has a log source fed by emit, which a request-scoped endpoint reads only while a request lasts (serve it on an endpoint without requestScoped)`,
-        ]
-      : []),
-    ...(requestScoped && release !== undefined
-      ? [
-          `MCP event "${event.name}" has a subscription hook, which a request-scoped endpoint cannot hold between requests (remove the hook, or serve it on an endpoint without requestScoped)`,
-        ]
-      : []),
-  ])[0] ??
-  (authentication === undefined
-    ? undefined
-    : unkeyedHook("MCP", feeds, authentication.principal !== undefined));
-
 /**
  * Dies with the reason the endpoint of `serving` cannot serve one of its events, run where the
- * endpoint's layer is built.
+ * endpoint's layer is built: a protected one with a `subscription` hook, under an authentication
+ * without a principal to key its polls by.
  */
-export const refuseUnservable = (serving: Serving): Effect.Effect<void, never, unknown> =>
+export const refuseUnservable = ({
+  events,
+  authentication,
+}: Serving): Effect.Effect<void, never, unknown> =>
   // Why: Effect forks the server that installs the handlers, so a defect there ends only that
   // fiber and every request waits; the refusal runs beside the tools' registration, failing the
   // layer.
-  Effect.flatMap(acquireFeeds(serving.events), (feeds) => {
-    const refusal = refusalOf(feeds, serving);
+  authentication === undefined
+    ? Effect.void
+    : Effect.flatMap(acquireFeeds(events), (feeds) => {
+        const refusal = unkeyedHook("MCP", feeds, authentication.principal !== undefined);
 
-    return refusal === undefined ? Effect.void : Effect.die(new Error(refusal));
-  });
+        return refusal === undefined ? Effect.void : Effect.die(new Error(refusal));
+      });
 
 /**
  * `base`, the 2026-07-28 adapter, also serving SEP-3415's `events/list`, `events/poll` and
@@ -232,33 +232,21 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
       const built = yield* Effect.context<unknown>();
 
       const send = target.context.sendNotification;
-      const { name, version, description, websiteUrl } = target.context.serverInfo;
 
-      // Why: Every 2026-07-28 result names the server in its `_meta`, as Effect's own handlers'
-      // results do.
-      const _meta = {
-        "io.modelcontextprotocol/serverInfo": {
-          name,
-          version,
-          ...(description === undefined ? {} : { description }),
-          ...(websiteUrl === undefined ? {} : { websiteUrl }),
-        },
-      };
+      // Why: Every 2026-07-28 result names the server in its `_meta`, encoded per answer as
+      // Effect's own handlers' results encode it, so a server information that does not encode
+      // fails that answer rather than the forked installation, which no request would outwait.
+      const meta = Effect.map(
+        Effect.orDie(encodeServerInfo(target.context.serverInfo)),
+        (serverInfo) => ({ "io.modelcontextprotocol/serverInfo": serverInfo }),
+      );
 
       const delivery: EventDescriptor["delivery"] = [
         "poll",
         ...(send === undefined ? [] : ["push" as const]),
       ];
 
-      const served = new Map(
-        feeds.flatMap((feed) => {
-          const schemas = serving.schemas.get(feed.event.name);
-
-          return schemas === undefined
-            ? []
-            : [[feed.event.name, servedOf(feed, delivery, schemas)] as const];
-        }),
-      );
+      const served = new Map(feeds.map((feed) => [feed.event.name, servedOf(feed, delivery)]));
 
       const servedNamed = (name: string) =>
         Option.match(Option.fromNullishOr(served.get(name)), {
@@ -290,11 +278,11 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
 
       const handlers = Requests.of({
         "events/list": () =>
-          Effect.succeed({
+          Effect.map(meta, (_meta) => ({
             resultType: "complete" as const,
             events: [...served.values()].map(({ listing }) => listing),
             _meta,
-          }),
+          })),
         "events/poll": ({ name, arguments: args, cursor, maxEvents }) =>
           Effect.gen(function* () {
             yield* routedTo(name);
@@ -311,11 +299,7 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
                   ),
                 );
 
-                const events = yield* Effect.forEach(page.events, (occurrence) =>
-                  Effect.map(wire(occurrence), ({ cursor: _cursor, ...rest }) => rest),
-                );
-
-                return { page, events };
+                return { page, events: yield* Effect.forEach(page.events, wire) };
               }),
             );
 
@@ -326,7 +310,7 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
               truncated: page.truncated,
               hasMore: page.hasMore,
               nextPollMs: Duration.toMillis(page.nextPoll),
-              _meta,
+              _meta: yield* meta,
             };
           }).pipe(fromBuilt),
         "events/stream": ({ name, arguments: args, cursor }, { client, requestId }) =>
@@ -345,7 +329,7 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
             }
 
             return yield* delivered(
-              { send, clientId: client.id, requestId, wire, _meta },
+              { send, clientId: client.id, requestId, wire, _meta: yield* meta },
               (deliver) =>
                 asSubscriber(
                   feed.event,

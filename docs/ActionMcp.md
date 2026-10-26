@@ -158,9 +158,9 @@ const implementations = [builds, logs, buildEvents, statusEvents, deploys, deplo
 // The actions as MCP tools and the events as MCP events, at `/mcp`. A client polls with
 // `events/poll`, or holds `events/stream` open and is pushed each occurrence. Both events are
 // protected, so each request needs a member's token, and each subscriber sees what its token
-// lets it. One server holds the deploy event's `subscription` hook between requests, and its log
-// in memory, so this endpoint cannot be `requestScoped`; a serverless host would serve check
-// sources by poll alone.
+// lets it. This long-lived process holds the deploy event's `subscription` hook between polls and
+// its log in memory, and pushes each occurrence: a `requestScoped` endpoint would serve the events
+// by poll alone, and a serverless host, where no process lasts, check sources alone.
 //
 // A tool answers one result, so `tailLog` would collect a whole log before answering, all of it
 // in a model's context: its implementation, `logs`, is left out, and the endpoint serves every
@@ -190,11 +190,12 @@ export const routes = Layer.mergeAll(mcp, api, rpc).pipe(Layer.provide(authentic
 events with `client`, by stream and by poll. What each method answers, and when the endpoint
 refuses to start, is on `layerHttp`; what a watch fails with is on `client`.
 
-- **Which deployment.** A log source, a `subscription` hook and push need one server that
-  outlives a request. Serve them from a long-lived process; a `requestScoped` endpoint serves
-  check sources by poll alone. A log source published to there is served, its log the
-  `Event.Events`' own: under `Event.layerMemory`, each instance's, whose cursors another reads as
-  a gap.
+- **Which deployment.** Push needs a server that outlives a request, so a `requestScoped`
+  endpoint serves events by poll alone. Sources, logs and `subscription` hooks' leases are built
+  once with the endpoint, either way. On a host with no lasting process, such as a serverless
+  platform, serve check sources alone, without a `subscription` hook: nothing refuses the others,
+  and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors
+  another reads as a gap, and its own leases, lost as it ends.
 
 ## Allow browser clients
 

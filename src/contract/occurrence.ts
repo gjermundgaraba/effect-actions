@@ -50,8 +50,14 @@ export const AnyOccurrence = Schema.TaggedStruct(
 export const ReceivedOf = <E extends Event.Any>(event: E) =>
   Schema.Union([OccurrenceOf(event), Gap]);
 
+// Why: Its timestamp and data are each given their JSON codec, the other fields being JSON already,
+// so what it encodes to is typed as the wire's object rather than as any JSON.
 const untaggedOf = (event: Event.Any) =>
-  Schema.toCodecJson(OccurrenceOf(event).mapFields(Struct.omit(["_tag"])));
+  OccurrenceOf(event).mapFields((fields) => ({
+    ...Struct.omit(fields, ["_tag"]),
+    timestamp: Schema.DateTimeUtcFromString,
+    data: Schema.toCodecJson(event.payload),
+  }));
 
 /**
  * How a subscriber of `event` decodes an occurrence sent as JSON without its tag, as MCP's
@@ -69,7 +75,7 @@ export const untaggedOccurrenceOf = (event: Event.Any) => {
 // here is a defect.
 /** How a surface encodes an occurrence of `event` as JSON without its tag, its counterpart. */
 export const encodeUntaggedOf = (event: Event.Any) => {
-  const encode = Schema.encodeUnknownEffect(untaggedOf(event));
+  const encode = Schema.encodeEffect(untaggedOf(event));
 
   return (occurrence: Event.Occurrence<Event.Any>) => Effect.orDie(encode(occurrence));
 };

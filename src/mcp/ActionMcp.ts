@@ -5,8 +5,6 @@ import {
   ErrorReporter,
   Exit,
   Fiber,
-  JsonPointer,
-  type JsonSchema,
   Layer,
   Option,
   Predicate,
@@ -31,7 +29,6 @@ import {
 } from "../authentication/provider.js";
 import { Anyone, assertAuthentication } from "../contract/caller.js";
 import type {
-  AnyEventImplementation,
   EventBuildError,
   EventBuildServices,
   EventOf,
@@ -50,14 +47,16 @@ import {
   fieldKey,
   httpProtocol,
   isMisplaced,
+  isObjectSchema,
   type Lift,
   type Lifted,
   liftedFrom,
   liftOf,
   protocols,
   routingFormsOf,
+  toolJsonSchema,
 } from "./protocol.js";
-import { refuseUnservable, type Serving, withEvents } from "./bridge.js";
+import { eventSchemasOf, refuseUnservable, type Serving, withEvents } from "./bridge.js";
 import { progressNotifier } from "./progress.js";
 import { recordStepUp } from "../authentication/refusal.js";
 import { withStderrConsole } from "../stdio/console.js";
@@ -187,63 +186,23 @@ type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provi
 
 type Features<R> = Exclude<R, McpServer.McpServer>;
 
-const isObjectSchema = Schema.is(McpSchema.ToolJson);
+/** The actions and event types an endpoint of `Apps` given the options `O` serves. */
+type Contracts<Apps extends Served, O> = SelectedOf<O, Apps> | SelectedEventsOf<O, Apps>;
 
-const isJson = Schema.is(Schema.Json);
+/** What building an endpoint of `Apps` given the options `O` may fail with. */
+type ServerError<Apps extends Served, O> =
+  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | EventBuildError<
+      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
+      SelectedEventsOf<O, Apps>
+    >
+  | Cause.IllegalArgumentError;
 
-const definitionsReferenced = (value: Schema.Json): ReadonlyArray<string> => {
-  if (
-    value === null ||
-    Predicate.isString(value) ||
-    Predicate.isNumber(value) ||
-    Predicate.isBoolean(value)
-  )
-    return [];
-
-  if (Array.isArray(value)) return value.flatMap(definitionsReferenced);
-
-  return Object.entries(value).flatMap(([field, nested]) => {
-    if (field !== "$ref") return definitionsReferenced(nested);
-
-    const [scope, key] = Predicate.isString(nested)
-      ? (JsonPointer.parseUriFragment(nested) ?? [])
-      : [];
-
-    return scope === "$defs" && key !== undefined ? [key] : [];
-  });
-};
-
-// Why: MCP requires an object root, so a top-level `$ref` is inlined, and the inlined root's
-// definition is dropped unless something still refers to it (a recursive root, or one used again
-// inside itself), as Effect's private `toolJsonSchema` does for `registerToolkit` from 4.0.6;
-// tests/mcp/media.test.ts compares the listings.
-const toolJsonSchema = (schema: Schema.Top, strict: boolean): JsonSchema.JsonSchema | undefined => {
-  const document = Schema.toJsonSchemaDocument(schema, {
-    onExcessProperty: strict ? "error" : "ignore",
-  });
-
-  const [scope, key] = Predicate.isString(document.schema["$ref"])
-    ? (JsonPointer.parseUriFragment(document.schema["$ref"]) ?? [])
-    : [];
-
-  const inlined = scope === "$defs" && key !== undefined ? key : undefined;
-
-  const root = inlined === undefined ? document.schema : document.definitions[inlined];
-
-  if (root === undefined) return undefined;
-
-  const definitions =
-    inlined !== undefined &&
-    ![root, ...Object.values(document.definitions)]
-      .flatMap((schema) => (isJson(schema) ? definitionsReferenced(schema) : []))
-      .includes(inlined)
-      ? Object.fromEntries(
-          Object.entries(document.definitions).filter(([name]) => name !== inlined),
-        )
-      : document.definitions;
-
-  return Object.keys(definitions).length === 0 ? root : { ...root, $defs: definitions };
-};
+/** What building the event sources of an endpoint of `Apps` given the options `O` needs. */
+type EventServices<Apps extends Served, O> = EventBuildServices<
+  HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
+  SelectedEventsOf<O, Apps>
+>;
 
 const assertToolShapes = (lifted: ReadonlyArray<readonly [Action.Any, Lift]>): void => {
   const actions = lifted.map(([action]) => action);
@@ -446,57 +405,23 @@ const registerTools = Effect.fnUntraced(function* (
 });
 
 /**
- * The JSON Schemas `events/list` lists for each event type of `events`, by name, refusing an event
- * type whose input or payload is no object.
+ * Refuses event types an endpoint cannot serve as MCP events: one named twice, one named as MCP's
+ * own, or one whose input or payload is no object.
  */
-const eventSchemasOf = (events: ReadonlyArray<AnyEventImplementation>): Serving["schemas"] => {
-  const listed = events.flatMap((app) => app.events);
-
-  assertOnce("MCP event", listed);
+const assertEventShapes = (events: ReadonlyArray<Event.Any>): void => {
+  assertOnce("MCP event", events);
 
   // Why: MCP keeps event names starting with `mcp.` for its own events, so one of an
   // application's would be read as the protocol's.
-  const reserved = listed.find(({ name }) => name.startsWith("mcp."));
+  const reserved = events.find(({ name }) => name.startsWith("mcp."));
 
   if (reserved !== undefined) {
     throw new Error(
-      `Invalid event name: ${reserved.name} (use lowercase dot-separated segments of [a-z0-9_-], at most 128 characters, not starting with "mcp.")`,
+      `MCP event name starts with "mcp.", which MCP keeps for its own events: ${reserved.name} (rename it, or serve it on another surface)`,
     );
   }
 
-  const schemas = listed.map((event) => ({
-    name: event.name,
-    inputSchema: toolJsonSchema(Schema.toCodecJson(event.input), true),
-    payloadSchema: toolJsonSchema(Schema.toCodecJson(event.payload), false),
-  }));
-
-  const inputs = schemas
-    .filter(({ inputSchema }) => !isObjectSchema(inputSchema))
-    .map(({ name }) => name);
-
-  if (inputs.length > 0) {
-    throw new Error(
-      `MCP event input must be one object with keys, such as a struct: ${inputs.join(", ")} (wrap a union, an array or a scalar in a field, or omit input for no arguments)`,
-    );
-  }
-
-  const payloads = schemas
-    .filter(({ payloadSchema }) => !isObjectSchema(payloadSchema))
-    .map(({ name }) => name);
-
-  if (payloads.length > 0) {
-    throw new Error(
-      `MCP event payload must be one object, such as a struct: ${payloads.join(", ")} (wrap an array or a scalar in a field)`,
-    );
-  }
-
-  return new Map(
-    schemas.flatMap(({ name, inputSchema, payloadSchema }) =>
-      isObjectSchema(inputSchema) && isObjectSchema(payloadSchema)
-        ? [[name, { inputSchema, payloadSchema }] as const]
-        : [],
-    ),
-  );
+  for (const event of events) eventSchemasOf(event);
 };
 
 /** The revisions an endpoint speaks, the 2026-07-28 one serving `serving`'s events if any. */
@@ -668,9 +593,10 @@ type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [undefined
  * - A 2025-11-25 or 2025-06-18 client gets `structuredContent` only for a success that is an object: any other success arrives as its text block alone, a string unquoted.
  * - A client asking for an earlier revision, such as 2025-03-26, is offered 2025-11-25, so a client speaking only that earlier one cannot connect.
  * - A request body is read whole, however large, and a 2025 session holds what its `initialize` sent until it ends, so an oversized `initialize` costs memory for that long: limit bodies as `ActionHttp.layer` says.
- * - An event type named starting with `mcp.`, a prefix MCP keeps for its own events, is refused as the endpoint is made, with `Invalid event name`.
+ * - An event type named starting with `mcp.`, a prefix MCP keeps for its own events, is refused as the endpoint is made, with `MCP event name starts with "mcp."`.
  * - Events are 2026-07-28's alone: a 2025 session gets `-32601` for `events/*`, and its `initialize` advertises no events extension.
- * - With `requestScoped`, an event fed by `emit` or with a `subscription` hook is refused at startup, and `events/stream` answers `-32026`: no server outlives a request to consume a stream, hold a lease or push; a published log source's log is the `Events`' own, under `Event.layerMemory` each instance's, whose cursors another reads as a gap.
+ * - With `requestScoped`, `events/stream` answers `-32026`, no server outliving a request to push, so events are served by poll alone; their sources, logs and `subscription` hooks' leases are built once with the endpoint, as without it.
+ * - On a host with no lasting process, such as a serverless platform, serve check sources alone, without a `subscription` hook: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a gap, and its own leases, lost as it ends.
  * - A protected event with a `subscription` hook needs `principal` on `authentication`, or the endpoint is refused at startup: a poll's hook is held per principal between requests.
  * - A push stream holds its request open while it is read, a heartbeat every 30 seconds: a host's request timeout ends it, and `client`'s `watch` reconnects from its cursor.
  * - A poll's `maxEvents` caps a log source's page, at most 100, and is not honored for a check source, whose page is answered whole since only its last cursor resumes; `maxAgeMs` is accepted and not honored, a log source keeping what its `log.maxAge` and `log.maxEvents` say.
@@ -687,23 +613,14 @@ export function layerHttp<
   options: LayerHttpOptions<E, R, ActionOf<Member<Apps>> | EventOf<Member<Apps>>> &
     O &
     NoInfer<Known<O, LayerHttpOptions<E, R>>> &
-    NoInfer<RequiredAuthentication<SelectedOf<O, Apps> | SelectedEventsOf<O, Apps>>> &
-    Matching<NoInfer<SelectedOf<O, Apps> | SelectedEventsOf<O, Apps>>, NoInfer<D>> &
-    Inferring<D, NoInfer<SelectedOf<O, Apps> | SelectedEventsOf<O, Apps>>>,
+    NoInfer<RequiredAuthentication<Contracts<Apps, O>>> &
+    Matching<NoInfer<Contracts<Apps, O>>, NoInfer<D>> &
+    Inferring<D, NoInfer<Contracts<Apps, O>>>,
 ): Layer.Layer<
   never,
-  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
-  | EventBuildError<
-      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
-      SelectedEventsOf<O, Apps>
-    >
-  | Cause.IllegalArgumentError
-  | E,
+  ServerError<Apps, O> | E,
   | ServerBuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
-  | EventBuildServices<
-      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
-      SelectedEventsOf<O, Apps>
-    >
+  | EventServices<Apps, O>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
       "Requires",
@@ -732,13 +649,9 @@ export function layerHttp(
   const listed = events.flatMap((app) => app.events);
   assertAuthentication(served, authentication);
   assertAuthentication(listed, authentication, "event");
+  assertEventShapes(listed);
 
-  const serving = {
-    events,
-    schemas: eventSchemasOf(events),
-    authentication,
-    requestScoped: requestScoped === true,
-  };
+  const serving = { events, authentication };
 
   const transport = server(
     selected,
@@ -834,18 +747,9 @@ export function runStdio<
     NoInfer<Known<O, Options<E, R>>>,
 ): Effect.Effect<
   void,
-  | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
-  | EventBuildError<
-      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
-      SelectedEventsOf<O, Apps>
-    >
-  | Cause.IllegalArgumentError
-  | E,
+  ServerError<Apps, O> | E,
   | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
-  | EventBuildServices<
-      HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
-      SelectedEventsOf<O, Apps>
-    >
+  | EventServices<Apps, O>
   | Stdio.Stdio
   | ToolRequestContext<
       | ServedRequest<Member<Apps>, SelectedOf<O, Apps>>
@@ -858,13 +762,9 @@ export function runStdio(
   { actions, features, ...options }: Options<unknown, unknown>,
 ) {
   const { apps: selected, events } = selectFrom(apps, actions);
+  assertEventShapes(events.flatMap((app) => app.events));
 
-  const serving = {
-    events,
-    schemas: eventSchemasOf(events),
-    authentication: undefined,
-    requestScoped: false,
-  };
+  const serving = { events, authentication: undefined };
 
   const transport = server(
     selected,

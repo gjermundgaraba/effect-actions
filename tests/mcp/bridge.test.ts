@@ -3,7 +3,7 @@ import { Predicate } from "effect";
 import { withEvents } from "../../src/mcp/bridge.js";
 import { httpProtocol } from "../../src/mcp/protocol.js";
 
-const serving = { events: [], schemas: new Map(), authentication: undefined, requestScoped: false };
+const serving = { events: [], authentication: undefined };
 
 const groups = ["clientRpcs", "handlerRpcs", "serverNotificationRpcs"] as const;
 

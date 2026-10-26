@@ -154,11 +154,12 @@ const callTool = <S extends Action.Any["success"]>(
 ): Effect.Effect<S["Type"], unknown, unknown> => {
   const { name } = action;
   const lift = liftOf(success);
+  const method = "tools/call";
 
   return Effect.gen(function* () {
     const response = yield* client.execute(
       request(
-        "tools/call",
+        method,
         {
           name,
           arguments: input,
@@ -169,14 +170,14 @@ const callTool = <S extends Action.Any["success"]>(
       ),
     );
 
-    const messages = yield* bodyOf("tools/call", name, response, sink);
+    const messages = yield* bodyOf(method, name, response, sink);
     const text = messages.join("\n");
 
     if (response.status !== 200) {
       return yield* failWith(
         refusedWith,
         text,
-        callError("tools/call", name, new StatusError({ status: response.status, body: text })),
+        callError(method, name, new StatusError({ status: response.status, body: text })),
       );
     }
 
@@ -185,13 +186,11 @@ const callTool = <S extends Action.Any["success"]>(
     );
 
     if (Option.isNone(reply)) {
-      return yield* Effect.fail(callError("tools/call", name, new NoReply({ body: text })));
+      return yield* Effect.fail(callError(method, name, new NoReply({ body: text })));
     }
 
     if ("error" in reply.value) {
-      return yield* Effect.fail(
-        callError("tools/call", name, new ProtocolError(reply.value.error)),
-      );
+      return yield* Effect.fail(callError(method, name, new ProtocolError(reply.value.error)));
     }
 
     const { result } = reply.value;
@@ -202,14 +201,12 @@ const callTool = <S extends Action.Any["success"]>(
       return yield* failWith(
         projectedErrors(action),
         error,
-        callError("tools/call", name, new UndeclaredError({ text: error })),
+        callError(method, name, new UndeclaredError({ text: error })),
       );
     }
 
     if (result.structuredContent === undefined && lift.rest !== undefined) {
-      return yield* Effect.fail(
-        callError("tools/call", name, new NoStructuredContent({ body: text })),
-      );
+      return yield* Effect.fail(callError(method, name, new NoStructuredContent({ body: text })));
     }
 
     return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(success))(

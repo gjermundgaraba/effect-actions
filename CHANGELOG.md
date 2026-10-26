@@ -105,8 +105,8 @@ build-events' `pipeline.status` is one.
 implementations among those they are given as SEP-3415 events, a draft pinned to its PR head
 2ec39b9c49c583411b73cb460dea5f52b5c541a6: 2026-07-28 discovery advertises the extension,
 `events/list` lists each event type with its schemas and delivery, `events/poll` answers a page
-from a cursor, at most `maxEvents` of a log source's, and `events/stream` pushes occurrences
-with a heartbeat every 30 seconds, reporting an upstream's failure as `notifications/events/error`
+from a cursor, each occurrence with its own, at most `maxEvents` of a log source's, and
+`events/stream` pushes occurrences with a heartbeat every 30 seconds, reporting an upstream's failure as `notifications/events/error`
 and resuming, and ending with `notifications/events/terminated` when the source refuses the
 subscriber. A refusal is SEP-3415's `Forbidden`, or the endpoint's 401 or 403.
 `ActionMcp.client` given event types has `watch`, streaming, or polling with `mode: "poll"`, and
@@ -116,14 +116,16 @@ reconnecting with a backoff after a transient failure, a silent stream or a requ
 which a watch learns from `Event.SubscriptionError`'s reason `Unsupported` (`feature`, `value`).
 The client reads SEP-3415's codes: `-32602` as `InvalidInput`, `-32023` as the reason
 `NotServed`, `-32025` as `LimitReached`
-(`limit`, `max`), `-32026` as `Unsupported`, and `-32024` as the refusal its `data` carries,
+(`limit`, `max`), `-32026` as `Unsupported`, each `McpCallError`'s `ProtocolError` where its `data`
+does not say what it names, and `-32024` as the refusal its `data` carries,
 `Action.Forbidden` where it carries none, which a subscriber whose access is revoked also gets, with
 no reason of its own. A
-`requestScoped` endpoint serves events by poll alone, and refuses at startup a log source fed by
-`emit` or a `subscription` hook. `allowSubscriptions` now defaults to `true` where event
+`requestScoped` endpoint serves events by poll alone; on a host with no lasting process, serve
+check sources alone, as `layerHttp` says. `allowSubscriptions` now defaults to `true` where event
 implementations are given, as `events/stream` needs it; `false` serves events by poll alone. An
 event type named starting with `mcp.`, a prefix MCP keeps for its own events, is refused as the
-endpoint is made, `Event.make` accepting it for the other surfaces.
+endpoint is made, with `MCP event name starts with "mcp."`, `Event.make` accepting it for the
+other surfaces.
 Guide: `docs/ActionMcp.md#serve-events`; example: `examples/build-events`.
 
 **HTTP events (experimental).** `ActionHttp.make` binds event types beside actions, and

@@ -1,10 +1,12 @@
 import { Duration, Effect, Match, Option, Predicate, Schema, Stream } from "effect";
 import type { HttpClient, HttpClientResponse } from "effect/http";
+import type { RpcGroup } from "effect/rpc";
 import type * as Action from "../contract/Action.js";
 import { InvalidInput, type Refusal } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
 import { Checked, Gap, untaggedOccurrenceOf } from "../contract/occurrence.js";
 import type { Fed, Page } from "../contract/pages.js";
+import { Failed, type Pushed, readOn } from "../contract/push.js";
 import { defaultNextPoll } from "../contract/feed.js";
 import {
   failingWhenSilent,
@@ -14,10 +16,15 @@ import {
 } from "../contract/transient.js";
 import type { Transport } from "../contract/watch.js";
 import {
+  Active,
   codes,
-  Notification,
+  Failed as FailedNotification,
+  Heartbeat,
+  type Notifications,
+  Occurred,
   PollEvents,
   reasonOf,
+  Terminated,
   WireError,
   type WireOccurrence,
 } from "./events.js";
@@ -50,17 +57,31 @@ const PollReply = Schema.Union([
 
 const pollReplyOf = Schema.decodeUnknownOption(Schema.fromJsonString(PollReply));
 
-const StreamFrame = Schema.Union([
-  Notification,
-  Schema.Struct({ result: Schema.Unknown }),
+// Why: A frame is read as a reply, or as a notification whose params its method's rpc decodes, so
+// the methods a push stream carries are the `Notifications` group's alone.
+const Frame = Schema.Union([
   Schema.Struct({ error: WireError }),
+  Schema.Struct({ method: Schema.String, params: Schema.optional(Schema.Json) }),
+  Schema.Struct({ result: Schema.Unknown }),
 ]);
 
-const decodeFrame = Schema.decodeUnknownOption(Schema.fromJsonString(StreamFrame));
+const decodeFrame = Schema.decodeUnknownOption(Schema.fromJsonString(Frame));
 
-const decodeMethod = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ method: Schema.String })),
-);
+type Notified = RpcGroup.Rpcs<typeof Notifications>;
+
+/** Reads one notification's params as what a push stream sends, where they decode. */
+type Reader = (
+  params: Schema.Json | undefined,
+) => Option.Option<Effect.Effect<ReadonlyArray<Pushed>, unknown>>;
+
+const reading = <N extends Notified>(
+  rpc: N,
+  read: (params: N["payloadSchema"]["Type"]) => Effect.Effect<ReadonlyArray<Pushed>, unknown>,
+): Reader => {
+  const decode = Schema.decodeUnknownOption(rpc.payloadSchema);
+
+  return (params) => Option.map(decode(params), read);
+};
 
 // Why: An endpoint's transient status, and an internal error answering a poll or a stream, which
 // `layerHttp` answers for a source's failure, are what a 5xx is to an HTTP watch: a reconnect may
@@ -91,8 +112,7 @@ export const transportOf = <R>(
   const { name } = event;
   const untagged = untaggedOccurrenceOf(event);
 
-  const occurrenceOf = (wire: WireOccurrence, cursor: string | null) =>
-    untagged({ ...wire, cursor });
+  const occurrenceOf = (wire: WireOccurrence) => untagged({ ...wire, cursor: wire.cursor ?? null });
 
   // Why: A refusal the endpoint's authentication answers is a 401 or a 403 with the refusal's
   // JSON, as for a tool's call; one the event's authorizer answers is SEP-3415's `Forbidden`,
@@ -121,94 +141,76 @@ export const transportOf = <R>(
             ),
     );
 
-  const answered = <A>(
-    method: string,
-    params: { readonly [key: string]: Schema.Json },
-    replyOf: (
-      message: string,
-    ) => Option.Option<{ readonly result: A } | { readonly error: WireError }>,
-  ): Effect.Effect<A, unknown, R> =>
+  const poll = (cursor: string | null): Effect.Effect<Page, unknown, R> =>
     Effect.gen(function* () {
-      const messages = yield* bodyOf(method, name, yield* sent(method, params));
+      const messages = yield* bodyOf("events/poll", name, yield* sent("events/poll", { cursor }));
 
       const reply = Option.fromNullishOr(
-        messages.flatMap((message) => Option.toArray(replyOf(message))).at(-1),
+        messages.flatMap((message) => Option.toArray(pollReplyOf(message))).at(-1),
       );
 
       if (Option.isNone(reply))
         return yield* Effect.fail(
-          callError(method, name, new NoReply({ body: messages.join("\n") })),
+          callError("events/poll", name, new NoReply({ body: messages.join("\n") })),
         );
 
-      if ("error" in reply.value) return yield* Effect.fail(failed(method, reply.value.error));
+      if ("error" in reply.value)
+        return yield* Effect.fail(failed("events/poll", reply.value.error));
 
-      return reply.value.result;
-    }).pipe(failingWhenUnanswered);
-
-  const poll = (cursor: string | null): Effect.Effect<Page, unknown, R> =>
-    Effect.gen(function* () {
-      const result = yield* answered("events/poll", { cursor }, pollReplyOf);
-      const last = result.events.length - 1;
-
-      // Why: A poll carries one cursor, the page's: an occurrence before the last resumes from
-      // the cursor the page was asked for, as a check's does in process.
-      const events = yield* Effect.forEach(result.events, (wire, index) =>
-        occurrenceOf(wire, index === last ? (result.cursor ?? null) : cursor),
-      );
+      const { result } = reply.value;
 
       return {
-        events,
+        events: yield* Effect.forEach(result.events, occurrenceOf),
         cursor: result.cursor ?? null,
         truncated: result.truncated === true,
         hasMore: result.hasMore === true,
         nextPoll:
           result.nextPollMs === undefined ? defaultNextPoll : Duration.millis(result.nextPollMs),
       };
-    });
+    }).pipe(failingWhenUnanswered);
 
-  const framed = (data: string): Effect.Effect<ReadonlyArray<Fed>, unknown> => {
-    const frame = decodeFrame(data);
+  const readers = new Map<string, Reader>(
+    Object.entries({
+      [Active._tag]: reading(Active, ({ cursor = null, truncated }) =>
+        Effect.succeed([truncated === true ? Gap.make({ cursor }) : Checked.make({ cursor })]),
+      ),
+      [Occurred._tag]: reading(Occurred, (params) =>
+        Effect.map(occurrenceOf(params), (occurrence) => [occurrence]),
+      ),
+      [Heartbeat._tag]: reading(Heartbeat, ({ cursor = null }) =>
+        Effect.succeed([Checked.make({ cursor })]),
+      ),
+      [FailedNotification._tag]: reading(FailedNotification, () =>
+        Effect.succeed([Failed.make({})]),
+      ),
+      [Terminated._tag]: reading(Terminated, ({ error }) =>
+        Effect.fail(failed("events/stream", error)),
+      ),
+    } satisfies { readonly [K in Notified["_tag"]]: Reader }),
+  );
 
-    // Why: Another notification on the stream is not the watch's to read, but one of its own
-    // methods that does not decode leaves it unconfirmed, or blind, until its silence reconnects.
-    if (Option.isNone(frame))
-      return Option.exists(decodeMethod(data), ({ method }) =>
-        method.startsWith("notifications/events/"),
-      )
-        ? Effect.as(
+  const framed = (data: string): Effect.Effect<ReadonlyArray<Pushed>, unknown> =>
+    Option.match(decodeFrame(data), {
+      onNone: () => Effect.succeed([]),
+      onSome: (frame) => {
+        if ("error" in frame) return Effect.fail(failed("events/stream", frame.error));
+
+        if (!("method" in frame)) return Effect.succeed([]);
+
+        const reader = readers.get(frame.method);
+
+        if (reader === undefined) return Effect.succeed([]);
+
+        // Why: Another notification on the stream is not the watch's to read, but one of its own
+        // methods that does not decode leaves it unconfirmed, or blind, until its silence reconnects.
+        return Option.getOrElse(reader(frame.params), () =>
+          Effect.as(
             Effect.logWarning(`MCP event "${name}" sent a frame that does not decode: ${data}`),
             [],
-          )
-        : Effect.succeed([]);
-
-    const value = frame.value;
-
-    if ("error" in value) return Effect.fail(failed("events/stream", value.error));
-
-    if (!("method" in value)) return Effect.succeed([]);
-
-    switch (value.method) {
-      case "notifications/events/active":
-        return Effect.succeed([
-          value.params.truncated === true
-            ? Gap.make({ cursor: value.params.cursor ?? null })
-            : Checked.make({ cursor: value.params.cursor ?? null }),
-        ]);
-      case "notifications/events/event":
-        return Effect.map(occurrenceOf(value.params, value.params.cursor ?? null), (occurrence) => [
-          occurrence,
-        ]);
-      case "notifications/events/heartbeat":
-        return Effect.succeed([Checked.make({ cursor: value.params.cursor ?? null })]);
-      case "notifications/events/error":
-        return Effect.as(
-          Effect.logWarning(`MCP event "${name}" reported an error: ${value.params.error.message}`),
-          [],
+          ),
         );
-      case "notifications/events/terminated":
-        return Effect.fail(failed("events/stream", value.params.error));
-    }
-  };
+      },
+    });
 
   const read = (response: HttpClientResponse.HttpClientResponse) =>
     framesOf("events/stream", name, response).pipe(
@@ -226,7 +228,7 @@ export const transportOf = <R>(
           ? read(response)
           : Stream.fromIterableEffect(failingWhenUnanswered(Effect.flatMap(response.text, framed))),
       ),
-    );
+    ).pipe(readOn("MCP", name));
 
   return { name, poll, stream, transient };
 };
