@@ -64,7 +64,7 @@ const filling = Action.implement(Fill, ({ slots }, { progress }) =>
   ),
 );
 
-const counter = () => {
+const counter = (serving: { readonly counted: boolean }) => {
   let count = 0;
 
   return [
@@ -80,28 +80,35 @@ const counter = () => {
       ),
       { authorize },
     ),
-    Event.implement(
-      Counted,
-      { current: () => Effect.sync(() => ({ count })) },
-      {
-        authorize: Event.allowAll,
-      },
-    ),
-  ] as const;
+    ...(serving.counted
+      ? [
+          Event.implement(
+            Counted,
+            { current: () => Effect.sync(() => ({ count })) },
+            {
+              authorize: Event.allowAll,
+            },
+          ),
+        ]
+      : []),
+  ];
 };
 
 /**
- * The server a placed contract reaches, serving `Placed` but `Double` where `withoutDouble`, and
- * the client reaching it, which records each request it sends.
+ * The server a placed contract reaches, serving `Placed` but `Double` where `withoutDouble` and
+ * `Counted` where `withoutCounted`, and the client reaching it, which records each request it
+ * sends.
  */
-export const target = (options: { readonly withoutDouble?: boolean } = {}) => {
+export const target = (
+  options: { readonly withoutDouble?: boolean; readonly withoutCounted?: boolean } = {},
+) => {
   const requests: Array<Request> = [];
 
   const served = serve(
     ActionHttp.layer(Placed, [
       userActions,
       ...(options.withoutDouble === true ? [] : [double]),
-      ...counter(),
+      ...counter({ counted: options.withoutCounted !== true }),
       countingDown,
       filling,
     ]).pipe(Layer.provide([authenticate, Users.layerMemory, Event.layerMemory])),

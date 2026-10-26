@@ -13,12 +13,6 @@ export const answeredStatus = ({ reason }: HttpClientError.HttpClientError): num
     Match.orElse(() => undefined),
   );
 
-/** Whether `error` is an HTTP client's failure on a 404 answer. */
-export const isNotFound = Predicate.compose(
-  HttpClientError.isHttpClientError,
-  (error) => answeredStatus(error) === 404,
-);
-
 // Why: A `DecodeError` on a success is its body failing as it is read, such as a stream a proxy
 // or a restart cut: the transport's failure, not the server's answer.
 /** Whether an HTTP client's failure, by its `reason`, is one a reconnect may outlast. */

@@ -276,7 +276,7 @@ export function make(apps: ServedActions, options?: ErasedOptions): ErasedTools 
   );
 
   const layer = toolkit.toLayer(
-    Effect.map(acquire(served), (bound) =>
+    Effect.map(acquire(served, undefined), (bound) =>
       Object.fromEntries(
         bound.map(([action, handler]) => {
           const run = answeringWhole(action, handler);

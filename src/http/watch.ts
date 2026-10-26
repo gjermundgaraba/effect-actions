@@ -1,11 +1,12 @@
 import { Effect, Predicate, Stream } from "effect";
+import { HttpClientError } from "effect/http";
 import * as Event from "../contract/Event.js";
 import type { ErasedValue } from "../contract/implementation.js";
 import { type Fed, fedOf, type Page } from "../contract/pages.js";
 import type { AnySubscription, Pushed } from "../contract/push.js";
 import {
+  answeredStatus,
   failingWhenUnanswered,
-  isNotFound,
   isTransient,
   receivedFrom,
 } from "../contract/transient.js";
@@ -28,6 +29,12 @@ export type PollMethod<R> = (request: Subscription) => Effect.Effect<Page, unkno
 export type StreamMethod<R> = (
   request: Subscription,
 ) => Effect.Effect<Page | Stream.Stream<Pushed, unknown>, unknown, R>;
+
+/** Whether `error` is an HTTP client's failure on a 404 answer. */
+export const isNotFound = Predicate.compose(
+  HttpClientError.isHttpClientError,
+  (error) => answeredStatus(error) === 404,
+);
 
 /** The native client's methods of one event's webhook routes, where its binding has them. */
 export interface WebhookMethods<R> {

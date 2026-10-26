@@ -1,11 +1,23 @@
-import { Cause, Clock, Context, Deferred, Effect, Exit, Layer, Option, Schema } from "effect";
+import {
+  Cause,
+  Clock,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Schema,
+} from "effect";
 import type * as Action from "./Action.js";
+import { CallerKeyed, principalOf } from "./caller.js";
 import { canonicalInput } from "./canonical.js";
 import { projectedErrors } from "./declared.js";
 import { sha256Hex } from "./digest.js";
 import { InvalidInput } from "./errors.js";
-import type { ErasedValue, WrittenHandler } from "./implementation.js";
-import { declared, httpApiStatusOf, isTransientStatus } from "./status.js";
+import { answered, type ErasedValue, type WrittenHandler } from "./implementation.js";
+import { declaredStatus, isTransientStatus } from "./status.js";
 
 // Why: Declared once, as the schema a store decodes what it reads with and the time it keeps it
 // for, both statics of `Idempotency`, so a store of its own reads them where the core writes them.
@@ -93,17 +105,11 @@ export const keyed = (
   const encodeOutcome = Schema.encodeUnknownEffect(Outcome);
   const decodeOutcome = Schema.decodeUnknownOption(Outcome);
 
-  const KeyOf = Schema.decodeUnknownOption(
-    Schema.Struct({ key: Schema.String }).pipe(Schema.encodeKeys({ key: field })),
-  );
-
   // Why: a declared failure whose status a server sends while it recovers, as a 503, is the
   // server's state, not the call's answer: a retry with the key runs the call again.
   const isTransientFailure = Schema.is(
     Schema.Union(
-      projectedErrors(action).filter((error) =>
-        isTransientStatus(httpApiStatusOf(declared(error).ast) ?? 422),
-      ),
+      projectedErrors(action).filter((error) => isTransientStatus(declaredStatus(error))),
     ),
   );
 
@@ -119,7 +125,9 @@ export const keyed = (
       const first = running.get(id);
 
       if (first !== undefined) {
-        yield* Deferred.await(first);
+        yield* Deferred.await(first).pipe(
+          Effect.withSpan("idempotencyKey wait", { attributes: { "action.name": action.name } }),
+        );
 
         return yield* run(id, key, digest, answer);
       }
@@ -172,26 +180,24 @@ export const keyed = (
       }).pipe(Effect.ensuring(release));
     });
 
-  return (input, reporting, principal) =>
-    Option.match(KeyOf(input), {
-      onNone: () => handle(input, reporting),
-      onSome: ({ key }) => {
-        // Why: `make` refuses a key on an action answering a stream, so its answer is an Effect.
-        const answer = Effect.suspend(() => {
-          const answered = handle(input, reporting);
+  return (input, reporting) => {
+    const key = Predicate.hasProperty(input, field) ? input[field] : undefined;
 
-          return Effect.isEffect(answered) ? answered : Effect.die(answered);
-        });
+    if (!Predicate.isString(key)) return handle(input, reporting);
 
-        // Why: one caller's key is never another's, so a key a model fills in, or one guessed,
-        // answers no one else's call; a record's keys, in whatever order they arrive, are one input.
-        return Effect.flatMap(
-          Effect.all([
-            sha256Hex(JSON.stringify([principal ?? null, key])),
-            Effect.flatMap(canonicalInput(action.input, input), sha256Hex),
-          ]),
-          ([id, digest]) => run(`${action.name}/${id}`, key, digest, answer),
-        );
-      },
-    });
+    const answer = Effect.suspend(() => answered(handle(input, reporting)));
+
+    // Why: one caller's key is never another's, so a key a model fills in, or one guessed,
+    // answers no one else's call; a record's keys, in whatever order they arrive, are one input.
+    return Effect.flatMap(
+      Effect.all([
+        Effect.service(CallerKeyed).pipe(
+          Effect.flatMap((named) => principalOf(action, named)),
+          Effect.flatMap((principal) => sha256Hex(JSON.stringify([principal ?? null, key]))),
+        ),
+        Effect.flatMap(canonicalInput(action.input, input), sha256Hex),
+      ]),
+      ([id, digest]) => run(`${action.name}/${id}`, key, digest, answer),
+    );
+  };
 };

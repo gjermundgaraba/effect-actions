@@ -103,10 +103,12 @@ build-events' `pipeline.status` is one.
 
 **Contracts served where another server serves them.** `ActionHttp.placed(binding, client)`
 returns implementations of the binding's actions and event types that send each call and
-subscription on, over the binding, to the server `client` reaches for its input and its contract, with the caller's
+subscription on, over the binding, to the server `client` reaches for its decoded input and its
+contract, one of the binding's, with the caller's
 headers but those of its request's connection, body, `Accept` and MCP routing, and pass back its
 answer, its declared errors, its occurrences and, where its caller reads them, its progress
-values; a header `client` sets is sent in place of the caller's of that name. `ActionHttp.layer`, `ActionMcp.layerHttp` and
+values; a header `client` sets is sent in place of the caller's of that name, and one it removes
+is not sent. A call with no HTTP request, as in process or over MCP stdio, sends no header on. `ActionHttp.layer`, `ActionMcp.layerHttp` and
 `ActionRpc.layer` serve them beside their own implementations: the surface authenticates a
 protected one as its own, and the server reached authenticates and authorizes again. A server
 reached that does not serve one is a defect naming it. Guide:
@@ -119,7 +121,8 @@ it does not serve. Defaults to none.
 **Idempotency keys.** `Action.make`'s `idempotencyKey` names a string field of the input as the
 call's key: a call repeated with the key and the same input is answered as the first was, its
 answer or its declared failure, its handler run once, on every surface; a repeat with another
-input fails with `InvalidInput`, and a repeat while the first runs waits for it. A key is its
+input fails with `InvalidInput`, and a repeat while the first runs waits for it, in an
+`idempotencyKey wait` span. A key is its
 caller's own where the surface's authentication gives a `principal`, and shared otherwise; a
 record's keys in another order are the same input. A defect, an interruption or a declared
 failure whose status a recovering server sends (408, 429, 500, 502, 503 or 504) is not kept, so a

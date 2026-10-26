@@ -28,6 +28,14 @@ export interface Named extends Keyed {
   principal(identity: Action.Any["input"]["Type"]): string;
 }
 
+/**
+ * The authentication of the surface the running call came through, which names its caller where
+ * it has a `principal`: none in process, as `Action.client` calls.
+ */
+export const CallerKeyed = Context.Reference<Keyed | undefined>("effect-actions/CallerKeyed", {
+  defaultValue: () => undefined,
+});
+
 /** Whether `keyed` names each caller, its `principal` given. */
 export const isNamed = (keyed: Keyed | undefined): keyed is Named => keyed?.principal !== undefined;
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect";
+import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Schema, Tracer } from "effect";
 import { TestClock } from "effect/testing";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
@@ -25,73 +25,82 @@ const posting = () => {
   };
 };
 
-describe("an action's idempotencyKey", () => {
-  it.live("runs two calls given one key at once once, the second answered as the first", () =>
-    Effect.gen(function* () {
-      const entered = yield* Deferred.make<void>();
-      const gate = yield* Deferred.make<void>();
-      let posted = 0;
+const holdingFirst = Effect.gen(function* () {
+  const entered = yield* Deferred.make<void>();
+  const again = yield* Deferred.make<void>();
+  const gate = yield* Deferred.make<void>();
+  const waiting = Deferred.makeUnsafe<void>();
+  let posted = 0;
 
-      const client = yield* Action.client(
-        Action.implement(Post, () =>
-          Effect.gen(function* () {
-            posted += 1;
-            yield* Deferred.succeed(entered, undefined);
-            yield* Deferred.await(gate);
+  const client = yield* Action.client(
+    Action.implement(Post, () =>
+      Effect.gen(function* () {
+        const run = ++posted;
 
-            return { id: posted };
-          }),
-        ),
-      );
+        yield* Deferred.succeed(run === 1 ? entered : again, undefined);
+        yield* Deferred.await(gate);
 
-      const first = yield* Effect.forkChild(client.post({ text: "hi", request: "r1" }));
-
-      yield* Deferred.await(entered);
-
-      const second = yield* Effect.forkChild(client.post({ text: "hi", request: "r1" }));
-
-      yield* Effect.sleep("100 millis");
-      yield* Deferred.succeed(gate, undefined);
-
-      expect([yield* Fiber.join(first), yield* Fiber.join(second)]).toEqual([{ id: 1 }, { id: 1 }]);
-      expect(posted).toBe(1);
-    }).pipe(Effect.provide(Action.layerIdempotency)),
+        return { id: run };
+      }),
+    ),
   );
 
-  it.live(
+  const first = yield* Effect.forkChild(client.post({ text: "hi", request: "r1" }));
+
+  yield* Deferred.await(entered);
+
+  return {
+    posted: () => posted,
+    repeat: (input: typeof Post.input.Type) =>
+      Effect.forkChild(client.post(input)).pipe(
+        Effect.provideService(
+          Tracer.Tracer,
+          Tracer.make({
+            span(options) {
+              if (options.name === "idempotencyKey wait") Deferred.doneUnsafe(waiting, Exit.void);
+
+              return Tracer.nativeTracer.span(options);
+            },
+          }),
+        ),
+      ),
+    release: Effect.gen(function* () {
+      const came = yield* Effect.raceFirst(
+        Effect.as(Deferred.await(waiting), "waited" as const),
+        Effect.as(Deferred.await(again), "ran again" as const),
+      );
+
+      yield* Deferred.succeed(gate, undefined);
+
+      return [came, yield* Fiber.join(first)] as const;
+    }),
+  };
+});
+
+describe("an action's idempotencyKey", () => {
+  it.effect(
+    "runs two calls given one key at once once, the second waiting for the first and answered as it",
+    () =>
+      Effect.gen(function* () {
+        const held = yield* holdingFirst;
+        const second = yield* held.repeat({ text: "hi", request: "r1" });
+
+        expect(yield* held.release).toEqual(["waited", { id: 1 }]);
+        expect(yield* Fiber.join(second)).toEqual({ id: 1 });
+        expect(held.posted()).toBe(1);
+      }).pipe(Effect.provide(Action.layerIdempotency)),
+  );
+
+  it.effect(
     "refuses a repeat sent with another input as the first runs, once the first has answered",
     () =>
       Effect.gen(function* () {
-        const entered = yield* Deferred.make<void>();
-        const gate = yield* Deferred.make<void>();
-        let posted = 0;
+        const held = yield* holdingFirst;
+        const other = yield* held.repeat({ text: "bye", request: "r1" });
 
-        const client = yield* Action.client(
-          Action.implement(Post, () =>
-            Effect.gen(function* () {
-              posted += 1;
-              yield* Deferred.succeed(entered, undefined);
-              yield* Deferred.await(gate);
-
-              return { id: posted };
-            }),
-          ),
-        );
-
-        const first = yield* Effect.forkChild(client.post({ text: "hi", request: "r1" }));
-
-        yield* Deferred.await(entered);
-
-        const other = yield* Effect.forkChild(
-          Effect.flip(client.post({ text: "bye", request: "r1" })),
-        );
-
-        yield* Effect.sleep("100 millis");
-        yield* Deferred.succeed(gate, undefined);
-
-        expect(yield* Fiber.join(first)).toEqual({ id: 1 });
-        expect(yield* Fiber.join(other)).toBeInstanceOf(Action.InvalidInput);
-        expect(posted).toBe(1);
+        expect(yield* held.release).toEqual(["waited", { id: 1 }]);
+        expect(yield* Effect.flip(Fiber.join(other))).toBeInstanceOf(Action.InvalidInput);
+        expect(held.posted()).toBe(1);
       }).pipe(Effect.provide(Action.layerIdempotency)),
   );
 

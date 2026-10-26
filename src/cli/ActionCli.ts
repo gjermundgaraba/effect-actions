@@ -190,7 +190,7 @@ const runWithBuildOfItsOwn = <App extends AnyImplementation, A extends Action.An
 ): Local<App, A> => {
   const thisActionOnly = Implementation.share([action], app);
 
-  const call = Effect.flatMap(acquire([thisActionOnly]), (bound) => {
+  const call = Effect.flatMap(acquire([thisActionOnly], undefined), (bound) => {
     const [, run] = bound.find(([candidate]) => candidate === action) ?? [];
 
     return run === undefined

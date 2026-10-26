@@ -15,7 +15,7 @@ import type { Scope } from "effect";
 import type * as Action from "./Action.js";
 import type * as Event from "./Event.js";
 import { checkInput } from "./input-check.js";
-import { Anyone, type Keyed, principalOf } from "./caller.js";
+import { Anyone, CallerKeyed, type Keyed } from "./caller.js";
 import { projectedErrors } from "./declared.js";
 import { assertOnce, heldOnce } from "./names.js";
 import { type Refusal, Unauthenticated } from "./errors.js";
@@ -40,7 +40,6 @@ export type WrittenHandler<R> = {
   handle(
     input: ErasedValue,
     reporting?: Reporting,
-    principal?: string,
   ): Effect.Effect<ErasedValue, ErasedValue, R> | Stream.Stream<ErasedValue, ErasedValue, R>;
 }["handle"];
 
@@ -69,6 +68,12 @@ export const elementsOf = (
 
 // Why: Only a handler the types were bypassed for answers otherwise than its contract says.
 const notAStream = new Error("A handler answered otherwise than its action's success declares");
+
+/** The answer of a handler of an action answering one value, a stream refused as a defect. */
+export const answered = (
+  answer: ReturnType<WrittenHandler<unknown>>,
+): Effect.Effect<ErasedValue, ErasedValue, unknown> =>
+  Stream.isStream(answer) ? Effect.die(notAStream) : answer;
 
 /**
  * `run` as a tool calls it, a tool answering one result: the elements of an action answering a
@@ -580,7 +585,7 @@ export const provideHandlers = (apps: ReadonlyArray<AnyImplementation>) =>
 
 export const acquire = (
   apps: ReadonlyArray<AnyImplementation>,
-  keyed?: Keyed,
+  keyed: Keyed | undefined,
 ): Effect.Effect<Bound, never, unknown> =>
   Effect.map(
     Effect.forEach(apps, (app) => Implementation.boundOf(app, keyed)),
@@ -697,25 +702,17 @@ const dispatch = (
       );
   }
 
-  const answered = (answer: ReturnType<WrittenHandler<unknown>>) =>
-    Stream.isStream(answer) ? Effect.die(notAStream) : answer;
-
-  // Why: only a keyed action's handler, `keyed`'s own, is given the principal: a handler as
-  // written is called with what it declares.
-  const principal =
-    action.idempotencyKey === undefined ? Effect.succeed(undefined) : principalOf(action, keyed);
-
+  // Why: Provided whatever it is, an in-process call's `undefined` included, so a call made in a
+  // handler is named by its own surface, not by the one its caller came through.
   return (input, sink) =>
     Effect.scoped(
       admitted(input).pipe(
-        Effect.andThen(principal),
-        Effect.flatMap((caller) =>
-          reportedTo(action.progress, sink, (reporting) =>
-            answered(
-              caller === undefined ? handle(input, reporting) : handle(input, reporting, caller),
-            ),
+        Effect.andThen(
+          Effect.suspend(() =>
+            reportedTo(action.progress, sink, (reporting) => answered(handle(input, reporting))),
           ),
         ),
+        Effect.provideService(CallerKeyed, keyed),
         Effect.catchCause(declaredOrDefect),
       ),
     ).pipe(Effect.annotateLogs(actionAttributes), Effect.withSpan(action.name, span, trace));
