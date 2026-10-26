@@ -4,6 +4,7 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import { appended, textsIn, textsSince } from "./texts.js";
 
 export class Subscriber extends Context.Service<Subscriber, string>()("test/Subscriber") {}
 
@@ -26,43 +27,16 @@ export const receivedKey = "received";
 
 export const answerKey = "answer";
 
-const Texts = Schema.Array(Schema.String);
-
-const textsOf = Schema.decodeUnknownOption(Texts);
-
-const textsIn = (storage: DurableObjectStorage, key: string) =>
-  Effect.map(
-    Effect.promise(() => storage.get(key)),
-    (stored) => Option.getOrElse(textsOf(stored), (): ReadonlyArray<string> => []),
-  );
-
 const hooked = Event.implement(
   Hooked,
   Effect.map(ActionDurableObject.State, ({ storage }) => ({
     check: (_input: typeof Hooked.input.Type, cursor: string | null) =>
-      Effect.map(textsIn(storage, hookedKey), (notes) => {
-        const seen = cursor === null ? notes.length : Number(cursor);
-
-        return {
-          cursor: String(notes.length),
-          events: notes.slice(seen).map((text, index) => ({
-            eventId: `h${seen + index + 1}`,
-            data: { n: seen + index + 1, text },
-          })),
-        };
-      }),
+      textsSince(storage, hookedKey, "h", cursor),
   })),
   { authorize: Event.allowAll },
 );
 
-export const hook = (text: string) =>
-  Effect.gen(function* () {
-    const { storage } = yield* ActionDurableObject.State;
-    const notes = yield* textsIn(storage, hookedKey);
-
-    yield* Effect.promise(() => storage.put(hookedKey, [...notes, text]));
-    yield* Event.Events.use((events) => events.notify(Hooked));
-  });
+export const hook = (text: string) => appended(hookedKey, Hooked, text);
 
 const Body = Schema.fromJsonString(
   Schema.Struct({

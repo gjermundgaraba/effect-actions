@@ -1,4 +1,4 @@
-import { Array as Arr } from "effect";
+import { Array as Arr, Effect } from "effect";
 
 /**
  * `keys`, or entries, in the batches one storage call takes: `get`, `put` and `delete` take at
@@ -6,3 +6,9 @@ import { Array as Arr } from "effect";
  */
 export const batches = <A>(keys: ReadonlyArray<A>): ReadonlyArray<ReadonlyArray<A>> =>
   Arr.chunksOf(keys, 128);
+
+/** Deletes `keys` from `storage`, one batch per call. */
+export const deleted = (storage: DurableObjectStorage, keys: ReadonlyArray<string>) =>
+  Effect.forEach(batches(keys), (batch) => Effect.promise(() => storage.delete([...batch])), {
+    discard: true,
+  });

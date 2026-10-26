@@ -1,5 +1,5 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { Cause, Effect, Exit, Fiber, Layer, Option, Schema, Stream } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Option, Schema, type Scope, Stream } from "effect";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -8,6 +8,7 @@ import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { layerEvents } from "../../src/durable/events.js";
 import { groupTag, socketIdOf } from "../../src/durable/frames.js";
+import { keptPrefix } from "../../src/durable/subscriptions.js";
 import { Noted, Said, Statused, Watched } from "../support/events.js";
 import { protocolOver, protocolUpgrading, upgradeTo, upgradeToRpc } from "../support/socket.js";
 
@@ -27,7 +28,7 @@ const resumedOf = Schema.decodeUnknownOption(Resumed);
 const keptCursors = (stub: DurableObjectStub) =>
   Effect.promise(() =>
     runInDurableObject(stub, async (_, state) => [
-      ...(await state.storage.list({ prefix: "effect-actions/subscription/payload/" })).values(),
+      ...(await state.storage.list({ prefix: `${keptPrefix}payload/` })).values(),
     ]),
   ).pipe(
     Effect.map((kept) =>
@@ -72,6 +73,21 @@ const collected = <E>(
   });
 
 const evicted = (stub: DurableObjectStub) => Effect.promise(() => evictDurableObject(stub));
+
+const keptWatch = (stub: DurableObjectStub, suffix: string) =>
+  Effect.promise(() =>
+    runInDurableObject(stub, (_, state) =>
+      state.storage.put({
+        [`${keptPrefix}request/${suffix}`]: {
+          _tag: "Request",
+          id: 1,
+          tag: Noted.name,
+          headers: [["authorization", "Bearer ada"]],
+        },
+        [`${keptPrefix}payload/${suffix}`]: { input: {}, cursor: "0" },
+      }),
+    ),
+  );
 
 describe("an event subscription over layerWebSocket", () => {
   it.live(
@@ -224,9 +240,7 @@ describe("an event subscription over layerWebSocket", () => {
 
         yield* Effect.promise(() =>
           runInDurableObject(stub, async (_, state) => {
-            const requests = await state.storage.list({
-              prefix: "effect-actions/subscription/request/",
-            });
+            const requests = await state.storage.list({ prefix: `${keptPrefix}request/` });
 
             for (const key of requests.keys()) await state.storage.put(key, "from another version");
           }),
@@ -244,23 +258,8 @@ describe("an event subscription over layerWebSocket", () => {
   it.live("forgets, as it wakes, a kept subscription whose socket is gone", () =>
     Effect.gen(function* () {
       const stub = watching("orphaned");
-      const orphan = "/rpc#999#1";
-      const kept = "effect-actions/subscription";
 
-      yield* Effect.promise(() =>
-        runInDurableObject(stub, (_, state) =>
-          state.storage.put({
-            [`${kept}/request/${orphan}`]: {
-              _tag: "Request",
-              id: 1,
-              tag: Noted.name,
-              headers: [["authorization", "Bearer ada"]],
-            },
-            [`${kept}/payload/${orphan}`]: { input: {}, cursor: "0" },
-          }),
-        ),
-      );
-
+      yield* keptWatch(stub, "/rpc#999#n1");
       yield* evicted(stub);
       yield* Effect.promise(() => stub.note("one"));
 
@@ -302,70 +301,65 @@ describe("an event subscription over layerWebSocket", () => {
 });
 
 describe("layerEvents", () => {
-  it.live("refuses a second log source whose event type shares the first's name", () =>
+  const failureIn = <A, E>(name: string, effect: Effect.Effect<A, E, Event.Events | Scope.Scope>) =>
     Effect.promise(() =>
-      runInDurableObject(watching("namesakes"), (_, state) => {
-        const namesake = () =>
-          Event.make("thing.namesake", {
-            description: "Two event types of one name.",
-            payload: { text: Schema.String },
-            caller: Action.Anyone,
-          });
-
-        const [first, second] = [namesake(), namesake()];
-
-        return Effect.runPromiseExit(
-          Effect.gen(function* () {
-            const one = yield* Action.client([Event.implement(first, { log: {} })]);
-
-            const other = yield* Action.client([Event.implement(second, { log: {} })]);
-
-            yield* Stream.runDrain(Stream.take(one.watch(first), 0));
-            yield* Stream.runDrain(Stream.take(other.watch(second), 0));
-          }).pipe(
+      runInDurableObject(watching(name), (_, state) =>
+        Effect.runPromiseExit(
+          effect.pipe(
             Effect.scoped,
             Effect.provide(layerEvents),
             Effect.provideService(ActionDurableObject.State, state),
           ),
-        );
-      }),
-    ).pipe(
-      Effect.map((exit) => {
-        expect(Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : exit).toContain(
-          'two event types are named "thing.namesake"',
-        );
-      }),
-    ),
-  );
-});
+        ),
+      ),
+    ).pipe(Effect.map((exit) => (Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : exit)));
 
-describe("layerEvents, fed", () => {
-  it.live("refuses a log source fed by emit", () =>
-    Effect.promise(() =>
-      runInDurableObject(watching("emitted"), (_, state) => {
-        const Emitted = Event.make("thing.emitted", {
-          description: "An occurrence a stream feeds.",
+  it.live("refuses a second log source whose event type shares the first's name", () =>
+    Effect.gen(function* () {
+      const namesake = () =>
+        Event.make("thing.namesake", {
+          description: "Two event types of one name.",
           payload: { text: Schema.String },
           caller: Action.Anyone,
         });
 
-        return Effect.runPromiseExit(
-          Action.client([
-            Event.implement(Emitted, { log: { emit: Stream.make({ data: { text: "one" } }) } }),
-          ]).pipe(
-            Effect.scoped,
-            Effect.provide(layerEvents),
-            Effect.provideService(ActionDurableObject.State, state),
-          ),
-        );
-      }),
-    ).pipe(
-      Effect.map((exit) => {
-        expect(Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : exit).toContain(
-          'Event "thing.emitted" has a log source fed by emit, which this Event.Events does not consume',
-        );
-      }),
-    ),
+      const [first, second] = [namesake(), namesake()];
+
+      const failure = yield* failureIn(
+        "namesakes",
+        Effect.gen(function* () {
+          const one = yield* Action.client([Event.implement(first, { log: {} })]);
+
+          const other = yield* Action.client([Event.implement(second, { log: {} })]);
+
+          yield* Stream.runDrain(Stream.take(one.watch(first), 0));
+          yield* Stream.runDrain(Stream.take(other.watch(second), 0));
+        }),
+      );
+
+      expect(failure).toContain('two event types are named "thing.namesake"');
+    }),
+  );
+
+  it.live("refuses a log source fed by emit", () =>
+    Effect.gen(function* () {
+      const Emitted = Event.make("thing.emitted", {
+        description: "An occurrence a stream feeds.",
+        payload: { text: Schema.String },
+        caller: Action.Anyone,
+      });
+
+      const failure = yield* failureIn(
+        "emitted",
+        Action.client([
+          Event.implement(Emitted, { log: { emit: Stream.make({ data: { text: "one" } }) } }),
+        ]),
+      );
+
+      expect(failure).toContain(
+        'Event "thing.emitted" has a log source fed by emit, which this Event.Events does not consume',
+      );
+    }),
   );
 });
 
@@ -382,26 +376,12 @@ describe("layerWebSocket's kept subscriptions", () => {
     () =>
       Effect.gen(function* () {
         const stub = watching("cross-path");
-        const kept = "effect-actions/subscription";
 
         yield* upgradeTo(stub, "https://object/also", bearer("ada"));
 
         const [other] = yield* alsoSockets(stub);
 
-        yield* Effect.promise(() =>
-          runInDurableObject(stub, (_, state) =>
-            state.storage.put({
-              [`${kept}/request//rpc#${other}#n1`]: {
-                _tag: "Request",
-                id: 1,
-                tag: Noted.name,
-                headers: [["authorization", "Bearer ada"]],
-              },
-              [`${kept}/payload//rpc#${other}#n1`]: { input: {}, cursor: "0" },
-            }),
-          ),
-        );
-
+        yield* keptWatch(stub, `/rpc#${other}#n1`);
         yield* evicted(stub);
         yield* Effect.promise(() => stub.note("one"));
 

@@ -5,6 +5,7 @@ import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { CurrentUser, Login } from "./app.js";
+import { appended, textsSince } from "./texts.js";
 
 export const Noted = Event.make("note.added", {
   description: "A note was added to the object.",
@@ -34,31 +35,11 @@ const notesKey = "notes";
 
 export const revokedKey = (token: string) => `revoked:${token}`;
 
-const Notes = Schema.Array(Schema.String);
-
-const notesOf = Schema.decodeUnknownOption(Notes);
-
-const notesIn = (storage: DurableObjectStorage) =>
-  Effect.map(
-    Effect.promise(() => storage.get(notesKey)),
-    (stored) => Option.getOrElse(notesOf(stored), (): ReadonlyArray<string> => []),
-  );
-
 const noted = Event.implement(
   Noted,
   Effect.map(ActionDurableObject.State, ({ storage }) => ({
     check: (_input: typeof Noted.input.Type, cursor: string | null) =>
-      Effect.map(notesIn(storage), (notes) => {
-        const seen = cursor === null ? notes.length : Number(cursor);
-
-        return {
-          cursor: String(notes.length),
-          events: notes.slice(seen).map((text, index) => ({
-            eventId: `n${seen + index + 1}`,
-            data: { n: seen + index + 1, text },
-          })),
-        };
-      }),
+      textsSince(storage, notesKey, "n", cursor),
   })),
   { authorize: Event.allowAll },
 );
@@ -89,14 +70,7 @@ export const setStatus = (text: string) =>
     yield* Event.Events.use((events) => events.notify(Statused));
   });
 
-export const note = (text: string) =>
-  Effect.gen(function* () {
-    const { storage } = yield* ActionDurableObject.State;
-    const notes = yield* notesIn(storage);
-
-    yield* Effect.promise(() => storage.put(notesKey, [...notes, text]));
-    yield* Event.Events.use((events) => events.notify(Noted));
-  });
+export const note = (text: string) => appended(notesKey, Noted, text);
 
 export const say = (text: string) =>
   Event.Events.use((events) => events.publish(Said, { data: { text } }));

@@ -215,8 +215,7 @@ const makeProtocol = (
     // Why: every frame the object sends, a defect it answers a message with included, settles the
     // calls it answers, so a socket keeps no call pending that its client has already failed.
     const send = (clientId: number, response: RpcMessage.FromServerEncoded) =>
-      Effect.andThen(
-        sendFrame(state, clientId, response),
+      sendFrame(state, clientId, response).pipe(
         Effect.andThen(
           Effect.sync(() => {
             const settled = settledBy(response);
@@ -227,8 +226,8 @@ const makeProtocol = (
               tracked(socket, settled);
             }
           }),
-          subscriptions.sent(clientId, response),
         ),
+        Effect.andThen(subscriptions.sent(clientId, response)),
       );
 
     const protocol = yield* RpcServer.Protocol.make((write) => {
@@ -283,11 +282,14 @@ const makeProtocol = (
             Effect.provideContext(context),
           );
         },
-        close: (socket) =>
-          Effect.andThen(
-            subscriptions.closed(idOf(socket)),
-            Effect.asVoid(Queue.offer(disconnects, idOf(socket))),
-          ),
+        close: (socket) => {
+          const clientId = idOf(socket);
+
+          return Effect.andThen(
+            subscriptions.closed(clientId),
+            Effect.asVoid(Queue.offer(disconnects, clientId)),
+          );
+        },
       });
 
       // Why: the router does not tell a protocol the prefix it is mounted under, so two protocols
@@ -303,11 +305,11 @@ const makeProtocol = (
       // Why: written as the protocol is made, the server buffering them until it runs, so the
       // subscriptions of the sockets kept open across hibernation resume before any message of
       // the event that woke the object, each authenticated again from its own headers.
-      // Why: a call the instance before was answering when an eviction, a deploy or a crash cut
-      // it off is never answered, and its client would wait on an open socket for good, since the
-      // runtime answers its pings: its socket is closed with 1012, a restart, so the client fails
-      // the call and connects again. A kept subscription among them resumes instead.
       const resumed = subscriptions.resumed(write, (socket, kept) => {
+        // Why: a call the instance before was answering when an eviction, a deploy or a crash
+        // cut it off is never answered, and its client would wait on an open socket for good,
+        // since the runtime answers its pings: its socket is closed with 1012, a restart, so the
+        // client fails the call and connects again. A kept subscription among them resumes instead.
         if (pendingOf(socket).every(kept)) return true;
 
         closeQuietly(socket, 1012, lostCalls);

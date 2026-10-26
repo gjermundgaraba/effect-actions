@@ -1,0 +1,46 @@
+import { Effect, Option, Schema } from "effect";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
+import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+
+const Texts = Schema.Array(Schema.String);
+
+const textsOf = Schema.decodeUnknownOption(Texts);
+
+/** The texts kept under `key`, none where nothing is. */
+export const textsIn = (storage: DurableObjectStorage, key: string) =>
+  Effect.map(
+    Effect.promise(() => storage.get(key)),
+    (stored) => Option.getOrElse(textsOf(stored), (): ReadonlyArray<string> => []),
+  );
+
+/**
+ * A check source's page of the texts under `key` past `cursor`, each numbered from 1, `n`, its
+ * event id `prefix` then `n`.
+ */
+export const textsSince = (
+  storage: DurableObjectStorage,
+  key: string,
+  prefix: string,
+  cursor: string | null,
+) =>
+  Effect.map(textsIn(storage, key), (texts) => {
+    const seen = cursor === null ? texts.length : Number(cursor);
+
+    return {
+      cursor: String(texts.length),
+      events: texts.slice(seen).map((text, index) => ({
+        eventId: `${prefix}${seen + index + 1}`,
+        data: { n: seen + index + 1, text },
+      })),
+    };
+  });
+
+/** Appends `text` to the texts under `key`, then notifies `event`, whose check source reads them. */
+export const appended = (key: string, event: Event.Any, text: string) =>
+  Effect.gen(function* () {
+    const { storage } = yield* ActionDurableObject.State;
+    const texts = yield* textsIn(storage, key);
+
+    yield* Effect.promise(() => storage.put(key, [...texts, text]));
+    yield* Event.Events.use((events) => events.notify(event));
+  });

@@ -182,14 +182,12 @@ export const layerWebhooks = (
   options: LayerWebhooksOptions = {},
 ): Layer.Layer<Webhooks, never, HttpClient.HttpClient | State | Waits> =>
   Webhook.layer({ ...options, persist: true, resolveCallbacks: false }).pipe(
-    Layer.provide(
+    Layer.provide([
       Layer.effect(KeyValueStore.KeyValueStore)(
         Effect.map(State, ({ storage }) => storageStore(storage)),
       ),
-    ),
-    Layer.provide(
       Layer.effect(Clock.Clock)(
         Effect.map(Effect.all([Clock.Clock, Waits]), ([base, waits]) => alarmClock(base, waits)),
       ),
-    ),
+    ]),
   );

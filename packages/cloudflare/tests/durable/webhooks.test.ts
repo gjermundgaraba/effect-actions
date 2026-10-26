@@ -5,6 +5,7 @@ import { TestClock } from "effect/testing";
 import { alarmPrefix } from "../../src/durable/alarm.js";
 import { clockOwner, webhookPrefix } from "../../src/durable/webhooks.js";
 import { runAlarmDue } from "../support/alarm.js";
+import { textsIn } from "../support/texts.js";
 import { answerKey, Hooked, receivedKey } from "../support/webhooks.js";
 import type { Hooking } from "../worker.js";
 
@@ -20,10 +21,6 @@ const Body = Schema.fromJsonString(
 );
 
 const bodyOf = Schema.decodeUnknownOption(Body);
-
-const Texts = Schema.Array(Schema.String);
-
-const textsOf = Schema.decodeUnknownOption(Texts);
 
 const Kept = Schema.fromJsonString(
   Schema.Struct({ status: Schema.Struct({ failedSince: Schema.optional(Schema.String) }) }),
@@ -49,10 +46,7 @@ const subscribe = (stub: DurableObjectStub) =>
 const posted = (stub: DurableObjectStub) =>
   Effect.promise(() =>
     runInDurableObject(stub, async (_, state) =>
-      Option.getOrElse(
-        textsOf(await state.storage.get(receivedKey)),
-        (): ReadonlyArray<string> => [],
-      )
+      (await Effect.runPromise(textsIn(state.storage, receivedKey)))
         .flatMap((body) => Option.toArray(bodyOf(body)))
         .flatMap(({ type, data }) => (type === undefined && data !== undefined ? [data.text] : [])),
     ),

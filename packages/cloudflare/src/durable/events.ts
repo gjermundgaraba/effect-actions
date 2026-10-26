@@ -1,6 +1,6 @@
 import { Effect, Layer, Option, Schema, Semaphore } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
-import { batches } from "./batches.js";
+import { deleted } from "./batches.js";
 import { State } from "./state.js";
 
 const Position = Schema.Struct({ epoch: Schema.String, last: Schema.Int });
@@ -108,12 +108,7 @@ const storageLog = (storage: DurableObjectStorage, event: Event.Any): Event.LogS
             Effect.map(listedOf(storedOf(value)), (kept) => [seqOfKey(key), kept] as const),
           ),
       ),
-    delete: (seqs) =>
-      Effect.forEach(
-        batches(seqs.map(entryKey)),
-        (keys) => Effect.promise(() => storage.delete([...keys])),
-        { discard: true },
-      ),
+    delete: (seqs) => deleted(storage, seqs.map(entryKey)),
   };
 };
 

@@ -1,11 +1,11 @@
 import { Effect, Match, Option, Predicate, Schema } from "effect";
 import type { RpcMessage } from "effect/rpc";
 import type * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { batches } from "./batches.js";
+import { deleted } from "./batches.js";
 import { closeQuietly, groupTag, RequestId, socketIdOf } from "./frames.js";
 
 /** Where an object keeps its sockets' event subscriptions. */
-const keptPrefix = "effect-actions/subscription/";
+export const keptPrefix = "effect-actions/subscription/";
 
 const Request = Schema.TaggedStruct("Request", {
   id: RequestId,
@@ -50,11 +50,6 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
   // storage call.
   const live = new Map<string, ActionRpc.KeptSubscription["resumeFrom"]>();
 
-  const deleted = (keys: ReadonlyArray<string>) =>
-    Effect.forEach(batches(keys), (batch) => Effect.promise(() => storage.delete([...batch])), {
-      discard: true,
-    });
-
   const listed = (prefix: string) =>
     Effect.map(
       Effect.promise(() => storage.list<unknown>({ prefix })),
@@ -67,7 +62,7 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
 
       for (const suffix of owned) live.delete(suffix);
 
-      return deleted(owned.flatMap(keysOf));
+      return deleted(storage, owned.flatMap(keysOf));
     });
 
   const keeper: ActionRpc.SubscriptionKeeper = {
@@ -179,6 +174,9 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
 
       for (const { suffix, socket, request } of entries) {
         if (open.has(socket) && !unread.has(socket) && Option.isSome(request)) {
+          // Why: marked live before `keep` admits the request again, so its stored request is
+          // not written over, and an exit before then, such as a refused authentication,
+          // forgets it.
           live.set(suffix, () => undefined);
 
           yield* write(socket, request.value);
@@ -187,7 +185,7 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
         }
       }
 
-      yield* deleted(gone);
+      yield* deleted(storage, gone);
 
       for (const [id, socket] of open) if (unread.has(id)) yield* unresumed(socket);
     });

@@ -71,23 +71,23 @@ a process's memory, each log source's log included, beyond the builds attached t
 serving events, and `Action.client` watching them, need one, provided once around the handlers that
 announce and the surfaces that serve. `Event.makeEvents({ log, polls?, emits? })` builds one over
 log storage of a host's own, `Event.LogStorage` (its `position`, `put`, `list` from a sequence
-number, answering `Event.Listed` entries, and `delete`), the core keeping each log's cursors, bounds and expiry over it, and reads
-check sources when notified, and 5 seconds after a read fails, where `polls` is `false`, and refuses
-a log source fed by `emit` where `emits` is `false`. An occurrence whose data breaks its payload is
-reported and a gap sent in its place, and a read failing with no refusal is reported once and read
-again, in process as on every surface. A `subscription` hook sets something up upstream for as long
-as a subscription lasts, a poll's under a lease. A list of event types takes a record of sources by
-name, each reading services of its own, which a surface owes only for the event types it serves.
-Event implementations go in the same list as action implementations, and the `actions` option of
-every surface serving events lists event types beside actions: a surface given it serves exactly
-what it lists, its event types included, and one without it every one, so two layers of one binding
-given one list each serve their own. `Action.client` given them has `watch(event, input, options)`,
-typed `Action.Watch`, a `Stream` of occurrences and gaps that polls or streams, drops duplicates by
-`eventId` among its last 1,000, and keeps its cursor in an `Event.CursorStore` under `resume`,
-across retries and restarts; `Event.isEvent` tells an event type from an action. Guide:
-`docs/Event.md`; example: `examples/build-events`, whose builds notify a check source and whose
-deploy requests are published to a log. The surfaces' projections follow, MCP's tracking the draft
-SEP-3415.
+number, answering `Event.Listed` entries, and `delete`), the core keeping each log's cursors, bounds
+and expiry over it, and reads check sources when notified, and 5 seconds after a read fails, where
+`polls` is `false`, and refuses a log source fed by `emit` where `emits` is `false`. An occurrence
+whose data breaks its payload is reported and a gap sent in its place, and a read failing with no
+refusal is reported once and read again, in process as on every surface. A `subscription` hook sets
+something up upstream for as long as a subscription lasts, a poll's under a lease. A list of event
+types takes a record of sources by name, each reading services of its own, which a surface owes only
+for the event types it serves. Event implementations go in the same list as action implementations,
+and the `actions` option of every surface serving events lists event types beside actions: a surface
+given it serves exactly what it lists, its event types included, and one without it every one, so
+two layers of one binding given one list each serve their own. `Action.client` given them has
+`watch(event, input, options)`, typed `Action.Watch`, a `Stream` of occurrences and gaps that polls
+or streams, drops duplicates by `eventId` among its last 1,000, and keeps its cursor in an
+`Event.CursorStore` under `resume`, across retries and restarts; `Event.isEvent` tells an event type
+from an action. Guide: `docs/Event.md`; example: `examples/build-events`, whose builds notify a
+check source and whose deploy requests are published to a log. The surfaces' projections follow,
+MCP's tracking the draft SEP-3415.
 
 **A current source for events whose occurrence is the whole value.** `Event.implement` takes
 `current`, beside `check` and `log`: the value as it is, for the subscription's input, such as a
