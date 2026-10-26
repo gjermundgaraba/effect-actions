@@ -1,6 +1,6 @@
 import { Clock, Effect, Layer, Option, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import { batches } from "./batches.js";
+import { deleted } from "./batches.js";
 
 /** Where the object's kept answers live, one key per action, caller's principal and idempotency key. */
 const keptPrefix = "effect-actions/idempotency/";
@@ -36,11 +36,7 @@ export const layerIdempotency = (state: DurableObjectState): Layer.Layer<Action.
         }),
       );
 
-      yield* Effect.forEach(
-        batches(expired),
-        (batch) => Effect.promise(() => state.storage.delete([...batch])),
-        { discard: true },
-      );
+      yield* deleted(state.storage, expired);
     });
 
     return Action.Idempotency.of({
