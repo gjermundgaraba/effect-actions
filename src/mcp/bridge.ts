@@ -64,9 +64,9 @@ interface Target {
   ) => Effect.Effect<void, never, unknown>;
 }
 
-// Why: Effect 4.0.5 keeps an adapter's groups typed as maps and its `handlerRpcs`, which the HTTP
-// runtime admits stateless methods by, off its public interface. Reaching them is pinned to the
-// 4.0.x line: tests/mcp/bridge.test.ts fails loudly if the groups move, and `Target`, the
+// Why: Effect 4.0.5 and 4.0.6 keep an adapter's groups typed as maps and its `handlerRpcs`, which
+// the HTTP runtime admits stateless methods by, off its public interface. Reaching them is pinned
+// to the 4.0.x line: tests/mcp/bridge.test.ts fails loudly if the groups move, and `Target`, the
 // installation target matched against `any`, is guarded only by tests/mcp/events.test.ts, which
 // time out if it moves, since Effect runs the installation in a forked fiber.
 const isGroup = (u: unknown): u is RpcGroup.RpcGroup<Rpc.AnyWithProps> =>
@@ -138,11 +138,9 @@ const wireErrorOf = (cause: Cause.Cause<unknown>): Effect.Effect<EventsError> =>
 
 const headerMismatch = (request: HttpServerRequest.HttpServerRequest) =>
   Effect.andThen(
-    Effect.sync(() =>
-      HttpEffect.appendPreResponseHandlerUnsafe(request, (_request, response) =>
-        Effect.succeed(HttpServerResponse.setStatus(response, 400)),
-      ),
-    ),
+    HttpEffect.appendPreResponseHandler((_request, response) =>
+      Effect.succeed(HttpServerResponse.setStatus(response, 400)),
+    ).pipe(Effect.provideService(HttpServerRequest.HttpServerRequest, request)),
     Effect.fail(
       new EventsError({
         code: codes.headerMismatch,

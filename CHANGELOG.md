@@ -2,13 +2,13 @@
 
 ## Unreleased
 
-Built and tested against `effect` and `@effect/platform-node` `4.0.5`. The `effect` peer is now
+Built and tested against `effect` and `@effect/platform-node` `4.0.6`. The `effect` peer is now
 `~4.0.5`.
 
 ### Breaking changes
 
 **The `effect` peer requires Effect 4.0.5 or a later 4.0.x patch**: `ActionMcp`'s events are
-served through the internals of Effect's MCP server as 4.0.5 has them.
+served through the internals of Effect's MCP server as 4.0.5 and 4.0.6 have them.
 
 - Migrate: install `effect` and every `@effect/*` package at `~4.0.5`.
 
