@@ -216,7 +216,7 @@ export interface Options {
    *
    * - Kept are an answer and a failure the action declares or a built-in one; a defect, an interruption and a declared failure whose status is 408, 429, 500, 502, 503 or 504 are not, and the call runs again when retried: at least once, not exactly once.
    * - A repeat with the key and another input fails with `InvalidInput`, naming the key: the key stands for one call, and a record's keys in another order are the same input.
-   * - A repeat while the first runs waits for its answer, in the same server, traced as an `idempotencyKey wait` span; two servers sharing a store run both, the later answer kept.
+   * - A repeat while the first runs waits for its answer, in the same server, traced as an `Idempotency.wait` span; two servers sharing a store run both, the later answer kept.
    * - A repeat answers without the progress the first reported.
    * - An answer kept before a deployment changed `success` or an error schema, so that it no longer decodes, is ignored: the call runs again.
    * - An action answering `Action.Stream` throws at `make`: an answer is kept whole.

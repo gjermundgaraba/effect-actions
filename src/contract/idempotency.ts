@@ -126,7 +126,7 @@ export const keyed = (
 
       if (first !== undefined) {
         yield* Deferred.await(first).pipe(
-          Effect.withSpan("idempotencyKey wait", { attributes: { "action.name": action.name } }),
+          Effect.withSpan("Idempotency.wait", { attributes: { "action.name": action.name } }),
         );
 
         return yield* run(id, key, digest, answer);

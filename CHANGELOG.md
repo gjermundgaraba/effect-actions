@@ -122,7 +122,7 @@ it does not serve. Defaults to none.
 call's key: a call repeated with the key and the same input is answered as the first was, its
 answer or its declared failure, its handler run once, on every surface; a repeat with another
 input fails with `InvalidInput`, and a repeat while the first runs waits for it, in an
-`idempotencyKey wait` span. A key is its
+`Idempotency.wait` span. A key is its
 caller's own where the surface's authentication gives a `principal`, and shared otherwise; a
 record's keys in another order are the same input. A defect, an interruption or a declared
 failure whose status a recovering server sends (408, 429, 500, 502, 503 or 504) is not kept, so a

@@ -1,6 +1,6 @@
 import { Context, Effect, Option, Predicate, Schema, Stream } from "effect";
 import { Headers, HttpClient, HttpClientRequest, HttpServerRequest } from "effect/http";
-import type * as Action from "../contract/Action.js";
+import * as Action from "../contract/Action.js";
 import * as Event from "../contract/Event.js";
 import { EventImplementation, type Run } from "../contract/feed.js";
 import {
@@ -80,10 +80,6 @@ const notServedThere = (name: string) =>
     `ActionHttp.placed: the server its client reaches does not serve ${name} (serve its implementation in that server's ActionHttp.layer of this binding)`,
   );
 
-const admitting: ErasedAuthorize = () => Effect.void;
-
-const admittingEvents: ErasedAuthorize<Event.Any> = () => Effect.void;
-
 /**
  * The actions and event types of `binding` served where another server serves them, as a
  * surface's implementations: each call and subscription sent on over `binding` with the client
@@ -118,7 +114,7 @@ export const placed = <const H extends AnyHttp>(
       Effect.map(forwarded, (headers) => HttpClientRequest.setHeaders(request, headers)),
     );
 
-  const senders = sendersWith(binding, dispatching);
+  const senders = sendersWith(binding, dispatching, undefined);
 
   const handlerOf = ({ method }: Senders<Sending>, action: Action.Any): WrittenHandler<unknown> => {
     const send = method(action);
@@ -126,9 +122,7 @@ export const placed = <const H extends AnyHttp>(
     return (input, reporting) => {
       const sent = send(
         input,
-        ...(reporting === undefined || reporting.dropped
-          ? []
-          : [{ onProgress: reporting.progress }]),
+        ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }]),
       );
 
       const sending = sendingTo(input, action);
@@ -173,7 +167,7 @@ export const placed = <const H extends AnyHttp>(
                 binding.actions.map((action) => [action, handlerOf(built, action)]),
               ),
             ),
-            memoized(Effect.succeed(admitting)),
+            memoized(Effect.succeed<ErasedAuthorize>(Action.allowAll)),
           ),
         ]),
     ...(binding.events.length === 0
@@ -185,7 +179,7 @@ export const placed = <const H extends AnyHttp>(
               (event) =>
                 [event, memoized(Effect.map(senders, (built) => runOf(built, event)))] as const,
             ),
-            memoized(Effect.succeed(admittingEvents)),
+            memoized(Effect.succeed<ErasedAuthorize<Event.Any>>(Event.allowAll)),
           ),
         ]),
   ];

@@ -57,7 +57,7 @@ const holdingFirst = Effect.gen(function* () {
           Tracer.Tracer,
           Tracer.make({
             span(options) {
-              if (options.name === "idempotencyKey wait") Deferred.doneUnsafe(waiting, Exit.void);
+              if (options.name === "Idempotency.wait") Deferred.doneUnsafe(waiting, Exit.void);
 
               return Tracer.nativeTracer.span(options);
             },

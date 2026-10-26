@@ -16,8 +16,6 @@ import type { ErasedValue } from "./implementation.js";
 /** Where a call's progress goes: each value reported, checked by its schema, is given to `progress`. */
 export interface Reporting {
   readonly progress: (value: ErasedValue) => Effect.Effect<void>;
-  /** Set where the call has no sink, so each value is checked and dropped. */
-  readonly dropped?: true;
 }
 
 /** The second argument of a handler of `A`, where `A` declares `progress`: what it reports by. */
@@ -70,7 +68,7 @@ const buffering = (
 
   if (sink === undefined)
     return Effect.succeed({
-      reporting: { progress: (value) => Effect.asVoid(checked(value)), dropped: true },
+      reporting: { progress: (value) => Effect.asVoid(checked(value)) },
       drained: Effect.void,
     });
 

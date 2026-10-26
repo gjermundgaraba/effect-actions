@@ -208,19 +208,20 @@ const actionMethodOf = <R>(
   );
 };
 
-const methodsWith = <E, R>(
+/** What sends `http`'s calls and subscriptions over `httpClient`: `client`'s methods and `placed`'s alike. */
+export interface Senders<R> {
+  readonly method: (action: Action.Any) => ErasedMethod<R> | ErasedStreamMethod<R>;
+  readonly transport: (event: Event.Any, input: ErasedValue) => Transport<unknown, R | Receiving>;
+}
+
+/** The `Senders` of `http` over `httpClient`: its native clients, built once. */
+export const sendersWith = <E, R>(
   http: AnyHttp,
   httpClient: HttpClient.HttpClient.With<E, R>,
   baseUrl: Options["baseUrl"],
-): Effect.Effect<Methods<R>> =>
+): Effect.Effect<Senders<R>> =>
   Effect.gen(function* () {
     const native = yield* nativeOf(http, acceptingStreams(httpClient), baseUrl);
-
-    const actions: Methods<R> = Object.fromEntries(
-      http.actions.map((action) => [action.name, actionMethodOf<R>(action, native)]),
-    );
-
-    if (http.events.length === 0) return actions;
 
     // Why: An event's route answers a page, or its stream where the request accepts one, so a
     // poll asks with a client accepting JSON alone, as do a webhook's routes, which answer JSON.
@@ -239,42 +240,6 @@ const methodsWith = <E, R>(
         : { subscribe, unsubscribe };
     };
 
-    const watch: ErasedWatch<R> = (event, input, options) =>
-      Stream.unwrap(
-        Effect.map(watchInput(event, input), ({ value }) =>
-          watching(
-            transportOf(
-              event,
-              methodOf(polls, event.name, "event"),
-              methodOf(streams, event.name, "event"),
-              webhookOf(event.name),
-              value,
-            ),
-            options,
-          ),
-        ),
-      );
-
-    return { ...actions, watch };
-  });
-
-/** How a server sends calls and subscriptions of `http` on over `httpClient`, as `client` sends them. */
-export interface Senders<R> {
-  readonly method: (action: Action.Any) => ErasedMethod<R> | ErasedStreamMethod<R>;
-  readonly transport: (event: Event.Any, input: ErasedValue) => Transport<unknown, R | Receiving>;
-}
-
-/** The `Senders` of `http` over `httpClient`: its native clients, built once. */
-export const sendersWith = <E, R>(
-  http: AnyHttp,
-  httpClient: HttpClient.HttpClient.With<E, R>,
-): Effect.Effect<Senders<R>> =>
-  Effect.gen(function* () {
-    const native = yield* nativeOf(http, acceptingStreams(httpClient), undefined);
-    const plain = yield* nativeOf(http, httpClient, undefined);
-    const polls: NativeClient<PollMethod<R>> = plain;
-    const streams: NativeClient<StreamMethod<R>> = native;
-
     return {
       method: (action) => actionMethodOf<R>(action, native),
       transport: (event, input) =>
@@ -282,10 +247,32 @@ export const sendersWith = <E, R>(
           event,
           methodOf(polls, event.name, "event"),
           methodOf(streams, event.name, "event"),
-          undefined,
+          webhookOf(event.name),
           input,
         ),
     };
+  });
+
+const methodsWith = <E, R>(
+  http: AnyHttp,
+  httpClient: HttpClient.HttpClient.With<E, R>,
+  baseUrl: Options["baseUrl"],
+): Effect.Effect<Methods<R>> =>
+  Effect.map(sendersWith(http, httpClient, baseUrl), ({ method, transport }) => {
+    const actions: Methods<R> = Object.fromEntries(
+      http.actions.map((action) => [action.name, method(action)]),
+    );
+
+    if (http.events.length === 0) return actions;
+
+    const watch: ErasedWatch<R> = (event, input, options) =>
+      Stream.unwrap(
+        Effect.map(watchInput(event, input), ({ value }) =>
+          watching(transport(event, value), options),
+        ),
+      );
+
+    return { ...actions, watch };
   });
 
 export const methods = <E, R>(
