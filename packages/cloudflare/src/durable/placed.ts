@@ -4,8 +4,6 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
 
-const placing: unique symbol = Symbol.for("effect-actions-cloudflare/ActionDurableObject/placed");
-
 type Contract<H extends ActionHttp.Any> = H["actions"][number] | H["events"][number];
 
 /**
@@ -16,12 +14,6 @@ export type PlacementKeys<H extends ActionHttp.Any> = {
   readonly [C in Contract<H> as C["name"]]: (input: C["input"]["Type"]) => string;
 };
 
-/** What an object's `make` or `handlers` checks each served input by. */
-interface Placing {
-  readonly contracts: ReadonlySet<Action.Any | Event.Any>;
-  readonly keys: { readonly [name: string]: (input: Action.Any["input"]["Type"]) => string };
-}
-
 /**
  * What `placed` returns: the objects whose routes serve `binding`, each the one an input's key
  * names. Given to `make` or `handlers` as `placed`, it is what the object checks each input by;
@@ -29,7 +21,8 @@ interface Placing {
  */
 export interface Placement<H extends ActionHttp.Any> {
   readonly binding: H;
-  readonly [placing]: Placing;
+  /** `placed`'s keys: by a contract's name, the name of the object serving its input. */
+  readonly keys: { readonly [name: string]: (input: Action.Any["input"]["Type"]) => string };
 }
 
 /** Any placement, as `make` and `handlers` take it. */
@@ -46,28 +39,7 @@ export type AnyPlacement = Placement<ActionHttp.Any>;
 export const placed = <const H extends ActionHttp.Any>(
   binding: H,
   keys: NoInfer<PlacementKeys<H>>,
-): Placement<H> => ({
-  binding,
-  [placing]: {
-    contracts: new Set<Action.Any | Event.Any>([...binding.actions, ...binding.events]),
-    keys,
-  },
-});
-
-const keyOf = (
-  placement: AnyPlacement,
-  contract: Action.Any | Event.Any,
-  input: Action.Any["input"]["Type"],
-) => {
-  const key = placement[placing].keys[contract.name];
-
-  if (key === undefined)
-    throw new Error(
-      `ActionDurableObject.placed: its keys hold none for ${contract.name} (give placed a key for each contract of its binding, by name)`,
-    );
-
-  return key(input);
-};
+): Placement<H> => ({ binding, keys });
 
 /**
  * The implementations a Worker serves of `placement`, reaching its objects in the namespace
@@ -89,7 +61,16 @@ export const reaching = <H extends ActionHttp.Any>(
   ).pipe(HttpClient.mapRequest(HttpClientRequest.prependUrl("https://object")));
 
   return ActionHttp.placed(placement.binding, (input, contract) => {
-    const stub = namespace().getByName(keyOf(placement, contract, input));
+    const key = placement.keys[contract.name];
+
+    // Why: a contract's name is a `string` to the compiler, so the lookup may find no key, though
+    // `PlacementKeys` gives each contract of the binding one: the Worker has no object to reach.
+    if (key === undefined)
+      throw new Error(
+        `ActionDurableObject.placed: its keys hold none for ${contract.name} (give placed a key for each contract of its binding, by name)`,
+      );
+
+    const stub = namespace().getByName(key(input));
 
     return HttpClient.transform(fetching, (sent) =>
       Effect.provideService(sent, FetchHttpClient.Fetch, (url, init) => stub.fetch(url, init)),
@@ -103,11 +84,18 @@ export const reaching = <H extends ActionHttp.Any>(
  */
 // Why: the Worker decoded the input to pick the object, and the object decodes it again, since
 // only the input it decodes is the one its handler is given: the check runs on that one.
-export const layerInputCheck = (placement: AnyPlacement, name: string | undefined) =>
-  Layer.succeed(Action.InputCheck)((contract, input) => {
-    if (!placement[placing].contracts.has(contract)) return Effect.void;
+export const layerInputCheck = (placement: AnyPlacement, name: string | undefined) => {
+  const contracts: ReadonlyArray<Action.Any | Event.Any> = [
+    ...placement.binding.actions,
+    ...placement.binding.events,
+  ];
 
-    const named = keyOf(placement, contract, input);
+  return Layer.succeed(Action.InputCheck)((contract, input) => {
+    const key = contracts.includes(contract) ? placement.keys[contract.name] : undefined;
+
+    if (key === undefined) return Effect.void;
+
+    const named = key(input);
 
     return named === name
       ? Effect.void
@@ -117,3 +105,4 @@ export const layerInputCheck = (placement: AnyPlacement, name: string | undefine
           }),
         );
   });
+};

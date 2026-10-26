@@ -17,7 +17,7 @@ import { layerIdempotency } from "./idempotency.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
 import { type AnyPlacement, layerInputCheck } from "./placed.js";
-import { makeTasks, taskOwner, Tasks } from "./tasks.js";
+import { makeTasks, Tasks } from "./tasks.js";
 import { clockOwner, makeWaits, Waits } from "./webhooks.js";
 
 export { Alarm } from "./alarm.js";
@@ -113,11 +113,10 @@ export interface Options<
    * instance, before the routes, again after every eviction, and never finalized. The routes,
    * every request, the alarm and `run` share that one build, and an implementation the services
    * build, such as an in-process `Action.client`'s, is the one the routes serve. They may
-   * require `State`, `Alarm`, `Tasks`, `Event.Events` and `Action.Idempotency`, which keeps the
-   * answers of calls given an idempotency key in the object's storage, alone, so a store over the
-   * object's storage,
-   * what the object is, such as its name, a store scheduling its expiries, or a handler
-   * announcing an event, is a Layer requiring them.
+   * require `State`, `Alarm`, `Tasks`, `Event.Events` and `Action.Idempotency` alone, the last
+   * keeping the answers of calls given an idempotency key in the object's storage. A store over
+   * the object's storage, what the object is, such as its name, a store scheduling its expiries,
+   * or a handler announcing an event, is a Layer requiring them.
    *
    * **Gotchas**
    *
@@ -149,8 +148,8 @@ export interface Options<
    * (`Schema.toCodecIso`), never a JSON string. Built after the services, beside the routes,
    * again after every eviction, and never finalized. It may require the protocol, `State`,
    * `Alarm`, `Tasks`, `Event.Events`, `Action.Idempotency` and the services; every call's own
-   * requirement must be provided by its middleware or be one of those. Without it, a call over the stub rejects once the object
-   * is built, naming the option.
+   * requirement must be provided by its middleware or be one of those. Without it, a call over
+   * the stub rejects once the object is built, naming the option.
    *
    * **Gotchas**
    *
@@ -171,8 +170,7 @@ export interface Options<
    * What runs at the time `Alarm.set` gave, given its `scheduledTime` and `retryCount`, 0 at that
    * time and counting each failed or cut-off run as it is retried. It may require the services,
    * `State`, `Alarm`, `Tasks`, `Event.Events`, `Action.Idempotency` and a `Scope`, closed when it
-   * ends. It runs through `run`, once the services
-   * and routes are built.
+   * ends. It runs through `run`, once the services and routes are built.
    *
    * **Gotchas**
    *
@@ -183,8 +181,9 @@ export interface Options<
   readonly alarm?: ((info: AlarmInvocationInfo) => Effect.Effect<void, AE, AR>) | undefined;
   /**
    * Work the object does at least once, by name, such as telling another object of a change:
-   * `Tasks.runAfter(name, change)` marks it in the object's storage, runs the change, then runs
-   * it, and the alarm runs it again until it succeeds. Each may require what `alarm` may.
+   * `Tasks.runAfter(name, change)` marks it due now in the object's storage and runs the change,
+   * and the object's alarm runs it, after the call, until it succeeds. Each may require what
+   * `alarm` may.
    */
   readonly tasks?:
     | {
@@ -305,15 +304,7 @@ const handlersOf = <S>(
 
   const { waits, wakeDue } = makeWaits(schedule);
 
-  const tasks = options.tasks;
-
-  // Why: a task runs with what the instance built, which the services do not hold as they build,
-  // so `Tasks` reads the instance as each task runs: one run as they build is only marked.
-  const tasksOf = makeTasks(schedule, new Set(Object.keys(tasks ?? {})), (name) => {
-    const task = tasks?.[name];
-
-    return instance === undefined || task === undefined ? undefined : provided(instance, task);
-  });
+  const tasks = makeTasks(schedule, options.tasks ?? {});
 
   const build = Effect.gen(function* () {
     // Why: an implementation of the core is shared through the memo map of the graph it is
@@ -332,7 +323,7 @@ const handlersOf = <S>(
             Layer.mergeAll(
               Layer.succeed(Alarm)(alarmOf(schedule)),
               Layer.succeed(Waits)(waits),
-              Layer.succeed(Tasks)(tasksOf.tasks),
+              Layer.succeed(Tasks)(tasks.tasks),
               layerEvents,
               layerIdempotency(ctx),
             ),
@@ -535,12 +526,7 @@ const handlersOf = <S>(
         schedule.runDue({
           [applicationOwner]: (info) => options.alarm?.(info) ?? Effect.void,
           [clockOwner]: () => wakeDue,
-          ...Object.fromEntries(
-            Object.entries(tasks ?? {}).map(([name, task]) => [
-              taskOwner(name),
-              () => tasksOf.due(name, task),
-            ]),
-          ),
+          ...tasks.owners,
         }),
       ),
     run,

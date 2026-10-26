@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { Data, DateTime, Effect, Layer, Schedule } from "effect";
+import { Data, DateTime, Effect, Layer } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import * as ActionDurableObject from "../src/durable/ActionDurableObject.js";
 import {
@@ -282,36 +282,12 @@ export class Tasked extends ActionDurableObject.make({
 
       const changes = Number((yield* stored("changes")) ?? 0);
 
-      if ((yield* stored("held")) === true) {
-        yield* Effect.promise(() => storage.delete("held"));
-        yield* Effect.repeat(stored("released"), {
-          until: (released) => released === true,
-          schedule: Schedule.spaced("10 millis"),
-        });
-      }
-
       yield* Effect.promise(() => storage.put("told", changes));
     }),
   },
 }) {
   change() {
     return this.run(changed);
-  }
-
-  hold() {
-    return this.run(
-      Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
-        Effect.promise(() => storage.put("held", true)),
-      ),
-    );
-  }
-
-  release() {
-    return this.run(
-      Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
-        Effect.promise(() => storage.put("released", true)),
-      ),
-    );
   }
 
   down(down: boolean) {

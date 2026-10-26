@@ -1,8 +1,9 @@
 import { env, runInDurableObject } from "cloudflare:test";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { batches } from "../../src/durable/batches.js";
 import { layerIdempotency } from "../../src/durable/idempotency.js";
 
 const Post = Action.make("post", {
@@ -119,53 +120,36 @@ describe("an object's kept answers", () => {
       expect(counts).toEqual([1, 2, 3, 3]);
     }),
   );
+  it.effect("are deleted past their day however many are kept, page by page", () =>
+    Effect.gen(function* () {
+      const start = Date.now();
+      const expired = Array.from({ length: 300 }, (_, index) => `post/expired-${index}`);
 
-  it.effect(
-    "runs two calls given one key at once once, reading the store after the first claims it",
-    () =>
-      Effect.gen(function* () {
-        const ran = yield* Effect.promise(() =>
-          runInDurableObject(
-            env.ROUTER_PROVIDED.getByName(`idempotency-${objects++}`),
-            (_, state) =>
-              Effect.runPromise(
-                Effect.gen(function* () {
-                  const gate = yield* Deferred.make<void>();
-                  let runs = 0;
-
-                  const client = yield* Action.client(
-                    Action.implement(Post, () =>
-                      Effect.gen(function* () {
-                        runs += 1;
-                        yield* Deferred.await(gate);
-
-                        return { id: runs };
-                      }),
-                    ),
-                  );
-
-                  const both = yield* Effect.forkChild(
-                    Effect.all(
-                      [
-                        client.post({ text: "hi", request: "r1" }),
-                        client.post({ text: "hi", request: "r1" }),
-                      ],
-                      {
-                        concurrency: "unbounded",
-                      },
-                    ),
-                  );
-
-                  yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 50)));
-                  yield* Deferred.succeed(gate, undefined);
-
-                  return { answers: yield* Fiber.join(both), runs };
-                }).pipe(Effect.scoped, Effect.provide(layerIdempotency(state))),
+      const kept = yield* inNewInstance(`idempotency-${objects++}`, start + day, (client, state) =>
+        Effect.gen(function* () {
+          yield* Effect.forEach(
+            batches(expired),
+            (batch) =>
+              Effect.promise(() =>
+                state.storage.put(
+                  Object.fromEntries(
+                    batch.map((id) => [
+                      `effect-actions/idempotency/${id}`,
+                      { input: "", outcome: "", at: start },
+                    ]),
+                  ),
+                ),
               ),
-          ),
-        );
+            { discard: true },
+          );
 
-        expect(ran).toEqual({ answers: [{ id: 1 }, { id: 1 }], runs: 1 });
-      }),
+          yield* client.post({ text: "hi", request: "fresh" });
+
+          return yield* keptKeys(state);
+        }),
+      );
+
+      expect(kept.length).toBe(1);
+    }),
   );
 });

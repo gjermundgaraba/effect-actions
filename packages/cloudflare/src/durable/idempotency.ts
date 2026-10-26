@@ -7,6 +7,8 @@ const keptPrefix = "effect-actions/idempotency/";
 
 const hour = 60 * 60 * 1000;
 
+const page = 128;
+
 const keptOf = Schema.decodeUnknownOption(Action.Idempotency.Kept);
 
 /**
@@ -19,7 +21,10 @@ export const layerIdempotency = (state: DurableObjectState): Layer.Layer<Action.
     let prunedAt = -Infinity;
 
     // Why: on a write, never on the alarm, so an object nobody calls is never woken to delete
-    // answers nobody reads, and an hour apart, as each prune lists every kept answer.
+    // answers nobody reads, and an hour apart, as each prune lists every kept answer. It lists
+    // them a page at a time: a busy object's day of answers, each its outcome's JSON, is too many
+    // to hold at once. An entry that does not decode is left, as `get` reads it as nothing kept
+    // and only this layer writes under the prefix.
     const prune = Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
 
@@ -27,16 +32,30 @@ export const layerIdempotency = (state: DurableObjectState): Layer.Layer<Action.
 
       prunedAt = now;
 
-      const listed = yield* Effect.promise(() => state.storage.list({ prefix: keptPrefix }));
+      let after: string | undefined;
 
-      const expired = [...listed].flatMap(([key, value]) =>
-        Option.match(keptOf(value), {
-          onNone: () => [key],
-          onSome: ({ at }) => (at + Action.Idempotency.keptFor <= now ? [key] : []),
-        }),
-      );
+      do {
+        const listed = [
+          ...(yield* Effect.promise(() =>
+            state.storage.list({
+              prefix: keptPrefix,
+              limit: page,
+              ...(after === undefined ? {} : { startAfter: after }),
+            }),
+          )),
+        ];
 
-      yield* deleted(state.storage, expired);
+        yield* deleted(
+          state.storage,
+          listed.flatMap(([key, value]) =>
+            Option.exists(keptOf(value), ({ at }) => at + Action.Idempotency.keptFor <= now)
+              ? [key]
+              : [],
+          ),
+        );
+
+        after = listed.length === page ? listed.at(-1)?.[0] : undefined;
+      } while (after !== undefined);
     });
 
     return Action.Idempotency.of({

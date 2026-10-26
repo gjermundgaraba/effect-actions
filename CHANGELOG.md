@@ -135,9 +135,9 @@ object's storage, each deleted past its day as later answers are kept; a store o
 
 **A Durable Object's tasks.** `make`'s and `handlers`' `tasks` names Effects an object does at
 least once, such as telling another object of a change. `ActionDurableObject.Tasks`, a startup
-service, runs one by name after a change, at once and again on the object's alarm until it
-succeeds: `runAfter(name, change)` marks the task before the change and runs it after, however
-the change ended. The rules are on `Tasks`.
+service, runs one by name after a change, on the object's alarm until it succeeds:
+`runAfter(name, change)` marks the task due now before the change and again as it ends, however
+it ended, and the alarm runs it after the call has answered. The rules are on `Tasks`.
 
 **Durable Objects reached by a key of the input.** `ActionDurableObject.placed(binding, keys)` says
 which object serves each call and subscription of an HTTP binding: the one its contract's key in
