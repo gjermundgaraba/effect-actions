@@ -25,16 +25,11 @@ import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { as, initializeParams, sessionRequest } from "../support/requests.js";
+import { Posted, settle } from "../support/events.js";
 import { recorder } from "../support/reporter.js";
+import { Json } from "../support/sse.js";
 import { transcript } from "../support/stdio-host.js";
 import { statelessRequest } from "../../src/mcp/request.js";
-
-const Posted = Event.make("message.posted", {
-  description: "A message was posted.",
-  input: { channel: Schema.optional(Schema.String) },
-  payload: { id: Schema.String, channel: Schema.String, text: Schema.String },
-  caller: Action.Anyone,
-});
 
 const Changed = Event.make("user.changed", {
   description: "A user of your tenant changed.",
@@ -85,8 +80,6 @@ const changes = Event.implement(
   },
 );
 
-const Json = Schema.fromJsonString(Schema.Json);
-
 const Listed = Schema.Struct({
   result: Schema.Struct({ events: Schema.Array(Schema.Struct({ name: Schema.String })) }),
 });
@@ -113,8 +106,6 @@ const framesOf = (response: HttpClientResponse.HttpClientResponse, count: number
     Stream.take(count),
     Stream.runCollect,
   );
-
-const settle = TestClock.adjust("0 millis");
 
 it("refuses an event type whose input or payload is no object, naming it", () => {
   const options = { name: "events", version: "0" };

@@ -10,21 +10,16 @@ export const extension = "io.modelcontextprotocol/events";
 /** The `_meta` key a push stream's notifications carry its request id under. */
 export const subscriptionIdKey = "io.modelcontextprotocol/subscriptionId";
 
-// Why: SEP-3415's error codes, provisional until it is accepted, pinned to the PR head
-// 2ec39b9c49c583411b73cb460dea5f52b5c541a6. A subscription's request fails with them, and its
-// termination carries them.
-const eventCodes = {
+// Why: SEP-3415's error codes, from `notFound` to `unsupported`, are provisional until it is
+// accepted, pinned to the PR head 2ec39b9c49c583411b73cb460dea5f52b5c541a6; a subscription's
+// request fails with them, and its termination carries them. The others are core MCP's and
+// JSON-RPC's. tests/mcp/events.test.ts asserts them as sent.
+export const codes = {
+  headerMismatch: -32020,
   notFound: -32023,
   forbidden: -32024,
   resourceExhausted: -32025,
   unsupported: -32026,
-} as const;
-
-// Why: Beside SEP-3415's codes, core MCP's and JSON-RPC's. tests/mcp/events.test.ts asserts them
-// as sent.
-export const codes = {
-  headerMismatch: -32020,
-  ...eventCodes,
   invalidParams: -32602,
   internal: -32603,
 } as const;
@@ -38,17 +33,10 @@ const decodeRefusal = Schema.decodeUnknownOption(Schema.toCodecJson(Refusal));
  * refusal's message, and the refusal as its data.
  */
 export const terminationError = (refusal: Refusal) => ({
-  code: eventCodes.forbidden,
+  code: codes.forbidden,
   message: refusal.message,
   data: encodeRefusal(refusal),
 });
-
-/**
- * The refusal a SEP-3415 error carries, as `terminationError` writes one: its `data` decoded, or
- * `Forbidden` with its message where `data` is no refusal.
- */
-const refusalOf = (error: { readonly message: string; readonly data?: unknown }): Refusal =>
-  Option.getOrElse(decodeRefusal(error.data), () => new Forbidden({ message: error.message }));
 
 const decodeUnsupported = Schema.decodeUnknownOption(
   Schema.Struct({ feature: Schema.String, value: Schema.optional(Schema.String) }),
@@ -68,17 +56,20 @@ export const reasonOf = (
   error: { readonly code?: number | undefined; readonly message: string; readonly data?: unknown },
 ): Event.SubscriptionError | Refusal | undefined => {
   switch (error.code) {
-    case eventCodes.notFound:
+    case codes.notFound:
       return Event.SubscriptionError.of(name, new Event.NotServed());
-    case eventCodes.forbidden:
-      return refusalOf(error);
-    case eventCodes.resourceExhausted:
+    case codes.forbidden:
+      return Option.getOrElse(
+        decodeRefusal(error.data),
+        () => new Forbidden({ message: error.message }),
+      );
+    case codes.resourceExhausted:
       return Option.getOrUndefined(
         Option.map(decodeLimit(error.data), (limit) =>
           Event.SubscriptionError.of(name, new Event.LimitReached(limit)),
         ),
       );
-    case eventCodes.unsupported:
+    case codes.unsupported:
       return Option.getOrUndefined(
         Option.map(decodeUnsupported(error.data), (unsupported) =>
           Event.SubscriptionError.of(name, new Event.Unsupported(unsupported)),

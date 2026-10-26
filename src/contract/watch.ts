@@ -20,6 +20,20 @@ const reconnectDelay = Duration.seconds(1);
 
 const maxReconnectDelay = Duration.seconds(30);
 
+// Why: `Stream.retry` starts its schedule again at the first element after a failure, so the
+// backoff counts only the failures since the stream last delivered.
+const afterFailures = <E>(transient: (error: E) => boolean) =>
+  Schedule.min([Schedule.exponential(reconnectDelay), Schedule.spaced(maxReconnectDelay)]).pipe(
+    Schedule.setInputType<E>(),
+    Schedule.while(({ input }) => transient(input)),
+    Schedule.tap(({ input, duration }) =>
+      Effect.logWarning(
+        `A watch reconnects in ${Duration.format(duration)} after a failure`,
+        input,
+      ),
+    ),
+  );
+
 const isSubscriptionError: Predicate.Refinement<unknown, Event.SubscriptionError> = Schema.is(
   Event.SubscriptionError,
 );
@@ -109,32 +123,17 @@ export const watching = <E, R, SE>(
         ),
       );
 
-      const fallingBack = (reopened: Stream.Stream<Fed, E, R>) =>
-        polled === undefined
-          ? reopened
-          : reopened.pipe(Stream.catchIf(pushRefused, () => Stream.suspend(() => polled(at))));
+      const reopened =
+        transient === undefined
+          ? once
+          : once.pipe(
+              Stream.repeat(Schedule.spaced(reconnectDelay)),
+              Stream.retry(afterFailures(transient)),
+            );
 
-      if (transient === undefined) return fallingBack(once);
-
-      // Why: `Stream.retry` starts its schedule again at the first element after a failure, so
-      // the backoff counts only the failures since the stream last delivered.
-      const afterFailures = Schedule.min([
-        Schedule.exponential(reconnectDelay),
-        Schedule.spaced(maxReconnectDelay),
-      ]).pipe(
-        Schedule.setInputType<E>(),
-        Schedule.while(({ input }) => transient(input)),
-        Schedule.tap(({ input, duration }) =>
-          Effect.logWarning(
-            `A watch reconnects in ${Duration.format(duration)} after a failure`,
-            input,
-          ),
-        ),
-      );
-
-      return fallingBack(
-        once.pipe(Stream.repeat(Schedule.spaced(reconnectDelay)), Stream.retry(afterFailures)),
-      );
+      return polled === undefined
+        ? reopened
+        : reopened.pipe(Stream.catchIf(pushRefused, () => Stream.suspend(() => polled(at))));
     };
 
     const polled = (cursor: string | null) =>

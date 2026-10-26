@@ -42,7 +42,7 @@ import {
 import { request } from "./request.js";
 
 /** What a watch's request needs of the client: its HTTP client, the endpoint, the event. */
-export interface Watched<R = unknown> {
+interface Watched<R = unknown> {
   readonly http: Pick<HttpClient.HttpClient.With<unknown, R>, "execute">;
   readonly url: string;
   readonly event: Event.Any;
@@ -145,19 +145,16 @@ export const transportOf = <R>(
     Effect.gen(function* () {
       const messages = yield* bodyOf("events/poll", name, yield* sent("events/poll", { cursor }));
 
-      const reply = Option.fromNullishOr(
-        messages.flatMap((message) => Option.toArray(pollReplyOf(message))).at(-1),
-      );
+      const reply = messages.flatMap((message) => Option.toArray(pollReplyOf(message))).at(-1);
 
-      if (Option.isNone(reply))
+      if (reply === undefined)
         return yield* Effect.fail(
           callError("events/poll", name, new NoReply({ body: messages.join("\n") })),
         );
 
-      if ("error" in reply.value)
-        return yield* Effect.fail(failed("events/poll", reply.value.error));
+      if ("error" in reply) return yield* Effect.fail(failed("events/poll", reply.error));
 
-      const { result } = reply.value;
+      const { result } = reply;
 
       return {
         events: yield* Effect.forEach(result.events, occurrenceOf),

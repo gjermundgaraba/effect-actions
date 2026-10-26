@@ -16,7 +16,6 @@ import {
 import { encodeUntaggedOf } from "../contract/occurrence.js";
 import { type Pushed, pushed, refusalIn } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
-import type { Refusal } from "../contract/errors.js";
 import {
   Active,
   codes,
@@ -125,8 +124,6 @@ const encodeServerInfo = Schema.encodeEffect(McpSchema.Implementation);
 
 type Notified = RpcGroup.Rpcs<typeof Notifications>;
 
-const refusalError = (refusal: Refusal) => new EventsError(terminationError(refusal));
-
 const internalError = new EventsError({ code: codes.internal, message: "Internal error" });
 
 // Why: A failure no refusal explains is the server's: the cause goes to the log and to the
@@ -136,7 +133,7 @@ const wireErrorOf = (cause: Cause.Cause<unknown>): Effect.Effect<EventsError> =>
 
   return refusal === undefined
     ? Effect.as(reported(cause), internalError)
-    : Effect.succeed(refusalError(refusal));
+    : Effect.succeed(new EventsError(terminationError(refusal)));
 };
 
 const headerMismatch = (request: HttpServerRequest.HttpServerRequest) =>
@@ -248,18 +245,19 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
 
       const served = new Map(feeds.map((feed) => [feed.event.name, servedOf(feed, delivery)]));
 
-      const servedNamed = (name: string) =>
-        Option.match(Option.fromNullishOr(served.get(name)), {
-          onNone: () =>
-            Effect.fail(
+      const servedNamed = (name: string) => {
+        const found = served.get(name);
+
+        return found === undefined
+          ? Effect.fail(
               new EventsError({
                 code: codes.notFound,
                 message: `Unknown event: ${name}`,
                 data: { kind: "event" },
               }),
-            ),
-          onSome: Effect.succeed,
-        });
+            )
+          : Effect.succeed(found);
+      };
 
       // Why: A protected event runs as the identity the endpoint verified, as a protected tool's
       // call does, and a refusal asking to sign in or step up is answered as its 401 or 403.
@@ -272,9 +270,6 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
         Effect.updateContext(handled, (request: Context.Context<never>) =>
           Context.merge(built, request),
         );
-
-      const failingAsWire = <A, R>(run: Effect.Effect<A, unknown, R>) =>
-        Effect.catchCause(run, (cause) => Effect.flatMap(wireErrorOf(cause), Effect.fail));
 
       const handlers = Requests.of({
         "events/list": () =>
@@ -290,18 +285,16 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
             const { feed, decode, wire } = yield* servedNamed(name);
             const input = yield* decode(args);
 
-            const { page, events } = yield* failingAsWire(
-              Effect.gen(function* () {
-                const page = yield* asSubscriber(
-                  feed.event,
-                  Effect.flatMap(principalOf(feed.event, authentication), (subscriber) =>
-                    feed.poll(input, cursor ?? null, { subscriber, maxEvents }),
-                  ),
-                );
+            const { page, events } = yield* Effect.gen(function* () {
+              const page = yield* asSubscriber(
+                feed.event,
+                Effect.flatMap(principalOf(feed.event, authentication), (subscriber) =>
+                  feed.poll(input, cursor ?? null, { subscriber, maxEvents }),
+                ),
+              );
 
-                return { page, events: yield* Effect.forEach(page.events, wire) };
-              }),
-            );
+              return { page, events: yield* Effect.forEach(page.events, wire) };
+            }).pipe(Effect.catchCause((cause) => Effect.flatMap(wireErrorOf(cause), Effect.fail)));
 
             return {
               resultType: "complete" as const,
@@ -360,6 +353,8 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
       yield* target.install(base, Requests, handlers);
     });
 
+  // Why: Named before it is returned, as `handlerRpcs` is off the adapter's public interface,
+  // which a returned literal would be checked against for excess properties.
   const adapter = {
     ...base,
     clientRpcs: groupOf(base, "clientRpcs").merge(Requests),
@@ -425,9 +420,11 @@ const delivered = (
     if (Exit.isFailure(exit)) {
       if (Cause.hasInterruptsOnly(exit.cause)) return yield* Effect.interrupt;
 
-      const { code, message, data } = yield* wireErrorOf(exit.cause);
+      const error = yield* wireErrorOf(exit.cause);
 
-      if (!active) return yield* new EventsError({ code, message, data });
+      if (!active) return yield* error;
+
+      const { code, message, data } = error;
 
       yield* notify(Terminated, {
         _meta,
