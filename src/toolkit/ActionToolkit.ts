@@ -154,8 +154,11 @@ const annotateFromContract = (tool: Tool.Any, action: Action.Any) => {
 /** A value an action reported, as a toolkit's preliminary result holds it. */
 class Reported<A> {
   readonly _tag = "Progress";
+  readonly value: A;
 
-  constructor(readonly value: A) {}
+  constructor(value: A) {
+    this.value = value;
+  }
 }
 
 // Why: Progress tagged, and tried first: a preliminary result is encoded with the tool's one

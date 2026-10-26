@@ -161,7 +161,7 @@ export const answeringWithProgress = (
 
   return (payload: ErasedValue) =>
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-      (request.headers.accept ?? "").includes("text/event-stream")
+      (request.headers["accept"] ?? "").includes("text/event-stream")
         ? streamed((reporting, send) =>
             run(payload, reporting).pipe(
               Effect.tap(check),
