@@ -31,9 +31,9 @@ export const tellLobby: Effect.Effect<void, unknown, Room | Scope.Scope> = Effec
 });
 
 // A room's activity, a startup service of the room's: each change runs the `lobby` task after it,
-// at once and again on the room's alarm until the lobby hears it, so a lobby that cannot be
-// reached fails no post and misses no change. `runAfter` marks the task before the change, so a
-// crash between the change and the task leaves the task to the alarm.
+// on the room's alarm once the call has answered, and again until the lobby hears it, so a lobby
+// that cannot be reached fails no post and misses no change. `runAfter` marks the task before the
+// change and again after it, so a crash at any point leaves the task to the alarm.
 export const layerActivity: Layer.Layer<Activity, never, ActionDurableObject.Tasks> = Layer.effect(
   Activity,
 )(

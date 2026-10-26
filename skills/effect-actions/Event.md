@@ -285,7 +285,7 @@ Effect, whose finalizer tears it down, run as the subscriber. How long it lasts 
 provides one, `Event.layerMemory`, around both the handlers that announce and the surfaces that
 serve, as [build-events/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/server.ts) does; a host
 keeping logs elsewhere builds its own with `Event.makeEvents`, as the Cloudflare package's
-`layerEvents` keeps them in a Durable Object's storage. A source's
+`make` and `handlers` keep them in a Durable Object's storage. A source's
 `key`, such as the room a subscriber follows, lets an announcement given that key reach that
 room's subscribers alone, as [live-rpc/src/chat/events.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/chat/events.ts)
 keys its messages by room. The rules are on `Event.Events`.

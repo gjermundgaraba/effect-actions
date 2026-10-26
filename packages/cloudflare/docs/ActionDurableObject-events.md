@@ -8,10 +8,10 @@ an agent over MCP. Read [ActionDurableObject.md](ActionDurableObject.md) first, 
 
 List the event type in the rpcs' binding and its implementation beside the actions' in
 `ActionRpc.layer`, as `routes.ts` on [ActionDurableObject.md](ActionDurableObject.md) does, and a
-page watches it on its socket. `make` and `handlers` provide `Event.Events` as `layerEvents`, in the
-object's storage, in place of the core's `Event.layerMemory`, which an object is given no other way,
-so a handler announces with `notify` or `publish` as it does elsewhere. The room's messages are a
-check source over its store, which `postMessage` notifies after each post:
+page watches it on its socket. `make` and `handlers` provide the object's own `Event.Events`, its
+logs kept in the object's storage, in place of the core's `Event.layerMemory`, so a handler
+announces with `notify` or `publish` as it does elsewhere. The room's messages are a check source
+over its store, which `postMessage` notifies after each post:
 
 ```ts example=chat-rooms/src/chat/events.ts
 import { Effect, Option, Schema } from "effect";
@@ -73,7 +73,7 @@ The page reads, then watches from the last id it read: `messages` in
 socket's subscription in its storage while it hibernates and resumes it from the position it
 reached when it next wakes, on any event, authenticating it again from the headers it was
 made with: a token that expired meanwhile ends the watch with `Unauthenticated`. What a check,
-current and log source do in an object is on `ActionDurableObject.layerEvents`; which calls the
+current and log source do in an object is on `ActionDurableObject.handlers`; which calls the
 object keeps across hibernation, on `ActionDurableObject.layerWebSocket`. To empty an object,
 `ctx.storage.deleteAll()` deletes its subscriptions, webhook subscriptions and alarm times with
 the rest: close its sockets as it does, so their pages connect again and watch anew.

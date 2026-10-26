@@ -49,7 +49,7 @@ export { RoomsEntrypoint } from "./rooms-entrypoint.js";
 // as it is constructed, again after every eviction. The room is the name the Worker reached the
 // object by, `getByName(room)`: `ActionDurableObject.name` dies for an object reached by an id, a
 // bug in the Worker. Given `rooms`, it refuses a call or a watch whose input names another room.
-// Its `lobby` task tells the lobby of each change, again on the alarm until the lobby hears. The
+// Its `lobby` task tells the lobby of each change, on the alarm until the lobby hears. The
 // alarm expires old messages and tells the lobby, as an expired message can be the room's latest.
 export class ChatRoom extends ActionDurableObject.make({
   placed: rooms,

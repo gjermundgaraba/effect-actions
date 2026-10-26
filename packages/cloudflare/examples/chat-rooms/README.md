@@ -66,9 +66,10 @@ elsewhere.
   serve `ActionRpc.layer` as its `calls` and call them with `ActionRpc.client` over
   `layerStubClient`, forwarding a member's token in each call's headers.
 - **A room tells the lobby it changed, and the lobby notifies**: an object's events are its own,
-  so a room cannot notify the lobby's pages. It sends only its name, and the lobby reads the room
-  again, one change at a time, so a change heard late never overwrites a later one. A lobby that
-  cannot be reached is logged, not the post's failure.
+  so a room cannot notify the lobby's pages. It sends only its name, from its `lobby` task, which
+  its alarm runs once the post has answered, and the lobby reads the room again, one change at a
+  time, so a change heard late never overwrites a later one. A lobby that cannot be reached is
+  logged, not the post's failure, and told again on the alarm.
 - **The lobby's event is a whole value**, a current source, so a page watches it with no read
   first: it is sent the previews as they are, then again after each change. The room's messages, sent one by one, start
   from now instead, so a page reads them first.

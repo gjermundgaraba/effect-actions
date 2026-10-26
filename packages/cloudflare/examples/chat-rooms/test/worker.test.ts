@@ -272,18 +272,28 @@ describe("the Worker and its rooms", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect(
-    "answers the lobby's previews as each room told its object, without what was said",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-        const posted = yield* json.postMessage({ room: "design", text: "Seen from the lobby." });
-        const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl: "https://chat.example" });
-        const { previews } = yield* lobby.previews();
+  it.live("answers the lobby's previews as each room told its object, without what was said", () =>
+    Effect.gen(function* () {
+      const json = yield* jsonAs("ada");
+      const posted = yield* json.postMessage({ room: "design", text: "Seen from the lobby." });
+      const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl: "https://chat.example" });
 
-        expect(previews.map(({ room }) => room)).toEqual(["general", "design"]);
-        expect(previews).toContainEqual({ room: "design", latestAt: posted.at });
-      }).pipe(Effect.provide(worker)),
+      // The room tells the lobby from its `lobby` task, which the room's alarm runs once the
+      // post has answered: the lobby hears of it a moment later, not as the post returns.
+      yield* lobby.previews().pipe(
+        Effect.repeat({
+          until: ({ previews }) =>
+            previews.some(({ room, latestAt }) => room === "design" && latestAt === posted.at),
+          schedule: Schedule.spaced("10 millis"),
+        }),
+        Effect.timeout("5 seconds"),
+      );
+
+      const { previews } = yield* lobby.previews();
+
+      expect(previews.map(({ room }) => room)).toEqual(["general", "design"]);
+      expect(previews).toContainEqual({ room: "design", latestAt: posted.at });
+    }).pipe(Effect.provide(worker)),
   );
 
   it.live(

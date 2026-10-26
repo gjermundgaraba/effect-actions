@@ -132,11 +132,11 @@ export class RoomsEntrypoint extends WorkerEntrypoint<Cloudflare.Env> {
 An object telling another of its changes, as a room tells the lobby, does it as a task: give
 `make` or `handlers` `tasks`, a name for each Effect, and wrap each change in
 `ActionDurableObject.Tasks`' `runAfter`. The task is marked in the object's storage before the
-change and runs at once after it, as a call would, so one that fails, or that an eviction or a
-crash cuts off, the change's own included, runs again on the object's alarm until it succeeds; the
-caller never fails with it. A task reads what it sends as it runs, so one run covers every change
-before it: the object told ignores what it already holds, as the lobby reads the room again. Runs
-of one task take turns, so a run never sends an older state after a newer one.
+change and again after it, and the object's alarm runs it once the call has answered, so one that
+fails, or that an eviction or a crash cuts off, the change's own included, runs again until it
+succeeds; the caller never fails with it, and a caller reading the object told at once may find it
+not yet told. A task reads what it sends as it runs, so one run covers every change before it: the
+object told ignores what it already holds, as the lobby reads the room again.
 
 ```ts example=chat-rooms/src/platform/lobby-stubs.ts
 import { env } from "cloudflare:workers";
@@ -172,9 +172,9 @@ export const tellLobby: Effect.Effect<void, unknown, Room | Scope.Scope> = Effec
 });
 
 // A room's activity, a startup service of the room's: each change runs the `lobby` task after it,
-// at once and again on the room's alarm until the lobby hears it, so a lobby that cannot be
-// reached fails no post and misses no change. `runAfter` marks the task before the change, so a
-// crash between the change and the task leaves the task to the alarm.
+// on the room's alarm once the call has answered, and again until the lobby hears it, so a lobby
+// that cannot be reached fails no post and misses no change. `runAfter` marks the task before the
+// change and again after it, so a crash at any point leaves the task to the alarm.
 export const layerActivity: Layer.Layer<Activity, never, ActionDurableObject.Tasks> = Layer.effect(
   Activity,
 )(
