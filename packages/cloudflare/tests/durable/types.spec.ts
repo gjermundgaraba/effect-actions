@@ -30,10 +30,7 @@ import {
 import type { Hosted, Plain, PluginHost } from "../worker.js";
 
 expectTypeOf(ActionDurableObject.make({ routes: routerProvidedRoutes })).toEqualTypeOf<
-  new (
-    ctx: DurableObjectState,
-    env: Cloudflare.Env,
-  ) => ActionDurableObject.SocketHandlers & ActionDurableObject.Instance
+  new (ctx: DurableObjectState, env: Cloudflare.Env) => ActionDurableObject.Instance
 >();
 
 expectTypeOf(ActionDurableObject.make({ calls: stubCalls, services: () => startup })).toEqualTypeOf<
@@ -71,17 +68,9 @@ expectTypeOf(ActionDurableObject.Alarm.layer).toEqualTypeOf<
   Layer.Layer<ActionDurableObject.Alarm, never, ActionDurableObject.State>
 >();
 
-const unrouted = ActionDurableObject.handlers(ctx, { services: Builds.layer });
-
-expectTypeOf(unrouted).toEqualTypeOf<
-  Omit<
-    ActionDurableObject.Handlers<Builds>,
-    "webSocketMessage" | "webSocketClose" | "webSocketError"
-  >
+expectTypeOf(ActionDurableObject.handlers(ctx, { services: Builds.layer })).toEqualTypeOf<
+  ActionDurableObject.Handlers<Builds>
 >();
-
-// @ts-expect-error -- Without routes no protocol accepts a socket: there is no socket handler.
-void unrouted.webSocketClose;
 
 expectTypeOf(
   ActionDurableObject.handlers(ctx, { services: startup, routes: socketRoutes }),
@@ -138,7 +127,7 @@ export class WithCloseCode extends ActionDurableObject.make({
   }
 }
 
-expectTypeOf<Parameters<ActionDurableObject.SocketHandlers["webSocketError"]>>().toEqualTypeOf<
+expectTypeOf<Parameters<ActionDurableObject.Handlers["webSocketError"]>>().toEqualTypeOf<
   Parameters<NonNullable<DurableObject<Cloudflare.Env>["webSocketError"]>>
 >();
 
@@ -233,11 +222,7 @@ expectTypeOf<ConstructorParameters<typeof WithServices>[1]>().toEqualTypeOf<Clou
 
 declare const app: App;
 
-expectTypeOf<App["webSocketClose"]>().toEqualTypeOf<DurableObject<AppEnv>["webSocketClose"]>();
-
-expectTypeOf(app).not.toMatchTypeOf<ActionDurableObject.SocketHandlers>();
-
-expectTypeOf(fromEnv).toMatchTypeOf<ActionDurableObject.SocketHandlers>();
+expectTypeOf(app).toMatchTypeOf<ActionDurableObject.Handlers<Greeting>>();
 
 ActionDurableObject.make({
   // @ts-expect-error -- The services a function of env returns are built at startup too.

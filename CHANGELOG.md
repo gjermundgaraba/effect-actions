@@ -326,78 +326,14 @@ for what a surface holds between one subscriber's requests: MCP and HTTP key a p
 `subscription` hook by it, and refuse to serve a protected event with such a hook without it.
 
 **`@gjermundgaraba/effect-actions-cloudflare` serves actions from Cloudflare Durable Objects**,
-and calls them, released with this package at the same version and requiring it at `~` that
-version. Its module `ActionDurableObject` offers a Durable Object class, `make`, the handlers a
-class of your own delegates to, `handlers`, and what they serve:
-
-- `State` is the object's `DurableObjectState`, a startup service of its services, calls,
-  routes and alarm. `name`, an `Effect<string, never, State>`, is the name the Worker reached
-  the object by, `getByName(name)`, which a startup service such as a room is built from,
-  `Layer.effect(Room)(name)`; an object reached by an id carrying none, from `idFromString` or
-  `newUniqueId`, dies naming `getByName`.
-- `Alarm` schedules the object's `alarm` option: `set(at)`, a `DateTime`, replacing an earlier
-  time, and `clear`. The object's one runtime alarm is the package's, set for the earliest of the
-  times it keeps in the object's storage, under `effect-actions/alarm/`. A failed run is logged and retried 2 seconds later, doubling, six times, as
-  the runtime retries a plain object's alarm, then hourly, never dropped. A run is counted and the
-  alarm set for its retry before it runs, so one an eviction, a deploy or a crash cuts off is
-  retried as a failure, and an instance's build sets the alarm again for times kept with none set.
-  A firing runs only the times that have come, so a repeated one runs nothing early. The `alarm`
-  option is given its `scheduledTime` and `retryCount`.
-  `Alarm.layer` requires `State`; `handlers` and `make` provide it to the services, the calls,
-  the routes, the alarm and `run`. `State`'s `storage.setAlarm` replaces the package's alarm.
-- `layerWebSocket({ path, protocol? })` is the protocol `ActionRpc.layer` serves on: WebSockets
-  the runtime holds while the object hibernates. A socket keeps its upgrade request's headers, as
-  Effect's own socket protocol does, and each message is authenticated with them under its own
-  headers. An upgrade whose headers exceed a socket's 16 KiB attachment answers 431, and a call whose id would take it past them fails at once, never run. Each
-  protocol of one object needs a `path` of its own. `protocol: { version, code, reason? }`
-  refuses an upgrade whose `?protocol=` is absent or names another version with
-  `refuseUpgrade(code, reason)`: 101 and a socket closed at once with that code and reason, which
-  the page's client reads as `SocketCloseError`, since a browser cannot read a refused upgrade's
-  status, and whose reconnection `ActionRpc.reconnectUntil(code)` stops at. A `code` other than
-  an integer from 4000 to 4999, the codes a watch ends at, or a `reason` over a close frame's 123
-  bytes, fails the build. Router middleware provided to it runs for the upgrade alone, and refuses one by any
-  other judge, such as a foreign `Origin`, by returning `refuseUpgrade(code, reason)` itself.
-  Effect's web handler cannot upgrade a request, so `RpcServer.layerProtocolWebsocket` serves no
-  socket on Workers. The runtime answers a client's pings without waking the object. A call
-  doing I/O or waiting on a timer keeps the object from hibernating, and one waiting on memory
-  alone is lost if it hibernates, and one an eviction, a deploy or a crash cuts off closes its
-  socket with 1012 as the next instance builds, so its client fails it and connects again.
-- The socket handlers `make` defines and `handlers` returns hand a socket's event to its
-  protocol, and resolve for a socket no protocol accepted, such as one the class accepted itself,
-  which the class answers. `webSocketClose` completes the closing handshake under any
-  `compatibility_date`.
-- `make`'s and `handlers`' `calls`, `RpcServer.layer(group)` or `ActionRpc.layer`, are served
-  over the object's stub, with Cloudflare's own RPC: one call of the object's `effectActionsRpc`
-  method carries one call's messages and returns its responses once its exit is known, as values
-  Workers RPC's structured clone copies, each schema's plain form, never JSON. One protocol serves
-  an object's calls. It is unary: an rpc that streams is answered with a defect at its first
-  chunk, and an `ActionRpc.layer` there fails its build when it would serve a streaming action,
-  an event type or a native stream rpc, naming them. Nothing authenticates a stub call, which only
-  a binding reaches; a caller forwards a principal in a header or the payload.
-- `layerStubClient(stub | () => stub)` is the `RpcClient.Protocol` calling an object's rpcs over
-  a stub, with `RpcClient.make(group)` or `ActionRpc.client`; a failure of the stub itself is an
-  `RpcClientError`, its cause the runtime's error. `client(group)` makes one client, in the
-  caller's `Scope`, for every object of a class, and returns `(stubOf) => client`, calling
-  `stubOf` for a new stub as each call is sent; its calls fail with their declared errors or the
-  stub's `RpcClientError`, and an rpc that streams has no method. `Stub`, `Client` and
-  `StubRequest` are their types.
-- `handlers(ctx, { services, routes, calls, alarm, disableLogger })` returns a class's handlers,
-  `fetch`, the socket handlers (with `routes` alone), `effectActionsRpc`, `alarm` and `run`, for a
-  class of your own to delegate to. Each instance builds once, as it is constructed, `services`,
-  which may require `State` and `Alarm`, then
-  `calls`, which may require those, the services and `RpcServer.Protocol`, and `routes`, whose
-  Layers and handlers may require those, the services and `Sockets`; every event arrives after
-  that build, and a failed build is dropped, so the next event builds again, the events arriving
-  meanwhile running one after another once it ends. `run(effect)` runs an
-  Effect in the object with the services, `State`, `Alarm` and a `Scope`, for
-  the class's own methods.
-- `make(options)` is a Durable Object class delegating every handler and `run` to `handlers`, for
-  a class extending it to override. It always has an `alarm` handler, which runs `Alarm`'s
-  times, and socket handlers only with `routes`. Its `services` is a function of the instance's
-  `env`.
-- `layerHttpClient(stub)` is an `HttpClient` whose requests go to a Durable Object stub or a
-  service binding, so a Worker calls an object's routes with `ActionHttp.client`,
-  `ActionRpc.client` over `RpcClient.layerProtocolHttp` or `ActionMcp.client`.
+released with this package at the same version and requiring it at `~` that version. Its module
+`ActionDurableObject` makes a Durable Object class, `make`, or the handlers a class of your own
+delegates to, `handlers`, building the object's startup `services`, its `routes` on `fetch`, its
+`calls` over the stub and its `alarm` once per instance. `layerWebSocket` serves `ActionRpc.layer`
+and Effect rpcs over hibernating WebSockets, `layerStubClient` and `client` call an object's rpcs
+over its stub, `layerHttpClient` calls its routes, and `State`, `name` and `Alarm` are what the
+object is and when its `alarm` runs. Each option's and declaration's rules are in its JSDoc.
+Guide: `packages/cloudflare/docs/README.md`.
 
 ### Other changes
 

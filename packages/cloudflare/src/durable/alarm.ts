@@ -37,24 +37,14 @@ type Owners<R> = Readonly<
 
 /**
  * The object's alarm times, one per owner, kept in its storage: the runtime's one alarm is set
- * for the earliest, and `runDue` runs each owner whose time has come.
+ * for the earliest, and `runDue` runs each owner whose time has come. `handlers` and `make` make
+ * one per instance, which its `Alarm` and its `alarm` handler share.
  */
-// Why: a set and a run's end each read an owner's time and then write it, so they take turns, per
-// object, however many schedules are made for it: the end of a run never deletes a time set as it
-// ended.
-const locks = new WeakMap<DurableObjectState, Semaphore.Semaphore>();
-
-const lockOf = (state: DurableObjectState) => {
-  const found = locks.get(state) ?? Semaphore.makeUnsafe(1);
-
-  locks.set(state, found);
-
-  return found;
-};
-
 export const makeSchedule = (state: DurableObjectState) => {
   const storage = state.storage;
-  const lock = lockOf(state);
+  // Why: a set and a run's end each read an owner's time and then write it, so they take turns:
+  // the end of a run never deletes a time set as it ended.
+  const lock = Semaphore.makeUnsafe(1);
 
   const times = Effect.promise(() => storage.list({ prefix: alarmPrefix })).pipe(
     Effect.map((listed) =>
@@ -211,6 +201,8 @@ export const makeSchedule = (state: DurableObjectState) => {
   };
 };
 
+export type Schedule = ReturnType<typeof makeSchedule>;
+
 /** The owner the application's `alarm` option runs as. */
 export const applicationOwner = "application";
 
@@ -242,15 +234,16 @@ export class Alarm extends Context.Service<
    * **Gotchas**
    *
    * - Only `handlers`' and `make`'s `alarm` runs the times it keeps: provide this layer alone only where nothing calls `set`, as to a store under test.
+   * - Each build makes a schedule of its own, which takes no turns with the object's: a `set` through it while the object's alarm runs may be lost, so an object's own code uses the `Alarm` `handlers` and `make` provide.
    */
   static readonly layer: Layer.Layer<Alarm, never, State> = Layer.effect(Alarm)(
-    Effect.map(State, (state) => {
-      const schedule = makeSchedule(state);
-
-      return Alarm.of({
-        set: (at) => schedule.set(applicationOwner, DateTime.toEpochMillis(at)),
-        clear: schedule.clear(applicationOwner),
-      });
-    }),
+    Effect.map(State, (state) => alarmOf(makeSchedule(state))),
   );
 }
+
+/** The application's alarm over `schedule`, the instance's. */
+export const alarmOf = (schedule: Schedule) =>
+  Alarm.of({
+    set: (at) => schedule.set(applicationOwner, DateTime.toEpochMillis(at)),
+    clear: schedule.clear(applicationOwner),
+  });

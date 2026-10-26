@@ -44,11 +44,8 @@ const versioned = (options: ActionDurableObject.LayerWebSocketOptions) =>
     Layer.provide(ActionDurableObject.layerWebSocket(options)),
   );
 
-export const longVersions = {
-  long: "v".repeat(128),
-  fits: "é".repeat(39),
-  over: "é".repeat(40),
-};
+/** The longest version the default reason names within a close frame's 123 bytes. */
+export const longestVersion = "é".repeat(39);
 
 export const versionedRoutes = Layer.mergeAll(
   versioned({ path: "/rpc", protocol: { version: expectedProtocol, code: 4000 } }),
@@ -56,7 +53,5 @@ export const versionedRoutes = Layer.mergeAll(
     path: "/reasoned",
     protocol: { version: expectedProtocol, code: 4001, reason: givenReason },
   }),
-  ...Object.entries(longVersions).map(([name, version]) =>
-    versioned({ path: `/${name}`, protocol: { version, code: 4000 } }),
-  ),
+  versioned({ path: "/longest", protocol: { version: longestVersion, code: 4000 } }),
 ).pipe(Layer.provide(refuseForeignOrigins.layer), Layer.provide(recordStatus.layer));

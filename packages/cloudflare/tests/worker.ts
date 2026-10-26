@@ -54,7 +54,7 @@ export class Extended extends ActionDurableObject.make({
 }) {
   override async alarm(info?: AlarmInvocationInfo) {
     await this.ctx.storage.put("extended", true);
-    await super.alarm?.(info);
+    await super.alarm(info);
   }
 }
 

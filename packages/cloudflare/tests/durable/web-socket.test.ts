@@ -1,11 +1,8 @@
 import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { Cause, Effect, Exit, Fiber, Layer, Predicate, Schedule } from "effect";
-import { HttpRouter } from "effect/http";
+import { Cause, Effect, Exit, Fiber, Predicate, Schedule } from "effect";
 import { RpcClient } from "effect/rpc";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { Sockets } from "../../src/durable/sockets.js";
 import { noteHeader, Overdrawn } from "../support/app.js";
 import type { Room } from "../worker.js";
 import { nextMessage, scopedClientOver, upgradeToRpc } from "../support/socket.js";
@@ -325,34 +322,6 @@ describe("layerWebSocket", () => {
       expect(received).toEqual([expect.objectContaining({ _tag: "Defect" })]);
       expect(yield* (yield* scopedClientOver(socket)).whoami()).toBe("ada");
     }).pipe(Effect.scoped),
-  );
-
-  it.effect("refuses to register with a Sockets that handlers and make did not build", () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.promise(() =>
-        runInDurableObject(env.PLAIN.getByName("foreign-sockets"), (_, state) =>
-          Effect.runPromiseExit(
-            Layer.build(
-              ActionDurableObject.layerWebSocket({ path: "/rpc" }).pipe(
-                Layer.provide([
-                  Layer.succeed(ActionDurableObject.State, state),
-                  Layer.succeed(Sockets, {
-                    message: () => Effect.succeed(false),
-                    close: () => Effect.succeed(false),
-                    error: () => Effect.succeed(false),
-                  }),
-                  HttpRouter.layer,
-                ]),
-              ),
-            ).pipe(Effect.scoped),
-          ),
-        ),
-      );
-
-      expect(String(Exit.isFailure(exit) && Cause.squash(exit.cause))).toContain(
-        "registers only with the Sockets that handlers and make build",
-      );
-    }),
   );
 
   it.effect("refuses to build two protocols at one path under different prefixes", () =>

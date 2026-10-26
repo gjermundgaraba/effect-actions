@@ -4,12 +4,11 @@ import {
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
-import { Cause, DateTime, Effect, Exit, Layer } from "effect";
+import { DateTime, Effect, Layer } from "effect";
 import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 import { describe, expect, it } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { Calls } from "../../src/durable/calls.js";
 import { dueNow, runAlarmDue } from "../support/alarm.js";
 import { alarmBuildsKey, Builds, Http, ownTag, readyKey } from "../support/app.js";
 import type { OwnSockets, Room } from "../worker.js";
@@ -315,55 +314,57 @@ describe("handlers", () => {
       );
     }),
   );
-  it.effect("has no socket handlers without routes, and refuses calls without calls", () =>
+  it.effect("refuses a call over the stub without calls, naming the option", () =>
     Effect.gen(function* () {
-      const { handlers, refused } = yield* Effect.promise(() =>
-        runInDurableObject(env.HOSTED.getByName("nothing-served"), async (_, state) => {
-          const object = ActionDurableObject.handlers(state, { services: Builds.layer });
-
-          return {
-            handlers: Object.keys(object).toSorted(),
-            refused: await object.effectActionsRpc([]).then(() => "answered", String),
-          };
-        }),
+      const refused = yield* Effect.promise(() =>
+        runInDurableObject(env.HOSTED.getByName("nothing-served"), (_, state) =>
+          ActionDurableObject.handlers(state, { services: Builds.layer })
+            .effectActionsRpc([])
+            .then(() => "answered", String),
+        ),
       );
 
-      expect(handlers).toEqual(["alarm", "effectActionsRpc", "fetch", "run"]);
       expect(refused).toContain("serves no rpcs over its stub");
     }),
   );
 
-  it.effect("defines socket handlers on a class made with routes alone", () =>
-    Effect.gen(function* () {
-      const names = ["webSocketMessage", "webSocketClose", "webSocketError"];
+  it.live(
+    "defines the socket handlers on every class, and completes the closing handshake of a socket no protocol accepted, with routes or without",
+    () =>
+      Effect.gen(function* () {
+        const names = ["webSocketMessage", "webSocketClose", "webSocketError"];
 
-      const unrouted = yield* Effect.promise(() =>
-        runInDurableObject(env.STREAMED.getByName("no-routes"), (instance) =>
-          names.map((name) => name in instance),
-        ),
-      );
+        const closedOwn = (stub: DurableObjectStub) =>
+          Effect.promise(() =>
+            runInDurableObject(stub, async (instance, state) => {
+              const { 0: client, 1: server } = new WebSocketPair();
 
-      const routed = yield* Effect.promise(() =>
-        runInDurableObject(env.ROOM.getByName("routes"), (instance) =>
-          names.map((name) => name in instance),
-        ),
-      );
+              state.acceptWebSocket(server, ["own"]);
+              client.accept();
 
-      expect(unrouted).toEqual([false, false, false]);
-      expect(routed).toEqual([true, true, true]);
-    }),
-  );
+              const closed = new Promise<CloseEvent>((resolve) =>
+                client.addEventListener("close", resolve, { once: true }),
+              );
 
-  it.effect("dies on a call through a Calls no protocol registered with", () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        Calls.use((calls) => calls.call([])).pipe(Effect.provide(Calls.layer)),
-      );
+              client.close(4000, "page left");
 
-      expect(String(Exit.isFailure(exit) && Cause.squash(exit.cause))).toContain(
-        "No stub protocol registered",
-      );
-    }),
+              const { code, reason, wasClean } = await closed;
+
+              return {
+                handlers: names.filter((name) => name in instance),
+                closed: { code, reason, wasClean },
+              };
+            }),
+          ).pipe(Effect.timeout("2 seconds"));
+
+        const expected = {
+          handlers: names,
+          closed: { code: 4000, reason: "page left", wasClean: true },
+        };
+
+        expect(yield* closedOwn(room("own-close"))).toEqual(expected);
+        expect(yield* closedOwn(env.STREAMED.getByName("own-close"))).toEqual(expected);
+      }),
   );
 });
 

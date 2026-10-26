@@ -1,28 +1,22 @@
-import { Context, Effect, Layer, Match, Option, Predicate, Queue, Schema } from "effect";
+import { Context, Effect, Exit, Layer, Match, Predicate, Queue, Schema } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import { closeQuietly, groupTag, RequestId, sendFrame, socketIdOf, socketTag } from "./frames.js";
-import { makeRegistries } from "./registry.js";
 import { State } from "./state.js";
 
+/** What a protocol does with the events of the sockets carrying its tag. */
 interface Receiver {
+  /** Hands a message to the protocol. */
   readonly message: (socket: WebSocket, data: string | ArrayBuffer) => Effect.Effect<void>;
+  /** Tells the protocol the socket closed or failed. */
   readonly close: (socket: WebSocket) => Effect.Effect<void>;
 }
 
-interface Registry {
-  readonly receivers: Map<string, Receiver>;
-  /** The next socket's id, never one an earlier socket of the object had. */
-  readonly allocate: Effect.Effect<number>;
-}
-
-const registries = makeRegistries<Sockets["Service"], Registry>("layerWebSocket", "Sockets");
-
 /**
  * The object's dispatcher for the sockets the protocols of its routes accept, such as
- * `layerWebSocket`'s: each method hands a socket's event to the protocol whose tag the socket
- * carries, and succeeds with `true` once that protocol has it, or with `false` when no protocol
- * accepted the socket, such as one the object accepted itself, which the caller answers.
+ * `layerWebSocket`'s: each event method hands a socket's event to the protocol whose tag the
+ * socket carries, and succeeds with `true` once that protocol has it, or with `false` when no
+ * protocol accepted the socket, such as one the object accepted itself, which the caller answers.
  * `handlers` and `make` provide one per instance, which the protocols register with as the routes
  * build: a requirement of `layerWebSocket`, named as a type alone.
  *
@@ -36,13 +30,20 @@ export class Sockets extends Context.Service<
     /** Hands a message on `socket`, as `webSocketMessage` receives it, to its protocol. */
     readonly message: (socket: WebSocket, data: string | ArrayBuffer) => Effect.Effect<boolean>;
     /**
-     * Tells the socket's protocol it closed, interrupting its running calls, and completes the
-     * closing handshake, replying with the client's `code` and `reason`, as `webSocketClose`
-     * receives them.
+     * Completes the closing handshake of any socket, replying with the client's `code` and
+     * `reason`, as `webSocketClose` receives them, and tells the socket's protocol it closed,
+     * interrupting its running calls.
      */
     readonly close: (socket: WebSocket, code: number, reason: string) => Effect.Effect<boolean>;
     /** Tells the socket's protocol it failed, which ends it as a close does. */
     readonly error: (socket: WebSocket) => Effect.Effect<boolean>;
+    /**
+     * Hands the events of the sockets carrying `tag` to `receiver`, as a protocol builds, or
+     * answers `false` when another protocol already holds that tag.
+     */
+    readonly register: (tag: string, receiver: Receiver) => boolean;
+    /** The next socket's id, never one an earlier socket of the object had. */
+    readonly allocate: Effect.Effect<number>;
   }
 >()("effect-actions-cloudflare/ActionDurableObject/Sockets") {
   /** One dispatcher, with no protocol registered, for the instance whose `State` it is given. */
@@ -56,8 +57,6 @@ export class Sockets extends Context.Service<
         ...state.getWebSockets().map((socket) => socketIdOf(state.getTags(socket)) + 1),
       );
 
-      const allocate = Effect.sync(() => next++);
-
       const dispatch = (socket: WebSocket, event: (receiver: Receiver) => Effect.Effect<void>) =>
         Effect.suspend(() => {
           const receiver = state
@@ -68,18 +67,23 @@ export class Sockets extends Context.Service<
           return receiver === undefined ? Effect.succeed(false) : Effect.as(event(receiver), true);
         });
 
-      const sockets = Sockets.of({
+      return Sockets.of({
         message: (socket, data) => dispatch(socket, (receiver) => receiver.message(socket, data)),
         close: (socket, code, reason) =>
-          dispatch(socket, (receiver) =>
-            Effect.andThen(replyToClose(socket, code, reason), receiver.close(socket)),
+          Effect.andThen(
+            replyToClose(socket, code, reason),
+            dispatch(socket, (receiver) => receiver.close(socket)),
           ),
         error: (socket) => dispatch(socket, (receiver) => receiver.close(socket)),
+        register: (tag, receiver) => {
+          if (receivers.has(tag)) return false;
+
+          receivers.set(tag, receiver);
+
+          return true;
+        },
+        allocate: Effect.sync(() => next++),
       });
-
-      registries.register(sockets, { receivers, allocate });
-
-      return sockets;
     }),
   );
 }
@@ -87,7 +91,8 @@ export class Sockets extends Context.Service<
 // Why: without the runtime's `web_socket_auto_reply_to_close`, before the `compatibility_date`
 // `2026-04-07`, nothing answers a client's close frame, and every page closing a socket sees a
 // 1006. Replying here, as Cloudflare's hibernation example does in `webSocketClose`, completes
-// the handshake under any date, and a socket the runtime already answered is left as it is.
+// the handshake under any date, for a protocol's socket and one the object accepted itself
+// alike, and a socket the runtime or the class already answered is left as it is.
 const replyToClose = (socket: WebSocket, code: number, reason: string) =>
   Effect.sync(() =>
     code >= 1000 && code !== 1005 && code !== 1006 && code !== 1015
@@ -103,10 +108,15 @@ const Attachment = Schema.Struct({
   pending: Schema.optional(Schema.Array(RequestId)),
 });
 
-const attachmentOf = Schema.decodeUnknownSync(Schema.NullishOr(Attachment));
+const decodeAttachment = Schema.decodeUnknownExit(Schema.NullishOr(Attachment));
 
+/** The socket's attachment, failing when it does not decode, or `undefined` with none. */
+const attachmentOf = (socket: WebSocket) =>
+  Exit.map(decodeAttachment(socket.deserializeAttachment()), (held) => held ?? undefined);
+
+/** The socket's attachment, or `undefined` with none or one that does not decode. */
 const heldOf = (socket: WebSocket) =>
-  Option.getOrUndefined(Schema.decodeUnknownOption(Attachment)(socket.deserializeAttachment()));
+  Exit.match(attachmentOf(socket), { onFailure: () => undefined, onSuccess: (held) => held });
 
 const pendingOf = (socket: WebSocket) => heldOf(socket)?.pending ?? [];
 
@@ -169,7 +179,7 @@ const upgraded = (client: WebSocket) =>
  */
 const makeProtocol = (
   state: DurableObjectState,
-  { receivers, allocate }: Registry,
+  sockets: Sockets["Service"],
   { path, protocol: version }: LayerWebSocketOptions,
 ) =>
   Effect.gen(function* () {
@@ -178,16 +188,6 @@ const makeProtocol = (
     const parser = json.makeUnsafe();
 
     const group = groupTag(path);
-
-    // Why: the router does not tell a protocol the prefix it is mounted under, so two protocols
-    // at one `path` would share their sockets' tags and answer each other's sockets.
-    if (receivers.has(group)) {
-      return yield* Effect.die(
-        new Error(
-          `Two ActionDurableObject.layerWebSocket protocols of one object serve the path ${path}: a router prefix does not tell them apart: give each its own path, such as /a/rpc and /b/rpc`,
-        ),
-      );
-    }
 
     const refusal = yield* refusalOf(version);
 
@@ -221,7 +221,7 @@ const makeProtocol = (
       );
 
     const protocol = yield* RpcServer.Protocol.make((write) => {
-      receivers.set(group, {
+      const registered = sockets.register(group, {
         message: (socket, data) => {
           const clientId = idOf(socket);
 
@@ -230,12 +230,12 @@ const makeProtocol = (
           // Effect's own socket protocol answers a frame, never rejecting the event, which a
           // runtime may answer by closing the socket. The event ends once each message is
           // written: a call doing I/O or waiting on a timer keeps the object from hibernating.
-          return Effect.suspend(() => {
+          return Effect.gen(function* () {
             // Why: workerd keeps a socket's attachment across hibernation; celld 0.6.2 drops
             // it when it evicts an idle object, and the socket arrives without one. It then has
             // no saved headers: a message carrying its own token still authenticates, and one
             // relying on the upgrade's is refused as unauthenticated.
-            const headers = attachmentOf(socket.deserializeAttachment())?.headers ?? [];
+            const headers = (yield* Effect.orDie(attachmentOf(socket)))?.headers ?? [];
 
             // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- What a client sent: RpcServer checks each message's tag, id and payload, and a message it cannot read fails as a defect, answered as one.
             const messages = parser.decode(
@@ -248,7 +248,7 @@ const makeProtocol = (
 
             const kept = sent.length === 0 || tracked(socket, (pending) => [...pending, ...sent]);
 
-            return Effect.forEach(
+            return yield* Effect.forEach(
               messages,
               (message) =>
                 !Predicate.isTagged(message, "Request")
@@ -274,6 +274,16 @@ const makeProtocol = (
         },
         close: (socket) => Effect.asVoid(Queue.offer(disconnects, idOf(socket))),
       });
+
+      // Why: the router does not tell a protocol the prefix it is mounted under, so two protocols
+      // at one `path` would share their sockets' tags and answer each other's sockets.
+      if (!registered) {
+        return Effect.die(
+          new Error(
+            `Two ActionDurableObject.layerWebSocket protocols of one object serve the path ${path}: a router prefix does not tell them apart: give each its own path, such as /a/rpc and /b/rpc`,
+          ),
+        );
+      }
 
       // Why: a call the instance before was answering when an eviction, a deploy or a crash cut
       // it off is never answered, and its client would wait on an open socket for good, since the
@@ -338,7 +348,7 @@ const makeProtocol = (
           );
         }
 
-        state.acceptWebSocket(server, [group, socketTag(yield* allocate)]);
+        state.acceptWebSocket(server, [group, socketTag(yield* sockets.allocate)]);
 
         return upgraded(client);
       }),
@@ -350,16 +360,6 @@ const makeProtocol = (
 const closeReasonBytes = 123;
 
 const bytesOf = (text: string) => new TextEncoder().encode(text).byteLength;
-
-// Why: a version is any string, a long fingerprint included, so the default reason names it only
-// when it fits the close frame: a reason naming a long version would be refused at `close`.
-const defaultReason = (version: string) => {
-  const named = `This server speaks protocol ${version}: reload the page`;
-
-  return bytesOf(named) <= closeReasonBytes
-    ? named
-    : "This server speaks another protocol: reload the page";
-};
 
 // Why: a refusal's code is one of the private-use codes, 4000 to 4999, as the WHATWG WebSocket
 // standard's `close()` takes them: the core's `watch` ends at a close with one of those, the
@@ -377,7 +377,11 @@ const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
   Effect.gen(function* () {
     if (protocol === undefined) return undefined;
 
-    const { version, code, reason = defaultReason(version) } = protocol;
+    const {
+      version,
+      code,
+      reason = `This server speaks protocol ${version}: reload the page`,
+    } = protocol;
 
     if (!acceptedCode(code)) {
       return yield* Effect.die(
@@ -390,7 +394,7 @@ const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
     if (bytesOf(reason) > closeReasonBytes) {
       return yield* Effect.die(
         new Error(
-          `ActionDurableObject.layerWebSocket's protocol.reason is ${bytesOf(reason)} bytes, more than the ${closeReasonBytes} a close frame holds: give one of at most ${closeReasonBytes} bytes, UTF-8 encoded`,
+          `ActionDurableObject.layerWebSocket's protocol.reason, given or the default naming its version, is ${bytesOf(reason)} bytes, more than the ${closeReasonBytes} a close frame holds: give a reason of at most ${closeReasonBytes} bytes, UTF-8 encoded`,
         ),
       );
     }
@@ -448,7 +452,7 @@ export interface LayerWebSocketOptions {
     readonly version: string;
     /** The close code of a refusal, which a page's client stops at and its `watch` ends at: an integer from 4000 to 4999, the private-use codes; another fails `layerWebSocket`'s build. */
     readonly code: number;
-    /** The close reason of a refusal, at most 123 bytes UTF-8 encoded, as a close frame holds: a longer one fails `layerWebSocket`'s build. By default `This server speaks protocol <version>: reload the page`, or `This server speaks another protocol: reload the page` where the version would not fit, so any `version` builds. */
+    /** The close reason of a refusal, at most 123 bytes UTF-8 encoded, as a close frame holds: a longer one, the default included, fails `layerWebSocket`'s build. By default `This server speaks protocol <version>: reload the page`, which fits a `version` of up to 78 bytes: give a reason with a longer one. */
     readonly reason?: string;
   };
 }
@@ -483,9 +487,6 @@ export const layerWebSocket = (
 ): Layer.Layer<RpcServer.Protocol, never, Sockets | State | HttpRouter.HttpRouter> =>
   Layer.effect(RpcServer.Protocol)(
     Effect.gen(function* () {
-      const state = yield* State;
-      const registry = yield* registries.of(yield* Sockets);
-
-      return yield* makeProtocol(state, registry, options);
+      return yield* makeProtocol(yield* State, yield* Sockets, options);
     }),
   );

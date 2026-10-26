@@ -110,7 +110,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * - Workers RPC limits a call's arguments and its answer to 32 MiB, serialized: past it, the call fails with the runtime's `limited to 32MiB` error.
  * - An object serving no `calls`, once built, or a class without the method, fails each call, with the object's or the runtime's message as the error's cause; an object whose build fails fails it with that failure first.
  * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.
- * - Unary: an rpc that streams fails with a defect at its first chunk, so a handler returning a stream that never emits leaves the call waiting for good.
+ * - Unary: an rpc that streams fails with a defect at its first chunk, so a handler returning a stream that never emits leaves the call waiting for good; `client` gives such an rpc no method.
  * - `RpcClient.make` over it forks a fiber started on a timer of the request that builds it, which workerd drops when that request ends: a client first built lazily inside a Worker's request that ends without waiting on I/O never starts it, and every later call waits until workerd cancels it as hung; build the client per request or, shared, at module scope under Effect's sync scheduler, as `HttpRouter.toWebHandler`'s gotchas show; an object's build, under the microtask scheduler, did not strand it in the tests.
  */
 export const layerStubClient = (stub: Stub | (() => Stub)): Layer.Layer<RpcClient.Protocol> =>
@@ -154,19 +154,16 @@ export type Client<Group> = RpcClient.RpcClient<
  * one class: `room(() => env.CHAT_ROOM.getByName(name)).latestAt()`. One native client, built
  * in the given `Scope`, serves every object, and each call gets its stub from `stubOf` as it is
  * sent, so no stub is held, nothing is kept per object and an eviction changes nothing: a
- * client over one object may be kept for good, built per request or at module scope under
- * Effect's sync scheduler, as a gotcha below says. A call fails with the rpc's declared errors
- * and the stub's own failure, an `RpcClientError`, as Effect's native client does.
+ * client over one object may be kept for good. Each call goes over `layerStubClient`'s
+ * transport, whose gotchas hold here too: a call fails with the rpc's declared errors and the
+ * stub's own failure, an `RpcClientError`, as Effect's native client does.
  *
  * **Gotchas**
  *
- * - Never hold a stub: Cloudflare's error handling guide says "Many exceptions leave the DurableObjectStub in a "broken" state", failing every later request through it, so `stubOf` makes a new one for each call.
  * - `stubOf` reads `env` as each call is sent, from the `env` import of `cloudflare:workers` or the `env` `make`'s `services` function is given, never as the module evaluates; one that throws is a defect.
  * - Only names you accept should reach `getByName`: each name is another object.
  * - An `ActionRpc` binding's `group` fails here, `Expected null`, as `ActionRpc.layer` carries its values as JSON over the stub's protocol passing values: call such an object's actions and native rpcs with `ActionRpc.client` over `layerStubClient(() => stub)`.
- * - An rpc that streams has no method, as `Client` types it: the transport is unary, and over `layerStubClient` the object answers one with a defect at its first chunk.
- * - The stub's failure is an `RpcClientError` whose `RpcClientDefect` holds the runtime's error as its `cause`: `.retryable` true allows repeating the call, as Cloudflare's guide says, and `.durableObjectReset` true needs a new stub, which `stubOf` makes for each call.
- * - It forks a fiber started on a timer of the request that builds it, which workerd drops when that request ends: built lazily inside a Worker's request that ends without waiting on I/O, the fiber never starts, and every later call waits until workerd cancels it as hung; build it per request or, shared, at module scope under Effect's sync scheduler, as `HttpRouter.toWebHandler`'s gotchas show; an object's build, under the microtask scheduler, did not strand it in the tests.
+ * - An rpc that streams has no method, as `Client` types it.
  */
 export const client = <Rpcs extends Rpc.Any>(
   group: RpcGroup.RpcGroup<Rpcs>,

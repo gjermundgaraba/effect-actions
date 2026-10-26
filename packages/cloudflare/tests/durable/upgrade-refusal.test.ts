@@ -10,7 +10,7 @@ import {
   allowedOrigin,
   expectedProtocol,
   givenReason,
-  longVersions,
+  longestVersion,
   statusKey,
   VersionedRpcs,
 } from "../support/versioned.js";
@@ -95,38 +95,38 @@ describe("layerWebSocket's protocol", () => {
   );
 
   it.effect(
-    "fails the build with a reason given past a close frame's 123 bytes, UTF-8 encoded",
+    "fails the build with a reason past a close frame's 123 bytes, UTF-8 encoded, the default naming a long version too",
     () =>
       Effect.gen(function* () {
         expect(yield* built({ version: "3", code: 4000, reason: "é".repeat(62) })).toContain(
-          "protocol.reason is 124 bytes, more than the 123 a close frame holds",
+          "protocol.reason, given or the default naming its version, is 124 bytes, more than the 123 a close frame holds",
         );
         expect(yield* built({ version: "3", code: 4000, reason: `x${"é".repeat(61)}` })).toBe(
           "built",
         );
+        expect(yield* built({ version: `${longestVersion}x`, code: 4000 })).toContain(
+          "the default naming its version, is 124 bytes",
+        );
+        expect(yield* built({ version: longestVersion, code: 4000 })).toBe("built");
+        expect(
+          yield* built({ version: "v".repeat(128), code: 4000, reason: "Reload the page" }),
+        ).toBe("built");
       }),
   );
 
   it.effect(
-    "refuses a page of another version under any version, naming it in the default reason where it fits a close frame, UTF-8 encoded",
+    "refuses a page of another version, naming the longest version that fits in the default reason, UTF-8 encoded",
     () =>
       Effect.gen(function* () {
-        const reasons: Record<string, string | undefined> = {};
+        const { status, socket } = yield* upgrade(fresh(), "/longest?protocol=2");
+        const client = yield* acceptedAsTheClientListens(socket);
+        const { reason } = yield* Effect.flip(client.protocol());
 
-        for (const name of Object.keys(longVersions)) {
-          const { status, socket } = yield* upgrade(fresh(), `/${name}?protocol=2`);
-          const client = yield* acceptedAsTheClientListens(socket);
-          const { reason } = yield* Effect.flip(client.protocol());
-
-          expect(status).toBe(101);
-          expect(reason).toMatchObject({ _tag: "SocketCloseError", code: 4000 });
-          reasons[name] = reason._tag === "SocketCloseError" ? reason.closeReason : undefined;
-        }
-
-        expect(reasons).toEqual({
-          long: "This server speaks another protocol: reload the page",
-          fits: `This server speaks protocol ${longVersions.fits}: reload the page`,
-          over: "This server speaks another protocol: reload the page",
+        expect(status).toBe(101);
+        expect(reason).toMatchObject({
+          _tag: "SocketCloseError",
+          code: 4000,
+          closeReason: `This server speaks protocol ${longestVersion}: reload the page`,
         });
       }).pipe(Effect.scoped),
   );

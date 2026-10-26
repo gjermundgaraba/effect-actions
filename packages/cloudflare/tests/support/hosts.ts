@@ -2,7 +2,6 @@ import { env } from "cloudflare:workers";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { Rpc, RpcGroup, RpcServer } from "effect/rpc";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { layerStub } from "../../src/durable/calls.js";
 
 export class PluginNotFound extends Schema.TaggedError<PluginNotFound>()("PluginNotFound", {
   plugin: Schema.String,
@@ -126,8 +125,3 @@ export const streamCalls = RpcServer.layer(StreamRpcs).pipe(
     }),
   ),
 );
-
-export const twoProtocolCalls = Layer.mergeAll(
-  pluginCalls.pipe(Layer.provide(layerStub())),
-  streamCalls.pipe(Layer.provide(layerStub())),
-).pipe(Layer.provide(PluginStore.layer));

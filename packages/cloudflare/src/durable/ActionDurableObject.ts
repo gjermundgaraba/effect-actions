@@ -7,9 +7,9 @@ import {
   HttpServer,
   type HttpServerRequest,
 } from "effect/http";
-import type { RpcMessage, RpcServer } from "effect/rpc";
-import { Alarm, applicationOwner, makeSchedule } from "./alarm.js";
-import { Calls, layerStub, type StubRequest } from "./calls.js";
+import { type RpcMessage, RpcServer } from "effect/rpc";
+import { Alarm, alarmOf, applicationOwner, makeSchedule } from "./alarm.js";
+import { makeStubProtocol, type StubRequest } from "./calls.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
 
@@ -105,8 +105,8 @@ export interface Options<
    * again after every eviction, and never finalized. They may require `State`, `Alarm`,
    * `Sockets` and the services, as Layers and as
    * handlers; any other request-time requirement must be provided by their middleware or
-   * authentication, or be a service they provide themselves. Without them, `fetch` answers 404, and there are no socket handlers, as no
-   * protocol accepts a socket.
+   * authentication, or be a service they provide themselves. Without them, `fetch` answers 404, and
+   * no protocol accepts a socket.
    *
    * **Gotchas**
    *
@@ -128,6 +128,7 @@ export interface Options<
    * **Gotchas**
    *
    * - The calls serve one group on the one protocol `make` and `handlers` give them: serve several groups as one, `group.merge(other)`.
+   * - Calls running no rpc server on the protocol, such as a group's handlers given without `RpcServer.layer(group)`, fail the object's build, naming it.
    * - A `Date`, bytes, `undefined` and an `Error` defect cross as themselves; an `Option`, an exit and a tagged error as their tagged objects, a `Map` and a `Set` as arrays.
    * - A schema with no JSON form, such as `Schema.instanceOf(Date)`, works over the stub, not over `layerWebSocket`, which speaks JSON; an `ActionRpc` binding's values cross as JSON over either.
    * - A value the clone refuses, such as a class instance in a `Schema.Unknown`, or a defect that is a class instance other than an `Error`, fails the whole call with workerd's `DataCloneError`, whatever its exit.
@@ -164,31 +165,26 @@ type HandlerOf<K extends keyof DurableObject<Cloudflare.Env>> = NonNullable<
 >;
 
 /**
- * The socket handlers of an object serving `routes`, each taking the runtime's own arguments:
- * `handlers` returns them, and the class `make` returns defines them, only when the options have
- * `routes`, since without them no protocol accepts a socket.
+ * The handlers `handlers` returns and the class `make` returns defines, each taking the runtime's
+ * own arguments, so a Durable Object class delegates those it serves this way and writes the
+ * others itself. Each awaits the object's build, started by the first of them called, and
+ * rejects with its failure.
  */
-export interface SocketHandlers {
+export interface Handlers<S = never> {
+  /** Serves the routes, or answers 404 when there are none. */
+  fetch(...args: Parameters<HandlerOf<"fetch">>): Promise<Response>;
   /**
    * Hands the message to the protocol whose socket it is, and resolves for a socket no protocol
    * accepted.
    */
   webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>): Promise<void>;
-  /** Ends the socket's protocol client, and resolves for a socket no protocol accepted. */
+  /**
+   * Completes the closing handshake of any socket, replying with the client's code and reason,
+   * and ends the socket's protocol client, if a protocol accepted it.
+   */
   webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
   /** Ends the socket's protocol client, and resolves for a socket no protocol accepted. */
   webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
-}
-
-/**
- * The handlers `handlers` returns, each taking the runtime's own arguments, so a Durable Object
- * class delegates those it serves this way and writes the others itself: the socket handlers
- * only with `routes`. Each awaits the object's build, started by the first of them called, and
- * rejects with its failure.
- */
-export interface Handlers<S = never> extends SocketHandlers {
-  /** Serves the routes, or answers 404 when there are none. */
-  fetch(...args: Parameters<HandlerOf<"fetch">>): Promise<Response>;
   /**
    * Answers one call over the object's stub, the messages `layerStubClient` sends, with its
    * responses, as values, through the `calls` option's server, once every request it carries
@@ -207,11 +203,13 @@ export interface Handlers<S = never> extends SocketHandlers {
    * what the alarm runs through, and what the object's own methods run their Effects with, such
    * as a method a Worker calls over the object's stub. A Layer the effect provides itself, or an `Action.client` it
    * acquires, is built for that call alone: give what calls share as `services`.
+   *
+   * **Gotchas**
+   *
+   * - A Durable Object's public methods are callable over its stub, the `run` of a class `make` returns too, but it takes an Effect, which no stub can send: a caller over the stub gets a rejection, nothing more.
    */
   run<A, E>(effect: Effect.Effect<A, E, S | State | Alarm | Scope.Scope>): Promise<A>;
 }
-
-const handlersKey: unique symbol = Symbol("effect-actions-cloudflare/ActionDurableObject/handlers");
 
 // Why: Effect's default scheduler starts a forked fiber, such as each call an rpc server
 // handles, and yields a long one, on a timer, and a timer lets the runtime deliver the object's
@@ -221,13 +219,10 @@ const handlersKey: unique symbol = Symbol("effect-actions-cloudflare/ActionDurab
 // the lost writes back; its cost is that CPU-heavy work no longer lets other events in.
 const scheduler = new Scheduler.MixedScheduler("sync");
 
-const inObject = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.provideService(effect, Scheduler.Scheduler, scheduler);
-
 const handlersOf = <S>(
   ctx: DurableObjectState,
   options: Omit<ErasedOptions<S>, "routes"> & { readonly routes?: Layer.Any | undefined },
-) => {
+): Handlers<S> => {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
   const services = (options.services ?? Layer.empty) as Layer.Layer<S, unknown, ServicesRequire>;
 
@@ -248,6 +243,8 @@ const handlersOf = <S>(
 
   const state = Layer.succeed(State, ctx);
 
+  const schedule = makeSchedule(ctx);
+
   const build = Effect.gen(function* () {
     // Why: an implementation of the core is shared through the memo map of the graph it is
     // built in, so services, calls and routes build in this one map: an implementation the
@@ -261,7 +258,7 @@ const handlersOf = <S>(
       // the instance lives, and a failed build leaves no fiber of its own running.
       const context = yield* Layer.buildWithMemoMap(
         services.pipe(
-          Layer.provideMerge(Alarm.layer),
+          Layer.provideMerge(Layer.succeed(Alarm)(alarmOf(schedule))),
           Layer.provideMerge(state),
           Layer.provideMerge(Layer.succeed(Scheduler.Scheduler)(scheduler)),
         ),
@@ -271,7 +268,7 @@ const handlersOf = <S>(
 
       const given = Layer.succeedContext(context);
 
-      yield* makeSchedule(ctx).restore;
+      yield* schedule.restore;
 
       const call =
         calls === undefined
@@ -281,34 +278,37 @@ const handlersOf = <S>(
                   "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer",
                 ),
               )
-          : yield* Effect.map(
-              Layer.buildWithMemoMap(
+          : yield* Effect.gen(function* () {
+              const stub = yield* Effect.provideContext(makeStubProtocol, context);
+
+              yield* Layer.buildWithMemoMap(
                 calls.pipe(
-                  Layer.provide(layerStub()),
-                  Layer.provideMerge(Calls.layer),
+                  Layer.provide(Layer.succeed(RpcServer.Protocol)(stub.protocol)),
                   Layer.provide(given),
                 ),
                 memoMap,
                 scope,
-              ),
-              (served) => (request: StubRequest) =>
-                Effect.runPromise(inObject(Context.get(served, Calls).call(request))),
-            );
+              );
 
-      if (routes === undefined) {
-        return {
-          context,
-          call,
-          sockets: undefined,
-          serve: () => Promise.resolve(new Response(null, { status: 404 })),
-        };
-      }
+              yield* stub.served;
+
+              return (request: StubRequest) => Effect.runPromise(stub.serve(request));
+            });
 
       const sockets = yield* Layer.buildWithMemoMap(
         Sockets.layer.pipe(Layer.provide(given)),
         memoMap,
         scope,
       );
+
+      if (routes === undefined) {
+        return {
+          context,
+          call,
+          sockets: Context.get(sockets, Sockets),
+          serve: () => Promise.resolve(new Response(null, { status: 404 })),
+        };
+      }
 
       const routed = yield* Layer.buildWithMemoMap(
         routes.pipe(
@@ -369,7 +369,7 @@ const handlersOf = <S>(
 
     void ctx
       .blockConcurrencyWhile(async () => {
-        const exit = await Effect.runPromiseExit(inObject(build));
+        const exit = await Effect.runPromiseExit(build, { scheduler });
 
         building = false;
 
@@ -433,49 +433,34 @@ const handlersOf = <S>(
       ),
     );
 
+  // Why: the services' context carries the object's scheduler, which `provided` gives `run`, as
+  // the calls' and the protocols' own context gives each call and socket event.
   const run = <A, E>(effect: Effect.Effect<A, E, RunRequires<S>>): Promise<A> =>
-    withBuilt((built) => Effect.runPromise(inObject(provided(built, effect))));
+    withBuilt((built) => Effect.runPromise(provided(built, effect)));
 
   const dispatch = (event: (sockets: Sockets["Service"]) => Effect.Effect<boolean>) =>
     withBuilt(async ({ sockets }) => {
-      if (sockets !== undefined) await Effect.runPromise(inObject(event(sockets)));
+      await Effect.runPromise(event(sockets));
     });
 
   const onAlarm = options.alarm;
 
   return {
-    common: {
-      fetch: (request) => withBuilt(({ serve }) => serve(request)),
-      effectActionsRpc: (request) => withBuilt(({ call }) => call(request)),
-      alarm: () =>
-        run(
-          Effect.flatMap(State, (state) =>
-            makeSchedule(state).runDue({
-              [applicationOwner]: (info) => onAlarm?.(info) ?? Effect.void,
-            }),
-          ),
-        ),
-      run,
-    } satisfies Omit<Handlers<S>, keyof SocketHandlers>,
-    sockets: {
-      webSocketMessage: (socket, message) =>
-        dispatch((sockets) => sockets.message(socket, message)),
-      webSocketClose: (socket, code, reason) =>
-        dispatch((sockets) => sockets.close(socket, code, reason)),
-      webSocketError: (socket) => dispatch((sockets) => sockets.error(socket)),
-    } satisfies SocketHandlers,
+    fetch: (request) => withBuilt(({ serve }) => serve(request)),
+    webSocketMessage: (socket, message) => dispatch((sockets) => sockets.message(socket, message)),
+    webSocketClose: (socket, code, reason) =>
+      dispatch((sockets) => sockets.close(socket, code, reason)),
+    webSocketError: (socket) => dispatch((sockets) => sockets.error(socket)),
+    effectActionsRpc: (request) => withBuilt(({ call }) => call(request)),
+    alarm: () =>
+      run(
+        schedule.runDue({
+          [applicationOwner]: (info) => onAlarm?.(info) ?? Effect.void,
+        }),
+      ),
+    run,
   };
 };
-
-/** What `handlers` returns given `RT`, its `routes`: the socket handlers only with routes. */
-type HandlersOf<S, RT> = [RT] extends [Layer.Any]
-  ? Handlers<S>
-  : Omit<Handlers<S>, keyof SocketHandlers>;
-
-/** What `make` returns given `RT`, its `routes`: the socket handlers only with routes. */
-type InstanceOf<S, Env, RT> = [RT] extends [Layer.Any]
-  ? SocketHandlers & Instance<S, Env>
-  : Instance<S, Env>;
 
 /**
  * The object's lifecycle, for a Durable Object class that cannot extend the one `make` returns:
@@ -495,8 +480,8 @@ type InstanceOf<S, Env, RT> = [RT] extends [Layer.Any]
  * - An instance builds as it is constructed, under `blockConcurrencyWhile`, so the runtime holds every event, the first included, until the build ends, then delivers them one by one, as to a built instance: a build longer than 30 seconds resets the object.
  * - Every Effect of the object runs under Effect's microtask scheduler, `new Scheduler.MixedScheduler("sync")`, where its default's timers would let the next event in between any two steps: CPU-heavy work holds every other event until it ends.
  * - Calls still interleave where a plain method's would: while one waits on I/O, another object or a timer, such as `Effect.sleep`, the next event runs, so serialize a read and the write that depends on it with a `Semaphore`, or make both one synchronous `storage.kv` or `storage.sql` step.
- * - Without `routes`, `fetch` answers 404 and it returns no socket handlers: a class accepting its own sockets defines its own; without `calls`, `effectActionsRpc` rejects once the object is built, naming the option.
- * - A socket the class accepts itself, with `State`'s `acceptWebSocket`, carries no protocol's tag: the socket handlers resolve for it, so the class answers the sockets carrying its own tag in `webSocketMessage` and delegates the rest.
+ * - Without `routes`, `fetch` answers 404; without `calls`, `effectActionsRpc` rejects once the object is built, naming the option.
+ * - A socket the class accepts itself, with `State`'s `acceptWebSocket`, carries no protocol's tag: the socket handlers resolve for it, `webSocketClose` once it has replied to the client's close, so the class answers the sockets carrying its own tag in `webSocketMessage` and delegates the rest.
  * - Delegate `alarm` too: the object's one alarm is the package's, and workerd refuses `storage.setAlarm`, which `Alarm.set` calls, on a class without an `alarm` method, where celld 0.6.2 accepts it and drops the alarm when it is due.
  */
 export const handlers = <
@@ -511,39 +496,20 @@ export const handlers = <
   CA = never,
   CE = never,
   CR extends RpcServer.Protocol | S | State | Alarm = never,
-  RT = undefined,
 >(
   ctx: DurableObjectState,
-  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR> & { readonly routes?: RT },
-): HandlersOf<S, RT> => {
-  const { common, sockets } = handlersOf(ctx, options);
-
-  // Why: without routes no protocol accepts a socket, so the socket handlers would only wake a
-  // hibernating object for a socket the class accepted itself, and a close handler that does
-  // not reciprocate leaves the client a 1006 under a `compatibility_date` before `2026-04-07`:
-  // a class accepting its own sockets defines its own.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Options-dependent handlers: the socket handlers are left out exactly when there are no routes, as `HandlersOf` states.
-  return (options.routes === undefined ? common : { ...common, ...sockets }) as HandlersOf<S, RT>;
-};
+  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
+): Handlers<S> => handlersOf(ctx, options);
 
 /**
- * An instance of a class `make` returns, with the handlers it defines, each taking the
- * runtime's own arguments, so a class extending it overrides them as Cloudflare declares them,
- * its `env` the one its `services` function takes. Its `alarm` and socket handlers are
- * Cloudflare's own, optional in the type; one made with `routes` has the `SocketHandlers` in its
- * type too.
+ * An instance of a class `make` returns: a Durable Object with the handlers it defines, each
+ * taking the runtime's own arguments, so a class extending it overrides them as `Handlers`
+ * declares them, returning a promise, and reaches `make`'s through `super`, its `env` the one its
+ * `services` function takes.
  */
-export interface Instance<S = never, Env = Cloudflare.Env> extends DurableObject<Env> {
-  fetch(...args: Parameters<HandlerOf<"fetch">>): Promise<Response>;
-  /** `Handlers`' `effectActionsRpc`: what `layerStubClient` and `client` call. */
-  effectActionsRpc(request: StubRequest): ReturnType<Handlers["effectActionsRpc"]>;
-  /**
-   * `Handlers`' `run`, for the methods of a class extending this one. A Durable Object's public
-   * methods are callable over its stub, this one too, but it takes an Effect, which no stub can
-   * send: a caller over the stub gets a rejection, nothing more.
-   */
-  run<A, E>(effect: Effect.Effect<A, E, S | State | Alarm | Scope.Scope>): Promise<A>;
-}
+// Why: `Handlers` comes first, so `super.alarm(info)` and the other handlers resolve to the
+// delegated signatures, which always exist, rather than Cloudflare's optional ones.
+export type Instance<S = never, Env = Cloudflare.Env> = Handlers<S> & DurableObject<Env>;
 
 /**
  * `make` with `services`, a function of the instance's `env`, whose parameter's type is the
@@ -562,7 +528,6 @@ export function make<
   CE = never,
   CR extends RpcServer.Protocol | S | State | Alarm = never,
   Env = Cloudflare.Env,
-  RT = undefined,
 >(
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
     /**
@@ -572,9 +537,8 @@ export function make<
      * is the class's `env`.
      */
     readonly services: (env: Env) => Layer.Layer<S, SE, SR>;
-    readonly routes?: RT;
   },
-): new (ctx: DurableObjectState, env: Env) => InstanceOf<S, Env, RT>;
+): new (ctx: DurableObjectState, env: Env) => Instance<S, Env>;
 // Why: a `services` function of `env` has its parameter inferred, which fixes the type
 // parameters a default gives before the function's return gives `S`, so its signature has none
 // for the services. The other stays last, since TypeScript reports an argument matching neither
@@ -590,9 +554,9 @@ export function make<
  *
  * **Gotchas**
  *
- * - Made with `routes`, it has the `SocketHandlers`, which resolve for a socket no protocol accepted, such as one a class extending it accepts itself: an override answers its own sockets and calls `super` for the rest. Made without, it has none, and a class accepting its own sockets defines its own.
+ * - Its socket handlers resolve for a socket no protocol accepted, such as one a class extending it accepts itself, `webSocketClose` once it has replied to the client's close: an override answers its own sockets and calls `super` for the rest.
  * - The `services` function's parameter type is the class's `env`, so an application's own `Env` needs no augmenting of `Cloudflare.Env`; services reading no `env` are `() => layer`, and a class without one has `Cloudflare.Env`.
- * - It always has `alarm`, the package's, which runs the `alarm` option at the time `Alarm.set` gave: an override reaches it with `await super.alarm?.(info)`, optional in `Instance`'s type as Cloudflare declares it, and one that does not call it runs none of the times `Alarm` keeps.
+ * - It always has `alarm`, the package's, which runs the `alarm` option at the time `Alarm.set` gave: an override reaches it with `await super.alarm(info)`, and one that does not call it runs none of the times `Alarm` keeps.
  */
 export function make<
   S = never,
@@ -606,13 +570,11 @@ export function make<
   CA = never,
   CE = never,
   CR extends RpcServer.Protocol | S | State | Alarm = never,
-  RT = undefined,
 >(
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
     readonly services?: ((env: Cloudflare.Env) => Layer.Layer<S, SE, SR>) | undefined;
-    readonly routes?: RT;
   },
-): new (ctx: DurableObjectState, env: Cloudflare.Env) => InstanceOf<S, Cloudflare.Env, RT>;
+): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S>;
 export function make<S>(
   options: Omit<ErasedOptions<S>, "services" | "routes"> & {
     readonly routes?: Layer.Any | undefined;
@@ -621,55 +583,46 @@ export function make<S>(
       | undefined;
   },
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S> {
-  class ActionDurableObject extends DurableObject<Cloudflare.Env> {
-    // Why: the handlers are an instance's, reached by the subclass below, which adds the socket
-    // handlers only when the options have routes; a private field is not visible to a subclass,
-    // and a property a string names would be callable over the stub.
-    readonly [handlersKey]: Handlers<S>;
+  return class ActionDurableObject extends DurableObject<Cloudflare.Env> {
+    readonly #handlers: Handlers<S>;
 
     constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
       super(ctx, env);
 
-      const { common, sockets } = handlersOf(this.ctx, {
+      this.#handlers = handlersOf(this.ctx, {
         ...options,
         services: options.services?.(this.env),
       });
-
-      this[handlersKey] = { ...common, ...sockets };
     }
 
     override fetch(...args: Parameters<HandlerOf<"fetch">>) {
-      return this[handlersKey].fetch(...args);
+      return this.#handlers.fetch(...args);
+    }
+
+    override webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>) {
+      return this.#handlers.webSocketMessage(...args);
+    }
+
+    override webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>) {
+      return this.#handlers.webSocketClose(...args);
+    }
+
+    override webSocketError(...args: Parameters<HandlerOf<"webSocketError">>) {
+      return this.#handlers.webSocketError(...args);
     }
 
     effectActionsRpc(request: StubRequest) {
-      return this[handlersKey].effectActionsRpc(request);
+      return this.#handlers.effectActionsRpc(request);
     }
 
     // Why: always defined, as the object's one alarm is the package's: workerd refuses
     // `storage.setAlarm`, which `Alarm.set` calls, on a class without an `alarm` handler.
     override alarm(info?: AlarmInvocationInfo) {
-      return this[handlersKey].alarm(info);
+      return this.#handlers.alarm(info);
     }
 
     run<A, E>(effect: Effect.Effect<A, E, RunRequires<S>>) {
-      return this[handlersKey].run(effect);
+      return this.#handlers.run(effect);
     }
-  }
-
-  return options.routes === undefined
-    ? ActionDurableObject
-    : class extends ActionDurableObject {
-        override webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>) {
-          return this[handlersKey].webSocketMessage(...args);
-        }
-
-        override webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>) {
-          return this[handlersKey].webSocketClose(...args);
-        }
-
-        override webSocketError(...args: Parameters<HandlerOf<"webSocketError">>) {
-          return this[handlersKey].webSocketError(...args);
-        }
-      };
+  };
 }

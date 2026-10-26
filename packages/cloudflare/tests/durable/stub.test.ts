@@ -6,7 +6,7 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
-import { Calls, layerStub } from "../../src/durable/calls.js";
+import { makeStubProtocol } from "../../src/durable/calls.js";
 import { noteHeader, Overdrawn, Rpc } from "../support/app.js";
 import {
   PaneRpcs,
@@ -14,7 +14,6 @@ import {
   PluginNotFound,
   PluginRpcs,
   StreamRpcs,
-  twoProtocolCalls,
 } from "../support/hosts.js";
 
 const plugin = (id: string) => env.PLUGIN_HOST.getByName(id);
@@ -244,25 +243,6 @@ describe("layerStubClient", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("refuses a second stub protocol registering with one Calls as it builds", () =>
-    Effect.gen(function* () {
-      const failure = yield* Effect.promise(() =>
-        runInDurableObject(env.PLUGIN_HOST.getByName("two"), (_, state) =>
-          Effect.runPromiseExit(
-            Layer.build(
-              twoProtocolCalls.pipe(
-                Layer.provideMerge(Calls.layer),
-                Layer.provide(Layer.succeed(ActionDurableObject.State, state)),
-              ),
-            ).pipe(Effect.scoped),
-          ).then((exit) => String(defectOf(exit))),
-        ),
-      );
-
-      expect(failure).toContain("Two stub protocols in one object's calls");
-    }),
-  );
-
   it.effect(
     "fails an ActionRpc layer's build serving a streaming or progress action, an event type or a native stream rpc, and builds it serving the others alone",
     () =>
@@ -317,8 +297,11 @@ describe("layerStubClient", () => {
                 Layer.build(
                   served.pipe(
                     Layer.provide(Event.layerMemory),
-                    Layer.provide(layerStub()),
-                    Layer.provide(Calls.layer),
+                    Layer.provide(
+                      Layer.effect(RpcServer.Protocol)(
+                        Effect.map(makeStubProtocol, ({ protocol }) => protocol),
+                      ),
+                    ),
                     Layer.provide(Layer.succeed(ActionDurableObject.State, state)),
                   ),
                 ).pipe(Effect.scoped),
