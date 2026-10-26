@@ -66,19 +66,20 @@ export const eventEndpointOf = (
     error: errors.map(declared),
   }).annotate(OpenApi.Description, event.description);
 
-/** What a webhook subscribe to `event` takes: its input, the callback, a cursor, a lifetime. */
+/**
+ * What a webhook subscribe to `event` takes: a subscription's input and cursor, the callback,
+ * and a lifetime.
+ */
 export const WebhookSubscriptionOf = <E extends Event.Any>(event: E) =>
-  Schema.Struct({
-    input: event.input,
-    delivery: Schema.Struct({ url: CallbackUrl, secret: WebhookSecret }),
-    cursor: Schema.optional(Schema.NullOr(Schema.String)).annotate({
-      description: "Where to start: a cursor a delivery or a refresh carried; omitted, from now.",
+  SubscriptionOf(event).pipe(
+    Schema.fieldsAssign({
+      delivery: Schema.Struct({ url: CallbackUrl, secret: WebhookSecret }),
+      ttlMs: Schema.optional(Schema.NullOr(Schema.Finite)).annotate({
+        description:
+          "The lifetime it suggests, in milliseconds; the answer's refreshBefore is the grant.",
+      }),
     }),
-    ttlMs: Schema.optional(Schema.NullOr(Schema.Finite)).annotate({
-      description:
-        "The lifetime it suggests, in milliseconds; the answer's refreshBefore is the grant.",
-    }),
-  });
+  );
 
 /** What a webhook unsubscribe from `event` takes: the input and callback it subscribed with. */
 export const WebhookCancellationOf = <E extends Event.Any>(event: E) =>
@@ -122,12 +123,12 @@ export const webhookAnswers = (
 
   return {
     subscribe: ({
-      payload: { input, delivery, cursor = null, ttlMs },
+      payload: { input, delivery, cursor, ttlMs },
     }: {
       readonly payload: {
         readonly input: ErasedValue;
         readonly delivery: { readonly url: string; readonly secret: string };
-        readonly cursor?: string | null | undefined;
+        readonly cursor: string | null;
         readonly ttlMs?: number | null | undefined;
       };
     }) =>

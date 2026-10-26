@@ -23,7 +23,8 @@ const implementations = [builds, logs, buildEvents, statusEvents, deploys, deplo
 // protected, so each request needs a member's token, and each subscriber sees what its token
 // lets it. This long-lived process holds the deploy event's `subscription` hook between polls and
 // its log in memory, and pushes each occurrence: a `requestScoped` endpoint would serve the events
-// by poll alone, and a serverless host, where no process lasts, check sources alone.
+// by poll and webhook alone, and a serverless host, where no process lasts, check sources alone,
+// without `Webhook.layer`.
 //
 // A tool answers one result, so `tailLog` would collect a whole log before answering, all of it
 // in a model's context: its implementation, `logs`, is left out, and the endpoint serves every

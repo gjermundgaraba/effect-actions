@@ -213,12 +213,12 @@ const methodsWith = <E, R>(
     if (http.events.length === 0) return actions;
 
     // Why: An event's route answers a page, or its stream where the request accepts one, so a
-    // poll asks with a client accepting JSON alone.
-    const polls: NativeClient<PollMethod<R>> = yield* nativeOf(http, httpClient, baseUrl);
+    // poll asks with a client accepting JSON alone, as do a webhook's routes, which answer JSON.
+    const plain = yield* nativeOf(http, httpClient, baseUrl);
+    const polls: NativeClient<PollMethod<R>> = plain;
     const streams: NativeClient<StreamMethod<R>> = native;
-
-    const subscribes: NativeClient<WebhookMethods<R>["subscribe"]> = client;
-    const unsubscribes: NativeClient<WebhookMethods<R>["unsubscribe"]> = client;
+    const subscribes: NativeClient<WebhookMethods<R>["subscribe"]> = plain;
+    const unsubscribes: NativeClient<WebhookMethods<R>["unsubscribe"]> = plain;
 
     const webhookOf = (name: string): WebhookMethods<R> | undefined => {
       const subscribe = subscribes[`${name}/subscribe`];
