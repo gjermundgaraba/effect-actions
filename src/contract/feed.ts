@@ -42,8 +42,6 @@ type ErasedOccurrence = Event.Occurrence<Event.Any>;
  */
 export interface Feed {
   readonly event: Event.Any;
-  /** Whether its source is a log fed by `emit`, which feeds it only while a build holds it. */
-  readonly emits: boolean;
   /**
    * Releases the `subscription` hook `subscriber`'s polls of `input` hold: present exactly where
    * its source has a hook, held per subscriber.
@@ -205,7 +203,6 @@ const checkRun = (
     });
 
   return {
-    emits: false,
     poll: (input, cursor) => Effect.map(read(input, cursor), answeredPage),
     // Why: The waiter is held before the first read, so a notify while it runs reads again at
     // once rather than at the next poll.
@@ -323,7 +320,6 @@ const logRun = (
     );
 
   return {
-    emits: source.log.emit !== undefined,
     poll: (input, cursor, { maxEvents = logPageSize }) =>
       Effect.flatMap(
         Effect.all([keyOf(source, input), log.read(cursor, pageLimit(maxEvents))]),
@@ -590,7 +586,6 @@ const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>)
 
   return {
     event,
-    emits: run.emits,
     release: run.release,
     admit: admitted,
     poll: (input, cursor, options) =>
