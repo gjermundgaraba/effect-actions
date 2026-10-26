@@ -26,7 +26,6 @@ class ChatRoom extends ActionDurableObject.make({
     Layer.provide(handlers),
     Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
   ),
-  calls: RpcServer.layer(RoomCalls).pipe(Layer.provide(calls)),
 }) {}
 ```
 
@@ -44,9 +43,9 @@ another object with Cloudflare's own RPC, a new stub for each call, its declared
 
 ```ts
 Effect.gen(function* () {
-  const room = yield* ActionDurableObject.client(RoomCalls);
+  const lobby = yield* ActionDurableObject.client(LobbyCalls);
 
-  return yield* room(() => env.CHAT_ROOM.getByName("design")).latestAt();
+  return yield* lobby(() => env.CHAT_LOBBY.getByName("lobby")).previews();
 });
 ```
 

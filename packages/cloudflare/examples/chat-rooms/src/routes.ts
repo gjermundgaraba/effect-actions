@@ -6,9 +6,8 @@ import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { LobbyHttp, RoomHttp } from "./Api.js";
-import { RoomCalls } from "./chat/Calls.js";
 import { messageEvents } from "./chat/events.js";
-import { calls, messages, preview } from "./chat/handlers.js";
+import { messages } from "./chat/handlers.js";
 import { Login } from "./identity/Identity.js";
 import { authenticate } from "./identity/verifier.js";
 import { LobbyCalls } from "./lobby/Calls.js";
@@ -16,7 +15,7 @@ import { previewEvents } from "./lobby/events.js";
 import { calls as lobbyHandlers, lobby } from "./lobby/handlers.js";
 import { LobbyRpc, protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
 
-const room = [preview, messages, messageEvents];
+const room = [messages, messageEvents];
 
 const byRoom = ({ room }: { readonly room: string }) => room;
 
@@ -24,7 +23,6 @@ const byRoom = ({ room }: { readonly room: string }) => room;
 // key names. worker.ts gives it to the room's class, which then refuses an input naming another
 // room, on its socket too; the Worker serves it below.
 export const rooms = ActionDurableObject.placed(RoomHttp, {
-  preview: byRoom,
   readMessages: byRoom,
   postMessage: byRoom,
   deleteMessage: byRoom,
@@ -44,16 +42,11 @@ const pageSocket = ActionDurableObject.layerWebSocket({
 // client reads as `SocketCloseError` and stops connecting again at, not a 403, which a browser
 // reports as a bare 1006 its page connects again after. Its JSON routes, where the Worker sends
 // each call and watch on, the token with it: the object authenticates it again, and authorizes.
-// It requires `MessageStore` and `Room` at startup: worker.ts chooses them.
+// It requires `MessageStore`, `Room` and `Activity` at startup: worker.ts chooses them.
 export const roomRoutes = Layer.mergeAll(
   ActionRpc.layer(RoomRpc, room).pipe(Layer.provide(pageSocket)),
   ActionHttp.layer(RoomHttp, room),
 ).pipe(Layer.provide(authenticate));
-
-// What a room's object serves over its stub: its own calls, on Effect's own RpcServer, for the
-// Worker and the lobby, which call them with Cloudflare's own RPC. It requires `MessageStore` at
-// startup.
-export const roomCalls = RpcServer.layer(RoomCalls).pipe(Layer.provide(calls));
 
 // What the lobby's object serves: `PreviewsChanged` on its pages' sockets, a socket a page
 // signed out opens too, as nothing on it is protected. It requires `PreviewStore` at startup.
@@ -61,8 +54,9 @@ export const lobbyRoutes = ActionRpc.layer(LobbyRpc, [previewEvents]).pipe(
   Layer.provide(pageSocket),
 );
 
-// What the lobby's object serves over its stub: its own calls, for the rooms and the Worker. It
-// requires `PreviewStore` and `Rooms` at startup.
+// What the lobby's object serves over its stub: its own calls, on Effect's own RpcServer, for
+// the rooms and the Worker, which call them with Cloudflare's own RPC. It requires `PreviewStore`
+// at startup.
 export const lobbyCalls = RpcServer.layer(LobbyCalls).pipe(Layer.provide(lobbyHandlers));
 
 // The rooms as the Worker serves them, each call sent on to its room's object. The room is read

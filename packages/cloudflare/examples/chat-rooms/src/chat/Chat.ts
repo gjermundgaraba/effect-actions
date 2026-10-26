@@ -41,16 +41,6 @@ export class NotAuthor extends Schema.TaggedError<NotAuthor>()(
 // before any object is reached.
 const inRoom = { room: RoomName };
 
-// Public: the lobby shows anyone, signed in or not, when each room was last active. What was
-// said stays with the room's members.
-export const Preview = Action.make("preview", {
-  description: "When the room's latest message was posted, in milliseconds, if it holds any.",
-  input: inRoom,
-  success: { latestAt: Schema.NullOr(Schema.Int) },
-  readOnly: true,
-  caller: Action.Anyone,
-});
-
 const signedIn = { caller: CurrentMember } as const;
 
 // Reads once: a page opening a room reads what is there, then watches `MessagePosted` below from

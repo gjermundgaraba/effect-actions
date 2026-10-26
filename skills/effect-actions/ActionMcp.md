@@ -40,9 +40,8 @@ set of routes share each builder, as `Action.implement` says:
 - Where an endpoint without `authentication` listens, and its body limit:
   [mcp-tools/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/server.ts).
 - **On a serverless host**, such as Cloudflare Workers, pass `requestScoped: true`:
-  [notes-service/src/worker.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/worker.ts). In a Cloudflare Durable
-  Object, an endpoint is not request-scoped and serves events by stream and webhook too: the
-  `@gjermundgaraba/effect-actions-cloudflare` package's docs.
+  [notes-service/src/worker.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/worker.ts). For an endpoint in a
+  Cloudflare Durable Object: the `@gjermundgaraba/effect-actions-cloudflare` package's docs.
 - The endpoint takes no layer middleware. A limit that must hold for tools goes in the handlers:
   [kitchen-sink/src/issues/write-limit.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/write-limit.ts).
 

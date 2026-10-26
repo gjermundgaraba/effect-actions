@@ -126,9 +126,8 @@ in `middleware`, keyed on the caller, and
 [kitchen-sink/src/Rpc.ts](../examples/kitchen-sink/src/Rpc.ts) binds the protected actions
 alone for it.
 
-- **On Cloudflare Workers.** `RpcServer.layerProtocolWebsocket` cannot upgrade a request there:
-  serve the rpcs from a Durable Object with `@gjermundgaraba/effect-actions-cloudflare`, whose
-  sockets hibernate.
+- **On Cloudflare Workers**, serve the rpcs from a Durable Object, with
+  `@gjermundgaraba/effect-actions-cloudflare`'s `ActionDurableObject.layerWebSocket`.
 - **The same actions as JSON too.** Merge `ActionHttp.layer(Http, implementations)` beside the
   rpc layer, each given its descriptor's provider
   ([kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts) defines both, and

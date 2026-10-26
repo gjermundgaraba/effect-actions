@@ -26,7 +26,7 @@ const cloudflareExamples = directoriesIn(join(root, cloudflare, "examples"));
 
 const cloudflareDocsPages = markdownIn(join(root, cloudflare, "docs"));
 
-const docsPages = [...markdownIn(docsDirectory), ...cloudflareDocsPages];
+const docsPages = markdownIn(docsDirectory);
 
 const cloudflarePages = [
   `${cloudflare}/README.md`,
@@ -39,8 +39,10 @@ const pages = [
   "examples/README.md",
   ...docsPages,
   ...examples.map((example) => `examples/${example}/README.md`),
-  ...cloudflarePages.filter((page) => !docsPages.includes(page)),
+  ...cloudflarePages,
 ];
+
+const everyDocsPage = [...docsPages, ...cloudflareDocsPages];
 
 const withoutCode = (page: string) =>
   read(page).replaceAll(/^[ \t]*\x60{3}[\s\S]*?^[ \t]*\x60{3}/gm, "");
@@ -69,17 +71,17 @@ const linksOf = (page: string) =>
     ([, target = "", anchor]) => ({ target, anchor }),
   );
 
+const packageOf = (page: string) => (page.startsWith(`${cloudflare}/`) ? `${cloudflare}/` : "");
+
 const snippets = pages.flatMap((page) =>
   Array.from(
     read(page).matchAll(/\x60{3}ts example=(\S+)\n([\s\S]*?)\n\x60{3}/g),
-    ([, file = "", code]) => [page, file, code] as const,
+    ([, file = "", code]) => [page, `${packageOf(page)}examples/${file}`, code] as const,
   ),
 );
 
-const packageOf = (page: string) => (page.startsWith(`${cloudflare}/`) ? `${cloudflare}/` : "");
-
-it.each(snippets)("keeps %s's snippet of examples/%s equal to the file", (page, file, code) => {
-  expect(code).toBe(read(`${packageOf(page)}examples/${file}`).trim());
+it.each(snippets)("keeps %s's snippet of %s equal to the file", (_, file, code) => {
+  expect(code).toBe(read(file).trim());
 });
 
 it.each(pages)("%s links only to files and headings that exist", (page) => {
@@ -96,13 +98,16 @@ it.each(pages)("%s links only to files and headings that exist", (page) => {
   expect(broken).toEqual([]);
 });
 
-it.each(docsPages)("%s links only inside docs/ and to examples/, which ship with it", (page) => {
-  const outside = linksOf(page)
-    .map(({ target }) => target)
-    .filter((target) => target.startsWith("..") && !target.startsWith("../examples/"));
+it.each(everyDocsPage)(
+  "%s links only inside docs/ and to examples/, which ship with it",
+  (page) => {
+    const outside = linksOf(page)
+      .map(({ target }) => target)
+      .filter((target) => target.startsWith("..") && !target.startsWith("../examples/"));
 
-  expect(outside).toEqual([]);
-});
+    expect(outside).toEqual([]);
+  },
+);
 
 it.each(cloudflarePages)(
   "%s links only inside the cloudflare package, which ships alone",
@@ -115,20 +120,20 @@ it.each(cloudflarePages)(
   },
 );
 
-it.each(docsPages)("%s names no source path of the library, which does not ship", (page) => {
+it.each(everyDocsPage)("%s names no source path of the library, which does not ship", (page) => {
   const ofAnExample = new RegExp(`(?:${[...examples, ...cloudflareExamples].join("|")})/src/`, "g");
 
   expect(withoutCode(page).replaceAll(ofAnExample, "")).not.toMatch(/\bsrc\//);
 });
 
-it.each(docsPages)("%s fences TypeScript only as a whole example file", (page) => {
+it.each(everyDocsPage)("%s fences TypeScript only as a whole example file", (page) => {
   const fences = Array.from(read(page).matchAll(/^\x60{3}ts(.*)$/gm), ([, rest = ""]) => rest);
 
   for (const rest of fences) expect(rest, page).toMatch(/^ example=\S+$/);
 });
 
 it("gives every module page a -failures.md beside it, each entry one line", () => {
-  for (const page of docsPages) {
+  for (const page of everyDocsPage) {
     if (page.endsWith("-failures.md") || page.endsWith("docs/README.md")) continue;
 
     const own = page.replace(/\.md$/, "-failures.md");
@@ -147,9 +152,12 @@ it("gives every module page a -failures.md beside it, each entry one line", () =
   }
 });
 
-it.each(docsPages)("%s stays below the 16 KB safety margin for tool-output truncation", (page) => {
-  expect(Buffer.byteLength(read(page))).toBeLessThan(16_000);
-});
+it.each(everyDocsPage)(
+  "%s stays below the 16 KB safety margin for tool-output truncation",
+  (page) => {
+    expect(Buffer.byteLength(read(page))).toBeLessThan(16_000);
+  },
+);
 
 it("lists every example in examples/README.md and gives each a README", () => {
   const index = read("examples/README.md");
@@ -177,14 +185,13 @@ it("installs the cloudflare package beside the core, at its Effect peer range", 
   expect(cloudflareManifest.peerDependencies.effect).toBe(manifest.peerDependencies.effect);
 });
 
-it("gives every module the cloudflare package exports a page and a failures page", () => {
+it("gives every module the cloudflare package exports a page", () => {
   const modules = Object.keys(cloudflareManifest.exports).flatMap((path) =>
     path === "./package.json" ? [] : [path.slice("./".length)],
   );
 
   for (const module of modules) {
     expect(cloudflareDocsPages).toContain(`${cloudflare}/docs/${module}.md`);
-    expect(cloudflareDocsPages).toContain(`${cloudflare}/docs/${module}-failures.md`);
     expect(read(`${cloudflare}/docs/${module}.md`)).toContain(
       `Import \`${cloudflareManifest.name}/${module}\``,
     );

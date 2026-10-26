@@ -29,11 +29,8 @@ const idOf = Schema.decodeUnknownOption(Schema.NumberFromString.pipe(Schema.chec
 const nextPoll = "30 seconds";
 
 // The room's messages as an event, read from the store that keeps them: a check source.
-// `postMessage` notifies after each post, so a page receives it at once. In a Durable Object a
-// check source is read when notified, not on its `nextPoll`, a timer that would keep the object
-// from hibernating: a message written by any other path reaches a page's socket and an agent's
-// MCP stream only once something notifies, and an agent polling at its next poll. A read that
-// fails is tried again 5 seconds later until one succeeds, keeping the object awake meanwhile.
+// `postMessage` notifies after each post, so a page receives it at once: when an object reads a
+// check source, and what a write that does not notify misses, is on `ActionDurableObject.handlers`.
 export const messageEvents = Event.implement(
   MessagePosted,
   Effect.gen(function* () {
@@ -85,19 +82,18 @@ they run in, and no other, so every surface serving an event, a socket's rpcs, M
 watch, is among that object's `routes`, and a Worker's own routes serve actions alone. A change
 another object makes reaches them through a call, a plain
 `RpcGroup` on this object's stub, whose handler notifies. chat-rooms' lobby is one object, which
-pages follow for every room's preview: a room calls the lobby's `roomChanged` after each post,
-deletion and expiry, through a client its startup service builds
+pages follow for every room's preview: a room's `lobby` task sends the lobby's `roomChanged` the
+room's latest activity after each post, deletion and expiry
 ([chat-rooms/src/platform/lobby-stubs.ts](../examples/chat-rooms/src/platform/lobby-stubs.ts)),
-and the lobby reads the room again over the room's stub, one change at a time, and notifies:
+and the lobby records it and notifies:
 
 ```ts example=chat-rooms/src/lobby/handlers.ts
-import { Effect, Semaphore } from "effect";
+import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { LobbyCalls } from "./Calls.js";
 import { LobbyHost } from "./host.js";
 import { Previews, PreviewsChanged } from "./Lobby.js";
-import { Rooms } from "./rooms.js";
 import { PreviewStore } from "./store.js";
 
 // The Worker's `previews`, as the lobby's object keeps them.
@@ -106,26 +102,18 @@ export const lobby = Action.implement(
   Effect.map(LobbyHost, (host) => () => Effect.map(host.previews, (previews) => ({ previews }))),
 );
 
-// The lobby's own API, in its object. A room that changed is read again over its stub, one
-// change at a time: while a call waits on another object, its object runs other calls, so two
-// changes read at once could finish in either order, and the earlier read would be kept. Read
-// in turn, the last change heard is read last, after the room's last write. A change notifies
-// `PreviewsChanged`, which an object outside this one could not do itself: its event is this
-// object's.
+// The lobby's own API, in its object. A change notifies `PreviewsChanged`, which an object
+// outside this one could not do itself: its event is this object's.
 export const calls = LobbyCalls.toLayer(
   Effect.gen(function* () {
     const store = yield* PreviewStore;
-    const rooms = yield* Rooms;
     const events = yield* Event.Events;
-    const inTurn = Semaphore.withPermit(yield* Semaphore.make(1));
 
     return LobbyCalls.of({
-      roomChanged: ({ room }) =>
-        Effect.gen(function* () {
-          const changed = yield* store.record(room, yield* rooms.latestAt(room));
-
-          if (changed) yield* events.notify(PreviewsChanged);
-        }).pipe(inTurn),
+      roomChanged: ({ room, latestAt }) =>
+        Effect.flatMap(store.record(room, latestAt), (changed) =>
+          changed ? events.notify(PreviewsChanged) : Effect.void,
+        ),
       previews: () => store.read,
     });
   }),
@@ -171,8 +159,7 @@ per object. chat-rooms serves its MCP endpoint from the Worker instead, every ro
 - An agent polling with `events/poll` lets the object hibernate only if it asks less often than the
   runtime's idle window, 10 seconds: a check source answers `nextPoll`, 30 seconds in `events.ts`
   above, and the agent reads on from its cursor on whichever instance answers.
-- A poll reads the source each time; a stream, as a socket's watch, only when notified: a write
-  that does not notify reaches a polling agent and not a streaming one.
+- A poll reads the source each time; a stream reads it as `ActionDurableObject.handlers` says.
 - A client of a 2025 revision opens a session, which lives in the instance: once it is evicted,
   the session's next request is answered 404, at which the MCP specification has the client open
   a new one. Events are the 2026-07-28 revision's alone, which keeps no session.

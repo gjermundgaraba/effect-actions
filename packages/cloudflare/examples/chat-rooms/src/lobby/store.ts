@@ -2,7 +2,7 @@ import { Context, type Effect } from "effect";
 import type { RoomName } from "../chat/Chat.js";
 import type { RoomPreview } from "./Lobby.js";
 
-/** Every room's preview, as the lobby last read it from the room. */
+/** Every room's preview, as the room last told the lobby. */
 export class PreviewStore extends Context.Service<
   PreviewStore,
   {

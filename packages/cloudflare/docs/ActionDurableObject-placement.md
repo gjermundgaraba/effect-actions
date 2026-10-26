@@ -14,13 +14,13 @@ Each contract names its object in its input, chat-rooms' room in every action an
 
 ```ts example=chat-rooms/src/Api.ts
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import { MessagePosted, Messages, Preview } from "./chat/Chat.js";
+import { MessagePosted, Messages } from "./chat/Chat.js";
 import { Login } from "./identity/Identity.js";
 import { Previews } from "./lobby/Lobby.js";
 
 // The rooms' JSON routes, at `/api/<action>` and `/api/events/<name>`: the Worker's, which a
 // client without a socket calls, and each room's object's, where the Worker sends each call on.
-export const RoomHttp = ActionHttp.make([Preview, ...Messages, MessagePosted], {
+export const RoomHttp = ActionHttp.make([...Messages, MessagePosted], {
   authentication: Login,
 });
 
@@ -30,7 +30,7 @@ export const LobbyHttp = ActionHttp.make([Previews]);
 
 Then, as `routes.ts` on [ActionDurableObject.md](ActionDurableObject.md) does:
 
-- `ActionDurableObject.placed(RoomHttp, { preview: byRoom, … })` is the placement, shared by both
+- `ActionDurableObject.placed(RoomHttp, { readMessages: byRoom, … })` is the placement, shared by both
   sides: a key for each contract of the binding, by its name, each reading its own contract's
   input, so a contract added to the binding without one is a type error.
 - Each object's routes serve the binding in `ActionHttp.layer`, where each call arrives, beside

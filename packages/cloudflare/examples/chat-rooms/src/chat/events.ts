@@ -13,11 +13,8 @@ const idOf = Schema.decodeUnknownOption(Schema.NumberFromString.pipe(Schema.chec
 const nextPoll = "30 seconds";
 
 // The room's messages as an event, read from the store that keeps them: a check source.
-// `postMessage` notifies after each post, so a page receives it at once. In a Durable Object a
-// check source is read when notified, not on its `nextPoll`, a timer that would keep the object
-// from hibernating: a message written by any other path reaches a page's socket and an agent's
-// MCP stream only once something notifies, and an agent polling at its next poll. A read that
-// fails is tried again 5 seconds later until one succeeds, keeping the object awake meanwhile.
+// `postMessage` notifies after each post, so a page receives it at once: when an object reads a
+// check source, and what a write that does not notify misses, is on `ActionDurableObject.handlers`.
 export const messageEvents = Event.implement(
   MessagePosted,
   Effect.gen(function* () {

@@ -198,8 +198,8 @@ of its input as its `idempotencyKey`. The caller makes the key at random for the
 it again on each retry: a repeat with the same input is answered as the first call was, its
 handler run once, on every surface, since the key travels with the input. An implementation of
 such an action requires `Action.Idempotency` at startup, where the answers are kept: provide
-`Action.layerIdempotency` around the surfaces, as `Event.layerMemory` is provided; a Durable
-Object's `make` provides one over its storage. What is kept, whose a key is, and what a repeat
+`Action.layerIdempotency` around the surfaces, as `Event.layerMemory` is provided; in a Durable
+Object, the Cloudflare package's `ActionDurableObject.make` provides it. What is kept, whose a key is, and what a repeat
 with another input answers, are on the option.
 
 ## Call actions in process

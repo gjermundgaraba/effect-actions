@@ -355,8 +355,8 @@ routes, and `State`, `name` and `Alarm` are what the object is and when its `ala
 option's and declaration's rules are in its JSDoc. Guide: `packages/cloudflare/docs/README.md`;
 example: chat-rooms, one object per room, served by one Worker on one `/api` and one `/mcp` through
 `ActionDurableObject.placed`, its messages in the object's SQLite database and expired by its alarm,
-a page following a room through `MessagePosted` across hibernation and a lobby object told by each
-room's `lobby` task. The core's `docs/README.md` and `docs/ActionRpc.md` route to it.
+a page following a room through `MessagePosted` across hibernation and a lobby object told each
+room's latest activity by its `lobby` task. The core's `docs/README.md` and `docs/ActionRpc.md` route to it.
 
 ### Other changes
 

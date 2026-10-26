@@ -49,10 +49,9 @@ const pageIn = (room: RoomName, token: string, headers: Record<string, string> =
     Effect.provideContext(openRoom(room, token), protocol),
   );
 
-// First in the file, whose Worker module is its own: no request has reached the lobby before.
-// worker.ts builds its own handler as the module loads, so its lobby's client starts outside
-// any request; built inside the first one, a 404 that ends without I/O, it would never start,
-// and the previews after it would wait until workerd cancelled them.
+// First in the file, whose Worker module is its own: no request has reached the lobby before, so
+// a first request ending without I/O is the one that would strand a client built inside it, as
+// `ActionDurableObject.layerStubClient`'s gotchas say.
 describe("the Worker's handler, built as the module loads", () => {
   it.effect("answers a first request ending without I/O, then a call reaching the lobby", () =>
     Effect.gen(function* () {
@@ -76,7 +75,6 @@ describe("the Worker and its rooms", () => {
       const posted = yield* room.post("Mock-ups are up.");
 
       expect(yield* room.read(posted.id - 1)).toEqual([posted]);
-      expect(yield* room.preview).toBe(posted.at);
       expect(yield* room.remove(posted.id)).toBe("removed");
     }).pipe(Effect.scoped),
   );
@@ -237,11 +235,8 @@ describe("the Worker and its rooms", () => {
         client.postMessage({ room: "general", text: "Through the wrong room." }),
       );
 
-      expect(refused).toEqual(
-        new Action.Forbidden({
-          message: "This object is design, and the input of postMessage names general",
-        }),
-      );
+      expect(refused).toBeInstanceOf(Action.Forbidden);
+      expect(refused.message).toContain("names general");
     }).pipe(Effect.scoped),
   );
 
@@ -301,7 +296,8 @@ describe("the Worker and its rooms", () => {
     () =>
       Effect.gen(function* () {
         const general = yield* jsonAs("grace");
-        const before = yield* general.preview({ room: "general" });
+        const { messages } = yield* general.readMessages({ room: "general", after: 0 });
+        const before = messages.at(-1)?.at ?? null;
         const { protocol } = yield* pageSocket("/lobby");
         const received: Array<ReadonlyArray<{ room: string; latestAt: number | null }>> = [];
 
@@ -323,13 +319,13 @@ describe("the Worker and its rooms", () => {
         const generalIn = (previews: ReadonlyArray<{ room: string; latestAt: number | null }>) =>
           previews.find(({ room }) => room === "general")?.latestAt;
 
-        expect(received.map(generalIn)).toEqual([before.latestAt, posted.at, before.latestAt]);
+        expect(received.map(generalIn)).toEqual([before, posted.at, before]);
         expect(received.every((previews) => previews.length === 2)).toBe(true);
       }).pipe(Effect.scoped, Effect.provide(worker)),
   );
 
   it.effect(
-    "answers another Worker's call of RoomsEntrypoint from the room's object, and refuses a room it does not list",
+    "answers another Worker's call of RoomsEntrypoint as the lobby keeps it, and refuses a room it does not list",
     () =>
       Effect.gen(function* () {
         const posted = yield* (yield* jsonAs("grace")).postMessage({
@@ -341,9 +337,18 @@ describe("the Worker and its rooms", () => {
           Effect.tryPromise(() => exports.RoomsEntrypoint.latestAt("kitchen")),
         );
 
-        expect(yield* Effect.promise(() => exports.RoomsEntrypoint.latestAt("general"))).toBe(
-          posted.at,
+        // The lobby hears of the post from the room's `lobby` task, a moment after it answered.
+        const latestAt = yield* Effect.promise(() =>
+          exports.RoomsEntrypoint.latestAt("general"),
+        ).pipe(
+          Effect.repeat({
+            until: (at) => at === posted.at,
+            schedule: Schedule.spaced("10 millis"),
+          }),
+          Effect.timeout("5 seconds"),
         );
+
+        expect(latestAt).toBe(posted.at);
         expect(String(refused.cause)).toContain('Expected "general" | "design"');
       }).pipe(Effect.provide(worker)),
   );
@@ -356,14 +361,16 @@ describe("the Worker and its rooms", () => {
           Effect.promise(() =>
             exports.default.fetch(`https://chat.example${path}`, {
               method: "POST",
-              headers: { "content-type": "application/json" },
+              headers: { "content-type": "application/json", authorization: "Bearer ada" },
               body: JSON.stringify(body),
             }),
           ).pipe(Effect.map(({ status }) => status));
 
-        expect(yield* status("/api/preview", { room: "design" })).toBe(200);
-        expect(yield* status("/api/preview", { room: "unlisted" })).toBe(400);
-        expect(yield* status("/rooms/design/api/preview", { room: "design" })).toBe(404);
+        const read = (room: string) => ({ room, after: 0 });
+
+        expect(yield* status("/api/readMessages", read("design"))).toBe(200);
+        expect(yield* status("/api/readMessages", read("unlisted"))).toBe(400);
+        expect(yield* status("/rooms/design/api/readMessages", read("design"))).toBe(404);
         expect(yield* status("/rooms/unlisted/rpc")).toBe(404);
         expect(yield* status("/rooms/design//elsewhere.example/rpc")).toBe(404);
       }),

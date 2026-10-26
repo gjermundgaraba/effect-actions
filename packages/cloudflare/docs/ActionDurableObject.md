@@ -15,8 +15,9 @@ says its fix; for workerd's, a compiler diagnostic or Effect's own error, search
 `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions-cloudflare/dist/`: each declaration's
 JSDoc carries its rules and gotchas, and this page only what an example cannot show. Events are on
 [ActionDurableObject-events.md](ActionDurableObject-events.md), calls over the stub on
-[ActionDurableObject-stub.md](ActionDurableObject-stub.md), and a class that cannot extend `make`'s
-on [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md).
+[ActionDurableObject-stub.md](ActionDurableObject-stub.md), tests and runtimes on
+[ActionDurableObject-testing.md](ActionDurableObject-testing.md), and a class that cannot extend
+`make`'s on [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md).
 
 ## Serve actions from an object
 
@@ -25,7 +26,7 @@ export the class it returns, or one extending it, under the name the Wrangler co
 binds. The entrypoint holds the room's class beside the Worker's own `fetch`:
 
 ```ts example=chat-rooms/src/worker.ts
-import { Layer, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { RoomName } from "./chat/Chat.js";
@@ -34,9 +35,8 @@ import { Room } from "./chat/room.js";
 import { MessageStore } from "./chat/store.js";
 import { layerKvPreviews } from "./platform/kv-previews.js";
 import { layerActivity, layerLobbyHost, tellLobby } from "./platform/lobby-stubs.js";
-import { layerRooms } from "./platform/room-stubs.js";
 import { layerSql } from "./platform/sql-store.js";
-import { lobbyCalls, lobbyRoutes, roomCalls, roomRoutes, rooms, workerRoutes } from "./routes.js";
+import { lobbyCalls, lobbyRoutes, roomRoutes, rooms, workerRoutes } from "./routes.js";
 
 // The rooms for another Worker, over a service binding: a named entrypoint of this one.
 export { RoomsEntrypoint } from "./rooms-entrypoint.js";
@@ -44,38 +44,40 @@ export { RoomsEntrypoint } from "./rooms-entrypoint.js";
 // Entrypoint, Wrangler's `main`: the composition root of the Worker and of every object. It
 // chooses the stores, the room and the stubs, and routes each request.
 
+const decodeRoom = Schema.decodeUnknownEffect(RoomName);
+
 // A room's Durable Object, bound as CHAT_ROOM in wrangler.jsonc under this export's name. Each
-// instance builds its services, the store, the room and its activity, then its calls and routes,
-// as it is constructed, again after every eviction. The room is the name the Worker reached the
-// object by, `getByName(room)`: `ActionDurableObject.name` dies for an object reached by an id, a
-// bug in the Worker. Given `rooms`, it refuses a call or a watch whose input names another room.
-// Its `lobby` task tells the lobby of each change, on the alarm until the lobby hears. The
-// alarm expires old messages and tells the lobby, as an expired message can be the room's latest.
+// instance builds its services, the store, the room and its activity, then its routes, as it is
+// constructed, again after every eviction. The room is the name the Worker reached the object by,
+// `getByName(room)`, decoded once there: `ActionDurableObject.name` dies for an object reached by
+// an id, and the build fails for a name `RoomName` does not list, each a bug in the Worker. Given
+// `rooms`, it refuses a call or a watch whose input names another room. Its `lobby` task tells
+// the lobby of each change, on the alarm until the lobby hears. The alarm expires old messages
+// and tells the lobby, as an expired message can be the room's latest.
 export class ChatRoom extends ActionDurableObject.make({
   placed: rooms,
   services: () =>
     Layer.mergeAll(layerSql, layerActivity).pipe(
-      Layer.provideMerge(Layer.effect(Room)(ActionDurableObject.name)),
+      Layer.provideMerge(Layer.effect(Room)(Effect.flatMap(ActionDurableObject.name, decodeRoom))),
     ),
   routes: roomRoutes,
-  calls: roomCalls,
   tasks: { lobby: tellLobby },
   alarm: () =>
     Activity.use((activity) => activity.changing(MessageStore.use((store) => store.expire))),
 }) {}
 
 // The lobby's Durable Object, bound as CHAT_LOBBY: one for the Worker, named `lobby`, keeping
-// every room's preview, which each room tells it of and its pages follow. It reaches the rooms
-// over their stubs, as the Worker does.
+// every room's preview, which each room tells it of and its pages follow.
 export class ChatLobby extends ActionDurableObject.make({
-  services: () => Layer.mergeAll(layerKvPreviews, layerRooms),
+  services: () => layerKvPreviews,
   routes: lobbyRoutes,
   calls: lobbyCalls,
 }) {}
 
-// The Worker's own handler, built once, when the module loads: building it does no I/O, which a
-// Worker refuses outside a request. `toWebHandler` reads no `MaxBodySize`, so the platform
-// limits request bodies.
+// The Worker's own handler, built once, when the module loads, which keeps the lobby's client
+// from stranding as `ActionDurableObject.layerStubClient`'s gotchas say: building it does no I/O,
+// which a Worker refuses outside a request. `toWebHandler` reads no `MaxBodySize`, so the
+// platform limits request bodies.
 const served = HttpRouter.toWebHandler(
   workerRoutes.pipe(Layer.provide(layerLobbyHost), Layer.provide(HttpServer.layerServices)),
 );
@@ -135,9 +137,8 @@ import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { LobbyHttp, RoomHttp } from "./Api.js";
-import { RoomCalls } from "./chat/Calls.js";
 import { messageEvents } from "./chat/events.js";
-import { calls, messages, preview } from "./chat/handlers.js";
+import { messages } from "./chat/handlers.js";
 import { Login } from "./identity/Identity.js";
 import { authenticate } from "./identity/verifier.js";
 import { LobbyCalls } from "./lobby/Calls.js";
@@ -145,7 +146,7 @@ import { previewEvents } from "./lobby/events.js";
 import { calls as lobbyHandlers, lobby } from "./lobby/handlers.js";
 import { LobbyRpc, protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
 
-const room = [preview, messages, messageEvents];
+const room = [messages, messageEvents];
 
 const byRoom = ({ room }: { readonly room: string }) => room;
 
@@ -153,7 +154,6 @@ const byRoom = ({ room }: { readonly room: string }) => room;
 // key names. worker.ts gives it to the room's class, which then refuses an input naming another
 // room, on its socket too; the Worker serves it below.
 export const rooms = ActionDurableObject.placed(RoomHttp, {
-  preview: byRoom,
   readMessages: byRoom,
   postMessage: byRoom,
   deleteMessage: byRoom,
@@ -173,16 +173,11 @@ const pageSocket = ActionDurableObject.layerWebSocket({
 // client reads as `SocketCloseError` and stops connecting again at, not a 403, which a browser
 // reports as a bare 1006 its page connects again after. Its JSON routes, where the Worker sends
 // each call and watch on, the token with it: the object authenticates it again, and authorizes.
-// It requires `MessageStore` and `Room` at startup: worker.ts chooses them.
+// It requires `MessageStore`, `Room` and `Activity` at startup: worker.ts chooses them.
 export const roomRoutes = Layer.mergeAll(
   ActionRpc.layer(RoomRpc, room).pipe(Layer.provide(pageSocket)),
   ActionHttp.layer(RoomHttp, room),
 ).pipe(Layer.provide(authenticate));
-
-// What a room's object serves over its stub: its own calls, on Effect's own RpcServer, for the
-// Worker and the lobby, which call them with Cloudflare's own RPC. It requires `MessageStore` at
-// startup.
-export const roomCalls = RpcServer.layer(RoomCalls).pipe(Layer.provide(calls));
 
 // What the lobby's object serves: `PreviewsChanged` on its pages' sockets, a socket a page
 // signed out opens too, as nothing on it is protected. It requires `PreviewStore` at startup.
@@ -190,8 +185,9 @@ export const lobbyRoutes = ActionRpc.layer(LobbyRpc, [previewEvents]).pipe(
   Layer.provide(pageSocket),
 );
 
-// What the lobby's object serves over its stub: its own calls, for the rooms and the Worker. It
-// requires `PreviewStore` and `Rooms` at startup.
+// What the lobby's object serves over its stub: its own calls, on Effect's own RpcServer, for
+// the rooms and the Worker, which call them with Cloudflare's own RPC. It requires `PreviewStore`
+// at startup.
 export const lobbyCalls = RpcServer.layer(LobbyCalls).pipe(Layer.provide(lobbyHandlers));
 
 // The rooms as the Worker serves them, each call sent on to its room's object. The room is read
@@ -254,50 +250,7 @@ the way, on `ActionDurableObject.Alarm`.
 Call its `calls` with `client`, the declared errors typed, and its routes with the core's
 clients over `layerHttpClient(stub)`: [ActionDurableObject-stub.md](ActionDurableObject-stub.md).
 
-## Test on the Workers runtime
+## Test and deploy
 
-Run the tests inside the runtime with `@cloudflare/vitest-plugin`, on the Worker the Wrangler
-configuration describes:
-
-```ts example=chat-rooms/vite.config.ts
-import { cloudflareTest } from "@cloudflare/vitest-plugin";
-import { defineConfig } from "vite-plus";
-
-// Its tests run inside the Workers runtime, on the Worker wrangler.jsonc describes.
-export default defineConfig({
-  plugins: [
-    cloudflareTest({
-      wrangler: { configPath: "./wrangler.jsonc" },
-    }),
-  ],
-  test: {
-    include: ["test/**/*.test.ts"],
-    // Why: under @cloudflare/vitest-plugin 1.4.4, the warm-module response for a later file in a
-    // pool slot can exceed what the runner's control socket accepts, 41 MB in 709 entries
-    // measured on chat-rooms, which closes it with 1009 and loses the file as "Worker exited
-    // unexpectedly"; two small files alone did not trigger it.
-    fsModuleCache: false,
-  },
-});
-```
-
-From `cloudflare:test`, `evictDurableObject(stub)` evicts an instance as hibernation does,
-its sockets staying open, the runtime runs an alarm set in the past at once, which chat-rooms'
-`test/worker.test.ts` waits for, and `runInDurableObject(stub, fn)` reads or changes the object's
-storage directly. Call the Worker
-as a deployment would with `layerHttpClient(exports.default)`, and open a socket by upgrading
-through its `fetch`, handing `response.webSocket` to `Socket.fromWebSocket` under
-`RpcClient.layerProtocolSocket`
-([chat-rooms/test/support/socket.ts](../examples/chat-rooms/test/support/socket.ts),
-[chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)). The core's
-`Testing.layer` serves the same routes in memory, but cannot upgrade a socket. Under
-**celld**, Deno's self-hosted Durable Object runtime, `CELLD_IDLE_EVICT_S` is the equivalent of
-`evictDurableObject`: the idle seconds after which it evicts an object.
-
-## Deploy
-
-workerd, Cloudflare's runtime, serves an object's sockets under any `compatibility_date`.
-celld 0.6.2 differs from it twice, each difference a gotcha of the declaration it touches: a
-socket's upgrade headers after an eviction, on `ActionDurableObject.layerWebSocket`, and an
-alarm set on a class without an `alarm` method, on `ActionDurableObject.handlers`. What an
-eviction loses is on `ActionDurableObject.handlers`.
+Test an object on the Workers runtime, and what differs between runtimes:
+[ActionDurableObject-testing.md](ActionDurableObject-testing.md).

@@ -37,7 +37,6 @@ export const openRoom = (room: RoomName, token: string) =>
     const signedIn = RpcClient.withHeaders(headers);
 
     return {
-      preview: Effect.map(client.preview({ room }), ({ latestAt }) => latestAt),
       // The room's messages after `after`, the id of the last one the page holds: 0 reads them
       // all.
       read: (after: number) =>

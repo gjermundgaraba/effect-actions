@@ -5,9 +5,7 @@ import { MessageStore } from "../chat/store.js";
 
 const day = 24 * 60 * 60 * 1000;
 
-const decodeRows = Schema.decodeUnknownSync(Schema.Array(Message));
-
-const decodeRow = Schema.decodeUnknownSync(Message);
+const decodeMessage = Schema.decodeUnknownSync(Message);
 
 const decodeSequence = Schema.decodeUnknownSync(Schema.Array(Schema.Struct({ seq: Schema.Int })));
 
@@ -20,7 +18,10 @@ export const layerSql = Layer.effect(MessageStore)(
     const alarm = yield* ActionDurableObject.Alarm;
 
     const query = (sql: string, ...bindings: ReadonlyArray<string | number>) =>
-      decodeRows(storage.sql.exec(sql, ...bindings).toArray());
+      storage.sql
+        .exec(sql, ...bindings)
+        .toArray()
+        .map((row) => decodeMessage(row));
 
     storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL)",
@@ -35,7 +36,7 @@ export const layerSql = Layer.effect(MessageStore)(
     // once each set it for the oldest they see, and the last to set it has seen them all; reading
     // the alarm first would let two posts both see none and the later one win. Removing the
     // oldest message leaves its alarm, which then finds nothing due and moves on.
-    const expireOldest = Effect.suspend(() => {
+    const alarmForOldest = Effect.suspend(() => {
       const [oldest] = query("SELECT * FROM messages ORDER BY at LIMIT 1");
 
       return oldest === undefined ? Effect.void : alarm.set(DateTime.makeUnsafe(oldest.at + day));
@@ -58,7 +59,7 @@ export const layerSql = Layer.effect(MessageStore)(
       post: Effect.fn("MessageStore.post")(function* (author, text) {
         const at = yield* Clock.currentTimeMillis;
 
-        const message = decodeRow(
+        const message = decodeMessage(
           storage.sql
             .exec(
               "INSERT INTO messages (author, text, at) VALUES (?, ?, ?) RETURNING *",
@@ -69,7 +70,7 @@ export const layerSql = Layer.effect(MessageStore)(
             .one(),
         );
 
-        yield* expireOldest;
+        yield* alarmForOldest;
 
         return message;
       }),
@@ -87,7 +88,7 @@ export const layerSql = Layer.effect(MessageStore)(
 
         storage.sql.exec("DELETE FROM messages WHERE at <= ?", now - day);
 
-        yield* expireOldest;
+        yield* alarmForOldest;
       }),
     });
   }),

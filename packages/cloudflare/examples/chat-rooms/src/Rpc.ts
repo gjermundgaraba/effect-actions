@@ -1,11 +1,11 @@
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { MessagePosted, Messages, Preview } from "./chat/Chat.js";
+import { MessagePosted, Messages } from "./chat/Chat.js";
 import { Login } from "./identity/Identity.js";
 import { PreviewsChanged } from "./lobby/Lobby.js";
 
 // A room's rpcs and its event, on the socket a page keeps open to its object. Plain data: the
 // object and a browser page both import it.
-export const RoomRpc = ActionRpc.make([Preview, ...Messages, MessagePosted], {
+export const RoomRpc = ActionRpc.make([...Messages, MessagePosted], {
   authentication: Login,
 });
 

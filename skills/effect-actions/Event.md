@@ -172,8 +172,8 @@ a check's rules are on `Event.Check`.
 A subscriber holding a stream open is read again every 5 seconds. Where the application writes
 the store itself, it wakes them at once: after the write, `Event.Events`' `notify`, as
 [build-events/src/builds/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/builds/handlers.ts) does after
-each build finishes. A store another process writes is read at the next poll, where the host
-polls: a Durable Object's `Events` reads when notified, and again 5 seconds after a read fails.
+each build finishes. A store another process writes is read at the next poll; when a
+Durable Object reads it is on the Cloudflare package's `ActionDurableObject.handlers`.
 
 - **Check what a subscriber may see where the data is read**, as an action's handler does:
   `authorize` decides whether it may subscribe at all, and receives the event type, not the
@@ -285,7 +285,7 @@ Effect, whose finalizer tears it down, run as the subscriber. How long it lasts 
 provides one, `Event.layerMemory`, around both the handlers that announce and the surfaces that
 serve, as [build-events/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/server.ts) does; a host
 keeping logs elsewhere builds its own with `Event.makeEvents`, as the Cloudflare package's
-`make` and `handlers` keep them in a Durable Object's storage. A source's
+`ActionDurableObject.make` does. A source's
 `key`, such as the room a subscriber follows, lets an announcement given that key reach that
 room's subscribers alone, as [live-rpc/src/chat/events.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/chat/events.ts)
 keys its messages by room. The rules are on `Event.Events`.
