@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
+import { NodeHttpServer } from "@effect/platform-node";
+import { ConfigProvider, Effect, Layer } from "effect";
+import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Http } from "../src/Api.js";
@@ -113,6 +114,41 @@ describe("the request policy", () => {
 
     expect([here.status, foreignHost.status]).toEqual([200, 403]);
   });
+
+  // Behind a proxy ending TLS, Node's server sees `http:`: the public URL's origin is allowed by
+  // name, not as the request's own, so a page of it is answered whatever the proxy forwards.
+  it.effect("answers the public URL's page behind a proxy ending TLS", () =>
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+
+      const status = (origin: string) =>
+        client
+          .execute(
+            HttpClientRequest.post("/api/v1/getStatus").pipe(
+              HttpClientRequest.setHeaders({ origin, "x-forwarded-proto": "https" }),
+              HttpClientRequest.bodyJsonUnsafe({}),
+            ),
+          )
+          .pipe(Effect.map((response) => response.status));
+
+      expect([
+        yield* status("https://tracker.example"),
+        yield* status("https://evil.example"),
+      ]).toEqual([200, 403]);
+    }).pipe(
+      Effect.provide(
+        HttpRouter.serve(publicRoutes, { disableLogger: true, disableListenLog: true }).pipe(
+          Layer.provide(memory),
+          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnvRecord({ PUBLIC_URL: "https://tracker.example" }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
   // `Testing.layer(handler)` gives the typed clients the same handler the raw requests hit.
   it.effect("leaves the typed client, served from the same web handler, alone", () =>

@@ -2,10 +2,40 @@
 
 ## 0.20.0
 
+Built and tested against `effect` and `@effect/platform-node` `4.0.6`. The `effect` peer stays
+`~4.0.4`: what changed below holds on every 4.0 patch from 4.0.4, and where Effect 4.0.6 answers
+differently from earlier patches, each entry says so.
+
 ### Breaking changes
 
 **Node 26 or later.** `engines.node` is `>=26`, where it accepted Node 22.12 and 24 as well. The
 package is built, typed and tested against Node 26 alone.
+
+### Other changes
+
+- An MCP endpoint answers a body over `HttpServerRequest.MaxBodySize` as an action route does:
+  on Node from Effect 4.0.6, an empty 413, where the endpoint read it as a body that is not JSON
+  and answered a JSON-RPC `-32700` in a 200. Under Effect 4.0.4 and 4.0.5, Node still closes
+  such a request's connection unanswered, as before; `ActionHttp.layer`'s JSDoc says both.
+- `runStdio` answers the requests after a line of stdin that is not JSON, as it says, under
+  Effect 4.0.6 too: there Effect's stdio transport fails on such a line, and its retry drops the
+  rest of what it had read, so the next request went unanswered. Such a line, or a blank one,
+  no longer reaches the transport.
+- An MCP tool's `inputSchema` and `outputSchema` list a named root schema's definition under
+  `$defs` only where something refers to it, such as a recursive root, and leave out an empty
+  `$defs`, as Effect's own `McpServer.toolkit` does from 4.0.6.
+- From Effect 4.0.6 a failure beside a defect, a dying finalizer's or a concurrent sibling's, is
+  a defect too, so a handler failing with a declared error while its finalizer dies answers as a
+  defect on every surface, an empty 500 over HTTP. The library keeps a cause that holds both,
+  built so, whole, as before.
+- The request policy of `docs/Authentication-advanced.md` and `kitchen-sink` says why it lists
+  the public URL's origin by name: behind a proxy ending TLS, a request's own origin, from its
+  `originalUrl`, is an `http:` one from Effect 4.0.6, which takes the connection's scheme
+  whatever `X-Forwarded-Proto` says. A policy accepting only the request's own origin refuses
+  its site's pages there; `kitchen-sink` tests the proxied case.
+- `ActionCli.command`'s JSDoc says Effect CLI styles what it prints, a failure's JSON included,
+  on a terminal and, from Effect 4.0.6, wherever `FORCE_COLOR` forces colour, and how to get
+  plain text there.
 
 ## 0.19.0
 

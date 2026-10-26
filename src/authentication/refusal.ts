@@ -83,7 +83,7 @@ class SteppedUpRefusal extends Context.Service<SteppedUpRefusal, Ref.Ref<Option.
   "effect-actions/SteppedUp",
 ) {}
 
-export const isStepUp = (error: unknown): error is Refusal =>
+export const isStepUp = <E>(error: E): error is E & Refusal =>
   isRefusal(error) && (!Predicate.isTagged(error, "Forbidden") || error.scopes !== undefined);
 
 export const recordStepUp = <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>

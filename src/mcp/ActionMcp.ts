@@ -8,13 +8,15 @@ import {
   JsonPointer,
   type JsonSchema,
   Layer,
+  Option,
   Predicate,
   Schema,
-  type Stdio,
+  Stdio,
+  Stream,
 } from "effect";
 import { AiError, McpSchema, McpServer } from "effect/ai";
 import { Base64 } from "effect/encoding";
-import { type Headers, HttpRouter, HttpServerRequest } from "effect/http";
+import { type Headers, HttpRouter, HttpServerRequest, type HttpServerResponse } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import {
   promote,
@@ -153,8 +155,34 @@ type Features<R> = Exclude<R, McpServer.McpServer>;
 
 const isToolArgumentsSchema = Schema.is(McpSchema.ToolJson);
 
-// Why: MCP requires an object root, so a top-level `$ref` is inlined, as Effect's private
-// `toolJsonSchema` does for `registerToolkit`; tests/mcp/media.test.ts compares the listings.
+const isJson = Schema.is(Schema.Json);
+
+const definitionsReferenced = (value: Schema.Json): ReadonlyArray<string> => {
+  if (
+    value === null ||
+    Predicate.isString(value) ||
+    Predicate.isNumber(value) ||
+    Predicate.isBoolean(value)
+  )
+    return [];
+
+  if (Array.isArray(value)) return value.flatMap(definitionsReferenced);
+
+  return Object.entries(value).flatMap(([field, nested]) => {
+    if (field !== "$ref") return definitionsReferenced(nested);
+
+    const [scope, key] = Predicate.isString(nested)
+      ? (JsonPointer.parseUriFragment(nested) ?? [])
+      : [];
+
+    return scope === "$defs" && key !== undefined ? [key] : [];
+  });
+};
+
+// Why: MCP requires an object root, so a top-level `$ref` is inlined, and the inlined root's
+// definition is dropped unless something still refers to it (a recursive root, or one used again
+// inside itself), as Effect's private `toolJsonSchema` does for `registerToolkit` from 4.0.6;
+// tests/mcp/media.test.ts compares the listings.
 const toolJsonSchema = (schema: Schema.Top, strict: boolean): JsonSchema.JsonSchema | undefined => {
   const document = Schema.toJsonSchemaDocument(schema, {
     onExcessProperty: strict ? "error" : "ignore",
@@ -164,11 +192,23 @@ const toolJsonSchema = (schema: Schema.Top, strict: boolean): JsonSchema.JsonSch
     ? (JsonPointer.parseUriFragment(document.schema["$ref"]) ?? [])
     : [];
 
-  const root = scope === "$defs" && key !== undefined ? document.definitions[key] : document.schema;
+  const inlined = scope === "$defs" && key !== undefined ? key : undefined;
 
-  return root === undefined || Object.keys(document.definitions).length === 0
-    ? root
-    : { ...root, $defs: document.definitions };
+  const root = inlined === undefined ? document.schema : document.definitions[inlined];
+
+  if (root === undefined) return undefined;
+
+  const definitions =
+    inlined !== undefined &&
+    ![root, ...Object.values(document.definitions)]
+      .flatMap((schema) => (isJson(schema) ? definitionsReferenced(schema) : []))
+      .includes(inlined)
+      ? Object.fromEntries(
+          Object.entries(document.definitions).filter(([name]) => name !== inlined),
+        )
+      : document.definitions;
+
+  return Object.keys(definitions).length === 0 ? root : { ...root, $defs: definitions };
 };
 
 const assertToolShapes = (lifted: ReadonlyArray<readonly [Action.Any, Lift]>): void => {
@@ -455,6 +495,14 @@ const namesItsMethod = (request: HttpServerRequest.HttpServerRequest) =>
       !Predicate.hasProperty(body, "method") || body.method === request.headers["mcp-method"],
   });
 
+// Why: The runtime answers a body it cannot read as one that is not JSON, a `-32700` in a 200, so
+// one over `HttpServerRequest.MaxBodySize` read first fails the request as itself: Effect's 413
+// from 4.0.6, and before it the closed connection. The runtime then reads the text read here.
+const readsItsBody = <E, R>(route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+    request.method === "POST" ? Effect.andThen(request.text, route) : route,
+  );
+
 // Why: Protected tools without a descriptor get `unknown`, leaving `RequiredAuthentication` to
 // demand theirs. `{ authentication?: undefined }` would intersect with that demand to `never`, and
 // the error would read as every option being wrong.
@@ -543,7 +591,10 @@ export function layerHttp(
     authentication,
   );
 
-  if (authentication === undefined) return transport;
+  if (authentication === undefined) {
+    return transport.pipe(Layer.provide(HttpRouter.middleware(readsItsBody).layer));
+  }
+
   const required = requiresAuthentication(served);
 
   const middleware = HttpRouter.middleware(
@@ -552,14 +603,38 @@ export function layerHttp(
       (runtime) => (route) =>
         Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
           request.method !== "POST" || required(request.headers)
-            ? runtime.http(route, false)
-            : Effect.flatMap(namesItsMethod(request), (named) => runtime.http(route, named)),
+            ? runtime.http(readsItsBody(route), false)
+            : Effect.flatMap(namesItsMethod(request), (named) =>
+                runtime.http(readsItsBody(route), named),
+              ),
         ),
     ),
   );
 
   return transport.pipe(Layer.provide(middleware.layer));
 }
+
+const isJsonLine = (line: string): boolean =>
+  Option.isSome(Schema.decodeOption(Schema.fromJsonString(Schema.Json))(line));
+
+// Why: From Effect 4.0.6 the stdio transport's parser fails on a line that is not JSON, and its
+// retry drops what else that read held, so a request after the line went unanswered. Such a
+// line, and a blank one, never reaches it: the lines after it are answered on every 4.0 patch.
+const jsonLinesOnly = Layer.effect(
+  Stdio.Stdio,
+  Effect.map(Stdio.Stdio, (stdio) =>
+    Stdio.make({
+      ...stdio,
+      stdin: stdio.stdin.pipe(
+        Stream.decodeText,
+        Stream.splitLines,
+        Stream.filter(isJsonLine),
+        Stream.map((line) => `${line}\n`),
+        Stream.encodeText,
+      ),
+    }),
+  ),
+);
 
 /**
  * Serve MCP tools through newline-delimited JSON-RPC on standard I/O, speaking MCP
@@ -601,7 +676,7 @@ export function runStdio(
 ) {
   const transport = server(
     select(toList(apps), actions),
-    McpServer.layerStdio({ ...options, protocols }),
+    McpServer.layerStdio({ ...options, protocols }).pipe(Layer.provide(jsonLinesOnly)),
     features,
   );
 

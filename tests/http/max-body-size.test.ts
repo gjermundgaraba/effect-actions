@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { ByteSize, Effect, Exit, Layer, Schema } from "effect";
+import { ByteSize, Effect, Layer, Schema } from "effect";
 import { NodeHttpServer } from "@effect/platform-node";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerRequest } from "effect/http";
 import * as Action from "../../src/contract/Action.js";
@@ -19,7 +19,7 @@ const Echo = Action.make("echo", {
 const app = Action.implement(Echo, ({ text }) => Effect.succeed(text));
 
 it.effect(
-  "limits the body of the library's routes and MCP endpoints to the host's startup MaxBodySize, closing an oversized request's connection",
+  "limits the body of the library's routes and MCP endpoints to the host's startup MaxBodySize, answering an oversized request an empty 413",
   () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
@@ -40,8 +40,9 @@ it.effect(
       expect((yield* route(small)).status).toBe(200);
       expect((yield* tool(small)).status).toBe(200);
 
-      expect(Exit.isFailure(yield* Effect.exit(route(large)))).toBe(true);
-      expect(Exit.isFailure(yield* Effect.exit(tool(large)))).toBe(true);
+      for (const response of [yield* route(large), yield* tool(large)]) {
+        expect([response.status, yield* response.text]).toEqual([413, ""]);
+      }
     }).pipe(
       Effect.provide(
         HttpRouter.serve(

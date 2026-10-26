@@ -2702,6 +2702,7 @@ it(
       spawnSync(process.execPath, ["--import", "tsx", "tests/support/app/cli.ts", ...args], {
         cwd: process.cwd(),
         encoding: "utf8",
+        env: { ...process.env, FORCE_COLOR: "" },
       });
 
     const found = users("get-user", "--id", "1");

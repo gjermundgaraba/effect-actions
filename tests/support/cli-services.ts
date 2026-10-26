@@ -10,7 +10,7 @@ import {
   Stream,
   Terminal,
 } from "effect";
-import { CliError, Command } from "effect/cli";
+import { CliError, Command, TerminalCapabilities } from "effect/cli";
 import { TestConsole } from "effect/testing";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -35,6 +35,11 @@ const cliServices = (stdin: Stdin) =>
         display: () => Effect.void,
       }),
     ),
+    Layer.succeed(TerminalCapabilities.TerminalCapabilities, {
+      canColor: false,
+      canAnimate: false,
+      canPrompt: false,
+    }),
     Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make(() => Effect.die("unused")),

@@ -151,6 +151,10 @@ export const requestPolicy = HttpRouter.middleware(
 
         const origin = request.headers["origin"];
 
+        // The request's own origin is that of a page served from this port directly. Behind a
+        // proxy ending TLS it is an `http:` one from Effect 4.0.6, whose `originalUrl` takes the
+        // scheme of the connection, whatever `X-Forwarded-Proto` says, so the public URL's
+        // origin is among `origins`.
         if (origin !== undefined && origin !== url.value.origin && !origins.includes(origin)) {
           return HttpServerResponse.text("Origin not allowed", { status: 403 });
         }

@@ -505,7 +505,9 @@ describe("Action.client", () => {
 
       const client = yield* Action.client(
         Action.implement(Status, () =>
-          Effect.fail(busy).pipe(Effect.ensuring(Effect.die(cleanup)), Effect.withSpan("quota")),
+          Effect.failCause(Cause.combine(Cause.fail(busy), Cause.die(cleanup))).pipe(
+            Effect.withSpan("quota"),
+          ),
         ),
       );
 
