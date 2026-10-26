@@ -29,9 +29,13 @@ import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { layer as app } from "../support/app/app.js";
 import { routes as tenantRoutes } from "../support/app/authentication-tenant.js";
-import { Http as ExampleHttp } from "../support/app/binding.js";
+import {
+  protectedResource as exampleProtectedResource,
+  verify as exampleVerify,
+} from "../support/app/authentication.js";
+import { Http as ExampleHttp, Login as ExampleLogin } from "../support/app/binding.js";
+import { endpoint as exampleMcp } from "../support/app/mcp.js";
 import { requestPolicy } from "../support/app/request-policy.js";
 import { Users } from "../support/app/users.js";
 import { serve } from "../support/serve.js";
@@ -1863,8 +1867,18 @@ describe("Authentication.layer beside other middleware", () => {
 describe("one MCP URL for signed-out and signed-in callers", () => {
   const issuer = "https://auth.example.com";
 
-  const exampleBehindInMemoryOAuthServer = () => {
-    const web = serve(app);
+  const mcpBehindInMemoryOAuthServer = (resource: string) => {
+    const web = serve(
+      exampleMcp.pipe(
+        Layer.provide(
+          Authentication.layer(ExampleLogin, exampleVerify, {
+            protectedResource: { ...exampleProtectedResource, resource },
+          }),
+        ),
+        Layer.provide(Users.layerMemory),
+      ),
+    );
+
     const log: string[] = [];
 
     const authorizationServer = async (sent: Request): Promise<Response> => {
@@ -1910,55 +1924,67 @@ describe("one MCP URL for signed-out and signed-in callers", () => {
     return { web, log, fetch };
   };
 
-  it("serves a signed-out caller its listing and public tools, signs the official client in on a protected one, and steps it up for a write's scope", async () => {
-    const { log, fetch } = exampleBehindInMemoryOAuthServer();
+  it.each([
+    {
+      resource: "http://localhost:3000/mcp",
+      discovery: "/.well-known/oauth-protected-resource/mcp",
+    },
+    { resource: "http://localhost:3000", discovery: "/.well-known/oauth-protected-resource" },
+  ])(
+    "serves a signed-out caller its listing and public tools, signs the official client in on a protected one, and steps it up for a write's scope, the resource being $resource",
+    async ({ resource, discovery }) => {
+      const { log, fetch } = mcpBehindInMemoryOAuthServer(resource);
 
-    const client = new Client(
-      { name: "test", version: "0" },
-      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
-    );
-
-    try {
-      await client.connect(
-        new StreamableHTTPClientTransport(new URL("http://localhost:3000/mcp"), {
-          fetch: (input, init) => fetch(new Request(input, init)),
-          authProvider: new ClientCredentialsProvider({ clientId: "host", clientSecret: "secret" }),
-        }),
+      const client = new Client(
+        { name: "test", version: "0" },
+        { versionNegotiation: { mode: { pin: "2026-07-28" } } },
       );
 
-      const listed = await client.listTools();
-      const status = await client.callTool({ name: "status", arguments: {} });
+      try {
+        await client.connect(
+          new StreamableHTTPClientTransport(new URL("http://localhost:3000/mcp"), {
+            fetch: (input, init) => fetch(new Request(input, init)),
+            authProvider: new ClientCredentialsProvider({
+              clientId: "host",
+              clientSecret: "secret",
+            }),
+          }),
+        );
 
-      const renamed = await client.callTool({
-        name: "renameUser",
-        arguments: { id: "1", name: "OAuth" },
-      });
+        const listed = await client.listTools();
+        const status = await client.callTool({ name: "status", arguments: {} });
 
-      expect(listed.tools.map((tool) => tool.name)).toEqual([
-        "status",
-        "getUser",
-        "renameUser",
-        "whoAmI",
-        "listChanges",
-        "double",
+        const renamed = await client.callTool({
+          name: "renameUser",
+          arguments: { id: "1", name: "OAuth" },
+        });
+
+        expect(listed.tools.map((tool) => tool.name)).toEqual([
+          "status",
+          "getUser",
+          "renameUser",
+          "whoAmI",
+          "listChanges",
+          "double",
+        ]);
+        expect(status.structuredContent).toEqual({ service: "effect-actions", users: 2 });
+        expect(renamed.structuredContent).toEqual({ id: "1", name: "OAuth" });
+      } finally {
+        await client.close();
+      }
+
+      expect(log).toEqual([
+        "server/discover signed out: 200",
+        "tools/list signed out: 200",
+        "status signed out: 200",
+        "renameUser signed out: 401",
+        `${discovery} signed out: 200`,
+        `token users:read for ${resource}`,
+        "renameUser Bearer reader: 403",
+        `${discovery} signed out: 200`,
+        `token users:read users:write for ${resource}`,
+        "renameUser Bearer alice: 200",
       ]);
-      expect(status.structuredContent).toEqual({ service: "effect-actions", users: 2 });
-      expect(renamed.structuredContent).toEqual({ id: "1", name: "OAuth" });
-    } finally {
-      await client.close();
-    }
-
-    expect(log).toEqual([
-      "server/discover signed out: 200",
-      "tools/list signed out: 200",
-      "status signed out: 200",
-      "renameUser signed out: 401",
-      "/.well-known/oauth-protected-resource/mcp signed out: 200",
-      "token users:read for http://localhost:3000/mcp",
-      "renameUser Bearer reader: 403",
-      "/.well-known/oauth-protected-resource/mcp signed out: 200",
-      "token users:read users:write for http://localhost:3000/mcp",
-      "renameUser Bearer alice: 200",
-    ]);
-  });
+    },
+  );
 });

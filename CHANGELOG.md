@@ -368,6 +368,8 @@ room's latest activity by its `lobby` task. The core's `docs/README.md` and `doc
   answers as before.
 - **An `ActionMcp.McpCallError`'s `body` from an event stream holds the data of its frames**, one
   per line, without their `data:` framing and without its `notifications/progress` frames.
+- **`Authentication.ProtectedResource.resource` may be the endpoint's origin**, as MCP allows: one
+  resource for every endpoint it serves. 0.20.0 documented only the endpoint's URL.
 - live-rpc follows a room through an event: `MessagePosted`, read from the message store and
   keyed by the room a watch's header names, notified by `postMessage`; the page's `messages`
   watches it from the last id the page read, and `page.ts` gains `watch`. Its tests serialize with NDJSON, as a watch over

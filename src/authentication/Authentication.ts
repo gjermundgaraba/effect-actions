@@ -59,12 +59,14 @@ export const bearerTokenOf = (
 /** An OAuth protected resource (RFC 9728), as `layer` publishes it. */
 export interface ProtectedResource {
   /**
-   * Exact OAuth resource identifier: the public URL of the endpoint clients connect to, such as
-   * `${url}/mcp`. Discovery is served at `/.well-known/oauth-protected-resource` followed by its
-   * path and query.
+   * OAuth resource identifier: the public URL of the endpoint clients connect to, such as
+   * `${url}/mcp`, or its origin, such as `https://api.example.com`, which MCP allows to name one
+   * resource for every endpoint it serves. Discovery is served at
+   * `/.well-known/oauth-protected-resource` followed by its path and query.
    *
    * **Gotchas**
    *
+   * - A client applying RFC 9728 §3.3 strictly finds no authorization server for an origin, since metadata reached from a challenge must name the URL it requested; the official MCP client accepts it, and the endpoint's URL works with both.
    * - Discovery answers 404, and an MCP client finds no authorization server, when a request's path and query differ from this URL's, or when the provider is provided to no served layer.
    * - That it and `authorizationServers` are HTTPS, or loopback HTTP in development, is the deployment's to ensure: nothing checks it.
    */

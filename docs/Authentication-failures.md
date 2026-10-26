@@ -13,6 +13,10 @@ fix itself. Tasks: [Authentication.md](Authentication.md),
 - `is not assignable to type 'Forbidden | Unauthenticated'`, or `Property '…' is missing in type`, at `layer`'s verifier: it fails with an error that is neither a refusal nor one its descriptor declares, or succeeds with a value that is not the identity. Declare the error in the descriptor's `error`, or map it to a refusal where it is the caller's.
 - `Request<"Requires", Tenant>` still owed although the tenant middleware's layer is provided: it is in one `Layer.provide([...])` array with the provider, and an array's layers provide to the routes, not to one another. Provide it in a later `Layer.provide` of its own ([Read request context in a verifier](Authentication-advanced.md#read-request-context-in-a-verifier)).
 
+## Signing in
+
+- An MCP client reports `Protected resource … does not match expected …` and requests no token: the published `protectedResource.resource` is neither the endpoint's public URL nor its origin. Give one of them.
+
 ## Scopes
 
 - `Schema validation failed` thrown by `new Action.Forbidden({ scopes })`: a scope is no OAuth scope token, being empty or holding a space, `"`, `\` or a character outside printable ASCII. Give each scope as its own element.

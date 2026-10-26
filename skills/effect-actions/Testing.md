@@ -130,7 +130,9 @@ Serve the routes behind their provider
 ([Authentication.md](Authentication.md#verify-credentials)), and give each client its caller's
 credential in `transformClient`, as `as` in
 [notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts) does for
-`ActionHttp.client` and `ActionMcp.client` alike.
+`ActionHttp.client` and `ActionMcp.client` alike. An OAuth access token is such a credential:
+signing in, or again for more scopes, is the MCP client's part, so an application's tests need no
+MCP client package.
 
 To change what a credential verifies as, replace the service the verifier reads (`servedWith` in
 [kitchen-sink/test/identity/identity.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/test/identity/identity.test.ts)),

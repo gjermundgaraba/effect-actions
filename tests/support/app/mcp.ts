@@ -6,9 +6,11 @@ import { double, status, userActions } from "./handlers.js";
 
 const allowedOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
 
-export const layer = ActionMcp.layerHttp([status, userActions, double], {
+export const endpoint = ActionMcp.layerHttp([status, userActions, double], {
   name: "effect-actions",
   version: "0.0.0",
   allowedOrigins,
   authentication: Login,
-}).pipe(Layer.provide(authenticate));
+});
+
+export const layer = endpoint.pipe(Layer.provide(authenticate));
