@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.21.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.6`. The `effect` peer is now `~4.0.5`.
 
