@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
+
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import { webhookFed } from "../../src/contract/receiving.js";
@@ -19,24 +20,50 @@ describe("webhookFed", () => {
 
         const failures = yield* Effect.forEach(
           [
-            { code: -32023, message: "Event removed", data: { kind: "event" } },
-            { code: -32023, message: "Unsubscribed", data: { kind: "subscription" } },
-            { code: -32026, message: "Schema changed", data: { feature: "schema" } },
-            { code: -32027, message: "Unreachable", data: { reason: "timeout" } },
-            { code: -32024, message: "Revoked.", data: { _tag: "Forbidden", message: "Revoked." } },
-            { code: -32000, message: "Ended." },
+            {
+              code: -32_023,
+              message: "Event removed",
+              data: { kind: "event" },
+            },
+            {
+              code: -32_023,
+              message: "Unsubscribed",
+              data: { kind: "subscription" },
+            },
+            {
+              code: -32_026,
+              message: "Schema changed",
+              data: { feature: "schema" },
+            },
+            {
+              code: -32_027,
+              message: "Unreachable",
+              data: { reason: "timeout" },
+            },
+            {
+              code: -32_024,
+              message: "Revoked.",
+              data: { _tag: "Forbidden", message: "Revoked." },
+            },
+            { code: -32_000, message: "Ended." },
           ],
-          (error) => Effect.flip(read({ type: "terminated", error })),
+          (error) => Effect.flip(read({ type: "terminated", error }))
         );
 
         expect(failures).toMatchObject([
           { _tag: "SubscriptionError", reason: { _tag: "NotServed" } },
           { _tag: "SubscriptionError", reason: { _tag: "NotSubscribed" } },
-          { _tag: "SubscriptionError", reason: { _tag: "Unsupported", feature: "schema" } },
-          { _tag: "SubscriptionError", reason: { _tag: "CallbackFailed", category: "timeout" } },
+          {
+            _tag: "SubscriptionError",
+            reason: { _tag: "Unsupported", feature: "schema" },
+          },
+          {
+            _tag: "SubscriptionError",
+            reason: { _tag: "CallbackFailed", category: "timeout" },
+          },
           { _tag: "Forbidden", message: "Revoked." },
           { _tag: "Forbidden", message: "Ended." },
         ]);
-      }),
+      })
   );
 });

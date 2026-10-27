@@ -1,9 +1,19 @@
 import { expect, it } from "@effect/vitest";
-import { Clock, Effect, Match, Schema } from "effect";
+import { Clock, Effect, Match, Ref, Schema } from "effect";
 import { TestClock } from "effect/testing";
-import { events, makeWorld, passed, secretOf, sent, subscribed, url } from "../support/webhook.js";
 
-const Minutes = (maximum: number) => Schema.Int.check(Schema.isBetween({ minimum: 0, maximum }));
+import {
+  events,
+  makeWorld,
+  passed,
+  secretOf,
+  sent,
+  subscribed,
+  url,
+} from "../support/webhook.js";
+
+const Minutes = (maximum: number) =>
+  Schema.Int.check(Schema.isBetween({ minimum: 0, maximum }));
 
 const Command = Schema.Union([
   Schema.TaggedStruct("Subscribe", { ttlMinutes: Schema.NullOr(Minutes(90)) }),
@@ -12,7 +22,10 @@ const Command = Schema.Union([
   Schema.TaggedStruct("Advance", { minutes: Minutes(90) }),
 ]);
 
-const Commands = Schema.Array(Command).check(Schema.isMinLength(1), Schema.isMaxLength(8));
+const Commands = Schema.Array(Command).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(8)
+);
 
 const minute = 60_000;
 
@@ -23,9 +36,9 @@ it.effect.prop(
     const { world, server } = makeWorld({ maxTtl: "60 minutes" });
 
     return Effect.gen(function* () {
-      let expiresAt = 0;
-      let posted = 0;
-      const expected: Array<string> = [];
+      const expiresAt = yield* Ref.make(0);
+      const posted = yield* Ref.make(0);
+      const expected: string[] = [];
 
       for (const command of commands) {
         const now = yield* Clock.currentTimeMillis;
@@ -39,33 +52,43 @@ it.effect.prop(
                     ? 60 * minute
                     : Math.min(Math.max(ttlMinutes, 1), 60) * minute;
 
-                yield* subscribed(secretOf(1), ttlMinutes === null ? null : ttlMinutes * minute);
+                yield* subscribed(
+                  secretOf(1),
+                  ttlMinutes === null ? null : ttlMinutes * minute
+                );
 
-                expiresAt = now + granted;
+                yield* Ref.set(expiresAt, now + granted);
               }),
             Unsubscribe: () =>
               Effect.gen(function* () {
-                yield* sent("alice", "unsubscribe", { input: {}, delivery: { url } });
+                yield* sent("alice", "unsubscribe", {
+                  input: {},
+                  delivery: { url },
+                });
 
-                expiresAt = 0;
+                yield* Ref.set(expiresAt, 0);
               }),
             Post: () =>
               Effect.gen(function* () {
-                const id = `c${++posted}`;
+                const id = `c${yield* Ref.updateAndGet(posted, (count) => count + 1)}`;
 
                 world.changes.push({ id, by: "bob" });
 
-                if (now < expiresAt) expected.push(id);
+                if (now < (yield* Ref.get(expiresAt))) {
+                  expected.push(id);
+                }
 
                 yield* passed(30);
               }),
             Advance: ({ minutes }) => TestClock.adjust(minutes * minute),
-          }),
+          })
         );
       }
 
-      expect(events(world.received).map(({ eventId }) => eventId)).toEqual(expected);
+      expect(
+        events(world.received).map(({ eventId }) => eventId)
+      ).toStrictEqual(expected);
     }).pipe(Effect.provide(server));
   },
-  { timeout: 60_000, arbitrary: { runs: 50 } },
+  { timeout: 60_000, arbitrary: { runs: 50 } }
 );

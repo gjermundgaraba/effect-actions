@@ -1,6 +1,7 @@
-import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Schema } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 
 // DEMO ONLY: the rooms, fixed. Each name is one Durable Object, which the Worker reaches only
@@ -23,17 +24,15 @@ export type Message = typeof Message.Type;
 
 // A declared error is part of the contract: every client decodes it as this class. Its status is
 // for the JSON routes; an rpc carries none.
-export class MessageNotFound extends Schema.TaggedError<MessageNotFound>()(
-  "MessageNotFound",
-  { id: Schema.Int },
-  { httpApiStatus: 404 },
-) {}
+export class MessageNotFound extends Schema.TaggedError<
+  MessageNotFound,
+  { readonly brand: unique symbol }
+>()("MessageNotFound", { id: Schema.Int }, { httpApiStatus: 404 }) {}
 
-export class NotAuthor extends Schema.TaggedError<NotAuthor>()(
-  "NotAuthor",
-  { id: Schema.Int },
-  { httpApiStatus: 403 },
-) {}
+export class NotAuthor extends Schema.TaggedError<
+  NotAuthor,
+  { readonly brand: unique symbol }
+>()("NotAuthor", { id: Schema.Int }, { httpApiStatus: 403 }) {}
 
 // Every call and watch of a room names it in its input: the Worker sends each on to the room's
 // object, and the object refuses an input naming another room, so a page's socket to one room
@@ -64,8 +63,9 @@ export const PostMessage = Action.make("postMessage", {
     text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
     request: Schema.optional(
       Schema.String.annotate({
-        description: "A random id for this message, sent again on a retry: it is posted once.",
-      }).check(Schema.isMaxLength(64)),
+        description:
+          "A random id for this message, sent again on a retry: it is posted once.",
+      }).check(Schema.isMaxLength(64))
     ),
   },
   success: Message,

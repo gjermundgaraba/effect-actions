@@ -1,5 +1,6 @@
 import { Effect, Layer, Schema, Stream } from "effect";
 import { HttpClient } from "effect/http";
+
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
@@ -47,21 +48,21 @@ export const Placed = ActionHttp.make(
   [GetUser, RenameUser, Double, Bump, Counted, Countdown, Fill],
   {
     authentication: Login,
-  },
+  }
 );
 
 const countingDown = Action.implement(Countdown, ({ from }) =>
-  Stream.map(Stream.range(1, from), (n) => from + 1 - n),
+  Stream.map(Stream.range(1, from), (n) => from + 1 - n)
 );
 
 const filling = Action.implement(Fill, ({ slots }, { progress }) =>
   Effect.as(
     Effect.forEach(
       Array.from({ length: slots }, (_, at) => at + 1),
-      (slot) => progress({ slot }),
+      (slot) => progress({ slot })
     ),
-    { filled: slots },
-  ),
+    { filled: slots }
+  )
 );
 
 const counter = (serving: { readonly counted: boolean }) => {
@@ -73,12 +74,16 @@ const counter = (serving: { readonly counted: boolean }) => {
       Effect.map(
         Event.Events,
         (events) => () =>
-          Effect.flatMap(
-            Effect.sync(() => (count += 1)),
-            (counted) => Effect.as(events.notify(Counted), counted),
-          ),
+          Effect.tap(
+            Effect.sync(() => {
+              count += 1;
+
+              return count;
+            }),
+            () => events.notify(Counted)
+          )
       ),
-      { authorize },
+      { authorize }
     ),
     ...(serving.counted
       ? [
@@ -87,7 +92,7 @@ const counter = (serving: { readonly counted: boolean }) => {
             { current: () => Effect.sync(() => ({ count })) },
             {
               authorize: Event.allowAll,
-            },
+            }
           ),
         ]
       : []),
@@ -100,9 +105,12 @@ const counter = (serving: { readonly counted: boolean }) => {
  * sends.
  */
 export const target = (
-  options: { readonly withoutDouble?: boolean; readonly withoutCounted?: boolean } = {},
+  options: {
+    readonly withoutDouble?: boolean;
+    readonly withoutCounted?: boolean;
+  } = {}
 ) => {
-  const requests: Array<Request> = [];
+  const requests: Request[] = [];
 
   const served = serve(
     ActionHttp.layer(Placed, [
@@ -111,19 +119,19 @@ export const target = (
       ...counter({ counted: options.withoutCounted !== true }),
       countingDown,
       filling,
-    ]).pipe(Layer.provide([authenticate, Users.layerMemory, Event.layerMemory])),
+    ]).pipe(Layer.provide([authenticate, Users.layerMemory, Event.layerMemory]))
   );
 
   const client = Effect.runSync(
     Effect.service(HttpClient.HttpClient).pipe(
       Effect.provide(
-        Testing.layer((request) => {
+        Testing.layer(async (request) => {
           requests.push(request.clone());
 
-          return served.handler(request);
-        }),
-      ),
-    ),
+          return await served.handler(request);
+        })
+      )
+    )
   );
 
   return { client, requests, placed: ActionHttp.placed(Placed, () => client) };

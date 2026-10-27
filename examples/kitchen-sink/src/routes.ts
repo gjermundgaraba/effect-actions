@@ -1,38 +1,50 @@
-import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/http";
-import { HttpApiSwagger, OpenApi } from "effect/http-api";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
+import { Effect, Layer } from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/http";
+import { HttpApiSwagger, OpenApi } from "effect/http-api";
+
 import { MemberActions, Tools } from "./Actions.js";
 import { authenticateOperator } from "./admin/authenticate.js";
-import { assistant } from "./assistant/handlers.js";
 import { admin } from "./admin/handlers.js";
 import { AdminHttp, Http } from "./Api.js";
+import { assistant } from "./assistant/handlers.js";
 import { download } from "./attachments/download.js";
 import { attachments } from "./attachments/handlers.js";
 import { allowedOrigins } from "./config.js";
-import { authenticateBearer, authenticateSession } from "./identity/authenticate.js";
+import {
+  authenticateBearer,
+  authenticateSession,
+} from "./identity/authenticate.js";
 import { identity } from "./identity/handlers.js";
 import { Login } from "./identity/Identity.js";
 import { HttpQuota, quota, RpcQuota } from "./identity/quota.js";
 import { layer as assistantTools } from "./issues/assistant.js";
-import { features } from "./issues/guide.js";
 import { issueEvents } from "./issues/events.js";
 import { exports } from "./issues/export.js";
+import { features } from "./issues/guide.js";
 import { issues } from "./issues/handlers.js";
+import { IssueChanged } from "./issues/Issues.js";
 import { cors, requestPolicy } from "./request-policy.js";
 import { Rpc } from "./Rpc.js";
 import { status } from "./workspaces/handlers.js";
 import { resolveTenant } from "./workspaces/tenant.js";
-import { IssueChanged } from "./issues/Issues.js";
 import { GetStatus } from "./workspaces/Workspaces.js";
 
 // Every domain's implementation of the public port's actions and events, once. Each surface
 // below takes this one list and serves what its binding or its `actions` names.
-const implementations = [status, identity, issues, issueEvents, exports, attachments, assistant];
+const implementations = [
+  status,
+  identity,
+  issues,
+  issueEvents,
+  exports,
+  attachments,
+  assistant,
+];
 
 // JSON routes at `/api/v1/<action>`, in two layers of one binding, each naming its `actions`,
 // an event among them: a layer given `actions` serves exactly what it names. The quota requires
@@ -42,7 +54,7 @@ const api = Layer.mergeAll(
   ActionHttp.layer(Http, implementations, {
     actions: [...MemberActions, IssueChanged],
     middleware: [HttpQuota],
-  }),
+  })
 );
 
 // The same actions as MCP tools at `/mcp`: a mixed endpoint, serving the public `getStatus`
@@ -62,8 +74,8 @@ const mcp = Layer.unwrap(
       // this host answers to, such as http://127.0.0.1:3000. Not listed here, such a page gets
       // a 403 from the endpoint.
       allowedOrigins: origins,
-    }),
-  ),
+    })
+  )
 );
 
 // The members' actions as Effect RPC, for the web app, behind its session cookie and the same
@@ -80,9 +92,9 @@ const documentation = Layer.mergeAll(
   HttpRouter.add(
     "GET",
     `${Http.prefix}/openapi.json`,
-    HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api)),
+    HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api))
   ),
-  HttpApiSwagger.layer(Http.api, { path: "/docs" }),
+  HttpApiSwagger.layer(Http.api, { path: "/docs" })
 );
 
 const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
@@ -108,13 +120,19 @@ const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 // and each change it may see is POSTed there, signed. One layer holds the subscriptions of
 // both. It POSTs with an `HttpClient` and checks where each callback resolves with `Dns`, which
 // server.ts provides.
-export const publicRoutes = Layer.mergeAll(api, mcp, download, documentation, health).pipe(
+export const publicRoutes = Layer.mergeAll(
+  api,
+  mcp,
+  download,
+  documentation,
+  health
+).pipe(
   Layer.provide(Webhook.layer()),
   Layer.provide(assistantTools),
   Layer.provide([authenticateBearer, authenticateSession, quota]),
   Layer.provide(resolveTenant.layer),
   Layer.provide(cors),
-  Layer.provide(requestPolicy),
+  Layer.provide(requestPolicy)
 );
 
 // The admin port: what operators reach, and nothing else. It is a router of its own, with its
@@ -122,7 +140,7 @@ export const publicRoutes = Layer.mergeAll(api, mcp, download, documentation, he
 // serves one implementation the public port serves too, `status`.
 export const adminRoutes = Layer.mergeAll(
   ActionHttp.layer(AdminHttp, [status, admin]),
-  health,
+  health
 ).pipe(Layer.provide(authenticateOperator), Layer.provide(requestPolicy));
 
 // Every builder as one layer. The two ports are two layer graphs, and each would run the
@@ -131,4 +149,10 @@ export const adminRoutes = Layer.mergeAll(
 // runs once for every surface of both ports. The assistant's, the export's and the event's are
 // left out: the public port alone serves them, and builds each once for its routes and its
 // rpcs.
-export const builders = Action.layer([status, identity, issues, attachments, admin]);
+export const builders = Action.layer([
+  status,
+  identity,
+  issues,
+  attachments,
+  admin,
+]);

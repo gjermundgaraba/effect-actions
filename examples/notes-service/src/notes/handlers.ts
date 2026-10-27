@@ -1,5 +1,6 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Effect } from "effect";
+
 import { authorize } from "../identity/authorize.js";
 import { CurrentUser } from "../identity/Identity.js";
 import { Notes } from "./Notes.js";
@@ -22,18 +23,26 @@ export const notes = Action.implement(
 
           return { notes: owned.map(({ id, title }) => ({ id, title })) };
         }),
-      getNote: ({ id }) => Effect.flatMap(CurrentUser, (user) => store.get(user.id, id)),
+      getNote: ({ id }) =>
+        Effect.flatMap(CurrentUser, (user) => store.get(user.id, id)),
       createNote: ({ requestId, title, body }) =>
-        Effect.flatMap(CurrentUser, (user) => store.create(user.id, title, body, requestId)),
+        Effect.flatMap(CurrentUser, (user) =>
+          store.create(user.id, title, body, requestId)
+        ),
       updateNote: ({ id, body, revision }) =>
-        Effect.flatMap(CurrentUser, (user) => store.update(user.id, id, body, revision)),
-      deleteNote: ({ id }) => Effect.flatMap(CurrentUser, (user) => store.remove(user.id, id)),
-      importNotes: ({ notes }) =>
+        Effect.flatMap(CurrentUser, (user) =>
+          store.update(user.id, id, body, revision)
+        ),
+      deleteNote: ({ id }) =>
+        Effect.flatMap(CurrentUser, (user) => store.remove(user.id, id)),
+      importNotes: ({ notes: imported }) =>
         Effect.map(
-          Effect.flatMap(CurrentUser, (user) => store.createAll(user.id, notes)),
-          (created) => ({ notes: created }),
+          Effect.flatMap(CurrentUser, (user) =>
+            store.createAll(user.id, imported)
+          ),
+          (created) => ({ notes: created })
         ),
     };
   }),
-  { authorize },
+  { authorize }
 );

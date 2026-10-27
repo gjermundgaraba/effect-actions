@@ -1,4 +1,5 @@
 import { Context, Duration, Effect, Equal, Hash, RcMap, Scope } from "effect";
+
 import type { ErasedValue } from "./implementation.js";
 
 /** A poll subscription's key, held with the context of the poll that first acquired it. */
@@ -7,7 +8,11 @@ class Lease implements Equal.Equal {
   readonly input: ErasedValue;
   readonly context: Context.Context<never>;
 
-  constructor(key: string, input: ErasedValue, context: Context.Context<never>) {
+  constructor(
+    key: string,
+    input: ErasedValue,
+    context: Context.Context<never>
+  ) {
     this.key = key;
     this.input = input;
     this.context = context;
@@ -36,21 +41,25 @@ const defaultLease = Duration.minutes(5);
 
 export const makeLeases = (
   subscription: (input: ErasedValue) => Effect.Effect<void, never, unknown>,
-  ttl: Duration.Input = defaultLease,
+  ttl: Duration.Input = defaultLease
 ): Effect.Effect<Leases, never, unknown> =>
   Effect.map(
     RcMap.make({
       // Why: The hook runs as the subscriber who first polled, as a stream's runs as the one who
       // opened it; that poll's request scope is dropped, the lease's own scope holding the hook.
       lookup: (lease: Lease) =>
-        Effect.provideContext(subscription(lease.input), Context.omit(Scope.Scope)(lease.context)),
+        Effect.provideContext(
+          subscription(lease.input),
+          Context.omit(Scope.Scope)(lease.context)
+        ),
       idleTimeToLive: ttl,
     }),
     (map) => ({
       hold: (key, input) =>
-        Effect.flatMap(Effect.context<never>(), (context) =>
-          Effect.scoped(RcMap.get(map, new Lease(key, input, context))),
+        Effect.flatMap(Effect.context(), (context) =>
+          Effect.scoped(RcMap.get(map, new Lease(key, input, context)))
         ),
-      release: (key) => RcMap.invalidate(map, new Lease(key, undefined, Context.empty())),
-    }),
+      release: (key) =>
+        RcMap.invalidate(map, new Lease(key, undefined, Context.empty())),
+    })
   );

@@ -1,26 +1,36 @@
-import { afterAll, describe, expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
-import { ConfigProvider, Effect, Layer } from "effect";
-import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/http";
+import { afterAll, describe, expect, it } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+import { ConfigProvider, Effect, Layer } from "effect";
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServer,
+} from "effect/http";
+
 import { Http } from "../src/Api.js";
 import { memory } from "../src/memory.js";
-import { services } from "./support/services.js";
 import { adminRoutes, publicRoutes } from "../src/routes.js";
+import { services } from "./support/services.js";
 
 // Each port as a web handler, `Request` in and `Response` out: what a platform without
 // Effect's server runs, and what a test sends raw requests to. A handler builds its routes
 // once; the test owns it, and disposes it when done.
 const web = HttpRouter.toWebHandler(
-  publicRoutes.pipe(Layer.provide(HttpServer.layerServices), Layer.provide(services())),
+  publicRoutes.pipe(
+    Layer.provide(HttpServer.layerServices),
+    Layer.provide(services())
+  )
 );
 
 const adminWeb = HttpRouter.toWebHandler(
-  adminRoutes.pipe(Layer.provide(HttpServer.layerServices), Layer.provide(memory)),
+  adminRoutes.pipe(
+    Layer.provide(HttpServer.layerServices),
+    Layer.provide(memory)
+  )
 );
-
-afterAll(() => Promise.all([web.dispose(), adminWeb.dispose()]));
 
 const post = (url: string, headers: Record<string, string> = {}) =>
   new Request(url, {
@@ -29,32 +39,49 @@ const post = (url: string, headers: Record<string, string> = {}) =>
     body: "{}",
   });
 
+const read = async (url: string, headers: Record<string, string> = {}) =>
+  await web.handler(new Request(url, { headers }));
+
 const discovery = "/.well-known/oauth-protected-resource/mcp";
 
 describe("the request policy", () => {
-  it("refuses a foreign Host or Origin", async () => {
-    const foreignHost = await web.handler(post("http://tracker.evil.example/api/v1/getStatus"));
+  afterAll(async () => {
+    await Promise.all([web.dispose(), adminWeb.dispose()]);
+  });
 
-    const foreignOrigin = await web.handler(
-      post("http://localhost/api/v1/getStatus", { origin: "http://evil.example" }),
+  it("refuses a foreign Host or Origin", async () => {
+    const foreignHost = await web.handler(
+      post("http://tracker.evil.example/api/v1/getStatus")
     );
 
-    expect([foreignHost.status, await foreignHost.text()]).toEqual([403, "Host not allowed"]);
-    expect([foreignOrigin.status, await foreignOrigin.text()]).toEqual([403, "Origin not allowed"]);
+    const foreignOrigin = await web.handler(
+      post("http://localhost/api/v1/getStatus", {
+        origin: "http://evil.example",
+      })
+    );
+
+    expect([foreignHost.status, await foreignHost.text()]).toStrictEqual([
+      403,
+      "Host not allowed",
+    ]);
+    expect([foreignOrigin.status, await foreignOrigin.text()]).toStrictEqual([
+      403,
+      "Origin not allowed",
+    ]);
   });
 
   it("runs before authentication: a foreign Host is refused, not asked to sign in", async () => {
     const signedOut = await web.handler(post("http://localhost/api/v1/whoAmI"));
-    const foreignHost = await web.handler(post("http://tracker.evil.example/api/v1/whoAmI"));
 
-    expect([signedOut.status, foreignHost.status]).toEqual([401, 403]);
+    const foreignHost = await web.handler(
+      post("http://tracker.evil.example/api/v1/whoAmI")
+    );
+
+    expect([signedOut.status, foreignHost.status]).toStrictEqual([401, 403]);
     expect(foreignHost.headers.get("www-authenticate")).toBeNull();
   });
 
   it("runs before the discovery the Bearer provider publishes", async () => {
-    const read = (url: string, headers: Record<string, string> = {}) =>
-      web.handler(new Request(url, { headers }));
-
     const here = await read(`http://localhost${discovery}`);
     const foreignHost = await read(`http://tracker.evil.example${discovery}`);
 
@@ -62,12 +89,18 @@ describe("the request policy", () => {
       origin: "http://evil.test",
     });
 
-    expect([here.status, foreignHost.status, foreignOrigin.status]).toEqual([200, 403, 403]);
+    expect([
+      here.status,
+      foreignHost.status,
+      foreignOrigin.status,
+    ]).toStrictEqual([200, 403, 403]);
   });
 
   it("answers the browser MCP client's origin, and its CORS preflight", async () => {
     const allowed = await web.handler(
-      post("http://localhost/api/v1/getStatus", { origin: "http://localhost:6274" }),
+      post("http://localhost/api/v1/getStatus", {
+        origin: "http://localhost:6274",
+      })
     );
 
     const preflight = await web.handler(
@@ -76,16 +109,23 @@ describe("the request policy", () => {
         headers: {
           origin: "http://localhost:6274",
           "access-control-request-method": "POST",
-          "access-control-request-headers": "authorization, mcp-protocol-version",
+          "access-control-request-headers":
+            "authorization, mcp-protocol-version",
         },
-      }),
+      })
     );
 
     expect(allowed.status).toBe(200);
-    expect(allowed.headers.get("access-control-allow-origin")).toBe("http://localhost:6274");
+    expect(allowed.headers.get("access-control-allow-origin")).toBe(
+      "http://localhost:6274"
+    );
     expect(preflight.status).toBe(204);
-    expect(preflight.headers.get("access-control-allow-headers")).toContain("MCP-Protocol-Version");
-    expect(allowed.headers.get("access-control-expose-headers")).toContain("Mcp-Session-Id");
+    expect(preflight.headers.get("access-control-allow-headers")).toContain(
+      "MCP-Protocol-Version"
+    );
+    expect(allowed.headers.get("access-control-expose-headers")).toContain(
+      "Mcp-Session-Id"
+    );
   });
 
   it("lets a browser client of an MCP revision with sessions end its session", async () => {
@@ -97,23 +137,30 @@ describe("the request policy", () => {
           "access-control-request-method": "DELETE",
           "access-control-request-headers": "authorization, mcp-session-id",
         },
-      }),
+      })
     );
 
     expect(preflight.status).toBe(204);
-    expect(preflight.headers.get("access-control-allow-methods")).toContain("DELETE");
-    expect(preflight.headers.get("access-control-allow-headers")).toContain("Mcp-Session-Id");
+    expect(preflight.headers.get("access-control-allow-methods")).toContain(
+      "DELETE"
+    );
+    expect(preflight.headers.get("access-control-allow-headers")).toContain(
+      "Mcp-Session-Id"
+    );
   });
 
   it("covers the admin port too, a valid key included", async () => {
     const key = { "x-operator-key": "ops-key" };
-    const here = await adminWeb.handler(post("http://localhost/admin/listWorkspaces", key));
 
-    const foreignHost = await adminWeb.handler(
-      post("http://tracker.evil.example/admin/listWorkspaces", key),
+    const here = await adminWeb.handler(
+      post("http://localhost/admin/listWorkspaces", key)
     );
 
-    expect([here.status, foreignHost.status]).toEqual([200, 403]);
+    const foreignHost = await adminWeb.handler(
+      post("http://tracker.evil.example/admin/listWorkspaces", key)
+    );
+
+    expect([here.status, foreignHost.status]).toStrictEqual([200, 403]);
   });
 
   // Behind a proxy ending TLS, Node's server sees `http:`: the public URL's origin is allowed by
@@ -126,37 +173,50 @@ describe("the request policy", () => {
         client
           .execute(
             HttpClientRequest.post("/api/v1/getStatus").pipe(
-              HttpClientRequest.setHeaders({ origin, "x-forwarded-proto": "https" }),
-              HttpClientRequest.bodyJsonUnsafe({}),
-            ),
+              HttpClientRequest.setHeaders({
+                origin,
+                "x-forwarded-proto": "https",
+              }),
+              HttpClientRequest.bodyJsonUnsafe({})
+            )
           )
           .pipe(Effect.map((response) => response.status));
 
       expect([
         yield* status("https://tracker.example"),
         yield* status("https://evil.example"),
-      ]).toEqual([200, 403]);
+      ]).toStrictEqual([200, 403]);
     }).pipe(
       Effect.provide(
-        HttpRouter.serve(publicRoutes, { disableLogger: true, disableListenLog: true }).pipe(
+        HttpRouter.serve(publicRoutes, {
+          disableLogger: true,
+          disableListenLog: true,
+        }).pipe(
           Layer.provide(services()),
           Layer.provideMerge(NodeHttpServer.layerTest),
           Layer.provide(
             ConfigProvider.layer(
-              ConfigProvider.fromEnvRecord({ PUBLIC_URL: "https://tracker.example" }),
-            ),
-          ),
-        ),
-      ),
-    ),
+              ConfigProvider.fromEnvRecord({
+                PUBLIC_URL: "https://tracker.example",
+              })
+            )
+          )
+        )
+      )
+    )
   );
 
   // `Testing.layer(handler)` gives the typed clients the same handler the raw requests hit.
-  it.effect("leaves the typed client, served from the same web handler, alone", () =>
-    Effect.gen(function* () {
-      const client = yield* ActionHttp.client(Http);
+  it.effect(
+    "leaves the typed client, served from the same web handler, alone",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* ActionHttp.client(Http);
 
-      expect(yield* client.getStatus()).toMatchObject({ service: "tracker", workspaces: 2 });
-    }).pipe(Effect.provide(Testing.layer(web.handler))),
+        expect(yield* client.getStatus()).toMatchObject({
+          service: "tracker",
+          workspaces: 2,
+        });
+      }).pipe(Effect.provide(Testing.layer(web.handler)))
   );
 });

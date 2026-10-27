@@ -1,43 +1,68 @@
 import { Context, Effect, Option, Predicate, Schema, Stream } from "effect";
-import { Headers, HttpClient, HttpClientRequest, HttpServerRequest } from "effect/http";
+import {
+  Headers,
+  HttpClient,
+  HttpClientRequest,
+  HttpServerRequest,
+} from "effect/http";
+
 import * as Action from "../contract/Action.js";
 import * as Event from "../contract/Event.js";
-import { EventImplementation, type Run } from "../contract/feed.js";
-import {
-  type ErasedAuthorize,
-  type ErasedValue,
-  Implementation,
-  memoized,
-  type Written,
-  type WrittenHandler,
+import { EventImplementation } from "../contract/feed.js";
+import type { Run } from "../contract/feed.js";
+import { Implementation, memoized } from "../contract/implementation.js";
+import type {
+  ErasedAuthorize,
+  ErasedValue,
+  Written,
+  WrittenHandler,
 } from "../contract/implementation.js";
-import { type AnyHttp, type Senders, sendersWith } from "./client.js";
+import { sendersWith } from "./client.js";
+import type { AnyHttp, Senders } from "./client.js";
 import { isNotFound } from "./watch.js";
 
 type Contract<H extends AnyHttp> = H["actions"][number] | H["events"][number];
 
 /** A call's or a subscription's decoded input, beside its contract, one of `C`. */
 /** What the contracts `C` require per request, by name: nothing. */
-type Nothing<C extends Action.Any | Event.Any> = { readonly [K in C["name"]]: never };
+type Nothing<C extends Action.Any | Event.Any> = {
+  readonly [K in C["name"]]: never;
+};
 
 /**
  * What `placed` returns: an implementation of the binding's actions where it has some, and one of
  * its event types where it has some, which require nothing.
  */
 export type Placed<H extends AnyHttp> = ReadonlyArray<
-  | Implementation<H["actions"][number], Nothing<H["actions"][number]>, never, never>
-  | EventImplementation<H["events"][number], Nothing<H["events"][number]>, never, never>
+  | Implementation<
+      H["actions"][number],
+      Nothing<H["actions"][number]>,
+      never,
+      never
+    >
+  | EventImplementation<
+      H["events"][number],
+      Nothing<H["events"][number]>,
+      never,
+      never
+    >
 >;
 
 // Why: each family belongs to the request the server received, not to the one sent on: its
 // connection's, a socket's upgrade's among them, its body's, what it accepts, which the client
 // sets for the answer it reads, and an MCP request's routing.
 const ownedByTheRequest = (name: string) =>
-  ["host", "connection", "keep-alive", "te", "trailer", "transfer-encoding", "upgrade"].includes(
-    name,
-  ) ||
+  [
+    "host",
+    "connection",
+    "keep-alive",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+  ].includes(name) ||
   ["content-", "accept", "proxy-", "sec-websocket-", "mcp-"].some((family) =>
-    name.startsWith(family),
+    name.startsWith(family)
   );
 
 const forwarded = Effect.map(
@@ -45,35 +70,41 @@ const forwarded = Effect.map(
   Option.match({
     onNone: () => Headers.empty,
     onSome: ({ headers }) =>
-      Headers.fromInput(Object.entries(headers).filter(([name]) => !ownedByTheRequest(name))),
-  }),
+      Headers.fromInput(
+        Object.entries(headers).filter(([name]) => !ownedByTheRequest(name))
+      ),
+  })
 );
 
 // Why: The binding's native clients are built once, over `dispatching`, which sends each request
 // with the client a call's input and contract chose, as this holds it for the call.
 class Sending extends Context.Service<Sending, HttpClient.HttpClient>()(
-  "effect-actions/ActionHttp/placed/Sending",
+  "effect-actions/ActionHttp/placed/Sending"
 ) {}
 
 const dispatching = HttpClient.makeWith(
   (request: Effect.Effect<HttpClientRequest.HttpClientRequest>) =>
-    Effect.flatMap(Effect.all([request, Effect.service(Sending)]), ([sent, client]) =>
-      client.execute(sent),
+    Effect.flatMap(
+      Effect.all([request, Effect.service(Sending)]),
+      ([sent, client]) => client.execute(sent)
     ),
-  (request) => Effect.succeed(request),
+  (request) => Effect.succeed(request)
 );
 
-const isSubscriptionError: Predicate.Refinement<unknown, Event.SubscriptionError> = Schema.is(
-  Event.SubscriptionError,
-);
+const isSubscriptionError: Predicate.Refinement<
+  unknown,
+  Event.SubscriptionError
+> = Schema.is(Event.SubscriptionError);
 
-const isNotServed = Predicate.compose(isSubscriptionError, (error: Event.SubscriptionError) =>
-  Predicate.isTagged(error.reason, "NotServed"),
+const isNotServed = Predicate.compose(
+  isSubscriptionError,
+  (error: Event.SubscriptionError) =>
+    Predicate.isTagged(error.reason, "NotServed")
 );
 
 const notServedThere = (name: string) =>
   new Error(
-    `ActionHttp.placed: the server its client reaches does not serve ${name} (serve its implementation in that server's ActionHttp.layer of this binding)`,
+    `ActionHttp.placed: the server its client reaches does not serve ${name} (serve its implementation in that server's ActionHttp.layer of this binding)`
   );
 
 /**
@@ -97,28 +128,37 @@ const notServedThere = (name: string) =>
  */
 export const placed = <const H extends AnyHttp>(
   binding: H,
-  client: (input: Contract<H>["input"]["Type"], contract: Contract<H>) => HttpClient.HttpClient,
+  client: (
+    input: Contract<H>["input"]["Type"],
+    contract: Contract<H>
+  ) => HttpClient.HttpClient
 ): Placed<H> => {
-  // Why: Read as the erased signature a method's parameters are compared by, both ways: a
-  // surface hands each contract its own decoded input.
-  const route: {
-    route(input: ErasedValue, contract: Action.Any | Event.Any): HttpClient.HttpClient;
-  }["route"] = client;
+  // Why: Read as the erased signature the surfaces call it by: a surface hands each contract its
+  // own decoded input.
+  const route: (
+    input: ErasedValue,
+    contract: Action.Any | Event.Any
+  ) => HttpClient.HttpClient = client;
 
   const sendingTo = (input: ErasedValue, contract: Action.Any | Event.Any) =>
     HttpClient.mapRequestInputEffect(route(input, contract), (request) =>
-      Effect.map(forwarded, (headers) => HttpClientRequest.setHeaders(request, headers)),
+      Effect.map(forwarded, (headers) =>
+        HttpClientRequest.setHeaders(request, headers)
+      )
     );
 
   const senders = sendersWith(binding, dispatching, undefined);
 
-  const handlerOf = ({ method }: Senders<Sending>, action: Action.Any): WrittenHandler<unknown> => {
+  const handlerOf = (
+    { method }: Senders<Sending>,
+    action: Action.Any
+  ): WrittenHandler<unknown> => {
     const send = method(action);
 
     return (input, reporting) => {
       const sent = send(
         input,
-        ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }]),
+        ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }])
       );
 
       const sending = sendingTo(input, action);
@@ -126,11 +166,15 @@ export const placed = <const H extends AnyHttp>(
       return Stream.isStream(sent)
         ? sent.pipe(
             Stream.provideService(Sending, sending),
-            Stream.catchIf(isNotFound, () => Stream.die(notServedThere(action.name))),
+            Stream.catchIf(isNotFound, () =>
+              Stream.die(notServedThere(action.name))
+            )
           )
         : sent.pipe(
             Effect.provideService(Sending, sending),
-            Effect.catchIf(isNotFound, () => Effect.die(notServedThere(action.name))),
+            Effect.catchIf(isNotFound, () =>
+              Effect.die(notServedThere(action.name))
+            )
           );
     };
   };
@@ -141,14 +185,18 @@ export const placed = <const H extends AnyHttp>(
         .poll(cursor)
         .pipe(
           Effect.provideService(Sending, sendingTo(input, event)),
-          Effect.catchIf(isNotServed, () => Effect.die(notServedThere(event.name))),
+          Effect.catchIf(isNotServed, () =>
+            Effect.die(notServedThere(event.name))
+          )
         ),
     stream: (input, cursor) =>
       transport(event, input)
         .stream(cursor)
         .pipe(
           Stream.provideService(Sending, sendingTo(input, event)),
-          Stream.catchIf(isNotServed, () => Stream.die(notServedThere(event.name))),
+          Stream.catchIf(isNotServed, () =>
+            Stream.die(notServedThere(event.name))
+          )
         ),
   });
 
@@ -156,26 +204,42 @@ export const placed = <const H extends AnyHttp>(
     ...(binding.actions.length === 0
       ? []
       : [
-          new Implementation<H["actions"][number], Nothing<H["actions"][number]>, never, never>(
+          new Implementation<
+            H["actions"][number],
+            Nothing<H["actions"][number]>,
+            never,
+            never
+          >(
             binding.actions,
             memoized(
               Effect.map(senders, (built): Written =>
-                binding.actions.map((action) => [action, handlerOf(built, action)]),
-              ),
+                binding.actions.map((action) => [
+                  action,
+                  handlerOf(built, action),
+                ])
+              )
             ),
-            memoized(Effect.succeed<ErasedAuthorize>(Action.allowAll)),
+            memoized(Effect.succeed<ErasedAuthorize>(Action.allowAll))
           ),
         ]),
     ...(binding.events.length === 0
       ? []
       : [
-          new EventImplementation<H["events"][number], Nothing<H["events"][number]>, never, never>(
+          new EventImplementation<
+            H["events"][number],
+            Nothing<H["events"][number]>,
+            never,
+            never
+          >(
             binding.events,
             binding.events.map(
               (event) =>
-                [event, memoized(Effect.map(senders, (built) => runOf(built, event)))] as const,
+                [
+                  event,
+                  memoized(Effect.map(senders, (built) => runOf(built, event))),
+                ] as const
             ),
-            memoized(Effect.succeed<ErasedAuthorize<Event.Any>>(Event.allowAll)),
+            memoized(Effect.succeed<ErasedAuthorize<Event.Any>>(Event.allowAll))
           ),
         ]),
   ];

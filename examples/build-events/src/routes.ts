@@ -1,9 +1,10 @@
-import { Layer } from "effect";
-import { RpcSerialization, RpcServer } from "effect/rpc";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
+import { Layer } from "effect";
+import { RpcSerialization, RpcServer } from "effect/rpc";
+
 import { Http } from "./Api.js";
 import { buildEvents } from "./builds/events.js";
 import { builds } from "./builds/handlers.js";
@@ -16,7 +17,14 @@ import { authenticate } from "./identity/verifier.js";
 import { Rpc } from "./Rpc.js";
 
 // Every domain's implementation, once: the events beside the actions, in one list.
-const implementations = [builds, logs, buildEvents, statusEvents, deploys, deployEvents];
+const implementations = [
+  builds,
+  logs,
+  buildEvents,
+  statusEvents,
+  deploys,
+  deployEvents,
+];
 
 // The actions as MCP tools and the events as MCP events, at `/mcp`. A client polls with
 // `events/poll`, or holds `events/stream` open and is pushed each occurrence. Both events are
@@ -29,11 +37,14 @@ const implementations = [builds, logs, buildEvents, statusEvents, deploys, deplo
 // A tool answers one result, so `tailLog` would collect a whole log before answering, all of it
 // in a model's context: its implementation, `logs`, is left out, and the endpoint serves every
 // other action and every event.
-const mcp = ActionMcp.layerHttp([builds, buildEvents, statusEvents, deploys, deployEvents], {
-  name: "build-events",
-  version: "1.0.0",
-  authentication: Login,
-});
+const mcp = ActionMcp.layerHttp(
+  [builds, buildEvents, statusEvents, deploys, deployEvents],
+  {
+    name: "build-events",
+    version: "1.0.0",
+    authentication: Login,
+  }
+);
 
 // The same implementations as routes under `/api`, for a client that speaks HTTP rather than
 // MCP: one implementation of each event serves every surface.
@@ -44,7 +55,7 @@ const api = ActionHttp.layer(Http, implementations);
 // answer once every stream of the request ended, which a watch never does.
 const rpc = ActionRpc.layer(Rpc, implementations).pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-  Layer.provide(RpcSerialization.layerNdjson),
+  Layer.provide(RpcSerialization.layerNdjson)
 );
 
 // Webhook delivery for MCP and HTTP alike: a member names a callback URL and a secret, with
@@ -56,5 +67,5 @@ const rpc = ActionRpc.layer(Rpc, implementations).pipe(
 // `server.ts` provides.
 export const routes = Layer.mergeAll(mcp, api, rpc).pipe(
   Layer.provide(authenticate),
-  Layer.provide(Webhook.layer({ persist: true })),
+  Layer.provide(Webhook.layer({ persist: true }))
 );

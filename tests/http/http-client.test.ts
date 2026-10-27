@@ -1,7 +1,25 @@
-import { expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Exit, Layer, Option, Schema, SchemaTransformation } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
+import { once } from "node:events";
+
+import { describe, expect, it } from "@effect/vitest";
+import {
+  Cause,
+  Context,
+  Effect,
+  Exit,
+  Function,
+  Layer,
+  Option,
+  Schema,
+  SchemaTransformation,
+} from "effect";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+} from "effect/http";
 import { OpenApi } from "effect/http-api";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
@@ -9,13 +27,13 @@ import { authenticate } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
 import { as } from "../support/requests.js";
-import { type Handler, httpClient, serve } from "../support/serve.js";
+import { httpClient, serve } from "../support/serve.js";
+import type { Handler } from "../support/serve.js";
 
-class NotFound extends Schema.TaggedError<NotFound>()(
-  "NotFound",
-  { id: Schema.String },
-  { httpApiStatus: 404 },
-) {}
+class NotFound extends Schema.TaggedError<
+  NotFound,
+  { readonly brand: unique symbol }
+>()("NotFound", { id: Schema.String }, { httpApiStatus: 404 }) {}
 
 const Get = Action.make("get", {
   description: "Read a note",
@@ -52,23 +70,27 @@ const apps = Action.implement(
         ? Effect.fail(new NotFound({ id }))
         : Effect.succeed({
             id,
-            at: Schema.decodeSync(Schema.DateTimeUtcFromString)(at.toISOString()),
+            at: Schema.decodeSync(Schema.DateTimeUtcFromString)(
+              at.toISOString()
+            ),
           }),
     count: () => Effect.succeed(Infinity),
     remove: () => Effect.succeed(null),
   },
-  { authorize: () => Effect.fail(new Action.Forbidden()) },
+  { authorize: () => Effect.fail(new Action.Forbidden()) }
 );
 
 const serveNotesRecordingRequests = () => {
-  const requests: Array<Request> = [];
+  const requests: Request[] = [];
 
-  const web = serve(ActionHttp.layer(Http, apps).pipe(Layer.provide(authenticate)));
+  const web = serve(
+    ActionHttp.layer(Http, apps).pipe(Layer.provide(authenticate))
+  );
 
-  const handler: Handler = (request) => {
+  const handler: Handler = async (request) => {
     requests.push(request.clone());
 
-    return web.handler(request);
+    return await web.handler(request);
   };
 
   return { handler, requests };
@@ -80,77 +102,104 @@ it.effect(
     Effect.gen(function* () {
       const { handler, requests } = serveNotesRecordingRequests();
 
-      const results = yield* Effect.flatMap(httpClient(Http, handler), (client) =>
-        Effect.all({
-          methods: Effect.succeed(Object.keys(client)),
-          note: client.get({ id: "a" }),
-          missing: Effect.flip(client.get({ id: "missing" })),
-          unencodableSuccess: Effect.flip(client.count()),
-          unauthenticated: Effect.flip(client.remove()),
-        }),
+      const results = yield* Effect.flatMap(
+        httpClient(Http, handler),
+        (client) =>
+          Effect.all({
+            methods: Effect.succeed(Object.keys(client)),
+            note: client.get({ id: "a" }),
+            missing: Effect.flip(client.get({ id: "missing" })),
+            unencodableSuccess: Effect.flip(client.count()),
+            unauthenticated: Effect.flip(client.remove()),
+          })
       );
 
-      expect(results.methods).toEqual(["get", "count", "remove"]);
+      expect(results.methods).toStrictEqual(["get", "count", "remove"]);
       expect(results.note.id).toBe("a");
       expect(results.note.at.epochMilliseconds).toBe(at.getTime());
-      expect(results.missing).toEqual(new NotFound({ id: "missing" }));
-      expect(HttpClientError.isHttpClientError(results.unencodableSuccess)).toBe(true);
+      expect(results.missing).toStrictEqual(new NotFound({ id: "missing" }));
+      expect(
+        HttpClientError.isHttpClientError(results.unencodableSuccess)
+      ).toBe(true);
       expect(
         HttpClientError.isHttpClientError(results.unencodableSuccess) &&
-          results.unencodableSuccess.response?.status,
+          results.unencodableSuccess.response?.status
       ).toBe(500);
       expect(results.unauthenticated).toBeInstanceOf(Action.Unauthenticated);
       expect(requests[0]?.url).toBe("http://localhost/api/get");
-      expect(yield* Effect.promise(async () => requests[0]?.json())).toEqual({ id: "a" });
+      expect(
+        yield* Effect.promise(async () => await requests[0]?.json())
+      ).toStrictEqual({
+        id: "a",
+      });
       expect(requests[0]?.headers.has("authorization")).toBe(false);
-      expect(yield* Effect.promise(async () => requests[2]?.json())).toEqual({});
+      expect(
+        yield* Effect.promise(async () => await requests[2]?.json())
+      ).toStrictEqual({});
 
       const invalid = yield* Effect.flatMap(
-        httpClient(Http, (request) =>
-          handler(new Request(request, { method: "POST", body: JSON.stringify({ id: 1 }) })),
+        httpClient(
+          Http,
+          async (request) =>
+            await handler(
+              new Request(request, {
+                method: "POST",
+                body: JSON.stringify({ id: 1 }),
+              })
+            )
         ),
-        (client) => Effect.flip(client.get({ id: "a" })),
+        (client) => Effect.flip(client.get({ id: "a" }))
       );
 
       expect(invalid).toBeInstanceOf(Action.InvalidInput);
-    }),
+    })
 );
 
-it.effect("passes the native client options through, such as a bearer token on every call", () =>
-  Effect.gen(function* () {
-    const { handler, requests } = serveNotesRecordingRequests();
+it.effect(
+  "passes the native client options through, such as a bearer token on every call",
+  () =>
+    Effect.gen(function* () {
+      const { handler, requests } = serveNotesRecordingRequests();
 
-    const forbidden = yield* Effect.flatMap(
-      httpClient(Http, handler, {
-        transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("alice")),
-      }),
-      (client) => Effect.andThen(client.get({ id: "a" }), Effect.flip(client.remove())),
-    );
+      const forbidden = yield* Effect.flatMap(
+        httpClient(Http, handler, {
+          transformClient: HttpClient.mapRequest(
+            HttpClientRequest.bearerToken("alice")
+          ),
+        }),
+        (client) =>
+          Effect.andThen(client.get({ id: "a" }), Effect.flip(client.remove()))
+      );
 
-    expect(forbidden).toEqual(new Action.Forbidden());
-    expect(requests.map((request) => request.headers.get("authorization"))).toEqual([
-      "Bearer alice",
-      "Bearer alice",
-    ]);
-  }),
+      expect(forbidden).toStrictEqual(new Action.Forbidden());
+      expect(
+        requests.map((request) => request.headers.get("authorization"))
+      ).toStrictEqual(["Bearer alice", "Bearer alice"]);
+    })
 );
 
-class SignInRequired extends Schema.TaggedError<SignInRequired>()("SignInRequired", {
+class SignInRequired extends Schema.TaggedError<
+  SignInRequired,
+  { readonly brand: unique symbol }
+>()("SignInRequired", {
   message: Schema.String,
 }) {}
 
-class SignIn extends Context.Service<SignIn, { readonly token: Option.Option<string> }>()(
-  "http-client/SignIn",
-) {}
+class SignIn extends Context.Service<
+  SignIn,
+  { readonly token: Option.Option<string> }
+>()("http-client/SignIn") {}
 
 const authorizing = (client: HttpClient.HttpClient) =>
   HttpClient.mapRequestEffect(client, (request) =>
     Effect.flatMap(SignIn, ({ token }) =>
       Option.match(token, {
-        onNone: () => Effect.fail(new SignInRequired({ message: "Run `notes login`" })),
-        onSome: (bearer) => Effect.succeed(HttpClientRequest.bearerToken(request, bearer)),
-      }),
-    ),
+        onNone: () =>
+          Effect.fail(new SignInRequired({ message: "Run `notes login`" })),
+        onSome: (bearer) =>
+          Effect.succeed(HttpClientRequest.bearerToken(request, bearer)),
+      })
+    )
   );
 
 it.effect(
@@ -159,53 +208,66 @@ it.effect(
     Effect.gen(function* () {
       const { handler, requests } = serveNotesRecordingRequests();
 
-      const client = yield* ActionHttp.client(Http, { transformClient: authorizing }).pipe(
-        Effect.provide(Testing.layer(handler)),
-      );
+      const client = yield* ActionHttp.client(Http, {
+        transformClient: authorizing,
+      }).pipe(Effect.provide(Testing.layer(handler)));
 
       const signedOut = yield* Effect.flip(client.get({ id: "a" })).pipe(
-        Effect.provideService(SignIn, { token: Option.none() }),
+        Effect.provideService(SignIn, { token: Option.none() })
       );
 
-      expect(signedOut).toStrictEqual(new SignInRequired({ message: "Run `notes login`" }));
-      expect(requests).toEqual([]);
+      expect(signedOut).toStrictEqual(
+        new SignInRequired({ message: "Run `notes login`" })
+      );
+      expect(requests).toStrictEqual([]);
 
       const note = yield* client
         .get({ id: "a" })
         .pipe(Effect.provideService(SignIn, { token: Option.some("alice") }));
 
       expect(note.id).toBe("a");
-      expect(requests.map((request) => request.headers.get("authorization"))).toEqual([
-        "Bearer alice",
-      ]);
-    }),
+      expect(
+        requests.map((request) => request.headers.get("authorization"))
+      ).toStrictEqual(["Bearer alice"]);
+    })
 );
 
-it.effect("fails with Effect's own errors when the contract cannot account for the answer", () =>
-  Effect.gen(function* () {
-    const respondingWith = (response: Response) =>
-      Effect.flatMap(
-        httpClient(Http, async () => response),
-        (client) => Effect.flip(client.get({ id: "a" })),
+it.effect(
+  "fails with Effect's own errors when the contract cannot account for the answer",
+  () =>
+    Effect.gen(function* () {
+      const respondingWith = (response: Response) =>
+        Effect.flatMap(
+          httpClient(Http, async () => response),
+          (client) => Effect.flip(client.get({ id: "a" }))
+        );
+
+      const undeclared = yield* respondingWith(
+        new Response("Bad gateway", { status: 502 })
       );
 
-    const undeclared = yield* respondingWith(new Response("Bad gateway", { status: 502 }));
+      expect(HttpClientError.isHttpClientError(undeclared)).toBe(true);
+      expect(
+        HttpClientError.isHttpClientError(undeclared) &&
+          undeclared.response?.status
+      ).toBe(502);
 
-    expect(HttpClientError.isHttpClientError(undeclared)).toBe(true);
-    expect(HttpClientError.isHttpClientError(undeclared) && undeclared.response?.status).toBe(502);
+      const unreachable = yield* Effect.flatMap(
+        httpClient(Http, async () => {
+          throw new TypeError("fetch failed");
+        }),
+        (client) => Effect.flip(client.get({ id: "a" }))
+      );
 
-    const unreachable = yield* Effect.flatMap(
-      httpClient(Http, () => Promise.reject(new TypeError("fetch failed"))),
-      (client) => Effect.flip(client.get({ id: "a" })),
-    );
+      expect(HttpClientError.isHttpClientError(unreachable)).toBe(true);
+      expect(
+        HttpClientError.isHttpClientError(unreachable) && unreachable.response
+      ).toBeUndefined();
 
-    expect(HttpClientError.isHttpClientError(unreachable)).toBe(true);
-    expect(HttpClientError.isHttpClientError(unreachable) && unreachable.response).toBeUndefined();
+      const malformed = yield* respondingWith(Response.json({ id: 1 }));
 
-    const malformed = yield* respondingWith(Response.json({ id: 1 }));
-
-    expect(Schema.isSchemaError(malformed)).toBe(true);
-  }),
+      expect(Schema.isSchemaError(malformed)).toBe(true);
+    })
 );
 
 it.effect(
@@ -225,52 +287,62 @@ it.effect(
 
       expect(refused).toBeInstanceOf(Action.InvalidInput);
       expect(
-        refused instanceof Action.InvalidInput && refused.issues.map(({ path }) => path),
-      ).toEqual([["id"]]);
+        refused instanceof Action.InvalidInput &&
+          refused.issues.map(({ path }) => path)
+      ).toStrictEqual([["id"]]);
       expect(sent).toBe(0);
-    }),
+    })
 );
 
-it.effect("fails an unserved action's call by whether the action declares its 404", () =>
-  Effect.gen(function* () {
-    const reasonOf = <A, E>(call: Effect.Effect<A, E>) =>
-      Effect.map(Effect.flip(call), (error) =>
-        HttpClientError.isHttpClientError(error) ? error.reason._tag : "declared",
+const reasonOf = <A, E>(call: Effect.Effect<A, E>) =>
+  Effect.map(Effect.flip(call), (error) =>
+    HttpClientError.isHttpClientError(error) ? error.reason._tag : "declared"
+  );
+
+it.effect(
+  "fails an unserved action's call by whether the action declares its 404",
+  () =>
+    Effect.gen(function* () {
+      const reasons = yield* Effect.flatMap(ActionHttp.client(Http), (client) =>
+        Effect.all([
+          reasonOf(client.get({ id: "a" })),
+          reasonOf(client.count()),
+        ])
+      ).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, []))));
+
+      expect(reasons).toStrictEqual(["StatusCodeError", "DecodeError"]);
+    })
+);
+
+it.effect(
+  "refuses a hand-spread binding holding an action its api lacks, saying the fix",
+  () =>
+    Effect.gen(function* () {
+      const spread = { ...ActionHttp.make([Count]), actions: [Count, Get] };
+
+      const exit = yield* Effect.exit(
+        ActionHttp.client(spread).pipe(Effect.provide(FetchHttpClient.layer))
       );
 
-    const reasons = yield* Effect.flatMap(ActionHttp.client(Http), (client) =>
-      Effect.all([reasonOf(client.get({ id: "a" })), reasonOf(client.count())]),
-    ).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, []))));
-
-    expect(reasons).toEqual(["StatusCodeError", "DecodeError"]);
-  }),
+      expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
+        "No client method for get (use the binding `ActionHttp.make` returned"
+      );
+    })
 );
 
-it.effect("refuses a hand-spread binding holding an action its api lacks, saying the fix", () =>
-  Effect.gen(function* () {
-    const spread = { ...ActionHttp.make([Count]), actions: [Count, Get] };
+it.effect(
+  "fails a call without baseUrl outside a browser with InvalidUrlError",
+  () =>
+    Effect.gen(function* () {
+      const failure = yield* ActionHttp.client(Http).pipe(
+        Effect.flatMap((client) => Effect.flip(client.count())),
+        Effect.provide(FetchHttpClient.layer)
+      );
 
-    const exit = yield* Effect.exit(
-      ActionHttp.client(spread).pipe(Effect.provide(FetchHttpClient.layer)),
-    );
-
-    expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
-      "No client method for get (use the binding `ActionHttp.make` returned",
-    );
-  }),
-);
-
-it.effect("fails a call without baseUrl outside a browser with InvalidUrlError", () =>
-  Effect.gen(function* () {
-    const failure = yield* ActionHttp.client(Http).pipe(
-      Effect.flatMap((client) => Effect.flip(client.count())),
-      Effect.provide(FetchHttpClient.layer),
-    );
-
-    expect(HttpClientError.isHttpClientError(failure) && failure.reason._tag).toBe(
-      "InvalidUrlError",
-    );
-  }),
+      expect(
+        HttpClientError.isHttpClientError(failure) && failure.reason._tag
+      ).toBe("InvalidUrlError");
+    })
 );
 
 it.effect(
@@ -289,25 +361,27 @@ it.effect(
         description: "Optional input",
         readOnly: false,
         caller: Action.Anyone,
-        input: { value: Schema.optional(Schema.Number) },
-        success: Schema.Number,
+        input: { value: Schema.optional(Schema.Finite) },
+        success: Schema.Finite,
       });
 
       const undefinedFromString = Schema.Literal("absent").pipe(
         Schema.decodeTo(
           Schema.Undefined,
           SchemaTransformation.transform({
-            decode: () => undefined,
+            decode: Function.constUndefined,
             encode: () => "absent" as const,
-          }),
-        ),
+          })
+        )
       );
 
       const Nullable = Action.make("nullable", {
         description: "Nullable object",
         readOnly: false,
         caller: Action.Anyone,
-        input: Schema.NullOr(Schema.Struct({ value: Schema.optional(Schema.Number) })),
+        input: Schema.NullOr(
+          Schema.Struct({ value: Schema.optional(Schema.Finite) })
+        ),
         success: Schema.String,
       });
 
@@ -335,28 +409,35 @@ it.effect(
         EmptyRecordCalledAsNoInput,
       ]);
 
-      const bodies: Array<unknown> = [];
+      const bodies: unknown[] = [];
 
       const web = serve(
         ActionHttp.layer(
           Inputs,
           Action.implement(
-            [Double, Optional, Nullable, UndefinedValue, EmptyRecordCalledAsNoInput],
+            [
+              Double,
+              Optional,
+              Nullable,
+              UndefinedValue,
+              EmptyRecordCalledAsNoInput,
+            ],
             {
               double: ({ value }) => Effect.succeed(value * 2),
               optional: ({ value }) => Effect.succeed(value ?? 7),
-              nullable: (input) => Effect.succeed(input === null ? "null" : "object"),
+              nullable: (input) =>
+                Effect.succeed(input === null ? "null" : "object"),
               undefinedValue: (input) => Effect.succeed(String(input)),
               emptyRecord: () => Effect.succeed(true),
-            },
-          ),
-        ),
+            }
+          )
+        )
       );
 
       const handler = async (request: Request) => {
         bodies.push(await request.clone().json());
 
-        return web.handler(request);
+        return await web.handler(request);
       };
 
       const calls = (client: ActionHttp.Client<typeof Inputs>) =>
@@ -373,64 +454,89 @@ it.effect(
 
       const results = yield* Effect.flatMap(
         ActionHttp.client(Inputs, { baseUrl: "http://localhost" }),
-        calls,
+        calls
       ).pipe(Effect.provide(Testing.layer(handler)));
 
-      expect(results).toEqual([42, 7, 7, 3, "null", "object", "undefined", true]);
-      expect(bodies).toEqual([{ value: "21" }, {}, {}, { value: 3 }, null, {}, "absent", {}]);
-    }),
+      expect(results).toStrictEqual([
+        42,
+        7,
+        7,
+        3,
+        "null",
+        "object",
+        "undefined",
+        true,
+      ]);
+      expect(bodies).toStrictEqual([
+        { value: "21" },
+        {},
+        {},
+        { value: 3 },
+        null,
+        {},
+        "absent",
+        {},
+      ]);
+    })
 );
 
-it.effect("takes a left-out argument as the input {} decodes to, an input class's instance", () =>
-  Effect.gen(function* () {
-    class Filters extends Schema.Class<Filters>("Filters")({
-      tag: Schema.optionalKey(Schema.String),
-    }) {}
+it.effect(
+  "takes a left-out argument as the input {} decodes to, an input class's instance",
+  () =>
+    Effect.gen(function* () {
+      class Filters extends Schema.Class<
+        Filters,
+        { readonly brand: unique symbol }
+      >("Filters")({
+        tag: Schema.optionalKey(Schema.String),
+      }) {}
 
-    const List = Action.make("list", {
-      description: "List notes, all of them without a tag",
-      readOnly: true,
-      caller: Action.Anyone,
-      input: Filters,
-      success: Schema.String,
-    });
+      const List = Action.make("list", {
+        description: "List notes, all of them without a tag",
+        readOnly: true,
+        caller: Action.Anyone,
+        input: Filters,
+        success: Schema.String,
+      });
 
-    const Lists = ActionHttp.make([List]);
+      const Lists = ActionHttp.make([List]);
 
-    const bodies: Array<unknown> = [];
+      const bodies: unknown[] = [];
 
-    const web = serve(
-      ActionHttp.layer(
-        Lists,
-        Action.implement(List, (filters) =>
-          Effect.succeed(`${filters instanceof Filters}: ${filters.tag ?? "all"}`),
-        ),
-      ),
-    );
+      const web = serve(
+        ActionHttp.layer(
+          Lists,
+          Action.implement(List, (filters) =>
+            Effect.succeed(
+              `${filters instanceof Filters}: ${filters.tag ?? "all"}`
+            )
+          )
+        )
+      );
 
-    const handler = async (request: Request) => {
-      bodies.push(await request.clone().json());
+      const handler = async (request: Request) => {
+        bodies.push(await request.clone().json());
 
-      return web.handler(request);
-    };
+        return await web.handler(request);
+      };
 
-    const results = yield* Effect.flatMap(
-      ActionHttp.client(Lists, { baseUrl: "http://localhost" }),
-      (client) => Effect.all([client.list(), client.list(new Filters({ tag: "x" }))]),
-    ).pipe(Effect.provide(Testing.layer(handler)));
+      const results = yield* Effect.flatMap(
+        ActionHttp.client(Lists, { baseUrl: "http://localhost" }),
+        (client) =>
+          Effect.all([client.list(), client.list(new Filters({ tag: "x" }))])
+      ).pipe(Effect.provide(Testing.layer(handler)));
 
-    expect(results).toEqual(["true: all", "true: x"]);
-    expect(bodies).toEqual([{}, { tag: "x" }]);
-  }),
+      expect(results).toStrictEqual(["true: all", "true: x"]);
+      expect(bodies).toStrictEqual([{}, { tag: "x" }]);
+    })
 );
 
 it.effect("decodes two errors that share a status by their tag", () =>
   Effect.gen(function* () {
-    class Rejected extends Schema.TaggedError<Rejected>()(
-      "Rejected",
-      { reason: Schema.String },
-      { httpApiStatus: 403 },
-    ) {}
+    class Rejected extends Schema.TaggedError<
+      Rejected,
+      { readonly brand: unique symbol }
+    >()("Rejected", { reason: Schema.String }, { httpApiStatus: 403 }) {}
 
     const Refuse = Action.make("refuse", {
       description: "Refused by its authorizer",
@@ -448,7 +554,9 @@ it.effect("decodes two errors that share a status by their tag", () =>
       error: [Rejected],
     });
 
-    const binding = ActionHttp.make([Refuse, Reject], { authentication: Login });
+    const binding = ActionHttp.make([Refuse, Reject], {
+      authentication: Login,
+    });
 
     const routes = ActionHttp.layer(
       binding,
@@ -458,171 +566,217 @@ it.effect("decodes two errors that share a status by their tag", () =>
           refuse: () => Effect.succeed("unreachable"),
           reject: () => Effect.fail(new Rejected({ reason: "closed" })),
         },
-        { authorize: () => Effect.fail(new Action.Forbidden()) },
-      ),
+        { authorize: () => Effect.fail(new Action.Forbidden()) }
+      )
     ).pipe(Layer.provide(authenticate));
 
-    const refused = yield* Effect.flatMap(ActionHttp.client(binding, as("alice")), (client) =>
-      Effect.all([Effect.flip(client.refuse()), Effect.flip(client.reject())]),
+    const refused = yield* Effect.flatMap(
+      ActionHttp.client(binding, as("alice")),
+      (client) =>
+        Effect.all([Effect.flip(client.refuse()), Effect.flip(client.reject())])
     ).pipe(Effect.provide(Testing.layer(routes)));
 
-    expect(refused).toEqual([new Action.Forbidden(), new Rejected({ reason: "closed" })]);
-  }),
+    expect(refused).toStrictEqual([
+      new Action.Forbidden(),
+      new Rejected({ reason: "closed" }),
+    ]);
+  })
 );
 
-it.effect("declares a binding's errors on every endpoint, so middleware's answers decode", () =>
-  Effect.gen(function* () {
-    class RateLimited extends Schema.TaggedError<RateLimited>()(
-      "RateLimited",
-      { retryAfter: Schema.Finite },
-      { httpApiStatus: 429 },
-    ) {}
+it.effect(
+  "declares a binding's errors on every endpoint, so middleware's answers decode",
+  () =>
+    Effect.gen(function* () {
+      class RateLimited extends Schema.TaggedError<
+        RateLimited,
+        { readonly brand: unique symbol }
+      >()(
+        "RateLimited",
+        { retryAfter: Schema.Finite },
+        { httpApiStatus: 429 }
+      ) {}
 
-    class MaintenanceWithoutStatus extends Schema.TaggedError<MaintenanceWithoutStatus>()(
-      "Maintenance",
-      {},
-    ) {}
+      class MaintenanceWithoutStatus extends Schema.TaggedError<
+        MaintenanceWithoutStatus,
+        { readonly brand: unique symbol }
+      >()("Maintenance", {}) {}
 
-    const binding = ActionHttp.make([Get, Count], {
-      error: [RateLimited, MaintenanceWithoutStatus],
-    });
+      const binding = ActionHttp.make([Get, Count], {
+        error: [RateLimited, MaintenanceWithoutStatus],
+      });
 
-    const middlewareAnswering =
-      (error: RateLimited | MaintenanceWithoutStatus, status: number) => () =>
-        Promise.resolve(
+      const middlewareAnswering =
+        (error: RateLimited | MaintenanceWithoutStatus, status: number) =>
+        async () =>
           Response.json(
-            Schema.encodeSync(Schema.Union([RateLimited, MaintenanceWithoutStatus]))(error),
+            Schema.encodeSync(
+              Schema.Union([RateLimited, MaintenanceWithoutStatus])
+            )(error),
             {
               status,
-            },
-          ),
+            }
+          );
+
+      const failures = (handler: () => Promise<Response>) =>
+        Effect.flatMap(httpClient(binding, handler), (client) =>
+          Effect.all([
+            Effect.flip(client.get({ id: "a" })),
+            Effect.flip(client.count()),
+          ])
         );
 
-    const failures = (handler: () => Promise<Response>) =>
-      Effect.flatMap(httpClient(binding, handler), (client) =>
-        Effect.all([Effect.flip(client.get({ id: "a" })), Effect.flip(client.count())]),
-      );
+      expect(
+        yield* failures(
+          middlewareAnswering(new RateLimited({ retryAfter: 3 }), 429)
+        )
+      ).toStrictEqual([
+        new RateLimited({ retryAfter: 3 }),
+        new RateLimited({ retryAfter: 3 }),
+      ]);
 
-    expect(yield* failures(middlewareAnswering(new RateLimited({ retryAfter: 3 }), 429))).toEqual([
-      new RateLimited({ retryAfter: 3 }),
-      new RateLimited({ retryAfter: 3 }),
-    ]);
+      expect(
+        yield* failures(
+          middlewareAnswering(new MaintenanceWithoutStatus(), 422)
+        )
+      ).toStrictEqual([
+        new MaintenanceWithoutStatus(),
+        new MaintenanceWithoutStatus(),
+      ]);
 
-    expect(yield* failures(middlewareAnswering(new MaintenanceWithoutStatus(), 422))).toEqual([
-      new MaintenanceWithoutStatus(),
-      new MaintenanceWithoutStatus(),
-    ]);
+      for (const path of ["/api/get", "/api/count"]) {
+        const responses = OpenApi.fromApi(binding.api).paths?.[path]?.post
+          ?.responses;
 
-    for (const path of ["/api/get", "/api/count"]) {
-      const responses = OpenApi.fromApi(binding.api).paths?.[path]?.post?.responses;
-      expect(Object.keys(responses ?? {})).toEqual(expect.arrayContaining(["422", "429"]));
-    }
-  }),
+        expect(Object.keys(responses ?? {})).toStrictEqual(
+          expect.arrayContaining(["422", "429"])
+        );
+      }
+    })
 );
 
 const namedRecordingFetch =
-  (name: string, handler: Handler, used: Array<string>): typeof globalThis.fetch =>
-  (input, init) => {
+  (name: string, handler: Handler, used: string[]): typeof globalThis.fetch =>
+  async (input, init) => {
     used.push(name);
 
-    return handler(new Request(input, init));
+    return await handler(new Request(input, init));
   };
 
-it("builds a fetch client outside an Effect, each sending with its own fetch", async () => {
-  const { handler, requests } = serveNotesRecordingRequests();
-  const used: Array<string> = [];
+describe("ActionHttp.fetchClient", () => {
+  it("builds a fetch client outside an Effect, each sending with its own fetch", async () => {
+    const { handler, requests } = serveNotesRecordingRequests();
+    const used: string[] = [];
 
-  const first = ActionHttp.fetchClient(Http, {
-    baseUrl: "http://localhost",
-    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("t0k")),
-    fetch: namedRecordingFetch("first", handler, used),
-  });
-
-  const second = ActionHttp.fetchClient(Http, {
-    baseUrl: "http://localhost",
-    fetch: namedRecordingFetch("second", handler, used),
-  });
-
-  expect(Object.keys(first)).toEqual(["get", "count", "remove"]);
-  expect((await Effect.runPromise(first.get({ id: "a" }))).id).toBe("a");
-  expect((await Effect.runPromise(second.get({ id: "b" }))).id).toBe("b");
-  expect(used).toEqual(["first", "second"]);
-  expect(requests.map((request) => request.headers.get("authorization"))).toEqual([
-    "Bearer t0k",
-    null,
-  ]);
-
-  const missing = Effect.runPromise(first.get({ id: "missing" }));
-
-  await expect(missing).rejects.toBeInstanceOf(NotFound);
-  await expect(missing).rejects.toEqual(new NotFound({ id: "missing" }));
-});
-
-it("builds a fetch client whose transform requires a service, which each call is given", async () => {
-  const { handler, requests } = serveNotesRecordingRequests();
-
-  const api = ActionHttp.fetchClient(Http, {
-    baseUrl: "http://localhost",
-    transformClient: authorizing,
-    fetch: (input, init) => handler(new Request(input, init)),
-  });
-
-  const signedIn = { token: Option.some("t0k") };
-  const signedOut = { token: Option.none() };
-
-  const note = await Effect.runPromise(
-    api.get({ id: "a" }).pipe(Effect.provideService(SignIn, signedIn)),
-  );
-
-  const refused = Effect.runPromise(
-    api.get({ id: "b" }).pipe(Effect.provideService(SignIn, signedOut)),
-  );
-
-  expect(note.id).toBe("a");
-  await expect(refused).rejects.toEqual(new SignInRequired({ message: "Run `notes login`" }));
-  expect(requests.map((request) => request.headers.get("authorization"))).toEqual(["Bearer t0k"]);
-});
-
-it("sends a fetch client's calls with the global fetch as each call finds it", async () => {
-  const { handler } = serveNotesRecordingRequests();
-  const used: Array<string> = [];
-  const original = globalThis.fetch;
-
-  const api = ActionHttp.fetchClient(Http, { baseUrl: "http://localhost" });
-
-  try {
-    globalThis.fetch = namedRecordingFetch("stub", handler, used);
-    await Effect.runPromise(api.get({ id: "a" }));
-
-    globalThis.fetch = namedRecordingFetch("later", handler, used);
-    await Effect.runPromise(api.get({ id: "a" }));
-  } finally {
-    globalThis.fetch = original;
-  }
-
-  expect(used).toEqual(["stub", "later"]);
-});
-
-it("aborts a fetch client's request when its call is interrupted, as a timeout does", async () => {
-  const signals: Array<AbortSignal> = [];
-
-  const fetchFailingOnlyOnAbort: typeof globalThis.fetch = (_input, init) =>
-    new Promise((_resolve, reject) => {
-      const signal = init?.signal;
-
-      if (signal === undefined || signal === null) return;
-
-      signals.push(signal);
-      signal.addEventListener("abort", () => reject(signal.reason));
+    const first = ActionHttp.fetchClient(Http, {
+      baseUrl: "http://localhost",
+      transformClient: HttpClient.mapRequest(
+        HttpClientRequest.bearerToken("t0k")
+      ),
+      fetch: namedRecordingFetch("first", handler, used),
     });
 
-  const api = ActionHttp.fetchClient(Http, {
-    baseUrl: "http://localhost",
-    fetch: fetchFailingOnlyOnAbort,
+    const second = ActionHttp.fetchClient(Http, {
+      baseUrl: "http://localhost",
+      fetch: namedRecordingFetch("second", handler, used),
+    });
+
+    expect(Object.keys(first)).toStrictEqual(["get", "count", "remove"]);
+    const fromFirst = await Effect.runPromise(first.get({ id: "a" }));
+    const fromSecond = await Effect.runPromise(second.get({ id: "b" }));
+
+    expect(fromFirst.id).toBe("a");
+    expect(fromSecond.id).toBe("b");
+    expect(used).toStrictEqual(["first", "second"]);
+    expect(
+      requests.map((request) => request.headers.get("authorization"))
+    ).toStrictEqual(["Bearer t0k", null]);
+
+    const missing = Effect.runPromise(first.get({ id: "missing" }));
+
+    await expect(missing).rejects.toBeInstanceOf(NotFound);
+    await expect(missing).rejects.toStrictEqual(
+      new NotFound({ id: "missing" })
+    );
   });
 
-  const timedOut = Effect.runPromise(api.get({ id: "a" }).pipe(Effect.timeout("10 millis")));
+  it("builds a fetch client whose transform requires a service, which each call is given", async () => {
+    const { handler, requests } = serveNotesRecordingRequests();
 
-  await expect(timedOut).rejects.toSatisfy(Cause.isTimeoutError);
-  expect(signals.map((signal) => signal.aborted)).toEqual([true]);
+    const api = ActionHttp.fetchClient(Http, {
+      baseUrl: "http://localhost",
+      transformClient: authorizing,
+      fetch: async (input, init) => await handler(new Request(input, init)),
+    });
+
+    const signedIn = { token: Option.some("t0k") };
+    const signedOut = { token: Option.none() };
+
+    const note = await Effect.runPromise(
+      api.get({ id: "a" }).pipe(Effect.provideService(SignIn, signedIn))
+    );
+
+    const refused = Effect.runPromise(
+      api.get({ id: "b" }).pipe(Effect.provideService(SignIn, signedOut))
+    );
+
+    expect(note.id).toBe("a");
+    await expect(refused).rejects.toStrictEqual(
+      new SignInRequired({ message: "Run `notes login`" })
+    );
+    expect(
+      requests.map((request) => request.headers.get("authorization"))
+    ).toStrictEqual(["Bearer t0k"]);
+  });
+
+  it("sends a fetch client's calls with the global fetch as each call finds it", async () => {
+    const { handler } = serveNotesRecordingRequests();
+    const used: string[] = [];
+    const original = globalThis.fetch;
+
+    const api = ActionHttp.fetchClient(Http, { baseUrl: "http://localhost" });
+
+    try {
+      globalThis.fetch = namedRecordingFetch("stub", handler, used);
+      await Effect.runPromise(api.get({ id: "a" }));
+
+      globalThis.fetch = namedRecordingFetch("later", handler, used);
+      await Effect.runPromise(api.get({ id: "a" }));
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    expect(used).toStrictEqual(["stub", "later"]);
+  });
+
+  it("aborts a fetch client's request when its call is interrupted, as a timeout does", async () => {
+    const signals: AbortSignal[] = [];
+
+    const fetchFailingOnlyOnAbort: typeof globalThis.fetch = async (
+      _input,
+      init
+    ) => {
+      const signal = init?.signal;
+
+      if (signal === undefined || signal === null) {
+        throw new TypeError("The request carries no abort signal");
+      }
+
+      signals.push(signal);
+      await once(signal, "abort");
+
+      throw new Error("The request was aborted", { cause: signal.reason });
+    };
+
+    const api = ActionHttp.fetchClient(Http, {
+      baseUrl: "http://localhost",
+      fetch: fetchFailingOnlyOnAbort,
+    });
+
+    const timedOut = Effect.runPromise(
+      api.get({ id: "a" }).pipe(Effect.timeout("10 millis"))
+    );
+
+    await expect(timedOut).rejects.toSatisfy(Cause.isTimeoutError);
+    expect(signals.map((signal) => signal.aborted)).toStrictEqual([true]);
+  });
 });

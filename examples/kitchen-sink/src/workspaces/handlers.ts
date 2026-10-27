@@ -1,5 +1,6 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Effect } from "effect";
+
 import { WorkspaceRegistry } from "./registry.js";
 import { GetStatus } from "./Workspaces.js";
 
@@ -19,5 +20,5 @@ export const status = Action.implement(
         instance,
         workspaces: workspaces.length,
       }));
-  }),
+  })
 );

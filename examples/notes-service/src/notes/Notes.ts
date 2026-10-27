@@ -1,5 +1,6 @@
-import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Schema } from "effect";
+
 import { CurrentUser } from "../identity/Identity.js";
 
 export const Note = Schema.Struct({
@@ -13,23 +14,24 @@ export type Note = typeof Note.Type;
 
 // A declared error is part of the contract: every client decodes it as this class, and its
 // status is what HTTP answers with.
-export class NoteNotFound extends Schema.TaggedError<NoteNotFound>()(
-  "NoteNotFound",
-  { id: Schema.String },
-  { httpApiStatus: 404 },
-) {}
+export class NoteNotFound extends Schema.TaggedError<
+  NoteNotFound,
+  { readonly brand: unique symbol }
+>()("NoteNotFound", { id: Schema.String }, { httpApiStatus: 404 }) {}
 
-export class NoteChanged extends Schema.TaggedError<NoteChanged>()(
+export class NoteChanged extends Schema.TaggedError<
+  NoteChanged,
+  { readonly brand: unique symbol }
+>()(
   "NoteChanged",
   { id: Schema.String, revision: Schema.Finite },
-  { httpApiStatus: 409 },
+  { httpApiStatus: 409 }
 ) {}
 
-export class RequestConflict extends Schema.TaggedError<RequestConflict>()(
-  "RequestConflict",
-  { requestId: Schema.String },
-  { httpApiStatus: 409 },
-) {}
+export class RequestConflict extends Schema.TaggedError<
+  RequestConflict,
+  { readonly brand: unique symbol }
+>()("RequestConflict", { requestId: Schema.String }, { httpApiStatus: 409 }) {}
 
 // A description on an input field is that field's help on every surface: beside its flag or
 // argument in a command's `--help`, and in the input schema a model reads from the MCP tool
@@ -42,7 +44,9 @@ const Id = Schema.String.annotate({
 // generic "Expected a value with a length of at least 1". A model and a CLI user read it too.
 const Title = Schema.String.check(
   Schema.isMinLength(1, { message: "A note needs a title." }),
-  Schema.isPattern(/^[^\r\n\u2028\u2029]*$/u, { message: "A title is one line." }),
+  Schema.isPattern(/^[^\r\n\u2028\u2029]*$/u, {
+    message: "A title is one line.",
+  })
 ).annotate({
   description: "A short name for the note: one line, at least one character.",
 });
@@ -53,7 +57,11 @@ const Content = Schema.Struct({ title: Title, body: Body });
 
 export const ListNotes = Action.make("listNotes", {
   description: "List your notes, without their bodies.",
-  success: { notes: Schema.Array(Schema.Struct({ id: Schema.String, title: Schema.String })) },
+  success: {
+    notes: Schema.Array(
+      Schema.Struct({ id: Schema.String, title: Schema.String })
+    ),
+  },
   readOnly: true,
   caller: CurrentUser,
 });
@@ -90,9 +98,12 @@ export const UpdateNote = Action.make("updateNote", {
     "Replace a note's body. Pass the revision you read: the update is refused if the note changed since.",
   input: {
     id: Id,
-    body: Body.annotate({ description: "The text that replaces the note's body." }),
+    body: Body.annotate({
+      description: "The text that replaces the note's body.",
+    }),
     revision: Schema.Finite.annotate({
-      description: "The revision you read: 1 for a new note, one more after each update.",
+      description:
+        "The revision you read: 1 for a new note, one more after each update.",
     }),
   },
   success: Note,
@@ -120,10 +131,16 @@ export const ImportNotes = Action.make("importNotes", {
   input: {
     notes: Schema.Array(Content)
       .check(
-        Schema.isMinLength(1, { message: "An import holds at least one note." }),
-        Schema.isMaxLength(100, { message: "An import holds at most 100 notes." }),
+        Schema.isMinLength(1, {
+          message: "An import holds at least one note.",
+        }),
+        Schema.isMaxLength(100, {
+          message: "An import holds at most 100 notes.",
+        })
       )
-      .annotate({ description: "The notes to create, in order: from 1 to 100." }),
+      .annotate({
+        description: "The notes to create, in order: from 1 to 100.",
+      }),
   },
   success: { notes: Schema.Array(Note) },
   readOnly: false,
@@ -131,4 +148,11 @@ export const ImportNotes = Action.make("importNotes", {
   mcp: { destructiveHint: false },
 });
 
-export const Notes = [ListNotes, GetNote, CreateNote, UpdateNote, DeleteNote, ImportNotes] as const;
+export const Notes = [
+  ListNotes,
+  GetNote,
+  CreateNote,
+  UpdateNote,
+  DeleteNote,
+  ImportNotes,
+] as const;

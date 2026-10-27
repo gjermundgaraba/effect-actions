@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { Data, DateTime, Effect, Layer } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
+
 import * as ActionDurableObject from "../src/durable/ActionDurableObject.js";
 import {
   alarm,
@@ -21,27 +22,43 @@ import {
   startup,
   stubCalls,
 } from "./support/app.js";
-import { note, revokedKey, say, setStatus, watchedRoutes } from "./support/events.js";
-import { heldTime, hook, hookedRoutes } from "./support/webhooks.js";
-import { Hosts, paneCalls, pluginCalls, PluginStore, streamCalls } from "./support/hosts.js";
-import { nativeCalls } from "./support/native.js";
+import {
+  note,
+  revokedKey,
+  say,
+  setStatus,
+  watchedRoutes,
+} from "./support/events.js";
+import {
+  Hosts,
+  paneCalls,
+  pluginCalls,
+  PluginStore,
+  streamCalls,
+} from "./support/hosts.js";
 import { heldBuild } from "./support/latch.js";
-import { builtOnSecondTry, racedCalls, yieldsPastTimer } from "./support/raced.js";
-import { versionedRoutes } from "./support/versioned.js";
+import { nativeCalls } from "./support/native.js";
 import { shelfCalls, shelfRoutes, shelves } from "./support/placed.js";
+import {
+  builtOnSecondTry,
+  racedCalls,
+  yieldsPastTimer,
+} from "./support/raced.js";
+import { versionedRoutes } from "./support/versioned.js";
+import { heldTime, hook, hookedRoutes } from "./support/webhooks.js";
 
 export class Plain extends DurableObject {
   readonly web = HttpRouter.toWebHandler(
     routes.pipe(
       Layer.provide(ActionDurableObject.Alarm.layer),
       Layer.provide(Layer.succeed(ActionDurableObject.State, this.ctx)),
-      Layer.provide(HttpServer.layerServices),
+      Layer.provide(HttpServer.layerServices)
     ),
-    { disableLogger: true },
+    { disableLogger: true }
   );
 
-  override fetch(request: Request) {
-    return this.web.handler(request);
+  override async fetch(request: Request) {
+    return await this.web.handler(request);
   }
 }
 
@@ -62,18 +79,25 @@ export class Extended extends ActionDurableObject.make({
   }
 }
 
-export class RouterProvided extends ActionDurableObject.make({ routes: routerProvidedRoutes }) {}
+export class RouterProvided extends ActionDurableObject.make({
+  routes: routerProvidedRoutes,
+}) {}
 
-export class Prefixed extends ActionDurableObject.make({ routes: prefixedRoutes }) {}
+export class Prefixed extends ActionDurableObject.make({
+  routes: prefixedRoutes,
+}) {}
 
-export class Unreachable extends Data.TaggedError("Unreachable")<{ readonly store: string }> {}
+export class Unreachable extends Data.TaggedError("Unreachable")<{
+  readonly store: string;
+}> {}
 
 export class Broken extends ActionDurableObject.make({
   routes: Layer.effectDiscard(Effect.fail(new Unreachable({ store: "notes" }))),
 }) {}
 
 export class BrokenServices extends ActionDurableObject.make({
-  services: () => Layer.effectDiscard(Effect.fail(new Unreachable({ store: "services" }))),
+  services: () =>
+    Layer.effectDiscard(Effect.fail(new Unreachable({ store: "services" }))),
   routes: Layer.empty,
 }) {}
 
@@ -82,12 +106,12 @@ export class Counted extends ActionDurableObject.make({
   routes: buildsRoutes.pipe(Layer.provide(slowUpstream)),
   alarm: () => buildsAlarm,
 }) {
-  builds() {
-    return this.run(Effect.service(Builds));
+  async builds() {
+    return await this.run(Effect.service(Builds));
   }
 
-  providedBuilds() {
-    return this.run(Effect.provide(Effect.service(Builds), Builds.layer));
+  async providedBuilds() {
+    return await this.run(Effect.provide(Effect.service(Builds), Builds.layer));
   }
 }
 
@@ -95,12 +119,17 @@ export class OwnSockets extends ActionDurableObject.make({
   services: () => startup,
   routes: ownSocketRoutes,
 }) {
-  override webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-    if (!this.ctx.getTags(socket).includes(ownTag)) return super.webSocketMessage(socket, message);
+  override async webSocketMessage(
+    socket: WebSocket,
+    message: string | ArrayBuffer
+  ) {
+    if (!this.ctx.getTags(socket).includes(ownTag)) {
+      await super.webSocketMessage(socket, message);
+
+      return;
+    }
 
     socket.send(message);
-
-    return Promise.resolve();
   }
 }
 
@@ -120,16 +149,16 @@ export class Hosted extends DurableObject {
     alarm: () => buildsAlarm,
   });
 
-  override fetch(request: Request) {
-    return this.#object.fetch(request);
+  override async fetch(request: Request) {
+    return await this.#object.fetch(request);
   }
 
-  override alarm(info?: AlarmInvocationInfo) {
-    return this.#object.alarm(info);
+  override async alarm(info?: AlarmInvocationInfo) {
+    await this.#object.alarm(info);
   }
 
-  builds() {
-    return this.#object.run(Effect.service(Builds));
+  async builds() {
+    return await this.#object.run(Effect.service(Builds));
   }
 }
 
@@ -148,13 +177,15 @@ export class Stubbed extends ActionDurableObject.make({
   calls: stubCalls,
 }) {}
 
-export class Streamed extends ActionDurableObject.make({ calls: streamCalls }) {}
+export class Streamed extends ActionDurableObject.make({
+  calls: streamCalls,
+}) {}
 
 export class Native extends ActionDurableObject.make({ calls: nativeCalls }) {}
 
 export class Raced extends ActionDurableObject.make({ calls: racedCalls }) {
-  yieldsPastTimer() {
-    return this.run(yieldsPastTimer);
+  async yieldsPastTimer() {
+    return await this.run(yieldsPastTimer);
   }
 }
 
@@ -168,15 +199,17 @@ export class LatchedRaced extends ActionDurableObject.make({
   calls: racedCalls,
 }) {}
 
-export class Unserved extends ActionDurableObject.make({ calls: Layer.empty }) {}
+export class Unserved extends ActionDurableObject.make({
+  calls: Layer.empty,
+}) {}
 
 export default { fetch: () => new Response(null, { status: 404 }) };
 
 export class FromEnv extends ActionDurableObject.make({
   services: (env) => Layer.succeed(Greeting, env.GREETING),
 }) {
-  greeting() {
-    return this.run(Effect.service(Greeting));
+  async greeting() {
+    return await this.run(Effect.service(Greeting));
   }
 }
 
@@ -186,8 +219,8 @@ export class Delegating extends DurableObject {
     calls: pluginCalls,
   });
 
-  effectActionsRpc(request: ActionDurableObject.StubRequest) {
-    return this.#object.effectActionsRpc(request);
+  async effectActionsRpc(request: ActionDurableObject.StubRequest) {
+    return await this.#object.effectActionsRpc(request);
   }
 }
 
@@ -195,47 +228,56 @@ export class Failing extends ActionDurableObject.make({
   alarm: () =>
     Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
       Effect.promise(async () => {
-        await storage.put("runs", ((await storage.get<number>("runs")) ?? 0) + 1);
-      }),
+        await storage.put(
+          "runs",
+          ((await storage.get<number>("runs")) ?? 0) + 1
+        );
+      })
     ).pipe(Effect.andThen(Effect.fail(new Unreachable({ store: "alarm" })))),
 }) {
-  arm() {
-    return this.run(
+  async arm() {
+    await this.run(
       Effect.flatMap(DateTime.now, (now) =>
-        ActionDurableObject.Alarm.use((alarm) => alarm.set(now)),
-      ),
+        ActionDurableObject.Alarm.use(({ set }) => set(now))
+      )
     );
   }
 
-  runs() {
-    return this.run(
+  async runs() {
+    return await this.run(
       Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
-        Effect.promise(async () => (await storage.get<number>("runs")) ?? 0),
-      ),
+        Effect.promise(async () => (await storage.get<number>("runs")) ?? 0)
+      )
     );
   }
 }
 
-export class Versioned extends ActionDurableObject.make({ routes: versionedRoutes }) {}
+export class Versioned extends ActionDurableObject.make({
+  routes: versionedRoutes,
+}) {}
 
-export class Watching extends ActionDurableObject.make({ routes: watchedRoutes }) {
-  note(text: string) {
-    return this.run(note(text));
+export class Watching extends ActionDurableObject.make({
+  routes: watchedRoutes,
+}) {
+  async note(text: string) {
+    await this.run(note(text));
   }
 
-  say(text: string) {
-    return this.run(say(text));
+  async say(text: string) {
+    await this.run(say(text));
   }
 
-  status(text: string) {
-    return this.run(setStatus(text));
+  async status(text: string) {
+    await this.run(setStatus(text));
   }
 
-  revoke(token: string) {
-    return this.run(
+  async revoke(token: string) {
+    await this.run(
       Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
-        Effect.promise(() => storage.put(revokedKey(token), true)),
-      ),
+        Effect.promise(async () => {
+          await storage.put(revokedKey(token), true);
+        })
+      )
     );
   }
 }
@@ -244,8 +286,8 @@ export class Hooking extends ActionDurableObject.make({
   services: () => heldTime,
   routes: hookedRoutes,
 }) {
-  hook(text: string) {
-    return this.run(hook(text));
+  async hook(text: string) {
+    await this.run(hook(text));
   }
 }
 
@@ -257,7 +299,7 @@ export class Shelf extends ActionDurableObject.make({
 
 const stored = (key: string) =>
   Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
-    Effect.promise(() => storage.get<number | boolean>(key)),
+    Effect.promise(async () => await storage.get<number | boolean>(key))
   );
 
 const changed = ActionDurableObject.Tasks.use((tasks) =>
@@ -267,38 +309,52 @@ const changed = ActionDurableObject.Tasks.use((tasks) =>
       const { storage } = yield* ActionDurableObject.State;
       const changes = Number((yield* stored("changes")) ?? 0);
 
-      yield* Effect.promise(() => storage.put("changes", changes + 1));
-    }),
-  ),
+      yield* Effect.promise(async () => {
+        await storage.put("changes", changes + 1);
+      });
+    })
+  )
 );
 
 export class Tasked extends ActionDurableObject.make({
-  routes: HttpRouter.add("POST", "/change", Effect.as(changed, HttpServerResponse.empty())),
+  routes: HttpRouter.add(
+    "POST",
+    "/change",
+    Effect.as(changed, HttpServerResponse.empty())
+  ),
   tasks: {
     tell: Effect.gen(function* () {
       const { storage } = yield* ActionDurableObject.State;
 
-      if ((yield* stored("down")) === true) return yield* new Unreachable({ store: "listener" });
+      if ((yield* stored("down")) === true) {
+        return yield* new Unreachable({ store: "listener" });
+      }
 
       const changes = Number((yield* stored("changes")) ?? 0);
 
-      yield* Effect.promise(() => storage.put("told", changes));
+      yield* Effect.promise(async () => {
+        await storage.put("told", changes);
+      });
     }),
   },
 }) {
-  change() {
-    return this.run(changed);
+  async change() {
+    await this.run(changed);
   }
 
-  down(down: boolean) {
-    return this.run(
+  async down(down: boolean) {
+    await this.run(
       Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
-        Effect.promise(() => storage.put("down", down)),
-      ),
+        Effect.promise(async () => {
+          await storage.put("down", down);
+        })
+      )
     );
   }
 
-  told() {
-    return this.run(Effect.map(stored("told"), (told) => Number(told ?? 0)));
+  async told() {
+    return await this.run(
+      Effect.map(stored("told"), (told) => Number(told ?? 0))
+    );
   }
 }

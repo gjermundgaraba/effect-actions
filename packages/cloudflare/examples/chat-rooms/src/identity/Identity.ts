@@ -1,7 +1,10 @@
-import { Context, Schema } from "effect";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { Context, Schema } from "effect";
 
-export const Member = Schema.Struct({ id: Schema.String, rooms: Schema.Array(Schema.String) });
+export const Member = Schema.Struct({
+  id: Schema.String,
+  rooms: Schema.Array(Schema.String),
+});
 
 export type Member = typeof Member.Type;
 
@@ -10,7 +13,7 @@ export type Member = typeof Member.Type;
  * provides it for each message, from the token the message carries or the one its socket kept.
  */
 export class CurrentMember extends Context.Service<CurrentMember, Member>()(
-  "chat-rooms/CurrentMember",
+  "chat-rooms/CurrentMember"
 ) {}
 
 // How a remote caller proves it is CurrentMember: a bearer token, the default scheme. Clients

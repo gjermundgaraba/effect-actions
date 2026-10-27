@@ -1,17 +1,14 @@
 import { Cause, Effect, ErrorReporter, Queue, Schema, Stream } from "effect";
 import { HttpServerRequest } from "effect/http";
 import { HttpApiSchema } from "effect/http-api";
+
 import type * as Action from "../contract/Action.js";
-import { type ErasedHandler, type ErasedValue, elementsOf } from "../contract/implementation.js";
-import {
-  answerFrom,
-  type CallOptions,
-  elementsFrom,
-  Progressed,
-  type Reporting,
-} from "../contract/progress.js";
-import { concealed } from "../contract/reported.js";
 import type { Codec } from "../contract/codec.js";
+import { elementsOf } from "../contract/implementation.js";
+import type { ErasedHandler, ErasedValue } from "../contract/implementation.js";
+import { answerFrom, elementsFrom, Progressed } from "../contract/progress.js";
+import type { CallOptions, Reporting } from "../contract/progress.js";
+import { concealed } from "../contract/reported.js";
 import type { StreamOf } from "../contract/stream.js";
 
 /** One event a route streams: a progress value, an element, or the answer it ends with. */
@@ -20,14 +17,19 @@ interface Sent {
   readonly data: ErasedValue;
 }
 
-const eventOf = <const N extends Sent["event"], D extends Codec>(event: N, data: D) =>
+const eventOf = <const N extends Sent["event"], D extends Codec>(
+  event: N,
+  data: D
+) =>
   Schema.Struct({
     id: Schema.optional(Schema.String),
     event: Schema.Literal(event),
     data: Schema.fromJsonString(Schema.toCodecJson(data)),
   });
 
-type EventOf<N extends Sent["event"], D extends Codec> = ReturnType<typeof eventOf<N, D>>;
+type EventOf<N extends Sent["event"], D extends Codec> = ReturnType<
+  typeof eventOf<N, D>
+>;
 
 /** The success of the endpoint of action `A` declaring errors `E`, as `ActionHttp` builds it. */
 export type SuccessOf<A extends Action.Any, E extends Schema.Top> =
@@ -35,7 +37,10 @@ export type SuccessOf<A extends Action.Any, E extends Schema.Top> =
     ? HttpApiSchema.StreamSse<
         Schema.Union<
           A["progress"] extends Codec
-            ? readonly [EventOf<"element", Element>, EventOf<"progress", A["progress"]>]
+            ? readonly [
+                EventOf<"element", Element>,
+                EventOf<"progress", A["progress"]>,
+              ]
             : readonly [EventOf<"element", Element>]
         >,
         E
@@ -45,7 +50,10 @@ export type SuccessOf<A extends Action.Any, E extends Schema.Top> =
           | Schema.toCodecJson<A["success"]>
           | HttpApiSchema.StreamSse<
               Schema.Union<
-                readonly [EventOf<"progress", A["progress"]>, EventOf<"final", A["success"]>]
+                readonly [
+                  EventOf<"progress", A["progress"]>,
+                  EventOf<"final", A["success"]>,
+                ]
               >,
               E
             >
@@ -65,10 +73,13 @@ export const answeredWithProgress = (success: Action.Any["success"]) =>
 export const progressStreamOf = (
   progress: Codec,
   success: Action.Any["success"],
-  errors: ReadonlyArray<Schema.Top>,
+  errors: readonly Schema.Top[]
 ) =>
   HttpApiSchema.StreamSse({
-    events: Schema.Union([eventOf("progress", progress), eventOf("final", success)]),
+    events: Schema.Union([
+      eventOf("progress", progress),
+      eventOf("final", success),
+    ]),
     error: Schema.Union(errors),
   });
 
@@ -81,13 +92,13 @@ export const progressStreamOf = (
 export const elementStreamOf = (
   element: Codec,
   progress: Codec | undefined,
-  errors: ReadonlyArray<Schema.Top>,
+  errors: readonly Schema.Top[]
 ) =>
   HttpApiSchema.StreamSse({
     events: Schema.Union(
       progress === undefined
         ? [eventOf("element", element)]
-        : [eventOf("element", element), eventOf("progress", progress)],
+        : [eventOf("element", element), eventOf("progress", progress)]
     ),
     error: Schema.Union(errors),
   });
@@ -102,8 +113,8 @@ export const elementStreamOf = (
 const streamed = (
   answer: (
     reporting: Reporting,
-    send: (sent: Sent) => Effect.Effect<void>,
-  ) => Effect.Effect<void, unknown, unknown>,
+    send: (sent: Sent) => Effect.Effect<void>
+  ) => Effect.Effect<void, unknown, unknown>
 ) =>
   Effect.gen(function* () {
     const sent = yield* Queue.bounded<Sent, unknown>(1);
@@ -114,13 +125,17 @@ const streamed = (
         Queue.offer(sent, event),
         Effect.sync(() => {
           streaming = true;
-        }),
+        })
       );
 
-    const reporting: Reporting = { progress: (data) => send({ event: "progress", data }) };
+    const reporting: Reporting = {
+      progress: (data) => send({ event: "progress", data }),
+    };
 
     const ended = (cause: Cause.Cause<unknown>) => {
-      if (Cause.hasDies(cause)) return concealed(cause);
+      if (Cause.hasDies(cause)) {
+        return concealed(cause);
+      }
 
       return streaming
         ? Effect.andThen(ErrorReporter.report(cause), Effect.failCause(cause))
@@ -130,11 +145,13 @@ const streamed = (
     yield* answer(reporting, send).pipe(
       Effect.catchCause(ended),
       Queue.into(sent),
-      Effect.forkScoped({ startImmediately: true }),
+      Effect.forkScoped({ startImmediately: true })
     );
 
-    const first = yield* Effect.catchIf(Queue.take(sent), Cause.isDone, () =>
-      Effect.succeed(undefined),
+    const first = yield* Effect.catchIf(
+      Queue.take(sent),
+      Cause.isDone,
+      () => Effect.undefined
     );
 
     return first === undefined
@@ -155,7 +172,7 @@ const checkedBy = (schema: Codec) => {
  */
 export const answeringWithProgress = (
   success: Action.Any["success"],
-  run: ErasedHandler<unknown>,
+  run: ErasedHandler<unknown>
 ) => {
   const check = checkedBy(success);
 
@@ -165,27 +182,32 @@ export const answeringWithProgress = (
         ? streamed((reporting, send) =>
             run(payload, reporting).pipe(
               Effect.tap(check),
-              Effect.flatMap((data) => send({ event: "final", data })),
-            ),
+              Effect.flatMap((data) => send({ event: "final", data }))
+            )
           )
-        : run(payload),
+        : run(payload)
     );
 };
 
 /** The route handler of an action answering a stream: its elements and its progress, streamed. */
-export const answeringElements = (element: Codec, run: ErasedHandler<unknown>) => {
+export const answeringElements = (
+  element: Codec,
+  run: ErasedHandler<unknown>
+) => {
   const check = checkedBy(element);
 
   return (payload: ErasedValue) =>
     streamed((reporting, send) =>
       Stream.runForEach(elementsOf(run(payload, reporting)), (data) =>
-        Effect.andThen(check(data), send({ event: "element", data })),
-      ),
+        Effect.andThen(check(data), send({ event: "element", data }))
+      )
     );
 };
 
 const progressedOf = ({ event, data }: Sent): Progressed => {
-  if (event === "progress") return Progressed.Progress({ value: data });
+  if (event === "progress") {
+    return Progressed.Progress({ value: data });
+  }
 
   return event === "final"
     ? Progressed.Final({ value: data })
@@ -195,13 +217,13 @@ const progressedOf = ({ event, data }: Sent): Progressed => {
 // Why: Every request `ActionHttp.client` sends accepts an event stream, which such a route always
 // answers with; only a server breaking the binding answers otherwise.
 const answeredWithout = new Error(
-  "A route of an action declaring progress or answering a stream answered without its event stream",
+  "A route of an action declaring progress or answering a stream answered without its event stream"
 );
 
 /** The events of a route's answer, as one stream of `Progressed`. */
 const sentFrom = (answer: ErasedValue): Stream.Stream<Progressed, unknown> =>
   Stream.isStream(answer)
-    ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: a route's stream schema decodes each element as one `Sent`.
+    ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Native API boundary: a route's stream schema decodes each element as one `Sent`.
       Stream.map(answer as Stream.Stream<Sent, unknown>, progressedOf)
     : Stream.die(answeredWithout);
 
@@ -211,8 +233,9 @@ const sentFrom = (answer: ErasedValue): Stream.Stream<Progressed, unknown> =>
  */
 export const readWithProgress = (
   answer: ErasedValue,
-  onProgress: CallOptions<unknown>["onProgress"],
-): Effect.Effect<ErasedValue, unknown> => answerFrom(sentFrom(answer), onProgress);
+  onProgress: CallOptions<unknown>["onProgress"]
+): Effect.Effect<ErasedValue, unknown> =>
+  answerFrom(sentFrom(answer), onProgress);
 
 /**
  * A client's elements from a route of an action answering a stream: each `element` event's
@@ -220,5 +243,6 @@ export const readWithProgress = (
  */
 export const readElements = (
   answer: ErasedValue,
-  onProgress: CallOptions<unknown>["onProgress"],
-): Stream.Stream<ErasedValue, unknown> => elementsFrom(sentFrom(answer), onProgress);
+  onProgress: CallOptions<unknown>["onProgress"]
+): Stream.Stream<ErasedValue, unknown> =>
+  elementsFrom(sentFrom(answer), onProgress);

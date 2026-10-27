@@ -1,11 +1,22 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, ErrorReporter, Exit, Fiber, Layer, Schema, Stream } from "effect";
+import {
+  Duration,
+  Effect,
+  ErrorReporter,
+  Exit,
+  Fiber,
+  Layer,
+  Schema,
+  Stream,
+} from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { OpenApi } from "effect/http-api";
 import { TestClock } from "effect/testing";
-import * as Action from "../../src/contract/Action.js";
+
 import * as Authentication from "../../src/authentication/Authentication.js";
+import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
+import { memoryStorage } from "../../src/contract/log.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
@@ -13,7 +24,6 @@ import { CurrentActor } from "../support/app/authorization.js";
 import { makeMessages, Posted, settle } from "../support/events.js";
 import { recorder } from "../support/reporter.js";
 import { call, framesOf, Json } from "../support/sse.js";
-import { memoryStorage } from "../../src/contract/log.js";
 
 const Changed = Event.make("user.changed", {
   description: "A user of your tenant changed.",
@@ -41,7 +51,7 @@ const breakingBeforeValid = Event.implement(Counted, {
                     { eventId: "c2", data: { n: 2 } },
                   ]
                 : [],
-          },
+          }
     ),
 });
 
@@ -49,14 +59,17 @@ const failingSecondRead = () => {
   let reads = 0;
 
   return Event.implement(Counted, {
-    check: (_input, cursor) =>
-      (reads += 1) === 2
+    check: (_input, cursor) => {
+      reads += 1;
+
+      return reads === 2
         ? Effect.die(new Error("upstream blew up"))
         : Effect.succeed(
             cursor === null
               ? { cursor: "0", events: [] }
-              : { cursor: "1", events: [{ eventId: "c1", data: { n: 1 } }] },
-          ),
+              : { cursor: "1", events: [{ eventId: "c1", data: { n: 1 } }] }
+          );
+    },
   });
 };
 
@@ -72,7 +85,10 @@ const changes = Event.implement(
     check: (_input, cursor) =>
       Effect.map(CurrentActor, (actor) => ({
         cursor: "1",
-        events: cursor === null ? [] : [{ eventId: `by-${actor.id}`, data: { by: actor.id } }],
+        events:
+          cursor === null
+            ? []
+            : [{ eventId: `by-${actor.id}`, data: { by: actor.id } }],
       })),
   },
   {
@@ -80,9 +96,11 @@ const changes = Event.implement(
       Effect.flatMap(CurrentActor, (actor) =>
         actor.permissions.includes("users:write")
           ? Effect.void
-          : Effect.fail(new Action.Forbidden({ message: "Requires users:write." })),
+          : Effect.fail(
+              new Action.Forbidden({ message: "Requires users:write." })
+            )
       ),
-  },
+  }
 );
 
 const Http = ActionHttp.make([Posted, Changed], { authentication: Login });
@@ -92,7 +110,10 @@ const Public = ActionHttp.make([Posted]);
 const subscribe = (
   name: string,
   body: Schema.Json,
-  { token, stream = false }: { readonly token?: string; readonly stream?: boolean } = {},
+  {
+    token,
+    stream = false,
+  }: { readonly token?: string; readonly stream?: boolean } = {}
 ) =>
   call(`events/${name}`, body, {
     ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
@@ -102,12 +123,14 @@ const subscribe = (
 const answerOf = (response: HttpClientResponse.HttpClientResponse) =>
   Effect.map(response.text, (body) => ({
     status: response.status,
-    body: Schema.decodeUnknownSync(Json)(body),
+    body: Schema.decodeSync(Json)(body),
   }));
 
 const served = (log = makeMessages()) =>
   Testing.layer(
-    ActionHttp.layer(Http, [log.implementation, changes]).pipe(Layer.provide(authenticate)),
+    ActionHttp.layer(Http, [log.implementation, changes]).pipe(
+      Layer.provide(authenticate)
+    )
   );
 
 describe("HTTP events", () => {
@@ -130,7 +153,9 @@ describe("HTTP events", () => {
             built += 1;
 
             return {
-              [Counted.name]: { check: () => Effect.succeed({ cursor: "1", events: [] }) },
+              [Counted.name]: {
+                check: () => Effect.succeed({ cursor: "1", events: [] }),
+              },
               [Tailed.name]: {
                 log: {
                   emit: Stream.fromEffect(
@@ -138,125 +163,168 @@ describe("HTTP events", () => {
                       tailed += 1;
 
                       return { data: { line: "started" } };
-                    }),
+                    })
                   ),
                 },
               },
             };
-          }),
+          })
         );
 
         const refusingEmit = Layer.effect(Event.Events)(
-          Event.makeEvents({ log: () => memoryStorage(), emits: false }),
+          Event.makeEvents({ log: () => memoryStorage(), emits: false })
         );
 
         const answers = yield* Effect.forEach([0, 1], () =>
-          Effect.flatMap(subscribe("counter.counted", { input: {}, cursor: null }), answerOf),
+          Effect.flatMap(
+            subscribe("counter.counted", { input: {}, cursor: null }),
+            answerOf
+          )
         ).pipe(
           Effect.provide(
-            Testing.layer(
-              ActionHttp.layer(ActionHttp.make([Counted]), [both], { actions: [Counted] }),
-            ),
-          ),
-          Effect.provide(refusingEmit),
-        );
-
-        expect(answers.map(({ status }) => status)).toEqual([200, 200]);
-        expect([built, tailed]).toEqual([1, 0]);
-      }),
-  );
-
-  it.effect("answers a poll whose source fails with no refusal 500, reporting it", () =>
-    Effect.gen(function* () {
-      const reportedCauses: Array<string> = [];
-
-      const failing = Event.implement(Posted, {
-        check: () => Effect.die(new Error("upstream down")),
-      });
-
-      const response = yield* subscribe("message.posted", { input: {}, cursor: "0" }).pipe(
-        Effect.provide(Testing.layer(ActionHttp.layer(Public, failing))),
-        Effect.provide(ErrorReporter.layer([recorder(reportedCauses)])),
-      );
-
-      expect(response.status).toBe(500);
-      expect(reportedCauses.join("\n")).toContain("upstream down");
-    }).pipe(Effect.provide(Event.layerMemory)),
-  );
-
-  it.effect("answers a nextPoll over 5 minutes, Duration.infinity included, as 5 minutes", () =>
-    Effect.gen(function* () {
-      const waits = [Duration.infinity, Duration.minutes(10), Duration.seconds(30)];
-
-      const answered = yield* Effect.forEach(waits, (nextPoll) =>
-        Effect.flatMap(subscribe("counter.counted", { input: {}, cursor: null }), answerOf).pipe(
-          Effect.provide(
-            Testing.layer(
-              ActionHttp.layer(
-                ActionHttp.make([Counted]),
-                Event.implement(Counted, {
-                  check: () => Effect.succeed({ cursor: "0", events: [], nextPoll }),
-                }),
+            Layer.provideMerge(
+              Testing.layer(
+                ActionHttp.layer(ActionHttp.make([Counted]), [both], {
+                  actions: [Counted],
+                })
               ),
-            ),
-          ),
-        ),
-      );
+              refusingEmit
+            )
+          )
+        );
 
-      expect(answered.map(({ status, body }) => [status, body])).toMatchObject([
-        [200, { nextPollMs: 300_000 }],
-        [200, { nextPollMs: 300_000 }],
-        [200, { nextPollMs: 30_000 }],
-      ]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        expect(answers.map(({ status }) => status)).toStrictEqual([200, 200]);
+        expect([built, tailed]).toStrictEqual([1, 0]);
+      })
   );
 
-  it.effect("polls from now as JSON, then answers what happened since with its cursor", () =>
-    Effect.gen(function* () {
-      const log = makeMessages();
+  it.effect(
+    "answers a poll whose source fails with no refusal 500, reporting it",
+    () =>
+      Effect.gen(function* () {
+        const reportedCauses: string[] = [];
 
-      const answers = yield* Effect.gen(function* () {
-        const first = yield* Effect.flatMap(
-          subscribe("message.posted", { input: {}, cursor: null }),
-          answerOf,
+        const failing = Event.implement(Posted, {
+          check: () => Effect.die(new Error("upstream down")),
+        });
+
+        const response = yield* subscribe("message.posted", {
+          input: {},
+          cursor: "0",
+        }).pipe(
+          Effect.provide(
+            Layer.provideMerge(
+              Testing.layer(ActionHttp.layer(Public, failing)),
+              ErrorReporter.layer([recorder(reportedCauses)])
+            )
+          )
         );
 
-        log.post("general", "hello");
+        expect(response.status).toBe(500);
+        expect(reportedCauses.join("\n")).toContain("upstream down");
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
 
-        const second = yield* Effect.flatMap(
-          subscribe("message.posted", { input: { channel: "general" }, cursor: "0" }),
-          answerOf,
+  it.effect(
+    "answers a nextPoll over 5 minutes, Duration.infinity included, as 5 minutes",
+    () =>
+      Effect.gen(function* () {
+        const waits = [
+          Duration.infinity,
+          Duration.minutes(10),
+          Duration.seconds(30),
+        ];
+
+        const answered = yield* Effect.forEach(waits, (nextPoll) =>
+          Effect.flatMap(
+            subscribe("counter.counted", { input: {}, cursor: null }),
+            answerOf
+          ).pipe(
+            Effect.provide(
+              Testing.layer(
+                ActionHttp.layer(
+                  ActionHttp.make([Counted]),
+                  Event.implement(Counted, {
+                    check: () =>
+                      Effect.succeed({ cursor: "0", events: [], nextPoll }),
+                  })
+                )
+              )
+            )
+          )
         );
 
-        return [first, second];
-      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Public, log.implementation))));
+        expect(
+          answered.map(({ status, body }) => [status, body])
+        ).toMatchObject([
+          [200, { nextPollMs: 300_000 }],
+          [200, { nextPollMs: 300_000 }],
+          [200, { nextPollMs: 30_000 }],
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
 
-      expect(answers).toEqual([
-        {
-          status: 200,
-          body: { events: [], cursor: "0", truncated: false, hasMore: false, nextPollMs: 5000 },
-        },
-        {
-          status: 200,
-          body: {
-            events: [
-              {
-                _tag: "Occurrence",
-                eventId: "m1",
-                name: "message.posted",
-                timestamp: "1970-01-01T00:00:00.000Z",
-                data: { id: "m1", channel: "general", text: "hello" },
-                cursor: "1",
-              },
-            ],
-            cursor: "1",
-            truncated: false,
-            hasMore: false,
-            nextPollMs: 5000,
+  it.effect(
+    "polls from now as JSON, then answers what happened since with its cursor",
+    () =>
+      Effect.gen(function* () {
+        const log = makeMessages();
+
+        const answers = yield* Effect.gen(function* () {
+          const first = yield* Effect.flatMap(
+            subscribe("message.posted", { input: {}, cursor: null }),
+            answerOf
+          );
+
+          log.post("general", "hello");
+
+          const second = yield* Effect.flatMap(
+            subscribe("message.posted", {
+              input: { channel: "general" },
+              cursor: "0",
+            }),
+            answerOf
+          );
+
+          return [first, second];
+        }).pipe(
+          Effect.provide(
+            Testing.layer(ActionHttp.layer(Public, log.implementation))
+          )
+        );
+
+        expect(answers).toStrictEqual([
+          {
+            status: 200,
+            body: {
+              events: [],
+              cursor: "0",
+              truncated: false,
+              hasMore: false,
+              nextPollMs: 5000,
+            },
           },
-        },
-      ]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+          {
+            status: 200,
+            body: {
+              events: [
+                {
+                  _tag: "Occurrence",
+                  eventId: "m1",
+                  name: "message.posted",
+                  timestamp: "1970-01-01T00:00:00.000Z",
+                  data: { id: "m1", channel: "general", text: "hello" },
+                  cursor: "1",
+                },
+              ],
+              cursor: "1",
+              truncated: false,
+              hasMore: false,
+              nextPollMs: 5000,
+            },
+          },
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect(
@@ -266,7 +334,11 @@ describe("HTTP events", () => {
         const log = makeMessages();
 
         const reading = yield* Effect.gen(function* () {
-          const response = yield* subscribe("message.posted", { input: {} }, { stream: true });
+          const response = yield* subscribe(
+            "message.posted",
+            { input: {} },
+            { stream: true }
+          );
 
           const frames = yield* Effect.forkChild(framesOf(response, 3));
 
@@ -275,11 +347,16 @@ describe("HTTP events", () => {
           yield* TestClock.adjust("5 seconds");
           yield* TestClock.adjust("25 seconds");
 
-          return { type: response.headers["content-type"], frames: yield* Fiber.join(frames) };
+          return {
+            type: response.headers["content-type"],
+            frames: yield* Fiber.join(frames),
+          };
         }).pipe(
           Effect.scoped,
-          Effect.provide(Testing.layer(ActionHttp.layer(Public, log.implementation))),
-          Effect.forkChild,
+          Effect.provide(
+            Testing.layer(ActionHttp.layer(Public, log.implementation))
+          ),
+          Effect.forkChild
         );
 
         const { type, frames } = yield* Fiber.join(reading);
@@ -287,10 +364,15 @@ describe("HTTP events", () => {
         expect(type).toContain("text/event-stream");
         expect(frames.map(({ data }) => data)).toMatchObject([
           { _tag: "Checked", cursor: "0" },
-          { _tag: "Occurrence", eventId: "m1", data: { text: "hello" }, cursor: "1" },
+          {
+            _tag: "Occurrence",
+            eventId: "m1",
+            data: { text: "hello" },
+            cursor: "1",
+          },
           { _tag: "Checked", cursor: "1" },
         ]);
-      }).pipe(Effect.provide(Event.layerMemory)),
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect(
@@ -299,21 +381,34 @@ describe("HTTP events", () => {
       Effect.gen(function* () {
         const answers = yield* Effect.all(
           [false, true].flatMap((stream) => [
-            Effect.flatMap(subscribe("user.changed", { input: {} }, { stream }), answerOf),
             Effect.flatMap(
-              subscribe("user.changed", { input: {} }, { stream, token: "reader" }),
-              answerOf,
+              subscribe("user.changed", { input: {} }, { stream }),
+              answerOf
             ),
-          ]),
+            Effect.flatMap(
+              subscribe(
+                "user.changed",
+                { input: {} },
+                { stream, token: "reader" }
+              ),
+              answerOf
+            ),
+          ])
         ).pipe(Effect.provide(served()));
 
         expect(answers).toMatchObject([
           { status: 401, body: { _tag: "Unauthenticated" } },
-          { status: 403, body: { _tag: "Forbidden", message: "Requires users:write." } },
+          {
+            status: 403,
+            body: { _tag: "Forbidden", message: "Requires users:write." },
+          },
           { status: 401, body: { _tag: "Unauthenticated" } },
-          { status: 403, body: { _tag: "Forbidden", message: "Requires users:write." } },
+          {
+            status: 403,
+            body: { _tag: "Forbidden", message: "Requires users:write." },
+          },
         ]);
-      }).pipe(Effect.provide(Event.layerMemory)),
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect(
@@ -339,11 +434,11 @@ describe("HTTP events", () => {
 
         const reading = yield* Effect.flatMap(
           subscribe("message.posted", { input: {} }, { stream: true }),
-          (response) => framesOf(response, 4),
+          (response) => framesOf(response, 4)
         ).pipe(
           Effect.scoped,
           Effect.provide(Testing.layer(ActionHttp.layer(Public, flaky))),
-          Effect.forkChild,
+          Effect.forkChild
         );
 
         yield* settle;
@@ -353,14 +448,18 @@ describe("HTTP events", () => {
 
         const frames = yield* Fiber.join(reading);
 
-        expect(frames.map(({ data }) => data)).toEqual([
+        expect(frames.map((frame) => frame.data)).toStrictEqual([
           { _tag: "Failed" },
           { _tag: "Checked", cursor: "2" },
           { _tag: "Failed" },
-          expect.objectContaining({ _tag: "Occurrence", eventId: "m1", cursor: "4" }),
+          expect.objectContaining({
+            _tag: "Occurrence",
+            eventId: "m1",
+            cursor: "4",
+          }),
         ]);
         expect(JSON.stringify(frames)).not.toContain("503");
-      }).pipe(Effect.provide(Event.layerMemory)),
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect(
@@ -369,13 +468,15 @@ describe("HTTP events", () => {
       Effect.gen(function* () {
         const reading = yield* Effect.flatMap(
           subscribe("counter.counted", { input: {} }, { stream: true }),
-          (response) => framesOf(response, 3),
+          (response) => framesOf(response, 3)
         ).pipe(
           Effect.scoped,
           Effect.provide(
-            Testing.layer(ActionHttp.layer(ActionHttp.make([Counted]), breakingBeforeValid)),
+            Testing.layer(
+              ActionHttp.layer(ActionHttp.make([Counted]), breakingBeforeValid)
+            )
           ),
-          Effect.forkChild,
+          Effect.forkChild
         );
 
         yield* settle;
@@ -384,148 +485,169 @@ describe("HTTP events", () => {
 
         const frames = yield* Fiber.join(reading);
 
-        expect(frames.map(({ data }) => data)).toEqual([
+        expect(frames.map(({ data }) => data)).toStrictEqual([
           { _tag: "Checked", cursor: "0" },
           { _tag: "Gap", cursor: "0" },
-          expect.objectContaining({ _tag: "Occurrence", eventId: "c2", cursor: "2" }),
+          expect.objectContaining({
+            _tag: "Occurrence",
+            eventId: "c2",
+            cursor: "2",
+          }),
         ]);
         expect(JSON.stringify(frames)).not.toContain("integer");
-      }).pipe(Effect.provide(Event.layerMemory)),
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("ends a stream with Effect's failure event when the source refuses later", () =>
-    Effect.gen(function* () {
-      let pages = 0;
+  it.effect(
+    "ends a stream with Effect's failure event when the source refuses later",
+    () =>
+      Effect.gen(function* () {
+        let pages = 0;
 
-      const revoked = Event.implement(Posted, {
-        check: () =>
-          Effect.suspend(() =>
-            (pages += 1) === 1
-              ? Effect.succeed({ cursor: "1", events: [] })
-              : Effect.fail(new Action.Forbidden({ message: "Revoked." })),
-          ),
-      });
+        const revoked = Event.implement(Posted, {
+          check: () =>
+            Effect.suspend(() => {
+              pages += 1;
 
-      const reading = yield* Effect.flatMap(
-        subscribe("message.posted", { input: {} }, { stream: true }),
-        (response) => framesOf(response, 2),
-      ).pipe(
-        Effect.scoped,
-        Effect.provide(Testing.layer(ActionHttp.layer(Public, revoked))),
-        Effect.forkChild,
-      );
+              return pages === 1
+                ? Effect.succeed({ cursor: "1", events: [] })
+                : Effect.fail(new Action.Forbidden({ message: "Revoked." }));
+            }),
+        });
 
-      yield* settle;
-      yield* TestClock.adjust("5 seconds");
+        const reading = yield* Effect.flatMap(
+          subscribe("message.posted", { input: {} }, { stream: true }),
+          (response) => framesOf(response, 2)
+        ).pipe(
+          Effect.scoped,
+          Effect.provide(Testing.layer(ActionHttp.layer(Public, revoked))),
+          Effect.forkChild
+        );
 
-      expect(yield* Fiber.join(reading)).toMatchObject([
-        { event: "message", data: { _tag: "Checked", cursor: "1" } },
-        { event: "effect/http-api/stream/failure" },
-      ]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        yield* settle;
+        yield* TestClock.adjust("5 seconds");
+
+        expect(yield* Fiber.join(reading)).toMatchObject([
+          { event: "message", data: { _tag: "Checked", cursor: "1" } },
+          { event: "effect/http-api/stream/failure" },
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("keeps each poll subscriber's subscription hook apart by principal", () =>
-    Effect.gen(function* () {
-      const held: Array<string> = [];
+  it.effect(
+    "keeps each poll subscriber's subscription hook apart by principal",
+    () =>
+      Effect.gen(function* () {
+        const held: string[] = [];
 
-      const hooked = Event.implement(
-        Changed,
-        {
+        const hooked = Event.implement(
+          Changed,
+          {
+            check: () => Effect.succeed({ cursor: "0", events: [] }),
+            subscription: () =>
+              Effect.flatMap(CurrentActor, (actor) =>
+                Effect.acquireRelease(
+                  Effect.sync(() => held.push(`set up for ${actor.id}`)),
+                  () => Effect.void
+                )
+              ),
+          },
+          { authorize: Event.allowAll }
+        );
+
+        const statuses = yield* Effect.forEach(
+          ["alice", "bob", "alice"],
+          (token) =>
+            Effect.map(
+              subscribe("user.changed", { input: {} }, { token }),
+              (response) => response.status
+            )
+        ).pipe(
+          Effect.provide(
+            Testing.layer(
+              ActionHttp.layer(
+                ActionHttp.make([Changed], { authentication: Login }),
+                hooked
+              ).pipe(Layer.provide(authenticate))
+            )
+          )
+        );
+
+        expect(statuses).toStrictEqual([200, 200, 200]);
+        expect(held).toStrictEqual(["set up for alice", "set up for bob"]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "holds one set-up for the polls of one input, until 5 minutes after the last",
+    () =>
+      Effect.gen(function* () {
+        const held: string[] = [];
+
+        const hooked = Event.implement(Posted, {
           check: () => Effect.succeed({ cursor: "0", events: [] }),
           subscription: () =>
-            Effect.flatMap(CurrentActor, (actor) =>
-              Effect.acquireRelease(
-                Effect.sync(() => held.push(`set up for ${actor.id}`)),
-                () => Effect.void,
-              ),
+            Effect.acquireRelease(
+              Effect.sync(() => held.push("set up")),
+              () => Effect.sync(() => held.push("torn down"))
             ),
-        },
-        { authorize: Event.allowAll },
-      );
+        });
 
-      const statuses = yield* Effect.all(
-        ["alice", "bob", "alice"].map((token) =>
-          Effect.map(
-            subscribe("user.changed", { input: {} }, { token }),
-            (response) => response.status,
-          ),
-        ),
-      ).pipe(
-        Effect.provide(
-          Testing.layer(
-            ActionHttp.layer(ActionHttp.make([Changed], { authentication: Login }), hooked).pipe(
-              Layer.provide(authenticate),
-            ),
-          ),
-        ),
-      );
-
-      expect(statuses).toEqual([200, 200, 200]);
-      expect(held).toEqual(["set up for alice", "set up for bob"]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        yield* Effect.gen(function* () {
+          yield* subscribe("message.posted", { input: {} });
+          yield* TestClock.adjust("4 minutes");
+          yield* subscribe("message.posted", { input: {} });
+          yield* TestClock.adjust("4 minutes");
+          expect(held).toStrictEqual(["set up"]);
+          yield* TestClock.adjust("1 minute");
+          expect(held).toStrictEqual(["set up", "torn down"]);
+        }).pipe(
+          Effect.provide(Testing.layer(ActionHttp.layer(Public, hooked)))
+        );
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("holds one set-up for the polls of one input, until 5 minutes after the last", () =>
-    Effect.gen(function* () {
-      const held: Array<string> = [];
+  it.effect(
+    "tears its subscription hook down when the client stops reading",
+    () =>
+      Effect.gen(function* () {
+        const held: string[] = [];
 
-      const hooked = Event.implement(Posted, {
-        check: () => Effect.succeed({ cursor: "0", events: [] }),
-        subscription: () =>
-          Effect.acquireRelease(
-            Effect.sync(() => held.push("set up")),
-            () => Effect.sync(() => held.push("torn down")),
-          ),
-      });
+        const hooked = Event.implement(Posted, {
+          check: () => Effect.succeed({ cursor: "0", events: [] }),
+          subscription: () =>
+            Effect.acquireRelease(
+              Effect.sync(() => held.push("set up")),
+              () => Effect.sync(() => held.push("torn down"))
+            ),
+        });
 
-      yield* Effect.gen(function* () {
-        yield* subscribe("message.posted", { input: {} });
-        yield* TestClock.adjust("4 minutes");
-        yield* subscribe("message.posted", { input: {} });
-        yield* TestClock.adjust("4 minutes");
-        expect(held).toEqual(["set up"]);
-        yield* TestClock.adjust("1 minute");
-        expect(held).toEqual(["set up", "torn down"]);
-      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Public, hooked))));
-    }).pipe(Effect.provide(Event.layerMemory)),
-  );
+        yield* Effect.flatMap(
+          subscribe("message.posted", { input: {} }, { stream: true }),
+          (response) => framesOf(response, 1)
+        ).pipe(
+          Effect.scoped,
+          Effect.provide(Testing.layer(ActionHttp.layer(Public, hooked)))
+        );
 
-  it.effect("tears its subscription hook down when the client stops reading", () =>
-    Effect.gen(function* () {
-      const held: Array<string> = [];
+        yield* settle;
 
-      const hooked = Event.implement(Posted, {
-        check: () => Effect.succeed({ cursor: "0", events: [] }),
-        subscription: () =>
-          Effect.acquireRelease(
-            Effect.sync(() => held.push("set up")),
-            () => Effect.sync(() => held.push("torn down")),
-          ),
-      });
-
-      yield* Effect.flatMap(
-        subscribe("message.posted", { input: {} }, { stream: true }),
-        (response) => framesOf(response, 1),
-      ).pipe(Effect.scoped, Effect.provide(Testing.layer(ActionHttp.layer(Public, hooked))));
-
-      yield* settle;
-
-      expect(held).toEqual(["set up", "torn down"]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        expect(held).toStrictEqual(["set up", "torn down"]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it("lists each event's route with its JSON page and its event stream", () => {
     const document = OpenApi.fromApi(Http.api);
     const operation = document.paths["/api/events/user.changed"]?.post;
 
-    expect(Object.keys(operation?.responses["200"]?.content ?? {})).toEqual([
-      "application/json",
-      "text/event-stream",
-    ]);
+    expect(
+      Object.keys(operation?.responses["200"]?.content ?? {})
+    ).toStrictEqual(["application/json", "text/event-stream"]);
     expect(operation?.description).toBe("A user of your tenant changed.");
-    expect(operation?.security).not.toEqual([]);
-    expect(document.paths["/api/events/message.posted"]?.post?.security ?? []).toEqual([]);
+    expect(operation?.security).not.toStrictEqual([]);
+    expect(
+      document.paths["/api/events/message.posted"]?.post?.security ?? []
+    ).toStrictEqual([]);
   });
 
   it.effect(
@@ -547,7 +669,10 @@ describe("HTTP events", () => {
         ];
 
         const read = Effect.all([
-          Effect.map(subscribe("message.posted", { input: {}, cursor: null }), (r) => r.status),
+          Effect.map(
+            subscribe("message.posted", { input: {}, cursor: null }),
+            (r) => r.status
+          ),
           Effect.flatMap(ActionHttp.client(Both), (client) => client.ping()),
         ]);
 
@@ -556,28 +681,32 @@ describe("HTTP events", () => {
             Testing.layer(
               Layer.mergeAll(
                 ActionHttp.layer(Both, implementations, { actions: [Ping] }),
-                ActionHttp.layer(Both, implementations, { actions: [Posted] }),
-              ),
-            ),
-          ),
+                ActionHttp.layer(Both, implementations, { actions: [Posted] })
+              )
+            )
+          )
         );
 
         const actionsAlone = yield* read.pipe(
           Effect.provide(
-            Testing.layer(ActionHttp.layer(Both, implementations, { actions: [Ping] })),
-          ),
+            Testing.layer(
+              ActionHttp.layer(Both, implementations, { actions: [Ping] })
+            )
+          )
         );
 
-        expect(split).toEqual([200, "pong"]);
-        expect(actionsAlone).toEqual([404, "pong"]);
-      }).pipe(Effect.provide(Event.layerMemory)),
+        expect(split).toStrictEqual([200, "pong"]);
+        expect(actionsAlone).toStrictEqual([404, "pong"]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it("refuses event implementations holding none of its binding's event types, and serves a bound one beside the others", () => {
     expect(() => ActionHttp.layer(Public, [changes])).toThrow(
-      "No event of these implementations is in this HTTP binding: user.changed (pass an implementation of a bound event, or bind one of these)",
+      "No event of these implementations is in this HTTP binding: user.changed (pass an implementation of a bound event, or bind one of these)"
     );
-    expect(() => ActionHttp.layer(Public, [makeMessages().implementation, changes])).not.toThrow();
+    expect(() =>
+      ActionHttp.layer(Public, [makeMessages().implementation, changes])
+    ).not.toThrow();
   });
 
   it("refuses a listed event type its binding lacks", () => {
@@ -585,9 +714,9 @@ describe("HTTP events", () => {
       ActionHttp.layer(Public, [makeMessages().implementation, changes], {
         // @ts-expect-error -- The failure under test: an event type the binding does not hold.
         actions: [Posted, Changed],
-      }),
+      })
     ).toThrow(
-      "Listed in actions, but the binding does not hold it: user.changed (add it to the binding's actions)",
+      "Listed in actions, but the binding does not hold it: user.changed (add it to the binding's actions)"
     );
   });
 
@@ -604,8 +733,8 @@ describe("HTTP events", () => {
       caller: Action.Anyone,
     });
 
-    expect(() => ActionHttp.make([Pinged, Ping])).toThrow(/pinged/);
-    expect(() => ActionHttp.make([Posted, Posted])).toThrow(/message\.posted/);
+    expect(() => ActionHttp.make([Pinged, Ping])).toThrow(/pinged/u);
+    expect(() => ActionHttp.make([Posted, Posted])).toThrow(/message\.posted/u);
   });
 
   it.effect(
@@ -620,7 +749,7 @@ describe("HTTP events", () => {
             check: () => Effect.succeed({ cursor: "0", events: [] }),
             subscription: () => Effect.void,
           },
-          { authorize: Event.allowAll },
+          { authorize: Event.allowAll }
         );
 
         const exit = yield* Effect.exit(
@@ -628,34 +757,40 @@ describe("HTTP events", () => {
             Testing.layer(
               ActionHttp.layer(
                 ActionHttp.make([Changed], { authentication: Anonymous }),
-                hooked,
-              ).pipe(Layer.provide(Authentication.layer(Anonymous, verify))),
-            ),
-          ).pipe(Effect.scoped),
+                hooked
+              ).pipe(Layer.provide(Authentication.layer(Anonymous, verify)))
+            )
+          ).pipe(Effect.scoped)
         );
 
         expect(Exit.isFailure(exit) ? String(exit.cause) : "built").toContain(
-          "needs principal to tell poll subscribers apart",
+          "needs principal to tell poll subscribers apart"
         );
-      }).pipe(Effect.provide(Event.layerMemory)),
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 });
 
+const watchedBy = <A, E>(
+  watch: Effect.Effect<A, E, HttpClient.HttpClient>,
+  log = makeMessages()
+) =>
+  Effect.gen(function* () {
+    const fiber = yield* Effect.forkChild(watch);
+
+    yield* settle;
+    log.post("general", "hello");
+    yield* TestClock.adjust("5 seconds");
+
+    return yield* Fiber.join(fiber);
+  }).pipe(Effect.provide(served(log)));
+
+const as = (token: string) =>
+  ActionHttp.client(Http, {
+    transformClient: (client) =>
+      HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)),
+  });
+
 describe("ActionHttp.client's watch", () => {
-  const watchedBy = <A, E>(
-    watch: Effect.Effect<A, E, HttpClient.HttpClient>,
-    log = makeMessages(),
-  ) =>
-    Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(watch);
-
-      yield* settle;
-      log.post("general", "hello");
-      yield* TestClock.adjust("5 seconds");
-
-      return yield* Fiber.join(fiber);
-    }).pipe(Effect.provide(served(log)));
-
   it.effect("streams and polls from a cursor", () =>
     Effect.gen(function* () {
       const watched = yield* watchedBy(
@@ -666,139 +801,171 @@ describe("ActionHttp.client's watch", () => {
             (["stream", "poll"] as const).map((mode) =>
               client
                 .watch(Posted, { channel: "general" }, { mode, cursor: "0" })
-                .pipe(Stream.take(1), Stream.runCollect),
+                .pipe(Stream.take(1), Stream.runCollect)
             ),
-            { concurrency: "unbounded" },
+            { concurrency: "unbounded" }
           );
-        }),
+        })
       );
 
       expect(watched).toMatchObject([
-        [{ _tag: "Occurrence", eventId: "m1", data: { text: "hello" }, cursor: "1" }],
-        [{ _tag: "Occurrence", eventId: "m1", data: { text: "hello" }, cursor: "1" }],
+        [
+          {
+            _tag: "Occurrence",
+            eventId: "m1",
+            data: { text: "hello" },
+            cursor: "1",
+          },
+        ],
+        [
+          {
+            _tag: "Occurrence",
+            eventId: "m1",
+            data: { text: "hello" },
+            cursor: "1",
+          },
+        ],
       ]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("watches a protected event as the client's caller, refused as declared", () =>
-    Effect.gen(function* () {
-      const as = (token: string) =>
-        ActionHttp.client(Http, {
-          transformClient: (client) =>
-            HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)),
+  it.effect(
+    "watches a protected event as the client's caller, refused as declared",
+    () =>
+      Effect.gen(function* () {
+        const changed = yield* watchedBy(
+          Effect.flatMap(as("alice"), (client) =>
+            client
+              .watch(Changed, {}, { cursor: "0" })
+              .pipe(Stream.take(1), Stream.runCollect)
+          )
+        );
+
+        const refused = yield* Effect.flatMap(as("reader"), (client) =>
+          Effect.flip(Stream.runDrain(client.watch(Changed)))
+        ).pipe(Effect.provide(served()));
+
+        expect(changed).toMatchObject([
+          { eventId: "by-alice", data: { by: "alice" } },
+        ]);
+        expect(refused).toMatchObject({
+          _tag: "Forbidden",
+          message: "Requires users:write.",
         });
-
-      const changed = yield* watchedBy(
-        Effect.flatMap(as("alice"), (client) =>
-          client.watch(Changed, {}, { cursor: "0" }).pipe(Stream.take(1), Stream.runCollect),
-        ),
-      );
-
-      const refused = yield* Effect.flatMap(as("reader"), (client) =>
-        Effect.flip(Stream.runDrain(client.watch(Changed))),
-      ).pipe(Effect.provide(served()));
-
-      expect(changed).toMatchObject([{ eventId: "by-alice", data: { by: "alice" } }]);
-      expect(refused).toMatchObject({ _tag: "Forbidden", message: "Requires users:write." });
-    }).pipe(Effect.provide(Event.layerMemory)),
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("reconnects after a status the route does not declare, streaming or polling", () =>
-    Effect.gen(function* () {
-      const attempts: Array<number> = [];
+  it.effect(
+    "reconnects after a status the route does not declare, streaming or polling",
+    () =>
+      Effect.gen(function* () {
+        const attempts: number[] = [];
 
-      const watched = yield* watchedBy(
-        Effect.gen(function* () {
-          const client = yield* ActionHttp.client(Http, {
-            transformClient: HttpClient.transform((response, request) =>
-              Effect.flatMap(
-                Effect.clockWith((clock) => clock.currentTimeMillis),
-                (now) => {
-                  attempts.push(now);
-
-                  return attempts.length <= 2
-                    ? Effect.succeed(
-                        HttpClientResponse.fromWeb(request, new Response("", { status: 503 })),
-                      )
-                    : response;
-                },
-              ),
-            ),
-          });
-
-          const fiber = yield* Effect.forkChild(
-            Effect.all(
-              (["stream", "poll"] as const).map((mode) =>
-                client
-                  .watch(Posted, {}, { mode, cursor: "0" })
-                  .pipe(Stream.take(1), Stream.runCollect),
-              ),
-              { concurrency: "unbounded" },
-            ),
-          );
-
-          yield* TestClock.adjust("1 second");
-          yield* TestClock.adjust("2 seconds");
-
-          return yield* Fiber.join(fiber);
-        }),
-      );
-
-      expect(attempts.slice(0, 2)).toEqual([0, 0]);
-      expect(attempts.slice(2, 4)).toEqual([1000, 1000]);
-      expect(watched).toMatchObject([[{ eventId: "m1" }], [{ eventId: "m1" }]]);
-    }).pipe(Effect.provide(Event.layerMemory)),
-  );
-
-  it.effect("reconnects after a request unanswered for 60 seconds, streaming or polling", () =>
-    Effect.gen(function* () {
-      let stalling = true;
-
-      const stallingFirstRead = Event.implement(Counted, {
-        check: () => {
-          if (stalling) {
-            stalling = false;
-
-            return Effect.never;
-          }
-
-          return Effect.succeed({ cursor: "1", events: [{ eventId: "c1", data: { n: 1 } }] });
-        },
-      });
-
-      const watched = yield* Effect.gen(function* () {
-        const client = yield* ActionHttp.client(ActionHttp.make([Counted]));
-
-        return yield* Effect.forEach(["stream", "poll"] as const, (mode) =>
+        const watched = yield* watchedBy(
           Effect.gen(function* () {
-            stalling = true;
+            const client = yield* ActionHttp.client(Http, {
+              transformClient: HttpClient.transform((response, request) =>
+                Effect.flatMap(
+                  Effect.clockWith((clock) => clock.currentTimeMillis),
+                  (now) => {
+                    attempts.push(now);
 
-            const fiber = yield* client
-              .watch(Counted, {}, { mode, cursor: "0" })
-              .pipe(
-                Stream.take(1),
-                Stream.runCollect,
-                Effect.timeoutOption("2 minutes"),
-                Effect.forkChild,
-              );
+                    return attempts.length <= 2
+                      ? Effect.succeed(
+                          HttpClientResponse.fromWeb(
+                            request,
+                            new Response("", { status: 503 })
+                          )
+                        )
+                      : response;
+                  }
+                )
+              ),
+            });
 
-            yield* settle;
-            yield* TestClock.adjust("2 minutes");
+            const fiber = yield* Effect.forkChild(
+              Effect.all(
+                (["stream", "poll"] as const).map((mode) =>
+                  client
+                    .watch(Posted, {}, { mode, cursor: "0" })
+                    .pipe(Stream.take(1), Stream.runCollect)
+                ),
+                { concurrency: "unbounded" }
+              )
+            );
+
+            yield* TestClock.adjust("1 second");
+            yield* TestClock.adjust("2 seconds");
 
             return yield* Fiber.join(fiber);
-          }),
+          })
         );
-      }).pipe(
-        Effect.provide(
-          Testing.layer(ActionHttp.layer(ActionHttp.make([Counted]), stallingFirstRead)),
-        ),
-      );
 
-      expect(watched).toMatchObject([
-        { _tag: "Some", value: [{ eventId: "c1" }] },
-        { _tag: "Some", value: [{ eventId: "c1" }] },
-      ]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        expect(attempts.slice(0, 2)).toStrictEqual([0, 0]);
+        expect(attempts.slice(2, 4)).toStrictEqual([1000, 1000]);
+        expect(watched).toMatchObject([
+          [{ eventId: "m1" }],
+          [{ eventId: "m1" }],
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "reconnects after a request unanswered for 60 seconds, streaming or polling",
+    () =>
+      Effect.gen(function* () {
+        let stalling = true;
+
+        const stallingFirstRead = Event.implement(Counted, {
+          check: () => {
+            if (stalling) {
+              stalling = false;
+
+              return Effect.never;
+            }
+
+            return Effect.succeed({
+              cursor: "1",
+              events: [{ eventId: "c1", data: { n: 1 } }],
+            });
+          },
+        });
+
+        const watched = yield* Effect.gen(function* () {
+          const client = yield* ActionHttp.client(ActionHttp.make([Counted]));
+
+          return yield* Effect.forEach(["stream", "poll"] as const, (mode) =>
+            Effect.gen(function* () {
+              stalling = true;
+
+              const fiber = yield* client
+                .watch(Counted, {}, { mode, cursor: "0" })
+                .pipe(
+                  Stream.take(1),
+                  Stream.runCollect,
+                  Effect.timeoutOption("2 minutes"),
+                  Effect.forkChild
+                );
+
+              yield* settle;
+              yield* TestClock.adjust("2 minutes");
+
+              return yield* Fiber.join(fiber);
+            })
+          );
+        }).pipe(
+          Effect.provide(
+            Testing.layer(
+              ActionHttp.layer(ActionHttp.make([Counted]), stallingFirstRead)
+            )
+          )
+        );
+
+        expect(watched).toMatchObject([
+          { _tag: "Some", value: [{ eventId: "c1" }] },
+          { _tag: "Some", value: [{ eventId: "c1" }] },
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect("yields no Failed the server sends, only what it reads on to", () =>
@@ -817,65 +984,71 @@ describe("ActionHttp.client's watch", () => {
         return yield* Fiber.join(fiber);
       }).pipe(
         Effect.provide(
-          Testing.layer(ActionHttp.layer(ActionHttp.make([Counted]), failingSecondRead())),
-        ),
+          Testing.layer(
+            ActionHttp.layer(ActionHttp.make([Counted]), failingSecondRead())
+          )
+        )
       );
 
       expect(watched).toMatchObject([{ _tag: "Occurrence", eventId: "c1" }]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("reconnects after its stream's body breaks, and reads on from where it reached", () =>
-    Effect.gen(function* () {
-      let requests = 0;
-      let frames = 0;
-      const log = makeMessages();
+  it.effect(
+    "reconnects after its stream's body breaks, and reads on from where it reached",
+    () =>
+      Effect.gen(function* () {
+        let requests = 0;
+        let frames = 0;
+        const log = makeMessages();
 
-      log.post("general", "hello");
+        log.post("general", "hello");
 
-      const watched = yield* Effect.gen(function* () {
-        const client = yield* ActionHttp.client(Http, {
-          transformClient: HttpClient.transform((response, request) =>
-            (requests += 1) === 1
-              ? Effect.succeed(
-                  HttpClientResponse.fromWeb(
-                    request,
-                    new Response(
-                      new ReadableStream({
-                        pull(controller) {
-                          if (frames === 1) {
-                            controller.error(new Error("connection reset"));
-                          } else {
-                            frames += 1;
-                            controller.enqueue(
-                              new TextEncoder().encode(
-                                `data: ${JSON.stringify({ _tag: "Checked", cursor: "0" })}\n\n`,
-                              ),
-                            );
-                          }
-                        },
-                      }),
-                      { headers: { "content-type": "text/event-stream" } },
-                    ),
-                  ),
-                )
-              : response,
-          ),
-        });
+        const watched = yield* Effect.gen(function* () {
+          const client = yield* ActionHttp.client(Http, {
+            transformClient: HttpClient.transform((response, request) => {
+              requests += 1;
 
-        const fiber = yield* client
-          .watch(Posted, {}, { mode: "stream" })
-          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+              return requests === 1
+                ? Effect.succeed(
+                    HttpClientResponse.fromWeb(
+                      request,
+                      new Response(
+                        new ReadableStream({
+                          pull(controller) {
+                            if (frames === 1) {
+                              controller.error(new Error("connection reset"));
+                            } else {
+                              frames += 1;
+                              controller.enqueue(
+                                new TextEncoder().encode(
+                                  `data: ${JSON.stringify({ _tag: "Checked", cursor: "0" })}\n\n`
+                                )
+                              );
+                            }
+                          },
+                        }),
+                        { headers: { "content-type": "text/event-stream" } }
+                      )
+                    )
+                  )
+                : response;
+            }),
+          });
 
-        yield* TestClock.adjust("1 second");
-        yield* TestClock.adjust("1 second");
+          const fiber = yield* client
+            .watch(Posted, {}, { mode: "stream" })
+            .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
-        return yield* Fiber.join(fiber);
-      }).pipe(Effect.provide(served(log)));
+          yield* TestClock.adjust("1 second");
+          yield* TestClock.adjust("1 second");
 
-      expect(requests).toBe(2);
-      expect(watched).toMatchObject([{ eventId: "m1", cursor: "1" }]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+          return yield* Fiber.join(fiber);
+        }).pipe(Effect.provide(served(log)));
+
+        expect(requests).toBe(2);
+        expect(watched).toMatchObject([{ eventId: "m1", cursor: "1" }]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect("fails with NotServed for an event the server does not serve", () =>
@@ -885,7 +1058,9 @@ describe("ActionHttp.client's watch", () => {
 
         return yield* Effect.flip(Stream.runDrain(client.watch(Changed)));
       }).pipe(
-        Effect.provide(Testing.layer(ActionHttp.layer(Public, makeMessages().implementation))),
+        Effect.provide(
+          Testing.layer(ActionHttp.layer(Public, makeMessages().implementation))
+        )
       );
 
       expect(error).toMatchObject({
@@ -893,26 +1068,32 @@ describe("ActionHttp.client's watch", () => {
         event: "user.changed",
         reason: { _tag: "NotServed" },
       });
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("fails with InvalidInput, sending nothing, for an input that does not encode", () =>
-    Effect.gen(function* () {
-      let requests = 0;
+  it.effect(
+    "fails with InvalidInput, sending nothing, for an input that does not encode",
+    () =>
+      Effect.gen(function* () {
+        let requests = 0;
 
-      const error = yield* Effect.gen(function* () {
-        const client = yield* ActionHttp.client(Http, {
-          transformClient: HttpClient.tapRequest(() => Effect.sync(() => (requests += 1))),
-        });
+        const error = yield* Effect.gen(function* () {
+          const client = yield* ActionHttp.client(Http, {
+            transformClient: HttpClient.tapRequest(() =>
+              Effect.sync(() => {
+                requests += 1;
+              })
+            ),
+          });
 
-        return yield* Effect.flip(
-          // @ts-expect-error -- A channel is a string.
-          Stream.runDrain(client.watch(Posted, { channel: 1 })),
-        );
-      }).pipe(Effect.provide(served()));
+          return yield* Effect.flip(
+            // @ts-expect-error -- A channel is a string.
+            Stream.runDrain(client.watch(Posted, { channel: 1 }))
+          );
+        }).pipe(Effect.provide(served()));
 
-      expect(error).toMatchObject({ _tag: "InvalidInput" });
-      expect(requests).toBe(0);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        expect(error).toMatchObject({ _tag: "InvalidInput" });
+        expect(requests).toBe(0);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 });

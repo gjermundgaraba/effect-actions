@@ -1,5 +1,5 @@
-import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Schema } from "effect";
 
 // Public: `caller: Action.Anyone`. It answers before anyone has signed in, on every surface.
 export const GetStatus = Action.make("getStatus", {

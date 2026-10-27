@@ -1,14 +1,14 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
-export const docsDirectory = join(root, "docs");
+export const docsDirectory = path.join(root, "docs");
 
-export const examplesDirectory = join(root, "examples");
+export const examplesDirectory = path.join(root, "examples");
 
-export const skillDirectory = join(root, "skills", "effect-actions");
+export const skillDirectory = path.join(root, "skills", "effect-actions");
 
 interface SkillFile {
   readonly path: string;
@@ -29,18 +29,23 @@ description: >
 `;
 
 const linkInstalledExamples = (page: string) =>
-  page.replaceAll("](../examples/", "](node_modules/@gjermundgaraba/effect-actions/examples/");
+  page.replaceAll(
+    "](../examples/",
+    "](node_modules/@gjermundgaraba/effect-actions/examples/"
+  );
 
 const linkSkillEntry = (page: string) =>
   page.replaceAll("[README.md](README.md", "[SKILL.md](SKILL.md");
 
-export const renderSkill = (): ReadonlyArray<SkillFile> =>
+export const renderSkill = (): readonly SkillFile[] =>
   readdirSync(docsDirectory)
     .filter((name) => name.endsWith(".md"))
-    .sort((left, right) => left.localeCompare(right))
+    .toSorted((left, right) => left.localeCompare(right))
     .map((name) => {
       const content = linkSkillEntry(
-        linkInstalledExamples(readFileSync(join(docsDirectory, name), "utf8")),
+        linkInstalledExamples(
+          readFileSync(path.join(docsDirectory, name), "utf-8")
+        )
       );
 
       return name === "README.md"

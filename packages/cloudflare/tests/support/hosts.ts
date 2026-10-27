@@ -1,20 +1,33 @@
 import { env } from "cloudflare:workers";
 import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { Rpc, RpcGroup, RpcServer } from "effect/rpc";
+
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 
-export class PluginNotFound extends Schema.TaggedError<PluginNotFound>()("PluginNotFound", {
+export class PluginNotFound extends Schema.TaggedError<
+  PluginNotFound,
+  { readonly brand: unique symbol }
+>()("PluginNotFound", {
   plugin: Schema.String,
 }) {}
 
-export class PluginHasNoPane extends Schema.TaggedError<PluginHasNoPane>()("PluginHasNoPane", {
+export class PluginHasNoPane extends Schema.TaggedError<
+  PluginHasNoPane,
+  { readonly brand: unique symbol }
+>()("PluginHasNoPane", {
   plugin: Schema.String,
 }) {}
 
-export const Code = Schema.Struct({ plugin: Schema.String, pane: Schema.Boolean });
+export const Code = Schema.Struct({
+  plugin: Schema.String,
+  pane: Schema.Boolean,
+});
 
 export const PluginRpcs = RpcGroup.make(
-  Rpc.make("install", { payload: { code: Code }, success: Schema.Struct({ version: Schema.Int }) }),
+  Rpc.make("install", {
+    payload: { code: Code },
+    success: Schema.Struct({ version: Schema.Int }),
+  }),
   Rpc.make("start", {
     success: Schema.Struct({ pane: Schema.String }),
     error: Schema.Union([PluginNotFound, PluginHasNoPane]),
@@ -23,7 +36,7 @@ export const PluginRpcs = RpcGroup.make(
   Rpc.make("echo", {
     payload: { text: Schema.String, millis: Schema.Int },
     success: Schema.String,
-  }),
+  })
 );
 
 export class PluginStore extends Context.Service<
@@ -31,40 +44,52 @@ export class PluginStore extends Context.Service<
   {
     readonly installed: () => typeof Code.Type | undefined;
     readonly install: (code: typeof Code.Type) => number;
-    readonly started: () => ReadonlyArray<string>;
+    readonly started: () => readonly string[];
     readonly start: (pane: string) => void;
   }
 >()("test/PluginStore") {
   static readonly layer = Layer.effect(PluginStore)(
-    Effect.map(Effect.service(ActionDurableObject.State), ({ storage: { kv } }) =>
-      PluginStore.of({
-        installed: () => kv.get<typeof Code.Type>("installed"),
-        install: (code) => {
-          const version = (kv.get<number>("version") ?? 0) + 1;
+    Effect.map(
+      Effect.service(ActionDurableObject.State),
+      ({ storage: { kv } }) =>
+        PluginStore.of({
+          installed: () => kv.get<typeof Code.Type>("installed"),
+          install: (code) => {
+            const version = (kv.get<number>("version") ?? 0) + 1;
 
-          kv.put("installed", code);
-          kv.put("version", version);
+            kv.put("installed", code);
+            kv.put("version", version);
 
-          return version;
-        },
-        started: () => kv.get<ReadonlyArray<string>>("panes") ?? [],
-        start: (pane) => kv.put("panes", [...(kv.get<ReadonlyArray<string>>("panes") ?? []), pane]),
-      }),
-    ),
+            return version;
+          },
+          started: () => kv.get<readonly string[]>("panes") ?? [],
+          start: (pane) => {
+            kv.put("panes", [
+              ...(kv.get<readonly string[]>("panes") ?? []),
+              pane,
+            ]);
+          },
+        })
+    )
   );
 }
 
 const pluginHandlers = PluginRpcs.toLayer(
   Effect.map(Effect.service(PluginStore), (store) =>
     PluginRpcs.of({
-      install: ({ code }) => Effect.sync(() => ({ version: store.install(code) })),
+      install: ({ code }) =>
+        Effect.sync(() => ({ version: store.install(code) })),
       start: () =>
         Effect.gen(function* () {
           const installed = store.installed();
 
-          if (installed === undefined) return yield* new PluginNotFound({ plugin: "unknown" });
+          if (installed === undefined) {
+            return yield* new PluginNotFound({ plugin: "unknown" });
+          }
 
-          if (!installed.pane) return yield* new PluginHasNoPane({ plugin: installed.plugin });
+          if (!installed.pane) {
+            return yield* new PluginHasNoPane({ plugin: installed.plugin });
+          }
 
           const pane = `${installed.plugin}/${store.started().length + 1}`;
 
@@ -74,20 +99,26 @@ const pluginHandlers = PluginRpcs.toLayer(
         }),
       panes: () => Effect.sync(() => store.started()),
       echo: ({ text, millis }) => Effect.as(Effect.sleep(millis), text),
-    }),
-  ),
+    })
+  )
 );
 
-export const pluginCalls = RpcServer.layer(PluginRpcs).pipe(Layer.provide(pluginHandlers));
+export const pluginCalls = RpcServer.layer(PluginRpcs).pipe(
+  Layer.provide(pluginHandlers)
+);
 
 export class Hosts extends Context.Service<
   Hosts,
-  { readonly plugin: (id: string) => ActionDurableObject.Client<typeof PluginRpcs> }
+  {
+    readonly plugin: (
+      id: string
+    ) => ActionDurableObject.Client<typeof PluginRpcs>;
+  }
 >()("test/Hosts") {
   static readonly layer = Layer.effect(Hosts)(
     Effect.map(ActionDurableObject.client(PluginRpcs), (plugin) =>
-      Hosts.of({ plugin: (id) => plugin(() => env.PLUGIN_HOST.getByName(id)) }),
-    ),
+      Hosts.of({ plugin: (id) => plugin(() => env.PLUGIN_HOST.getByName(id)) })
+    )
   );
 }
 
@@ -96,7 +127,7 @@ export const PaneRpcs = RpcGroup.make(
     payload: { plugin: Schema.String },
     success: Schema.Struct({ pane: Schema.String }),
     error: Schema.Union([PluginNotFound, PluginHasNoPane]),
-  }),
+  })
 );
 
 export const paneCalls = RpcServer.layer(PaneRpcs).pipe(
@@ -104,17 +135,26 @@ export const paneCalls = RpcServer.layer(PaneRpcs).pipe(
     PaneRpcs.toLayer(
       Effect.map(Effect.service(Hosts), (hosts) =>
         PaneRpcs.of({
-          open: ({ plugin }) =>
-            Effect.catchTag(hosts.plugin(plugin).start(), "RpcClientError", Effect.die),
-        }),
-      ),
-    ),
-  ),
+          open: ({
+            plugin,
+          }): Rpc.ResultFrom<
+            Rpc.ExtractTag<RpcGroup.Rpcs<typeof PaneRpcs>, "open">,
+            never
+          > =>
+            Effect.catchTag(
+              hosts.plugin(plugin).start(),
+              "RpcClientError",
+              Effect.die
+            ),
+        })
+      )
+    )
+  )
 );
 
 export const StreamRpcs = RpcGroup.make(
   Rpc.make("tail", { success: Schema.String, stream: true }),
-  Rpc.make("head", { success: Schema.String }),
+  Rpc.make("head", { success: Schema.String })
 );
 
 export const streamCalls = RpcServer.layer(StreamRpcs).pipe(
@@ -122,6 +162,6 @@ export const streamCalls = RpcServer.layer(StreamRpcs).pipe(
     StreamRpcs.toLayer({
       tail: () => Stream.make("a", "b"),
       head: () => Effect.succeed("head"),
-    }),
-  ),
+    })
+  )
 );

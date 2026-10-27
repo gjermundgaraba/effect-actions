@@ -1,7 +1,9 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Effect } from "effect";
+
 import { Operator } from "./Admin.js";
-import { type Grant, Grants } from "./grants.js";
+import { Grants } from "./grants.js";
+import type { Grant } from "./grants.js";
 
 // An authorizer built from a startup service, as a handler builder builds handlers: the
 // Effect yields `Grants` once, when the implementation is built, and the function it returns
@@ -14,13 +16,19 @@ export const authorize = Effect.gen(function* () {
       const operator = yield* Operator;
 
       // The one rule admits the console's operator too: no surface has a bypass of its own.
-      if (operator.trusted) return;
+      if (operator.trusted) {
+        return;
+      }
 
-      const grant: Grant = action.readOnly ? "workspaces:read" : "workspaces:suspend";
+      const grant: Grant = action.readOnly
+        ? "workspaces:read"
+        : "workspaces:suspend";
 
       // No `scopes`: a key cannot be re-authorized, so this is a plain 403.
       if (!(yield* grants.of(operator.id)).includes(grant)) {
-        return yield* new Action.Forbidden({ message: `Requires the ${grant} grant.` });
+        return yield* new Action.Forbidden({
+          message: `Requires the ${grant} grant.`,
+        });
       }
     });
 });

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Queue, Schema } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+import { Effect, Layer, Queue, Schema } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
+
 import { Http } from "../src/Api.js";
 import { routes } from "../src/routes.js";
 import { inMemory } from "./support/memory.js";
@@ -19,7 +20,7 @@ const signed = async (request: Request, body: string) => {
     Buffer.from(secret.slice("whsec_".length), "base64"),
     { name: "HMAC", hash: "SHA-256" },
     false,
-    ["sign"],
+    ["sign"]
   );
 
   const signedContent = [
@@ -29,13 +30,21 @@ const signed = async (request: Request, body: string) => {
   ].join(".");
 
   const expected = Buffer.from(
-    await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signedContent)),
+    await crypto.subtle.sign(
+      "HMAC",
+      key,
+      new TextEncoder().encode(signedContent)
+    )
   ).toString("base64");
 
-  return (request.headers.get("webhook-signature") ?? "").split(" ").includes(`v1,${expected}`);
+  return (request.headers.get("webhook-signature") ?? "")
+    .split(" ")
+    .includes(`v1,${expected}`);
 };
 
-const Delivered = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json));
+const Delivered = Schema.fromJsonString(
+  Schema.Record(Schema.String, Schema.Json)
+);
 
 interface Received {
   readonly body: typeof Delivered.Type;
@@ -44,25 +53,31 @@ interface Received {
 
 // grace's server: it answers the verification POST by echoing its challenge, which proves it
 // asked for these deliveries, and acknowledges each delivery with a 2xx.
-const subscriber = (received: Queue.Enqueue<Received>) => async (request: Request) => {
-  const text = await request.text();
-  const body = Schema.decodeUnknownSync(Delivered)(text);
+const subscriber =
+  (received: Queue.Enqueue<Received>) => async (request: Request) => {
+    const text = await request.text();
+    const body = Schema.decodeSync(Delivered)(text);
 
-  Queue.offerUnsafe(received, { body, signed: await signed(request, text) });
+    Queue.offerUnsafe(received, { body, signed: await signed(request, text) });
 
-  return body["type"] === "verification"
-    ? Response.json({ challenge: body["challenge"] })
-    : new Response(null);
-};
+    return body["type"] === "verification"
+      ? Response.json({ challenge: body["challenge"] })
+      : new Response(null);
+  };
 
 const served = (received: Queue.Enqueue<Received>) =>
-  Testing.layer(routes).pipe(Layer.provide(inMemory(Testing.layer(subscriber(received)))));
+  Testing.layer(routes).pipe(
+    Layer.provide(inMemory(Testing.layer(subscriber(received))))
+  );
 
 const Subscribed = Schema.Struct({
   id: Schema.String,
   refreshBefore: Schema.NullOr(Schema.String),
   deliveryStatus: Schema.optional(
-    Schema.Struct({ active: Schema.Boolean, lastError: Schema.NullOr(Schema.String) }),
+    Schema.Struct({
+      active: Schema.Boolean,
+      lastError: Schema.NullOr(Schema.String),
+    })
   ),
 });
 
@@ -73,12 +88,12 @@ const subscribe = Effect.flatMap(HttpClient.HttpClient, (client) =>
       HttpClientRequest.bodyJsonUnsafe({
         input: { status: "passed" },
         delivery: { url: "https://hooks.example.com/grace", secret },
-      }),
-    ),
-  ),
+      })
+    )
+  )
 ).pipe(
   Effect.flatMap((response) => response.json),
-  Effect.flatMap(Schema.decodeUnknownEffect(Subscribed)),
+  Effect.flatMap(Schema.decodeUnknownEffect(Subscribed))
 );
 
 describe("the service, by webhook", () => {
@@ -86,7 +101,9 @@ describe("the service, by webhook", () => {
     Effect.flatMap(Queue.unbounded<Received>(), (received) =>
       Effect.gen(function* () {
         const ada = yield* ActionHttp.client(Http, {
-          transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("ada")),
+          transformClient: HttpClient.mapRequest(
+            HttpClientRequest.bearerToken("ada")
+          ),
         });
 
         // The answer names the subscription, which each POST's `x-mcp-subscription-id`
@@ -105,16 +122,22 @@ describe("the service, by webhook", () => {
         // The same request again refreshes the subscription, and answers how it is going.
         const refreshed = yield* subscribe;
 
-        expect(verification).toMatchObject({ body: { type: "verification" }, signed: true });
+        expect(verification).toMatchObject({
+          body: { type: "verification" },
+          signed: true,
+        });
         expect(delivery).toMatchObject({
-          body: { name: "build.finished", data: { id: "build-2", pipeline: "web" } },
+          body: {
+            name: "build.finished",
+            data: { id: "build-2", pipeline: "web" },
+          },
           signed: true,
         });
         expect(refreshed).toMatchObject({
           id: subscription.id,
           deliveryStatus: { active: true, lastError: null },
         });
-      }).pipe(Effect.provide(served(received))),
-    ),
+      }).pipe(Effect.provide(served(received)))
+    )
   );
 });

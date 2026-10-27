@@ -1,11 +1,14 @@
-import { Array, Effect, Option, type Redacted } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { Array, Effect, Option } from "effect";
+import type { Redacted } from "effect";
+
 import { publicUrl } from "../config.js";
 import { WorkspaceRegistry } from "../workspaces/registry.js";
 import { Tenant } from "../workspaces/tenant.js";
 import { Directory } from "./directory.js";
-import { Login, type Member, scopes, Session } from "./Identity.js";
+import { Login, scopes, Session } from "./Identity.js";
+import type { Member } from "./Identity.js";
 
 // What both verifiers check once a credential has named a member: an operator may have
 // suspended the workspace. Checked here, it holds on every remote surface.
@@ -15,12 +18,16 @@ const inService = Effect.gen(function* () {
   return Effect.fn("inService")(function* (member: Member) {
     const suspended = yield* registry.get(member.workspace).pipe(
       Effect.map((workspace) => workspace.suspended),
-      Effect.orElseSucceed(() => true),
+      Effect.orElseSucceed(() => true)
     );
 
     // No scopes named: signing in again grants nothing, so this is a plain 403, never a
     // challenge sending an OAuth client back to its authorization server.
-    if (suspended) return yield* new Action.Forbidden({ message: "This workspace is suspended." });
+    if (suspended) {
+      return yield* new Action.Forbidden({
+        message: "This workspace is suspended.",
+      });
+    }
 
     return member;
   });
@@ -38,7 +45,7 @@ const protectedResource = Effect.map(
       scopesSupported: [scopes.read, scopes.write],
       scopesRequired: [scopes.read],
       resourceName: "Tracker",
-    }) satisfies Authentication.ProtectedResource,
+    }) satisfies Authentication.ProtectedResource
 );
 
 // Server only: `Login`'s provider. The Effect is a builder, as `Action.implement` takes one:
@@ -50,24 +57,25 @@ export const authenticateBearer = Authentication.layer(
     const directory = yield* Directory;
     const admit = yield* inService;
 
-    return (token: Redacted.Redacted<string>) =>
+    return (token: Redacted.Redacted) =>
       Effect.gen(function* () {
         const memberships = yield* directory.ofToken(token);
 
         const member = Option.flatMap(yield* Tenant, (slug) =>
-          Array.findFirst(memberships, ({ workspace }) => workspace === slug),
+          Array.findFirst(memberships, ({ workspace }) => workspace === slug)
         );
 
         if (Option.isNone(member)) {
           return yield* new Action.Forbidden({
-            message: "Name a workspace you belong to in the X-Workspace header.",
+            message:
+              "Name a workspace you belong to in the X-Workspace header.",
           });
         }
 
         return yield* admit(member.value);
       });
   }),
-  { protectedResource },
+  { protectedResource }
 );
 
 // `Session`'s provider: the same identity from another credential. Its verifier receives what
@@ -79,7 +87,7 @@ export const authenticateSession = Authentication.layer(
     const directory = yield* Directory;
     const admit = yield* inService;
 
-    return (session: Redacted.Redacted<string>) =>
+    return (session: Redacted.Redacted) =>
       Effect.flatMap(directory.ofSession(session), admit);
-  }),
+  })
 );

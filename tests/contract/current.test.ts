@@ -1,11 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber, Match, Schema, Stream } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
-import { TestClock } from "effect/testing";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+import { Effect, Fiber, Match, Schema, Stream } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import { TestClock } from "effect/testing";
+
 import { settle } from "../support/events.js";
 
 const Key = Schema.Literals(["a", "b"]);
@@ -33,19 +34,24 @@ const makeStatuses = () => {
 const Polled = Schema.fromJsonString(
   Schema.Struct({
     cursor: Schema.String,
-    events: Schema.Array(Schema.Struct({ eventId: Schema.String, data: Status.payload })),
-  }),
+    events: Schema.Array(
+      Schema.Struct({ eventId: Schema.String, data: Status.payload })
+    ),
+  })
 );
 
 const poll = (key: Key | undefined, cursor: string | null) =>
   HttpClient.execute(
     HttpClientRequest.post("/api/events/status.changed").pipe(
-      HttpClientRequest.bodyJsonUnsafe({ input: key === undefined ? {} : { key }, cursor }),
-    ),
+      HttpClientRequest.bodyJsonUnsafe({
+        input: key === undefined ? {} : { key },
+        cursor,
+      })
+    )
   ).pipe(
     Effect.flatMap((response) => response.text),
     Effect.flatMap(Schema.decodeUnknownEffect(Polled)),
-    Effect.orDie,
+    Effect.orDie
   );
 
 const Subscriber = Schema.UndefinedOr(Key);
@@ -67,7 +73,10 @@ const Command = Schema.Union([
   }),
 ]);
 
-const Commands = Schema.Array(Command).check(Schema.isMinLength(1), Schema.isMaxLength(40));
+const Commands = Schema.Array(Command).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(40)
+);
 
 describe("Event current source", () => {
   it.effect.prop(
@@ -78,7 +87,7 @@ describe("Event current source", () => {
         const statuses = makeStatuses();
         const events = yield* Event.Events;
         const reached = new Map<Key | undefined, number>();
-        const minted: Array<Minted> = [];
+        const minted: Minted[] = [];
         const ids = new Map<string, number>();
         let latest = 0;
 
@@ -102,7 +111,10 @@ describe("Event current source", () => {
 
             statuses.values.set(undefined, latest);
             reached.set(undefined, reachedOf(undefined) + 1);
-            yield* events.notify(Status, key === undefined ? undefined : { key });
+            yield* events.notify(
+              Status,
+              key === undefined ? undefined : { key }
+            );
             continue;
           }
 
@@ -110,26 +122,37 @@ describe("Event current source", () => {
 
           const resumed = Match.value(step.from).pipe(
             Match.when("start", () => ({ cursor: null, current: false })),
-            Match.when("foreign", () => ({ cursor: "another:0", current: false })),
+            Match.when("foreign", () => ({
+              cursor: "another:0",
+              current: false,
+            })),
             Match.orElse((index) => {
               const held = minted[index % Math.max(minted.length, 1)];
 
               return held === undefined
                 ? { cursor: null, current: false }
-                : { cursor: held.cursor, current: held.key === key && held.at === reachedOf(key) };
-            }),
+                : {
+                    cursor: held.cursor,
+                    current: held.key === key && held.at === reachedOf(key),
+                  };
+            })
           );
 
           const page = yield* poll(key, resumed.cursor).pipe(
             Effect.provide(
-              Testing.layer(ActionHttp.layer(ActionHttp.make([Status]), statuses.implementation)),
-            ),
+              Testing.layer(
+                ActionHttp.layer(
+                  ActionHttp.make([Status]),
+                  statuses.implementation
+                )
+              )
+            )
           );
 
           const answered = page.events.map(({ data }) => data);
 
-          expect(answered).toEqual(
-            resumed.current ? [] : [{ value: statuses.values.get(key) ?? 0 }],
+          expect(answered).toStrictEqual(
+            resumed.current ? [] : [{ value: statuses.values.get(key) ?? 0 }]
           );
 
           const at = reachedOf(key);
@@ -138,11 +161,13 @@ describe("Event current source", () => {
           expect(ids.get(seen) ?? at).toBe(at);
           ids.set(seen, at);
 
-          for (const occurrence of page.events) expect(occurrence.eventId).toBe(page.cursor);
+          for (const occurrence of page.events) {
+            expect(occurrence.eventId).toBe(page.cursor);
+          }
 
           minted.push({ cursor: page.cursor, key, at });
         }
-      }).pipe(Effect.provide(Event.layerMemory)),
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect(
@@ -167,68 +192,76 @@ describe("Event current source", () => {
 
         const received = yield* Fiber.join(watching);
 
-        expect(received.map((item) => (item._tag === "Gap" ? "gap" : item.data.value))).toEqual([
-          0, 1, 0,
-        ]);
-      }).pipe(Effect.provide(Event.layerMemory)),
+        expect(
+          received.map((item) =>
+            item._tag === "Gap" ? "gap" : item.data.value
+          )
+        ).toStrictEqual([0, 1, 0]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("sends a watcher of one key nothing for a notify of the empty key, another key", () =>
-    Effect.gen(function* () {
-      const statuses = makeStatuses();
-      const client = yield* Action.client(statuses.implementation);
-      const events = yield* Event.Events;
+  it.effect(
+    "sends a watcher of one key nothing for a notify of the empty key, another key",
+    () =>
+      Effect.gen(function* () {
+        const statuses = makeStatuses();
+        const client = yield* Action.client(statuses.implementation);
+        const events = yield* Event.Events;
 
-      const watching = yield* client
-        .watch(Status, { key: "a" })
-        .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+        const watching = yield* client
+          .watch(Status, { key: "a" })
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
 
-      yield* settle;
-      yield* events.notify(Status, { key: "" });
-      yield* TestClock.adjust("5 seconds");
-      statuses.values.set("a", 1);
-      yield* events.notify(Status, { key: "a" });
+        yield* settle;
+        yield* events.notify(Status, { key: "" });
+        yield* TestClock.adjust("5 seconds");
+        statuses.values.set("a", 1);
+        yield* events.notify(Status, { key: "a" });
 
-      const received = yield* Fiber.join(watching);
+        const received = yield* Fiber.join(watching);
 
-      expect(received.map((item) => (item._tag === "Gap" ? "gap" : item.data.value))).toEqual([
-        0, 1,
-      ]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        expect(
+          received.map((item) =>
+            item._tag === "Gap" ? "gap" : item.data.value
+          )
+        ).toStrictEqual([0, 1]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("sends a value written while the value was read, at the read its notify wakes", () =>
-    Effect.gen(function* () {
-      const events = yield* Event.Events;
-      let value = 0;
+  it.effect(
+    "sends a value written while the value was read, at the read its notify wakes",
+    () =>
+      Effect.gen(function* () {
+        const events = yield* Event.Events;
+        let value = 0;
 
-      const racing = Event.implement(Status, {
-        current: () =>
-          Effect.gen(function* () {
-            const read = value;
+        const racing = Event.implement(Status, {
+          current: () =>
+            Effect.gen(function* () {
+              const read = value;
 
-            if (read === 0) {
-              value = 1;
-              yield* events.notify(Status);
-            }
+              if (read === 0) {
+                value = 1;
+                yield* events.notify(Status);
+              }
 
-            return { value: read };
-          }),
-      });
+              return { value: read };
+            }),
+        });
 
-      const client = yield* Action.client(racing);
+        const client = yield* Action.client(racing);
 
-      const received = yield* client
-        .watch(Status, {})
-        .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+        const received = yield* client
+          .watch(Status, {})
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
 
-      yield* settle;
+        yield* settle;
 
-      expect(
-        (yield* Fiber.join(received)).map((item) =>
-          item._tag === "Gap" ? "gap" : item.data.value,
-        ),
-      ).toEqual([0, 1]);
-    }).pipe(Effect.provide(Event.layerMemory)),
+        expect(
+          (yield* Fiber.join(received)).map((item) =>
+            item._tag === "Gap" ? "gap" : item.data.value
+          )
+        ).toStrictEqual([0, 1]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 });

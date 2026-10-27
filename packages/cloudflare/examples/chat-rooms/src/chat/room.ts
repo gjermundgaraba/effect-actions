@@ -1,4 +1,5 @@
 import { Context } from "effect";
+
 import type { RoomName } from "./Chat.js";
 
 /**
@@ -6,4 +7,6 @@ import type { RoomName } from "./Chat.js";
  * a startup service: one value for the instance's whole life, unlike the caller, which every
  * message names again.
  */
-export class Room extends Context.Service<Room, RoomName>()("chat-rooms/Room") {}
+export class Room extends Context.Service<Room, RoomName>()(
+  "chat-rooms/Room"
+) {}

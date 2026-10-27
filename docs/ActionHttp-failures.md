@@ -1,7 +1,6 @@
 # ActionHttp failure modes
 
-What you see when something is wrong, and the fix. Search for a fragment of the message.
-The tasks are in [ActionHttp.md](ActionHttp.md).
+What you see when something is wrong, and the fix. Search for a fragment of the message. The tasks are in [ActionHttp.md](ActionHttp.md).
 
 ## Binding and serving
 

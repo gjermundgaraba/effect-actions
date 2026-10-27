@@ -1,4 +1,6 @@
-import { Context, Effect, Layer, type Scope } from "effect";
+import { Context, Effect, Layer } from "effect";
+import type { Scope } from "effect";
+
 import type { Environment } from "./Deploys.js";
 
 /** Who stands by to approve deploys, and to which environment. */
@@ -8,9 +10,11 @@ export class Approvers extends Context.Service<
     /** Stands `member` by to approve deploys to `environment`, every one where undefined, until the scope closes. */
     readonly standBy: (
       environment: Environment | undefined,
-      member: string,
+      member: string
     ) => Effect.Effect<void, never, Scope.Scope>;
-    readonly standingBy: (environment: Environment) => Effect.Effect<ReadonlyArray<string>>;
+    readonly standingBy: (
+      environment: Environment
+    ) => Effect.Effect<readonly string[]>;
   }
 >()("build-events/Approvers") {
   // DEMO ONLY: approvers live in this process's memory, where a real one is a rota in a store.
@@ -30,14 +34,20 @@ export class Approvers extends Context.Service<
 
             return standing;
           }),
-          (standing) => Effect.sync(() => approvers.splice(approvers.indexOf(standing), 1)),
+          (standing) =>
+            Effect.sync(() => approvers.splice(approvers.indexOf(standing), 1))
         ),
       standingBy: (environment) =>
         Effect.sync(() => [
           ...new Set(
             approvers
-              .filter((each) => each.environment === undefined || each.environment === environment)
-              .map((each) => each.member),
+              .values()
+              .filter(
+                (each) =>
+                  each.environment === undefined ||
+                  each.environment === environment
+              )
+              .map((each) => each.member)
           ),
         ]),
     });

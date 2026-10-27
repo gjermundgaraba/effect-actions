@@ -1,6 +1,8 @@
 import { expect, it } from "@effect/vitest";
 import { Arbitrary, Effect, Match, Ref, Schema, Stream } from "effect";
-import { Chat, LanguageModel, type Response } from "effect/ai";
+import { Chat, LanguageModel } from "effect/ai";
+import type { Response } from "effect/ai";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 
@@ -22,20 +24,25 @@ const Command = Schema.Union([
       Schema.Struct({
         place: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 8 })),
         approved: Schema.Boolean,
-      }),
+      })
     ).check(Schema.isMinLength(1), Schema.isMaxLength(3)),
   }),
 ]);
 
-const commands = Arbitrary.array(Arbitrary.schema(Command), { minLength: 1, maxLength: 12 });
+const commands = Arbitrary.array(Arbitrary.schema(Command), {
+  minLength: 1,
+  maxLength: 12,
+});
 
-const silence: ReadonlyArray<Response.PartEncoded> = [{ type: "text", text: "" }];
+const silence: readonly Response.PartEncoded[] = [{ type: "text", text: "" }];
 
-const requestsOf = (response: { readonly content: ReadonlyArray<Response.AnyPart> }) =>
+const requestsOf = (response: {
+  readonly content: readonly Response.AnyPart[];
+}) =>
   response.content.flatMap((part) =>
     part.type === "tool-approval-request"
       ? [{ approvalId: part.approvalId, toolCallId: part.toolCallId }]
-      : [],
+      : []
   );
 
 it.effect.prop(
@@ -48,51 +55,82 @@ it.effect.prop(
       const { toolkit, layer } = ActionToolkit.make(
         Action.implement(Erase, ({ id }) =>
           Effect.flatMap(Ref.get(dying), (dies) =>
-            dies ? Effect.die("the turn failed") : Effect.succeed(`erased ${id}`),
-          ),
+            dies
+              ? Effect.die("the turn failed")
+              : Effect.succeed(`erased ${id}`)
+          )
         ),
-        { needsApproval: () => true },
+        { needsApproval: () => true }
       );
 
-      const replies = yield* Ref.make<ReadonlyArray<ReadonlyArray<Response.PartEncoded>>>([]);
+      const replies = yield* Ref.make<
+        ReadonlyArray<readonly Response.PartEncoded[]>
+      >([]);
 
       const model = yield* LanguageModel.make({
-        generateText: () => Ref.modify(replies, ([next = silence, ...rest]) => [[...next], rest]),
+        generateText: () =>
+          Ref.modify(replies, ([next = silence, ...rest]) => [[...next], rest]),
         streamText: () => Stream.empty,
       });
 
       const chat = yield* Chat.empty;
 
-      const turn = (prompt: Parameters<typeof chat.generateText>[0]["prompt"]) =>
+      const turn = (
+        prompt: Parameters<typeof chat.generateText>[0]["prompt"]
+      ) =>
         chat
           .generateText({ prompt, toolkit })
-          .pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.provide(layer));
+          .pipe(
+            Effect.provideService(LanguageModel.LanguageModel, model),
+            Effect.provide(layer)
+          );
 
-      const failingStreamedTurn = (prompt: Parameters<typeof chat.streamText>[0]["prompt"]) =>
+      const failingStreamedTurn = (
+        prompt: Parameters<typeof chat.streamText>[0]["prompt"]
+      ) =>
         Ref.set(dying, true).pipe(
           Effect.andThen(Stream.runDrain(chat.streamText({ prompt, toolkit }))),
           Effect.provideService(LanguageModel.LanguageModel, model),
           Effect.provide(layer),
           Effect.exit,
-          Effect.ensuring(Ref.set(dying, false)),
+          Effect.ensuring(Ref.set(dying, false))
         );
 
-      const asked: Array<{ readonly approvalId: string; readonly toolCallId: string }> = [];
-      const answered = new Set<string>();
-      let calls = 0;
+      const asked: Array<{
+        readonly approvalId: string;
+        readonly toolCallId: string;
+      }> = [];
 
-      const open = () => asked.filter(({ approvalId }) => !answered.has(approvalId));
+      const answered = new Set<string>();
+      const calls = yield* Ref.make(0);
+
+      const open = () =>
+        asked.filter(({ approvalId }) => !answered.has(approvalId));
 
       for (const command of turns) {
         yield* Match.value(command).pipe(
           Match.tagsExhaustive({
             Ask: ({ calls: count }) =>
               Effect.gen(function* () {
-                const ids = Array.from({ length: count }, () => `call-${++calls}`);
+                const before = yield* Ref.getAndUpdate(
+                  calls,
+                  (made) => made + count
+                );
+
+                const ids = Array.from(
+                  { length: count },
+                  (_, index) => `call-${before + index + 1}`
+                );
 
                 yield* Ref.set(replies, [
                   ids.map(
-                    (id) => ({ type: "tool-call", id, name: "erase", params: { id } }) as const,
+                    (id) =>
+                      ({
+                        type: "tool-call",
+                        id,
+                        name: "erase",
+                        params: { id },
+                      }) as const
                   ),
                 ]);
 
@@ -102,13 +140,15 @@ it.effect.prop(
               Effect.gen(function* () {
                 const waiting = open();
 
-                if (waiting.length === 0) return;
+                if (waiting.length === 0) {
+                  return;
+                }
 
                 const answers = new Map(
                   picks.map(({ place, approved }) => [
                     waiting[place % waiting.length]?.approvalId ?? "",
                     approved,
-                  ]),
+                  ])
                 );
 
                 const prompt = [
@@ -126,29 +166,33 @@ it.effect.prop(
                   ? failingStreamedTurn(prompt)
                   : Effect.asVoid(turn(prompt));
 
-                for (const approvalId of answers.keys()) answered.add(approvalId);
+                for (const approvalId of answers.keys()) {
+                  answered.add(approvalId);
+                }
               }),
-          }),
+          })
         );
       }
 
-      expect(ActionToolkit.openApprovals(yield* Ref.get(chat.history))).toEqual(
+      expect(
+        ActionToolkit.openApprovals(yield* Ref.get(chat.history))
+      ).toStrictEqual(
         open().map(({ approvalId, toolCallId }) => ({
           approvalId,
           toolCallId,
           name: "erase",
           params: { id: toolCallId },
-        })),
+        }))
       );
     }),
-  { arbitrary: { runs: 200 } },
+  { arbitrary: { runs: 200 } }
 );
 
 it.effect(
   "lists exactly the calls that approving every listed request runs, in a history that repeats ids",
   () =>
     Effect.gen(function* () {
-      const erased: Array<string> = [];
+      const erased: string[] = [];
 
       const { toolkit, layer } = ActionToolkit.make(
         Action.implement(Erase, ({ id }) =>
@@ -156,9 +200,9 @@ it.effect(
             erased.push(id);
 
             return `erased ${id}`;
-          }),
+          })
         ),
-        { needsApproval: () => true },
+        { needsApproval: () => true }
       );
 
       const model = yield* LanguageModel.make({
@@ -171,17 +215,66 @@ it.effect(
         {
           role: "assistant",
           content: [
-            { type: "tool-call", id: "repeated", name: "erase", params: { id: "first of two" } },
-            { type: "tool-approval-request", approvalId: "twice", toolCallId: "repeated" },
-            { type: "tool-call", id: "plain", name: "erase", params: { id: "plain" } },
-            { type: "tool-approval-request", approvalId: "plain", toolCallId: "plain" },
-            { type: "tool-call", id: "other", name: "erase", params: { id: "replaced" } },
-            { type: "tool-approval-request", approvalId: "twice", toolCallId: "other" },
-            { type: "tool-call", id: "repeated", name: "erase", params: { id: "second of two" } },
-            { type: "tool-call", id: "done", name: "erase", params: { id: "already ran" } },
-            { type: "tool-approval-request", approvalId: "ran", toolCallId: "done" },
-            { type: "tool-approval-request", approvalId: "callless", toolCallId: "missing" },
-            { type: "tool-approval-request", approvalId: "last", toolCallId: "repeated" },
+            {
+              type: "tool-call",
+              id: "repeated",
+              name: "erase",
+              params: { id: "first of two" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "twice",
+              toolCallId: "repeated",
+            },
+            {
+              type: "tool-call",
+              id: "plain",
+              name: "erase",
+              params: { id: "plain" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "plain",
+              toolCallId: "plain",
+            },
+            {
+              type: "tool-call",
+              id: "other",
+              name: "erase",
+              params: { id: "replaced" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "twice",
+              toolCallId: "other",
+            },
+            {
+              type: "tool-call",
+              id: "repeated",
+              name: "erase",
+              params: { id: "second of two" },
+            },
+            {
+              type: "tool-call",
+              id: "done",
+              name: "erase",
+              params: { id: "already ran" },
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "ran",
+              toolCallId: "done",
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "callless",
+              toolCallId: "missing",
+            },
+            {
+              type: "tool-approval-request",
+              approvalId: "last",
+              toolCallId: "repeated",
+            },
           ],
         },
         {
@@ -214,10 +307,17 @@ it.effect(
           ],
           toolkit,
         })
-        .pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.provide(layer));
+        .pipe(
+          Effect.provideService(LanguageModel.LanguageModel, model),
+          Effect.provide(layer)
+        );
 
-      expect(listed.map(({ params }) => params)).toEqual(erased.map((id) => ({ id })));
-      expect(erased).toEqual(["plain", "replaced", "second of two"]);
-      expect(ActionToolkit.openApprovals(yield* Ref.get(chat.history))).toEqual([]);
-    }),
+      expect(listed.map(({ params }) => params)).toStrictEqual(
+        erased.map((id) => ({ id }))
+      );
+      expect(erased).toStrictEqual(["plain", "replaced", "second of two"]);
+      expect(
+        ActionToolkit.openApprovals(yield* Ref.get(chat.history))
+      ).toStrictEqual([]);
+    })
 );

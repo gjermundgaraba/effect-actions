@@ -1,20 +1,27 @@
 import { Buffer } from "node:buffer";
+
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Schema, SchemaGetter, Stream } from "effect";
 import { McpServer, Tool, Toolkit } from "effect/ai";
 import { Base64 } from "effect/encoding";
 import { HttpClient, HttpClientResponse } from "effect/http";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
-import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Testing from "../../src/testing/Testing.js";
+import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import { mcpRequest, post, send } from "../support/requests.js";
-import { converse, type HostRequest } from "../support/stdio-host.js";
+import { converse } from "../support/stdio-host.js";
+import type { HostRequest } from "../support/stdio-host.js";
 
 const options = { name: "media", version: "0" };
 
-const read = { description: "Reads", readOnly: true, caller: Action.Anyone } as const;
+const read = {
+  description: "Reads",
+  readOnly: true,
+  caller: Action.Anyone,
+} as const;
 
 const png = new Uint8Array([137, 80, 78, 71]);
 
@@ -24,7 +31,10 @@ const image = { data: png, mimeType: "image/png" };
 
 const photo = { data: jpeg, mimeType: "image/jpeg" };
 
-const imageBlockAsSent = ({ data, mimeType }: typeof Action.Image.Type, field?: string) => ({
+const imageBlockAsSent = (
+  { data, mimeType }: typeof Action.Image.Type,
+  field?: string
+) => ({
   type: "image",
   data: Base64.encode(data),
   mimeType,
@@ -35,76 +45,108 @@ const Screen = Schema.Struct({ id: Schema.Finite, title: Schema.String });
 
 const screen = { id: 1, title: "Home" };
 
-const Shot = Action.make("shot", { ...read, success: { screen: Screen, image: Action.Image } });
+const Shot = Action.make("shot", {
+  ...read,
+  success: { screen: Screen, image: Action.Image },
+});
 
 const JsonRpcReply = Schema.fromJsonString(
   Schema.Struct({
     result: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
     error: Schema.optionalKey(Schema.Json),
-  }),
+  })
 );
 
 const replyOf = (line: string) => {
-  const { result, error } = Schema.decodeUnknownSync(JsonRpcReply)(line);
+  const { result, error } = Schema.decodeSync(JsonRpcReply)(line);
 
-  if (result === undefined) return { error };
+  if (result === undefined) {
+    return { error };
+  }
 
   const { _meta: _sent, resultType: _type, ...rest } = result;
 
   return { result: rest };
 };
 
-const answersOverHttp = (requests: ReadonlyArray<HostRequest>) =>
+const answersOverHttp = (requests: readonly HostRequest[]) =>
   Effect.forEach(requests, ({ method, params = {} }) =>
-    Effect.flatMap(send(mcpRequest({ method, params })), (response) => response.text),
+    Effect.flatMap(
+      send(mcpRequest({ method, params })),
+      (response) => response.text
+    )
   );
+
+const call = (name: string, args: Schema.Json = {}): HostRequest => ({
+  method: "tools/call",
+  params: { name, arguments: args },
+});
 
 describe("MCP registration without media", () => {
   const Ready = Action.make("ready", {
     ...read,
     input: { verbose: Schema.optionalKey(Schema.Boolean) },
     success: { ready: Schema.Boolean },
-    mcp: { title: "Ready", openWorldHint: true, _meta: { "io.example/ui": "panel" } },
+    mcp: {
+      title: "Ready",
+      openWorldHint: true,
+      _meta: { "io.example/ui": "panel" },
+    },
   });
 
-  const Named = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Named" });
+  const Named = Schema.Struct({ id: Schema.String }).annotate({
+    identifier: "Named",
+  });
 
   const Find = Action.make("find", { ...read, input: Named, success: Named });
   const Greeting = Action.make("greeting", { ...read, success: Schema.String });
   const Count = Action.make("count", { ...read, success: Schema.Finite });
   const Reset = Action.make("reset", { ...read, readOnly: false });
 
-  class Missing extends Schema.TaggedError<Missing>()("Missing", { id: Schema.String }) {}
+  class Missing extends Schema.TaggedError<
+    Missing,
+    { readonly brand: unique symbol }
+  >()("Missing", {
+    id: Schema.String,
+  }) {}
 
-  const Fail = Action.make("fail", { ...read, success: Schema.String, error: Missing });
+  const Fail = Action.make("fail", {
+    ...read,
+    success: Schema.String,
+    error: Missing,
+  });
+
   const Boom = Action.make("boom", { ...read, success: Schema.String });
   const Broken = Action.make("broken", { ...read, success: Schema.Finite });
 
-  const apps = Action.implement([Ready, Find, Greeting, Count, Reset, Fail, Boom, Broken], {
-    ready: () => Effect.succeed({ ready: true }),
-    find: ({ id }) => Effect.succeed({ id }),
-    greeting: () => Effect.succeed('say "hi"'),
-    count: () => Effect.succeed(42),
-    reset: () => Effect.void,
-    fail: () => Effect.fail(new Missing({ id: "1" })),
-    boom: () => Effect.die(new Error("secret database password")),
-    broken: () => Effect.succeed(Infinity),
-  });
+  const apps = Action.implement(
+    [Ready, Find, Greeting, Count, Reset, Fail, Boom, Broken],
+    {
+      ready: () => Effect.succeed({ ready: true }),
+      find: ({ id }) => Effect.succeed({ id }),
+      greeting: () => Effect.succeed('say "hi"'),
+      count: () => Effect.succeed(42),
+      reset: () => Effect.void,
+      fail: () => Effect.fail(new Missing({ id: "1" })),
+      boom: () => Effect.die(new Error("secret database password")),
+      broken: () => Effect.succeed(Infinity),
+    }
+  );
 
   const tools = ActionToolkit.make(apps);
 
   const nativeRegistrationOfSameTools = McpServer.toolkit(
     Toolkit.make(
-      ...Object.values(tools.toolkit.tools).map((tool) => tool.annotate(Tool.Strict, true)),
-    ),
+      ...Object.values(tools.toolkit.tools).map((tool) =>
+        tool.annotate(Tool.Strict, true)
+      )
+    )
   ).pipe(Layer.provide(tools.layer));
 
-  const call = (name: string, args: Schema.Json = {}): HostRequest => ({
-    method: "tools/call",
-    params: { name, arguments: args },
-  });
-
-  const invalidArgumentCalls = [call("ready", { invented: true }), call("find", { id: 1 })];
+  const invalidArgumentCalls = [
+    call("ready", { invented: true }),
+    call("find", { id: 1 }),
+  ];
 
   const requests = [
     { method: "tools/list" },
@@ -120,65 +162,94 @@ describe("MCP registration without media", () => {
     ...invalidArgumentCalls,
   ];
 
-  it.effect("lists and answers as Effect's registerToolkit does, over HTTP", () =>
-    Effect.gen(function* () {
-      const ours = yield* answersOverHttp(requests).pipe(
-        Effect.provide(Testing.layer(ActionMcp.layerHttp(apps, options))),
-      );
+  it.effect(
+    "lists and answers as Effect's registerToolkit does, over HTTP",
+    () =>
+      Effect.gen(function* () {
+        const ours = yield* answersOverHttp(requests).pipe(
+          Effect.provide(Testing.layer(ActionMcp.layerHttp(apps, options)))
+        );
 
-      const theirs = yield* answersOverHttp(requests).pipe(
-        Effect.provide(
-          Testing.layer(
-            ActionMcp.layerHttp([], { ...options, features: nativeRegistrationOfSameTools }),
-          ),
-        ),
-      );
+        const theirs = yield* answersOverHttp(requests).pipe(
+          Effect.provide(
+            Testing.layer(
+              ActionMcp.layerHttp([], {
+                ...options,
+                features: nativeRegistrationOfSameTools,
+              })
+            )
+          )
+        );
 
-      expect(ours).toEqual(theirs);
+        expect(ours).toStrictEqual(theirs);
 
-      expect(replyOf(ours[1] ?? "")).toEqual({
-        result: {
-          isError: false,
-          structuredContent: { ready: true },
-          content: [{ type: "text", text: '{"ready":true}' }],
-        },
-      });
-      expect(replyOf(ours[7] ?? "")).toEqual({
-        result: { isError: true, content: [{ type: "text", text: '{"_tag":"Missing","id":"1"}' }] },
-      });
-      expect(ours[8]).toContain("internal server error");
-      expect(ours[8]).not.toContain("secret");
-      expect(ours[10]).toContain("Invalid parameters for tool 'ready'");
-    }),
+        expect(replyOf(ours[1] ?? "")).toStrictEqual({
+          result: {
+            isError: false,
+            structuredContent: { ready: true },
+            content: [{ type: "text", text: '{"ready":true}' }],
+          },
+        });
+        expect(replyOf(ours[7] ?? "")).toStrictEqual({
+          result: {
+            isError: true,
+            content: [{ type: "text", text: '{"_tag":"Missing","id":"1"}' }],
+          },
+        });
+        expect(ours[8]).toContain("internal server error");
+        expect(ours[8]).not.toContain("secret");
+        expect(ours[10]).toContain("Invalid parameters for tool 'ready'");
+      })
   );
 
   it.effect.each(["2026-07-28", "2025-11-25", "2025-06-18"])(
     "lists and answers as Effect's registerToolkit does, over stdio to a %s host",
     (revision) =>
       Effect.gen(function* () {
-        const ours = yield* converse(ActionMcp.runStdio(apps, options), revision, requests);
-
-        const theirs = yield* converse(
-          ActionMcp.runStdio([], { ...options, features: nativeRegistrationOfSameTools }),
+        const ours = yield* converse(
+          ActionMcp.runStdio(apps, options),
           revision,
-          requests,
+          requests
         );
 
-        expect(ours).toEqual(theirs);
+        const theirs = yield* converse(
+          ActionMcp.runStdio([], {
+            ...options,
+            features: nativeRegistrationOfSameTools,
+          }),
+          revision,
+          requests
+        );
+
+        expect(ours).toStrictEqual(theirs);
 
         if (revision !== "2026-07-28") {
-          expect(replyOf(ours[4] ?? "")).toEqual({
-            result: { isError: false, content: [{ type: "text", text: 'say "hi"' }] },
+          expect(replyOf(ours[4] ?? "")).toStrictEqual({
+            result: {
+              isError: false,
+              content: [{ type: "text", text: 'say "hi"' }],
+            },
           });
         }
-      }),
+      })
   );
 });
 
 describe("media fields over MCP", () => {
-  const ShotWithoutMedia = Action.make("plain", { ...read, success: { screen: Screen } });
-  const MaybeWithoutMedia = Action.make("title", { ...read, success: { title: Schema.String } });
-  const PagesWithoutMedia = Action.make("total", { ...read, success: { total: Schema.Finite } });
+  const ShotWithoutMedia = Action.make("plain", {
+    ...read,
+    success: { screen: Screen },
+  });
+
+  const MaybeWithoutMedia = Action.make("title", {
+    ...read,
+    success: { title: Schema.String },
+  });
+
+  const PagesWithoutMedia = Action.make("total", {
+    ...read,
+    success: { total: Schema.Finite },
+  });
 
   const Maybe = Action.make("maybe", {
     ...read,
@@ -197,7 +268,11 @@ describe("media fields over MCP", () => {
   });
 
   const Picture = Action.make("picture", { ...read, success: Action.Image });
-  const Album = Action.make("album", { ...read, success: Schema.Array(Action.Image) });
+
+  const Album = Action.make("album", {
+    ...read,
+    success: Schema.Array(Action.Image),
+  });
 
   const Pair = Action.make("pair", {
     ...read,
@@ -223,16 +298,19 @@ describe("media fields over MCP", () => {
     plain: () => Effect.succeed({ screen }),
     title: () => Effect.succeed({ title: "Home" }),
     total: () => Effect.succeed({ total: 2 }),
-    maybe: ({ present }) => Effect.succeed(present ? { title: "Home", image } : { title: "Home" }),
-    pages: () => Effect.succeed({ cover: photo, total: 2, pages: [image, photo], back: image }),
-    picture: () => Effect.succeed({ data: pngInNodeBuffer, mimeType: "image/png" }),
+    maybe: ({ present }) =>
+      Effect.succeed(present ? { title: "Home", image } : { title: "Home" }),
+    pages: () =>
+      Effect.succeed({
+        cover: photo,
+        total: 2,
+        pages: [image, photo],
+        back: image,
+      }),
+    picture: () =>
+      Effect.succeed({ data: pngInNodeBuffer, mimeType: "image/png" }),
     album: () => Effect.succeed([photo, image]),
     pair: () => Effect.succeed({ front: image }),
-  });
-
-  const call = (name: string, args: Schema.Json = {}): HostRequest => ({
-    method: "tools/call",
-    params: { name, arguments: args },
   });
 
   const calls = [
@@ -257,7 +335,10 @@ describe("media fields over MCP", () => {
     {
       isError: false,
       structuredContent: { title: "Home" },
-      content: [{ type: "text", text: '{"title":"Home"}' }, imageBlockAsSent(image, "image")],
+      content: [
+        { type: "text", text: '{"title":"Home"}' },
+        imageBlockAsSent(image, "image"),
+      ],
     },
     {
       isError: false,
@@ -276,7 +357,10 @@ describe("media fields over MCP", () => {
       ],
     },
     { isError: false, content: [imageBlockAsSent(image)] },
-    { isError: false, content: [imageBlockAsSent(photo), imageBlockAsSent(image)] },
+    {
+      isError: false,
+      content: [imageBlockAsSent(photo), imageBlockAsSent(image)],
+    },
     { isError: false, content: [imageBlockAsSent(image, "front")] },
   ];
 
@@ -284,18 +368,20 @@ describe("media fields over MCP", () => {
     Schema.Struct({
       result: Schema.Struct({
         tools: Schema.Array(
-          Schema.Struct({ name: Schema.String, outputSchema: Schema.optionalKey(Schema.Json) }),
+          Schema.Struct({
+            name: Schema.String,
+            outputSchema: Schema.optionalKey(Schema.Json),
+          })
         ),
       }),
-    }),
+    })
   );
 
   const outputSchemas = (line: string) =>
     Object.fromEntries(
-      Schema.decodeUnknownSync(Listed)(line).result.tools.map(({ name, outputSchema }) => [
-        name,
-        outputSchema,
-      ]),
+      Schema.decodeSync(Listed)(line).result.tools.map(
+        ({ name, outputSchema }) => [name, outputSchema]
+      )
     );
 
   it.effect("lifts each media field into an image block, over HTTP", () =>
@@ -303,20 +389,28 @@ describe("media fields over MCP", () => {
       const [listed = "", ...answered] = yield* answersOverHttp([
         { method: "tools/list" },
         ...calls,
-      ]).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(apps, options))));
+      ]).pipe(
+        Effect.provide(Testing.layer(ActionMcp.layerHttp(apps, options)))
+      );
 
-      expect(answered.map(replyOf)).toEqual(expectedResults.map((result) => ({ result })));
+      expect(answered.map(replyOf)).toStrictEqual(
+        expectedResults.map((result) => ({ result }))
+      );
 
       const schemas = outputSchemas(listed);
 
-      expect(schemas["shot"]).toEqual(schemas["plain"]);
-      expect(schemas["maybe"]).toEqual(schemas["title"]);
-      expect(schemas["pages"]).toEqual(schemas["total"]);
+      expect(schemas["shot"]).toStrictEqual(schemas["plain"]);
+      expect(schemas["maybe"]).toStrictEqual(schemas["title"]);
+      expect(schemas["pages"]).toStrictEqual(schemas["total"]);
 
-      expect(Object.keys(schemas)).toEqual(actions.map(({ name }) => name));
+      expect(Object.keys(schemas)).toStrictEqual(
+        actions.map(({ name }) => name)
+      );
 
-      for (const name of ["picture", "album", "pair"]) expect(schemas[name]).toBeUndefined();
-    }),
+      for (const name of ["picture", "album", "pair"]) {
+        expect(schemas[name]).toBeUndefined();
+      }
+    })
   );
 
   it.effect.each(["2026-07-28", "2025-11-25", "2025-06-18"])(
@@ -326,113 +420,144 @@ describe("media fields over MCP", () => {
         const [listed = "", ...answered] = yield* converse(
           ActionMcp.runStdio(apps, options),
           revision,
-          [{ method: "tools/list" }, ...calls],
+          [{ method: "tools/list" }, ...calls]
         );
 
-        expect(answered.map(replyOf)).toEqual(expectedResults.map((result) => ({ result })));
+        expect(answered.map(replyOf)).toStrictEqual(
+          expectedResults.map((result) => ({ result }))
+        );
 
         const schemas = outputSchemas(listed);
 
-        expect(schemas["shot"]).toEqual(schemas["plain"]);
+        expect(schemas["shot"]).toStrictEqual(schemas["plain"]);
 
-        for (const name of ["picture", "album", "pair"]) expect(schemas[name]).toBeUndefined();
-      }),
+        for (const name of ["picture", "album", "pair"]) {
+          expect(schemas[name]).toBeUndefined();
+        }
+      })
   );
 
-  it.effect("decodes each media success in ActionMcp.client as the handler returned it", () =>
-    Effect.gen(function* () {
-      const client = yield* ActionMcp.client(actions);
+  it.effect(
+    "decodes each media success in ActionMcp.client as the handler returned it",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* ActionMcp.client(actions);
 
-      expect(yield* client.shot()).toEqual({ screen, image });
-      expect(yield* client.maybe({ present: true })).toEqual({ title: "Home", image });
-      expect(yield* client.maybe({ present: false })).toEqual({ title: "Home" });
+        expect(yield* client.shot()).toStrictEqual({ screen, image });
+        expect(yield* client.maybe({ present: true })).toStrictEqual({
+          title: "Home",
+          image,
+        });
+        expect(yield* client.maybe({ present: false })).toStrictEqual({
+          title: "Home",
+        });
 
-      expect(yield* client.pages()).toEqual({
-        cover: photo,
-        total: 2,
-        pages: [image, photo],
-        back: image,
-      });
+        expect(yield* client.pages()).toStrictEqual({
+          cover: photo,
+          total: 2,
+          pages: [image, photo],
+          back: image,
+        });
 
-      expect(yield* client.picture()).toEqual(image);
-      expect(yield* client.album()).toEqual([photo, image]);
-      expect(yield* client.pair()).toEqual({ front: image });
-    }).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(apps, options)))),
+        expect(yield* client.picture()).toStrictEqual(image);
+        expect(yield* client.album()).toStrictEqual([photo, image]);
+        expect(yield* client.pair()).toStrictEqual({ front: image });
+      }).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(apps, options))))
   );
 
-  class Gone extends Schema.TaggedError<Gone>()("Gone", { id: Schema.Finite }) {}
+  class Gone extends Schema.TaggedError<
+    Gone,
+    { readonly brand: unique symbol }
+  >()("Gone", {
+    id: Schema.Finite,
+  }) {}
 
-  const Lost = Action.make("lost", { ...read, success: { image: Action.Image }, error: Gone });
+  const Lost = Action.make("lost", {
+    ...read,
+    success: { image: Action.Image },
+    error: Gone,
+  });
 
   it.effect("keeps a declared error of a media action unchanged", () =>
     Effect.gen(function* () {
       const [answer = ""] = yield* answersOverHttp([call("lost")]);
 
-      expect(replyOf(answer)).toEqual({
-        result: { isError: true, content: [{ type: "text", text: '{"_tag":"Gone","id":1}' }] },
+      expect(replyOf(answer)).toStrictEqual({
+        result: {
+          isError: true,
+          content: [{ type: "text", text: '{"_tag":"Gone","id":1}' }],
+        },
       });
 
       const client = yield* ActionMcp.client([Lost]);
 
-      expect(yield* Effect.flip(client.lost())).toEqual(new Gone({ id: 1 }));
+      expect(yield* Effect.flip(client.lost())).toStrictEqual(
+        new Gone({ id: 1 })
+      );
     }).pipe(
       Effect.provide(
         Testing.layer(
           ActionMcp.layerHttp(
             Action.implement(Lost, () => Effect.fail(new Gone({ id: 1 }))),
-            options,
-          ),
-        ),
-      ),
-    ),
+            options
+          )
+        )
+      )
+    )
   );
 });
 
 describe("the rest of a media success", () => {
-  const call = (name: string): HostRequest => ({
-    method: "tools/call",
-    params: { name, arguments: {} },
-  });
+  it.effect(
+    "keeps the success's own description, not its identifier, in its outputSchema",
+    () =>
+      Effect.gen(function* () {
+        const annotations = { title: "Shot", description: "A screenshot" };
 
-  it.effect("keeps the success's own description, not its identifier, in its outputSchema", () =>
-    Effect.gen(function* () {
-      const annotations = { title: "Shot", description: "A screenshot" };
-
-      const Described = Action.make("described", {
-        ...read,
-        success: Schema.Struct({ title: Schema.String, image: Action.Image }).annotate({
-          ...annotations,
-          identifier: "Shot",
-        }),
-      });
-
-      const Titled = Action.make("titled", {
-        ...read,
-        success: Schema.Struct({ title: Schema.String }).annotate(annotations),
-      });
-
-      const apps = Action.implement([Described, Titled], {
-        described: () => Effect.succeed({ title: "Home", image }),
-        titled: () => Effect.succeed({ title: "Home" }),
-      });
-
-      const [listed = ""] = yield* answersOverHttp([{ method: "tools/list" }]).pipe(
-        Effect.provide(Testing.layer(ActionMcp.layerHttp(apps, options))),
-      );
-
-      const [described, titled] = Schema.decodeUnknownSync(
-        Schema.fromJsonString(
-          Schema.Struct({
-            result: Schema.Struct({
-              tools: Schema.Array(Schema.Struct({ outputSchema: Schema.Json })),
-            }),
+        const Described = Action.make("described", {
+          ...read,
+          success: Schema.Struct({
+            title: Schema.String,
+            image: Action.Image,
+          }).annotate({
+            ...annotations,
+            identifier: "Shot",
           }),
-        ),
-      )(listed).result.tools;
+        });
 
-      expect(described?.outputSchema).toEqual(titled?.outputSchema);
-      expect(described?.outputSchema).toMatchObject(annotations);
-    }),
+        const Titled = Action.make("titled", {
+          ...read,
+          success: Schema.Struct({ title: Schema.String }).annotate(
+            annotations
+          ),
+        });
+
+        const apps = Action.implement([Described, Titled], {
+          described: () => Effect.succeed({ title: "Home", image }),
+          titled: () => Effect.succeed({ title: "Home" }),
+        });
+
+        const [listed = ""] = yield* answersOverHttp([
+          { method: "tools/list" },
+        ]).pipe(
+          Effect.provide(Testing.layer(ActionMcp.layerHttp(apps, options)))
+        );
+
+        const [described, titled] = (yield* Schema.decodeEffect(
+          Schema.fromJsonString(
+            Schema.Struct({
+              result: Schema.Struct({
+                tools: Schema.Array(
+                  Schema.Struct({ outputSchema: Schema.Json })
+                ),
+              }),
+            })
+          )
+        )(listed)).result.tools;
+
+        expect(described?.outputSchema).toStrictEqual(titled?.outputSchema);
+        expect(described?.outputSchema).toMatchObject(annotations);
+      })
   );
 
   it.effect("lifts an optional image whose union lists `undefined` first", () =>
@@ -441,7 +566,9 @@ describe("the rest of a media success", () => {
         ...read,
         success: {
           title: Schema.String,
-          image: Schema.optionalKey(Schema.Union([Schema.Undefined, Action.Image])),
+          image: Schema.optionalKey(
+            Schema.Union([Schema.Undefined, Action.Image])
+          ),
         },
       });
 
@@ -449,31 +576,41 @@ describe("the rest of a media success", () => {
         Effect.provide(
           Testing.layer(
             ActionMcp.layerHttp(
-              Action.implement(Reversed, () => Effect.succeed({ title: "Home", image })),
-              options,
-            ),
-          ),
-        ),
+              Action.implement(Reversed, () =>
+                Effect.succeed({ title: "Home", image })
+              ),
+              options
+            )
+          )
+        )
       );
 
-      expect(replyOf(answer)).toEqual({
+      expect(replyOf(answer)).toStrictEqual({
         result: {
           isError: false,
           structuredContent: { title: "Home" },
-          content: [{ type: "text", text: '{"title":"Home"}' }, imageBlockAsSent(image, "image")],
+          content: [
+            { type: "text", text: '{"title":"Home"}' },
+            imageBlockAsSent(image, "image"),
+          ],
         },
       });
-    }),
+    })
   );
 
   const SuspendedField = Action.make("later", {
     ...read,
-    success: { title: Schema.String, image: Schema.suspend(() => Action.Image) },
+    success: {
+      title: Schema.String,
+      image: Schema.suspend(() => Action.Image),
+    },
   });
 
   const SuspendedSuccess = Action.make("deferred", {
     ...read,
-    success: Schema.suspend(() => Schema.Struct({ title: Schema.String, image: Action.Image })),
+    success: Schema.suspend(() =>
+      Schema.Struct({ title: Schema.String, image: Action.Image })
+    ),
   });
 
   const suspended = Action.implement([SuspendedField, SuspendedSuccess], {
@@ -487,82 +624,108 @@ describe("the rest of a media success", () => {
         result: {
           isError: false,
           structuredContent: { title: "Home" },
-          content: [{ type: "text", text: '{"title":"Home"}' }, imageBlockAsSent(image, "image")],
-        },
-      };
-
-      const answered = yield* answersOverHttp([call("later"), call("deferred")]);
-
-      expect(answered.map(replyOf)).toEqual([lifted, lifted]);
-
-      const client = yield* ActionMcp.client([SuspendedField, SuspendedSuccess]);
-
-      expect(yield* client.later()).toEqual({ title: "Home", image });
-      expect(yield* client.deferred()).toEqual({ title: "Home", image });
-    }).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(suspended, options)))),
-  );
-
-  it.effect("encodes each field of the rest once, and never the media again", () =>
-    Effect.gen(function* () {
-      let encodes = 0;
-
-      const CountingEncodes = Schema.String.pipe(
-        Schema.decode({
-          decode: SchemaGetter.passthrough(),
-          encode: SchemaGetter.transform((value: string) => `${value}-${++encodes}`),
-        }),
-      );
-
-      const IndexSignatureTakingImage = Action.make("indexed", {
-        ...read,
-        success: Schema.StructWithRest(
-          Schema.Struct({ label: CountingEncodes, image: Action.Image }),
-          [
-            Schema.Record(
-              Schema.String,
-              Schema.Union([
-                Schema.String,
-                Schema.Finite,
-                Schema.Struct({ data: Schema.Uint8Array, mimeType: Schema.String }),
-              ]),
-            ),
-          ],
-        ),
-      });
-
-      const [answer = ""] = yield* answersOverHttp([call("indexed")]).pipe(
-        Effect.provide(
-          Testing.layer(
-            ActionMcp.layerHttp(
-              Action.implement(IndexSignatureTakingImage, () =>
-                Effect.succeed({ label: "Home", image, total: 2 }),
-              ),
-              options,
-            ),
-          ),
-        ),
-      );
-
-      expect(replyOf(answer)).toEqual({
-        result: {
-          isError: false,
-          structuredContent: { label: "Home-1", total: 2 },
           content: [
-            { type: "text", text: '{"label":"Home-1","total":2}' },
+            { type: "text", text: '{"title":"Home"}' },
             imageBlockAsSent(image, "image"),
           ],
         },
-      });
+      };
 
-      expect(encodes).toBe(1);
-    }),
+      const answered = yield* answersOverHttp([
+        call("later"),
+        call("deferred"),
+      ]);
+
+      expect(answered.map(replyOf)).toStrictEqual([lifted, lifted]);
+
+      const client = yield* ActionMcp.client([
+        SuspendedField,
+        SuspendedSuccess,
+      ]);
+
+      expect(yield* client.later()).toStrictEqual({ title: "Home", image });
+      expect(yield* client.deferred()).toStrictEqual({ title: "Home", image });
+    }).pipe(
+      Effect.provide(Testing.layer(ActionMcp.layerHttp(suspended, options)))
+    )
   );
 
-  const Strip = Action.make("strip", { ...read, success: Schema.NonEmptyArray(Action.Image) });
+  it.effect(
+    "encodes each field of the rest once, and never the media again",
+    () =>
+      Effect.gen(function* () {
+        let encodes = 0;
+
+        const CountingEncodes = Schema.String.pipe(
+          Schema.decode({
+            decode: SchemaGetter.passthrough(),
+            encode: SchemaGetter.transform((value: string) => {
+              encodes += 1;
+
+              return `${value}-${encodes}`;
+            }),
+          })
+        );
+
+        const IndexSignatureTakingImage = Action.make("indexed", {
+          ...read,
+          success: Schema.StructWithRest(
+            Schema.Struct({ label: CountingEncodes, image: Action.Image }),
+            [
+              Schema.Record(
+                Schema.String,
+                Schema.Union([
+                  Schema.String,
+                  Schema.Finite,
+                  Schema.Struct({
+                    data: Schema.Uint8Array,
+                    mimeType: Schema.String,
+                  }),
+                ])
+              ),
+            ]
+          ),
+        });
+
+        const [answer = ""] = yield* answersOverHttp([call("indexed")]).pipe(
+          Effect.provide(
+            Testing.layer(
+              ActionMcp.layerHttp(
+                Action.implement(IndexSignatureTakingImage, () =>
+                  Effect.succeed({ label: "Home", image, total: 2 })
+                ),
+                options
+              )
+            )
+          )
+        );
+
+        expect(replyOf(answer)).toStrictEqual({
+          result: {
+            isError: false,
+            structuredContent: { label: "Home-1", total: 2 },
+            content: [
+              { type: "text", text: '{"label":"Home-1","total":2}' },
+              imageBlockAsSent(image, "image"),
+            ],
+          },
+        });
+
+        expect(encodes).toBe(1);
+      })
+  );
+
+  const Strip = Action.make("strip", {
+    ...read,
+    success: Schema.NonEmptyArray(Action.Image),
+  });
 
   const Gallery = Action.make("gallery", {
     ...read,
-    success: { total: Schema.Finite, pages: Schema.NonEmptyArray(Action.Image) },
+    success: {
+      total: Schema.Finite,
+      pages: Schema.NonEmptyArray(Action.Image),
+    },
   });
 
   const arrays = Action.implement([Strip, Gallery], {
@@ -574,8 +737,13 @@ describe("the rest of a media success", () => {
     Effect.gen(function* () {
       const answered = yield* answersOverHttp([call("strip"), call("gallery")]);
 
-      expect(answered.map(replyOf)).toEqual([
-        { result: { isError: false, content: [imageBlockAsSent(photo), imageBlockAsSent(image)] } },
+      expect(answered.map(replyOf)).toStrictEqual([
+        {
+          result: {
+            isError: false,
+            content: [imageBlockAsSent(photo), imageBlockAsSent(image)],
+          },
+        },
         {
           result: {
             isError: false,
@@ -591,47 +759,65 @@ describe("the rest of a media success", () => {
 
       const client = yield* ActionMcp.client([Strip, Gallery]);
 
-      expect(yield* client.strip()).toEqual([photo, image]);
-      expect(yield* client.gallery()).toEqual({ total: 2, pages: [image, photo] });
-    }).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(arrays, options)))),
+      expect(yield* client.strip()).toStrictEqual([photo, image]);
+      expect(yield* client.gallery()).toStrictEqual({
+        total: 2,
+        pages: [image, photo],
+      });
+    }).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(arrays, options))))
   );
 });
 
+const clientAnsweringEveryCallWith = (result: Schema.Json) =>
+  Effect.provideService(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({ jsonrpc: "2.0", id: 1, result })
+        )
+      )
+    )
+  );
+
 describe("ActionMcp.client and a media result", () => {
-  const clientAnsweringEveryCallWith = (result: Schema.Json) =>
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(request, Response.json({ jsonrpc: "2.0", id: 1, result })),
-        ),
-      ),
-    );
+  it.effect(
+    "takes a media field from its blocks alone, never from the structured content",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* ActionMcp.client([Shot], {
+          url: "http://localhost/mcp",
+        });
 
-  it.effect("takes a media field from its blocks alone, never from the structured content", () =>
-    Effect.gen(function* () {
-      const client = yield* ActionMcp.client([Shot], { url: "http://localhost/mcp" });
+        const error = yield* Effect.flip(client.shot());
 
-      const error = yield* Effect.flip(client.shot());
-
-      expect(error._tag).toBe("SchemaError");
-    }).pipe(
-      clientAnsweringEveryCallWith({
-        isError: false,
-        structuredContent: { screen, image: { data: Base64.encode(png), mimeType: "image/png" } },
-        content: [],
-      }),
-    ),
+        expect(error._tag).toBe("SchemaError");
+      }).pipe(
+        clientAnsweringEveryCallWith({
+          isError: false,
+          structuredContent: {
+            screen,
+            image: { data: Base64.encode(png), mimeType: "image/png" },
+          },
+          content: [],
+        })
+      )
   );
 
   const OnlyImageRequired = Action.make("captioned", {
     ...read,
-    success: { caption: Schema.optionalKey(Schema.String), image: Action.Image },
+    success: {
+      caption: Schema.optionalKey(Schema.String),
+      image: Action.Image,
+    },
   });
 
   it.effect("fails a result whose structured content is no object", () =>
     Effect.gen(function* () {
-      const client = yield* ActionMcp.client([OnlyImageRequired], { url: "http://localhost/mcp" });
+      const client = yield* ActionMcp.client([OnlyImageRequired], {
+        url: "http://localhost/mcp",
+      });
 
       const error = yield* Effect.flip(client.captioned());
 
@@ -641,13 +827,15 @@ describe("ActionMcp.client and a media result", () => {
         isError: false,
         structuredContent: 42,
         content: [imageBlockAsSent(image, "image")],
-      }),
-    ),
+      })
+    )
   );
 
   it.effect("fails a result with more blocks than its one image", () =>
     Effect.gen(function* () {
-      const client = yield* ActionMcp.client([Shot], { url: "http://localhost/mcp" });
+      const client = yield* ActionMcp.client([Shot], {
+        url: "http://localhost/mcp",
+      });
 
       const error = yield* Effect.flip(client.shot());
 
@@ -661,8 +849,8 @@ describe("ActionMcp.client and a media result", () => {
           imageBlockAsSent(image, "image"),
           imageBlockAsSent(photo, "image"),
         ],
-      }),
-    ),
+      })
+    )
   );
 });
 
@@ -676,62 +864,85 @@ describe("media fields on the other surfaces", () => {
 
   const Http = ActionHttp.make([Shot]);
 
-  it.effect("sends the JSON over HTTP, and ActionHttp.client decodes the bytes", () =>
-    Effect.gen(function* () {
-      const response = yield* send(post("/api/shot"));
+  it.effect(
+    "sends the JSON over HTTP, and ActionHttp.client decodes the bytes",
+    () =>
+      Effect.gen(function* () {
+        const response = yield* send(post("/api/shot"));
 
-      expect(yield* response.json).toEqual(jsonWithBase64Bytes);
+        expect(yield* response.json).toStrictEqual(jsonWithBase64Bytes);
 
-      const client = yield* ActionHttp.client(Http);
+        const client = yield* ActionHttp.client(Http);
 
-      expect(yield* client.shot()).toEqual({ screen, image });
-    }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, shot)))),
+        expect(yield* client.shot()).toStrictEqual({ screen, image });
+      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, shot))))
   );
 
-  it.effect("gives a Toolkit's model the JSON, and its handler the decoded success", () =>
-    Effect.gen(function* () {
-      const tools = ActionToolkit.make(shot);
+  it.effect(
+    "gives a Toolkit's model the JSON, and its handler the decoded success",
+    () =>
+      Effect.gen(function* () {
+        const tools = ActionToolkit.make(shot);
 
-      const [returned] = yield* Effect.flatMap(tools.toolkit, (toolkit) =>
-        Effect.flatMap(toolkit.handle("shot", {}), Stream.runCollect),
-      ).pipe(Effect.provide(tools.layer));
+        const [returned] = yield* Effect.flatMap(tools.toolkit, (toolkit) =>
+          Effect.flatMap(toolkit.handle("shot", {}), Stream.runCollect)
+        ).pipe(Effect.provide(tools.layer));
 
-      expect(returned?.encodedResult).toEqual(jsonWithBase64Bytes);
-      expect(returned?.result).toEqual({ screen, image });
-    }),
+        expect(returned?.encodedResult).toStrictEqual(jsonWithBase64Bytes);
+        expect(returned?.result).toStrictEqual({ screen, image });
+      })
   );
 });
 
 describe("misplaced media", () => {
   interface ImageTree {
     readonly image: typeof Action.Image.Type;
-    readonly children: ReadonlyArray<ImageTree>;
+    readonly children: readonly ImageTree[];
   }
 
   const ImageTree: Schema.Codec<ImageTree> = Schema.Struct({
     image: Action.Image,
-    children: Schema.Array(Schema.suspend((): Schema.Codec<ImageTree> => ImageTree)),
+    children: Schema.Array(
+      Schema.suspend((): Schema.Codec<ImageTree> => ImageTree)
+    ),
   });
 
-  class Framed extends Schema.Class<Framed>("Framed")({ image: Action.Image }) {}
+  class Framed extends Schema.Class<Framed, { readonly brand: unique symbol }>(
+    "Framed"
+  )({
+    image: Action.Image,
+  }) {}
 
-  class Lost extends Schema.TaggedError<Lost>()("Lost", { image: Action.Image }) {}
+  class Lost extends Schema.TaggedError<
+    Lost,
+    { readonly brand: unique symbol }
+  >()("Lost", {
+    image: Action.Image,
+  }) {}
 
   const successes = {
     nested: { screen: Schema.Struct({ image: Action.Image }) },
     union: { image: Schema.NullOr(Action.Image) },
     record: { images: Schema.Record(Schema.String, Action.Image) },
     optionalArray: { images: Schema.optional(Schema.Array(Action.Image)) },
-    optionalKeyArray: { images: Schema.optionalKey(Schema.Array(Action.Image)) },
+    optionalKeyArray: {
+      images: Schema.optionalKey(Schema.Array(Action.Image)),
+    },
     option: { image: Schema.Option(Action.Image) },
-    nullableOptional: { image: Schema.optionalKey(Schema.NullOr(Action.Image)) },
-    renamed: Schema.Struct({ image: Action.Image }).pipe(Schema.encodeKeys({ image: "picture" })),
-    encodedImage: { image: Action.Image.pipe(Schema.encodeKeys({ data: "bytes" })) },
+    nullableOptional: {
+      image: Schema.optionalKey(Schema.NullOr(Action.Image)),
+    },
+    renamed: Schema.Struct({ image: Action.Image }).pipe(
+      Schema.encodeKeys({ image: "picture" })
+    ),
+    encodedImage: {
+      image: Action.Image.pipe(Schema.encodeKeys({ data: "bytes" })),
+    },
     encodedArray: Schema.Array(Action.Image).pipe(
       Schema.encode({
-        decode: SchemaGetter.transform((images) => [...images].reverse()),
-        encode: SchemaGetter.transform((images) => [...images].reverse()),
-      }),
+        decode: SchemaGetter.transform((images) => images.toReversed()),
+        encode: SchemaGetter.transform((images) => images.toReversed()),
+      })
     ),
     optionalSuccess: Schema.UndefinedOr(Action.Image),
     framed: Framed,
@@ -739,14 +950,20 @@ describe("misplaced media", () => {
   };
 
   const misplaced = [
-    ...Object.entries(successes).map(([name, success]) => Action.make(name, { ...read, success })),
+    ...Object.entries(successes).map(([name, success]) =>
+      Action.make(name, { ...read, success })
+    ),
     Action.make("input", { ...read, input: { image: Action.Image } }),
     Action.make("error", { ...read, error: Lost }),
   ];
 
-  const refused = misplaced.map((action) => Action.implement(action, () => Effect.die("unused")));
+  const refused = misplaced.map((action) =>
+    Action.implement(action, () => Effect.die("unused"))
+  );
 
-  const lifted = Action.implement(Shot, () => Effect.succeed({ screen, image }));
+  const lifted = Action.implement(Shot, () =>
+    Effect.succeed({ screen, image })
+  );
 
   it("refuses media where no tool lifts it when the server is made, naming every such action", () => {
     const message =
@@ -756,10 +973,12 @@ describe("misplaced media", () => {
       "absent; an image in input or an error is not served over MCP, so leave that action out " +
       "of actions)";
 
-    expect(() => ActionMcp.layerHttp([lifted, ...refused], options)).toThrow(message);
+    expect(() => ActionMcp.layerHttp([lifted, ...refused], options)).toThrow(
+      message
+    );
     expect(() => ActionMcp.runStdio(refused, options)).toThrow(message);
     expect(() =>
-      ActionMcp.layerHttp([lifted, ...refused], { ...options, actions: [Shot] }),
+      ActionMcp.layerHttp([lifted, ...refused], { ...options, actions: [Shot] })
     ).not.toThrow();
     expect(() => ActionHttp.make(misplaced)).not.toThrow();
   });

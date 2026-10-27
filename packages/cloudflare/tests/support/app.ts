@@ -1,32 +1,51 @@
-import { Context, Data, DateTime, Effect, Layer, Redacted, Schema } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/http";
-import { Rpc as NativeRpc, RpcGroup, RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import {
+  Context,
+  Data,
+  DateTime,
+  Effect,
+  Layer,
+  Redacted,
+  Schema,
+} from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/http";
+import {
+  Rpc as NativeRpc,
+  RpcGroup,
+  RpcMiddleware,
+  RpcSerialization,
+  RpcServer,
+} from "effect/rpc";
+
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 
-export class CurrentUser extends Context.Service<CurrentUser, string>()("test/CurrentUser") {}
+export class CurrentUser extends Context.Service<CurrentUser, string>()(
+  "test/CurrentUser"
+) {}
 
 export const Login = Authentication.make("test.Login", CurrentUser);
 
-export class Overdrawn extends Schema.TaggedError<Overdrawn>()(
-  "Overdrawn",
-  { by: Schema.Int },
-  { httpApiStatus: 409 },
-) {}
+export class Overdrawn extends Schema.TaggedError<
+  Overdrawn,
+  { readonly brand: unique symbol }
+>()("Overdrawn", { by: Schema.Int }, { httpApiStatus: 409 }) {}
 
 export const noteHeader = "x-note";
 
-export class CurrentNote extends Context.Service<CurrentNote, string>()("test/CurrentNote") {}
-
-export class ResolveNote extends RpcMiddleware.Service<ResolveNote, { provides: CurrentNote }>()(
-  "test/ResolveNote",
+export class CurrentNote extends Context.Service<CurrentNote, string>()(
+  "test/CurrentNote"
 ) {}
 
+export class ResolveNote extends RpcMiddleware.Service<
+  ResolveNote,
+  { provides: CurrentNote }
+>()("test/ResolveNote") {}
+
 const resolveNote = Layer.succeed(ResolveNote, (call, { headers }) =>
-  Effect.provideService(call, CurrentNote, headers[noteHeader] ?? "none"),
+  Effect.provideService(call, CurrentNote, headers[noteHeader] ?? "none")
 );
 
 export const Whoami = Action.make("whoami", {
@@ -77,9 +96,19 @@ export const Hold = Action.make("hold", {
   caller: Action.Anyone,
 });
 
-const actions = [Whoami, Spend, ReadNote, Schedule, Alarms, Pause, Hold] as const;
+const actions = [
+  Whoami,
+  Spend,
+  ReadNote,
+  Schedule,
+  Alarms,
+  Pause,
+  Hold,
+] as const;
 
-export const Http = ActionHttp.make([Whoami, Spend, Schedule, Alarms], { authentication: Login });
+export const Http = ActionHttp.make([Whoami, Spend, Schedule, Alarms], {
+  authentication: Login,
+});
 
 export const Rpc = ActionRpc.make(actions, {
   authentication: Login,
@@ -93,19 +122,28 @@ const users = ["ada", "grace"] as const;
 const isUser = (name: string): name is (typeof users)[number] =>
   users.some((user) => user === name);
 
-export const authenticate = Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
-  isUser(Redacted.value(token))
-    ? Effect.succeed(Redacted.value(token))
-    : Effect.fail(new Action.Unauthenticated({ message: "Unknown test token." })),
+export const authenticate = Authentication.layer(
+  Login,
+  (token: Redacted.Redacted) =>
+    isUser(Redacted.value(token))
+      ? Effect.succeed(Redacted.value(token))
+      : Effect.fail(
+          new Action.Unauthenticated({ message: "Unknown test token." })
+        )
 );
 
 const alarmsKey = "alarms";
 
-export class StartupRead extends Context.Service<StartupRead, void>()("test/StartupRead") {
+export class StartupRead extends Context.Service<StartupRead, undefined>()(
+  "test/StartupRead"
+) {
   static readonly layer = Layer.effect(StartupRead)(
     Effect.flatMap(Effect.service(ActionDurableObject.State), ({ storage }) =>
-      Effect.asVoid(Effect.promise(() => storage.get("startup"))),
-    ),
+      Effect.as(
+        Effect.promise(async () => await storage.get("startup")),
+        undefined
+      )
+    )
   );
 }
 
@@ -126,41 +164,55 @@ export const implementation = Action.implement(
           : Effect.sync(() => ({ left: (balance -= amount) })),
       readNote: () => Effect.service(CurrentNote),
       schedule: () =>
-        Effect.flatMap(Effect.map(DateTime.now, DateTime.add({ minutes: 1 })), alarm.set),
-      alarms: () =>
-        Effect.promise(() => storage.get<number>(alarmsKey)).pipe(Effect.map((n) => n ?? 0)),
-      pause: () =>
-        Effect.promise(() => storage.put("pauseStarted", true)).pipe(
-          Effect.andThen(Effect.sleep("100 millis")),
+        Effect.flatMap(
+          Effect.map(DateTime.now, DateTime.add({ minutes: 1 })),
+          alarm.set
         ),
+      alarms: () =>
+        Effect.promise(async () => await storage.get<number>(alarmsKey)).pipe(
+          Effect.map((n) => n ?? 0)
+        ),
+      pause: () =>
+        Effect.promise(async () => {
+          await storage.put("pauseStarted", true);
+        }).pipe(Effect.andThen(Effect.sleep("100 millis"))),
       hold: () =>
-        Effect.promise(() => storage.put("holdStarted", true)).pipe(
+        Effect.promise(async () => {
+          await storage.put("holdStarted", true);
+        }).pipe(
           Effect.andThen(Effect.never),
-          Effect.onInterrupt(() => Effect.promise(() => storage.put("holdInterrupted", true))),
+          Effect.onInterrupt(() =>
+            Effect.promise(async () => {
+              await storage.put("holdInterrupted", true);
+            })
+          )
         ),
     };
   }),
-  { authorize: Action.allowAll },
+  { authorize: Action.allowAll }
 );
 
-export class Actions extends Context.Service<Actions, Action.Client<typeof implementation>>()(
-  "test/Actions",
-) {
+export class Actions extends Context.Service<
+  Actions,
+  Action.Client<typeof implementation>
+>()("test/Actions") {
   static readonly layer = Layer.effect(Actions)(Action.client(implementation));
 }
 
-export const startup = Layer.mergeAll(Action.layer(implementation), Actions.layer).pipe(
-  Layer.provideMerge(StartupRead.layer),
-);
+export const startup = Layer.mergeAll(
+  Action.layer(implementation),
+  Actions.layer
+).pipe(Layer.provideMerge(StartupRead.layer));
 
 export const slowUpstream = Layer.effectDiscard(
-  Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 20))),
+  Effect.promise(async () => {
+    await scheduler.wait(20);
+  })
 );
 
-const rpcRoutes = ActionRpc.layer(Rpc, implementation, { middleware: [ResolveNote] }).pipe(
-  Layer.provide(whose),
-  Layer.provide(resolveNote),
-);
+const rpcRoutes = ActionRpc.layer(Rpc, implementation, {
+  middleware: [ResolveNote],
+}).pipe(Layer.provide(whose), Layer.provide(resolveNote));
 
 export const stubCalls = rpcRoutes.pipe(Layer.provide(authenticate));
 
@@ -168,22 +220,28 @@ export const routes = Layer.mergeAll(
   ActionHttp.layer(Http, implementation),
   rpcRoutes.pipe(
     Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-    Layer.provide(RpcSerialization.layerJson),
-  ),
+    Layer.provide(RpcSerialization.layerJson)
+  )
 ).pipe(Layer.provide(authenticate), Layer.provide(startup));
 
-export class Greeting extends Context.Service<Greeting, string>()("test/Greeting") {}
+export class Greeting extends Context.Service<Greeting, string>()(
+  "test/Greeting"
+) {}
 
 const greetingRoute = HttpRouter.add(
   "GET",
   "/greeting",
-  Effect.map(Effect.service(Greeting), (greeting) => HttpServerResponse.text(greeting)),
+  Effect.map(Effect.service(Greeting), (greeting) =>
+    HttpServerResponse.text(greeting)
+  )
 ).pipe(Layer.provideMerge(Layer.succeed(Greeting, "hello")));
 
 export const socketRoutes = Layer.mergeAll(
   ActionHttp.layer(Http, implementation),
-  rpcRoutes.pipe(Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" }))),
-  greetingRoute,
+  rpcRoutes.pipe(
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" }))
+  ),
+  greetingRoute
 ).pipe(Layer.provide(authenticate), Layer.provide(slowUpstream));
 
 export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
@@ -191,31 +249,42 @@ export const routerProvidedRoutes = ActionRpc.layer(Rpc, implementation).pipe(
   Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
   HttpRouter.provideRequest(Layer.succeed(CurrentNote, "router")),
   Layer.provide(authenticate),
-  Layer.provide(startup),
+  Layer.provide(startup)
 );
 
 const mountedAt = (prefix: string) =>
   ActionRpc.layer(Rpc, implementation, { middleware: [ResolveNote] }).pipe(
     Layer.provide(whose),
     Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
-    Layer.updateService(HttpRouter.HttpRouter, (router) => router.prefixed(prefix)),
+    Layer.updateService(HttpRouter.HttpRouter, (router) =>
+      router.prefixed(prefix)
+    )
   );
 
-export const prefixedRoutes = Layer.mergeAll(mountedAt("/a"), mountedAt("/b")).pipe(
+export const prefixedRoutes = Layer.mergeAll(
+  mountedAt("/a"),
+  mountedAt("/b")
+).pipe(
   Layer.provide(resolveNote),
   Layer.provide(authenticate),
-  Layer.provide(startup),
+  Layer.provide(startup)
 );
 
 export const alarm = Effect.gen(function* () {
   const { storage } = yield* ActionDurableObject.State;
   const client = yield* Actions;
 
-  yield* client.spend({ amount: 1 }).pipe(Effect.provideService(CurrentUser, "alarm"));
+  yield* client
+    .spend({ amount: 1 })
+    .pipe(Effect.provideService(CurrentUser, "alarm"));
 
-  const ran = (yield* Effect.promise(() => storage.get<number>(alarmsKey))) ?? 0;
+  const ran =
+    (yield* Effect.promise(async () => await storage.get<number>(alarmsKey))) ??
+    0;
 
-  yield* Effect.promise(() => storage.put(alarmsKey, ran + 1));
+  yield* Effect.promise(async () => {
+    await storage.put(alarmsKey, ran + 1);
+  });
 });
 
 const buildsKey = "builds";
@@ -226,26 +295,36 @@ export class Builds extends Context.Service<Builds, number>()("test/Builds") {
   static readonly layer = Layer.effect(Builds)(
     Effect.gen(function* () {
       const { storage } = yield* ActionDurableObject.State;
-      const builds = ((yield* Effect.promise(() => storage.get<number>(buildsKey))) ?? 0) + 1;
 
-      yield* Effect.promise(() => storage.put(buildsKey, builds));
+      const builds =
+        ((yield* Effect.promise(
+          async () => await storage.get<number>(buildsKey)
+        )) ?? 0) + 1;
+
+      yield* Effect.promise(async () => {
+        await storage.put(buildsKey, builds);
+      });
 
       return builds;
-    }),
+    })
   );
 }
 
 export const buildsRoutes = HttpRouter.add(
   "GET",
   "/builds",
-  Effect.map(Effect.service(Builds), (builds) => HttpServerResponse.text(String(builds))),
+  Effect.map(Effect.service(Builds), (builds) =>
+    HttpServerResponse.text(String(builds))
+  )
 );
 
 export const buildsAlarm = Effect.gen(function* () {
   const { storage } = yield* ActionDurableObject.State;
   const builds = yield* Builds;
 
-  yield* Effect.promise(() => storage.put(alarmBuildsKey, builds));
+  yield* Effect.promise(async () => {
+    await storage.put(alarmBuildsKey, builds);
+  });
 });
 
 export const ownTag = "own";
@@ -262,47 +341,56 @@ const ownSocketRoute = HttpRouter.use((router) =>
 
         state.acceptWebSocket(server, [ownTag]);
 
-        return HttpServerResponse.raw(new Response(null, { status: 101, webSocket: client }), {
-          status: 101,
-        });
-      }),
+        return HttpServerResponse.raw(
+          new Response(null, { status: 101, webSocket: client }),
+          {
+            status: 101,
+          }
+        );
+      })
     );
-  }),
+  })
 );
 
 export const ownSocketRoutes = Layer.mergeAll(socketRoutes, ownSocketRoute);
 
 export const readyKey = "ready";
 
-export class NotReady extends Data.TaggedError("NotReady")<{ readonly key: string }> {}
+export class NotReady extends Data.TaggedError("NotReady")<{
+  readonly key: string;
+}> {}
 
 const readyOnceSet = Layer.effectDiscard(
   Effect.gen(function* () {
     const { storage } = yield* ActionDurableObject.State;
 
-    if ((yield* Effect.promise(() => storage.get(readyKey))) !== true) {
+    if (
+      (yield* Effect.promise(async () => await storage.get(readyKey))) !== true
+    ) {
       return yield* new NotReady({ key: readyKey });
     }
-  }),
+  })
 );
 
 export const retriedRoutes = Layer.mergeAll(buildsRoutes, readyOnceSet).pipe(
   Layer.provide(
     rpcRoutes.pipe(
       Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
-      Layer.provide(authenticate),
-    ),
-  ),
+      Layer.provide(authenticate)
+    )
+  )
 );
 
 export const readyAtOnce = Layer.effectDiscard(
   Effect.flatMap(Effect.service(ActionDurableObject.State), ({ storage }) =>
-    storage.kv.get(readyKey) === true ? Effect.void : Effect.fail(new NotReady({ key: readyKey })),
-  ),
+    storage.kv.get(readyKey) === true
+      ? Effect.void
+      : Effect.fail(new NotReady({ key: readyKey }))
+  )
 );
 
 export const readyRoute = HttpRouter.add(
   "GET",
   "/ready",
-  Effect.succeed(HttpServerResponse.text("ready")),
+  Effect.succeed(HttpServerResponse.text("ready"))
 );

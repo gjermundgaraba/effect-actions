@@ -26,8 +26,8 @@ export const demoModel = Layer.effect(
                 name: "closeIssue",
                 params: { id: "ACME-1" },
               } as const,
-            ],
+            ]
       ),
     streamText: () => Stream.empty,
-  }),
+  })
 );

@@ -1,7 +1,14 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
-import { type Build, BuildFinished, FinishBuild, PipelineStatus, StartBuild } from "./Builds.js";
+import { Effect } from "effect";
+
+import {
+  BuildFinished,
+  FinishBuild,
+  PipelineStatus,
+  StartBuild,
+} from "./Builds.js";
+import type { Build } from "./Builds.js";
 import { BuildStore } from "./store.js";
 
 // DEMO ONLY: each step passes at once. A runner's steps take their time, which is why a caller
@@ -21,23 +28,31 @@ export const builds = Action.implement(
       Effect.tap(build, ({ pipeline }) =>
         Effect.andThen(
           events.notify(BuildFinished),
-          events.notify(PipelineStatus, { key: pipeline }),
-        ),
+          events.notify(PipelineStatus, { key: pipeline })
+        )
       );
 
     return {
-      finishBuild: ({ pipeline, status }) => finished(store.finish(pipeline, status, [status])),
+      finishBuild: ({ pipeline, status }) =>
+        finished(store.finish(pipeline, status, [status])),
       // `progress` never waits for the caller: the build runs at its own pace.
       startBuild: ({ pipeline }, { progress }) =>
         Effect.andThen(
-          Effect.forEach(steps, (step, done) => progress({ step, done, total: steps.length }), {
-            discard: true,
-          }),
-          finished(
-            store.finish(pipeline, "passed", [...steps.map((step) => `${step}: passed`), "passed"]),
+          Effect.forEach(
+            steps,
+            (step, done) => progress({ step, done, total: steps.length }),
+            {
+              discard: true,
+            }
           ),
+          finished(
+            store.finish(pipeline, "passed", [
+              ...steps.map((step) => `${step}: passed`),
+              "passed",
+            ])
+          )
         ),
     };
   }),
-  { authorize: Action.allowAll },
+  { authorize: Action.allowAll }
 );

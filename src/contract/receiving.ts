@@ -1,13 +1,18 @@
-import { Context, Effect, Option, Schema, type Scope, Struct } from "effect";
+import { Context, Effect, Option, Schema, Struct } from "effect";
+import type { Scope } from "effect";
+
 import type { SigningSecret } from "./callback.js";
 import { reasonOf, refusalOf } from "./codes.js";
-import { Forbidden, type Refusal } from "./errors.js";
+import { Forbidden } from "./errors.js";
+import type { Refusal } from "./errors.js";
 import type * as Event from "./Event.js";
 import { Gap, untaggedOccurrenceOf } from "./occurrence.js";
 import type { Fed } from "./pages.js";
 
 /** A POST a receiver verified, its JSON body: an occurrence, or an envelope. */
-export type Delivered = { readonly [key: string]: Schema.Json };
+export interface Delivered {
+  readonly [key: string]: Schema.Json;
+}
 
 /** The query parameter of a watch's delivery URL naming its place at the receiver. */
 export const watchParameter = "watch";
@@ -32,7 +37,7 @@ export class Receiving extends Context.Service<
   {
     readonly path: `/${string}`;
     readonly register: (
-      deliver: (body: Delivered) => boolean,
+      deliver: (body: Delivered) => boolean
     ) => Effect.Effect<Registered, never, Scope.Scope>;
   }
 >()("effect-actions/Receiving") {}
@@ -48,7 +53,7 @@ const Terminated = Schema.Struct({
 const decodeTerminated = Schema.decodeUnknownOption(Terminated);
 
 const decodeGap = Schema.decodeUnknownEffect(
-  Schema.toCodecJson(Gap.mapFields(Struct.omit(["_tag"]))),
+  Schema.toCodecJson(Gap.mapFields(Struct.omit(["_tag"])))
 );
 
 const ended = new Forbidden({ message: "The subscription was ended." });
@@ -63,22 +68,31 @@ export const webhookFed = (event: Event.Any) => {
   const occurrenceOf = untaggedOccurrenceOf(event);
 
   return (
-    body: Delivered,
-  ): Effect.Effect<ReadonlyArray<Fed>, Event.SubscriptionError | Refusal | Schema.SchemaError> => {
-    switch (body["type"]) {
-      case undefined:
-        return Effect.map(occurrenceOf(body), (occurrence) => [occurrence]);
-      case "gap":
-        return Effect.map(decodeGap(body), (fields) => [Gap.make(fields)]);
-      case "terminated":
-        return Effect.fail(
-          Option.match(decodeTerminated(body), {
-            onNone: () => ended,
-            onSome: ({ error }) => reasonOf(event.name, error) ?? refusalOf(error),
-          }),
-        );
-      default:
-        return Effect.succeed([]);
+    body: Delivered
+  ): Effect.Effect<
+    readonly Fed[],
+    Event.SubscriptionError | Refusal | Schema.SchemaError
+  > => {
+    const { type } = body;
+
+    if (type === undefined) {
+      return Effect.map(occurrenceOf(body), (occurrence) => [occurrence]);
     }
+
+    if (type === "gap") {
+      return Effect.map(decodeGap(body), (fields) => [Gap.make(fields)]);
+    }
+
+    if (type === "terminated") {
+      return Effect.fail(
+        Option.match(decodeTerminated(body), {
+          onNone: () => ended,
+          onSome: ({ error }) =>
+            reasonOf(event.name, error) ?? refusalOf(error),
+        })
+      );
+    }
+
+    return Effect.succeed([]);
   };
 };

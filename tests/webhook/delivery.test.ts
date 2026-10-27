@@ -16,6 +16,7 @@ import {
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { Dns } from "effect/net";
 import { TestClock } from "effect/testing";
+
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
@@ -40,6 +41,15 @@ import {
   url,
 } from "../support/webhook.js";
 
+const statusOf = (callback: string) =>
+  Effect.map(
+    sent("alice", "subscribe", {
+      input: {},
+      delivery: { url: callback, secret: secretOf(1) },
+    }),
+    ({ status }) => status
+  );
+
 describe("webhook delivery over HTTP", () => {
   it.effect(
     "verifies the callback, then POSTs each occurrence signed, under the subscription's id",
@@ -57,7 +67,9 @@ describe("webhook delivery over HTTP", () => {
         const [verification, delivery] = world.received;
 
         expect(grant).toMatchObject({ cursor: "0", truncated: false });
-        expect(verification && bodyOf(verification)).toMatchObject({ type: "verification" });
+        expect(verification && bodyOf(verification)).toMatchObject({
+          type: "verification",
+        });
         expect(delivery && bodyOf(delivery)).toMatchObject({
           eventId: "c1",
           name: "user.changed",
@@ -72,84 +84,104 @@ describe("webhook delivery over HTTP", () => {
           traceparent: null,
         });
         expect(
-          yield* Effect.promise(() =>
-            Promise.all(world.received.map((each) => signedBy(secret, each))),
-          ),
-        ).toEqual([true, true]);
+          yield* Effect.promise(
+            async () =>
+              await Promise.all(
+                world.received.map(async (each) => await signedBy(secret, each))
+              )
+          )
+        ).toStrictEqual([true, true]);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
-  it.effect("refuses a callback that is not https, or a secret that is not whsec_", () =>
-    Effect.gen(function* () {
-      const [plain, weak] = yield* Effect.all([
-        sent("alice", "subscribe", {
-          input: {},
-          delivery: { url: "http://hooks.example.com/alice", secret: secretOf(1) },
-        }),
-        sent("alice", "subscribe", { input: {}, delivery: { url, secret: "whsec_c2hvcnQ=" } }),
-      ]);
+  it.effect(
+    "refuses a callback that is not https, or a secret that is not whsec_",
+    () =>
+      Effect.gen(function* () {
+        const [plain, weak] = yield* Effect.all([
+          sent("alice", "subscribe", {
+            input: {},
+            delivery: {
+              url: "http://hooks.example.com/alice",
+              secret: secretOf(1),
+            },
+          }),
+          sent("alice", "subscribe", {
+            input: {},
+            delivery: { url, secret: "whsec_c2hvcnQ=" },
+          }),
+        ]);
 
-      expect([plain.status, weak.status]).toEqual([400, 400]);
-    }).pipe(Effect.provide(makeWorld().server)),
+        expect([plain.status, weak.status]).toStrictEqual([400, 400]);
+      }).pipe(Effect.provide(makeWorld().server))
   );
 
-  it.effect("never POSTs to a callback resolving to an address not globally reachable", () => {
-    const { world, server } = makeWorld();
+  it.effect(
+    "never POSTs to a callback resolving to an address not globally reachable",
+    () => {
+      const { world, server } = makeWorld();
 
-    return Effect.gen(function* () {
-      const refused = yield* Effect.forEach(
-        ["https://127.0.0.1/a", "https://[::ffff:10.0.0.1]/a", "https://100.64.0.1/a"],
-        (callback) =>
-          Effect.flatMap(
-            sent("alice", "subscribe", {
-              input: {},
-              delivery: { url: callback, secret: secretOf(1) },
-            }),
-            (response) => Effect.map(response.json, (body) => [response.status, body] as const),
-          ),
-      );
+      return Effect.gen(function* () {
+        const refused = yield* Effect.forEach(
+          [
+            "https://127.0.0.1/a",
+            "https://[::ffff:10.0.0.1]/a",
+            "https://100.64.0.1/a",
+          ],
+          (callback) =>
+            Effect.flatMap(
+              sent("alice", "subscribe", {
+                input: {},
+                delivery: { url: callback, secret: secretOf(1) },
+              }),
+              (response) =>
+                Effect.map(
+                  response.json,
+                  (body) => [response.status, body] as const
+                )
+            )
+        );
 
-      for (const [status, body] of refused) {
-        expect(status).toBe(409);
-        expect(body).toMatchObject({
-          _tag: "SubscriptionError",
-          reason: { _tag: "CallbackFailed", category: "connection_refused" },
+        for (const [status, body] of refused) {
+          expect(status).toBe(409);
+          expect(body).toMatchObject({
+            _tag: "SubscriptionError",
+            reason: { _tag: "CallbackFailed", category: "connection_refused" },
+          });
+        }
+
+        expect(world.received).toStrictEqual([]);
+      }).pipe(Effect.provide(server));
+    }
+  );
+
+  it.effect(
+    "delivers to a callback allowedCallbacks trusts, at an address not global",
+    () => {
+      const { world, server } = makeWorld({
+        allowedCallbacks: ["https://10.0.0.5/"],
+      });
+
+      return Effect.gen(function* () {
+        yield* subscribed(secretOf(1), undefined, {
+          callback: "https://10.0.0.5/hook",
         });
-      }
 
-      expect(world.received).toEqual([]);
-    }).pipe(Effect.provide(server));
-  });
+        world.changes.push({ id: "c1", by: "bob" });
 
-  it.effect("delivers to a callback allowedCallbacks trusts, at an address not global", () => {
-    const { world, server } = makeWorld({ allowedCallbacks: ["https://10.0.0.5/"] });
+        yield* until(() => events(world.received).length >= 1);
 
-    return Effect.gen(function* () {
-      yield* subscribed(secretOf(1), undefined, { callback: "https://10.0.0.5/hook" });
-
-      world.changes.push({ id: "c1", by: "bob" });
-
-      yield* until(() => events(world.received).length >= 1);
-
-      expect(events(world.received)).toMatchObject([{ eventId: "c1" }]);
-    }).pipe(Effect.provide(server));
-  });
+        expect(events(world.received)).toMatchObject([{ eventId: "c1" }]);
+      }).pipe(Effect.provide(server));
+    }
+  );
 
   it.effect(
     "with resolveCallbacks false, checks a literal address alone, leaving a name to the platform",
     () => {
       const trusting = makeWorld({ resolveCallbacks: false });
       const resolving = makeWorld();
-
-      const statusOf = (callback: string) =>
-        Effect.map(
-          sent("alice", "subscribe", {
-            input: {},
-            delivery: { url: callback, secret: secretOf(1) },
-          }),
-          ({ status }) => status,
-        );
 
       return Effect.gen(function* () {
         const trusted = yield* Effect.all([
@@ -158,16 +190,16 @@ describe("webhook delivery over HTTP", () => {
         ]).pipe(Effect.provide(trusting.server));
 
         const resolved = yield* statusOf("https://unlisted.example/a").pipe(
-          Effect.provide(resolving.server),
+          Effect.provide(resolving.server)
         );
 
-        expect(trusted).toEqual([409, 200]);
+        expect(trusted).toStrictEqual([409, 200]);
         expect(resolved).toBe(409);
-        expect(trusting.world.received.map(({ body }) => body)).toEqual([
+        expect(trusting.world.received.map(({ body }) => body)).toStrictEqual([
           expect.stringContaining('"verification"'),
         ]);
       });
-    },
+    }
   );
 
   it.effect("unsubscribes, after which nothing more is POSTed", () => {
@@ -184,8 +216,8 @@ describe("webhook delivery over HTTP", () => {
 
       yield* passed();
 
-      expect([gone.status, again.status]).toEqual([204, 409]);
-      expect(events(world.received)).toEqual([]);
+      expect([gone.status, again.status]).toStrictEqual([204, 409]);
+      expect(events(world.received)).toStrictEqual([]);
     }).pipe(Effect.provide(server));
   });
 
@@ -193,14 +225,19 @@ describe("webhook delivery over HTTP", () => {
     Effect.gen(function* () {
       const response = yield* Effect.flatMap(HttpClient.HttpClient, (client) =>
         client.execute(
-          HttpClientRequest.post("http://localhost/api/events/user.changed/subscribe").pipe(
-            HttpClientRequest.bodyJsonUnsafe({ input: {}, delivery: { url, secret: secretOf(1) } }),
-          ),
-        ),
+          HttpClientRequest.post(
+            "http://localhost/api/events/user.changed/subscribe"
+          ).pipe(
+            HttpClientRequest.bodyJsonUnsafe({
+              input: {},
+              delivery: { url, secret: secretOf(1) },
+            })
+          )
+        )
       );
 
       expect(response.status).toBe(401);
-    }).pipe(Effect.provide(makeWorld().server)),
+    }).pipe(Effect.provide(makeWorld().server))
   );
 
   it.effect(
@@ -216,7 +253,9 @@ describe("webhook delivery over HTTP", () => {
         yield* until(() => events(world.received).length >= 1);
 
         world.answer = (body) =>
-          body["type"] === undefined ? new Response(null, { status: 503 }) : acknowledging(body);
+          body["type"] === undefined
+            ? new Response(null, { status: 503 })
+            : acknowledging(body);
 
         const posted = yield* Clock.currentTimeMillis;
 
@@ -242,10 +281,12 @@ describe("webhook delivery over HTTP", () => {
           cursor: "1",
           deliveryStatus: { active: true, lastError: "http_5xx" },
         });
-        expect(Date.parse(failing.deliveryStatus?.failedSince ?? "")).toBeGreaterThanOrEqual(
-          posted,
-        );
-        expect(Date.parse(failing.deliveryStatus?.failedSince ?? "")).toBeLessThanOrEqual(observed);
+        expect(
+          Date.parse(failing.deliveryStatus?.failedSince ?? "")
+        ).toBeGreaterThanOrEqual(posted);
+        expect(
+          Date.parse(failing.deliveryStatus?.failedSince ?? "")
+        ).toBeLessThanOrEqual(observed);
         expect(recovered).toMatchObject({
           cursor: "2",
           deliveryStatus: { active: true, lastError: null },
@@ -254,10 +295,10 @@ describe("webhook delivery over HTTP", () => {
         expect(
           events(world.received)
             .map(({ eventId }) => eventId)
-            .slice(1),
-        ).toEqual(Array.from({ length: attempted }, () => "c2"));
+            .slice(1)
+        ).toStrictEqual(Array.from({ length: attempted }, () => "c2"));
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
   it.effect(
@@ -269,7 +310,9 @@ describe("webhook delivery over HTTP", () => {
         yield* subscribed();
 
         world.answer = (body) =>
-          body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
+          body["type"] === undefined
+            ? new Response(null, { status: 500 })
+            : acknowledging(body);
         world.changes.push({ id: "c1", by: "bob" });
 
         yield* passed();
@@ -284,23 +327,33 @@ describe("webhook delivery over HTTP", () => {
 
         world.answer = acknowledging;
 
-        yield* until(() => events(world.received).some(({ eventId }) => eventId === "c2"));
+        yield* until(() =>
+          events(world.received).some(({ eventId }) => eventId === "c2")
+        );
 
         expect(attempts).toBeGreaterThan(1);
-        expect(suspended.deliveryStatus).toMatchObject({ active: false, lastError: "http_5xx" });
-        expect(events(world.received).map(({ eventId }) => eventId)).toEqual([
+        expect(suspended.deliveryStatus).toMatchObject({
+          active: false,
+          lastError: "http_5xx",
+        });
+        expect(
+          events(world.received).map(({ eventId }) => eventId)
+        ).toStrictEqual([
           ...Array.from({ length: attempts }, () => "c1"),
           "c1",
           "c2",
         ]);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
   it.effect(
     "times a failing delivery from its own first failure, not from one abandoned at a 410 before",
     () => {
-      const { world, server } = makeWorld({ retryFor: "1 minute", maxTtl: "3 hours" });
+      const { world, server } = makeWorld({
+        retryFor: "1 minute",
+        maxTtl: "3 hours",
+      });
 
       return Effect.gen(function* () {
         yield* subscribed(secretOf(1), 3 * 60 * 60 * 1000);
@@ -315,69 +368,92 @@ describe("webhook delivery over HTTP", () => {
         yield* TestClock.adjust("2 hours");
 
         world.answer = (body) =>
-          body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
+          body["type"] === undefined
+            ? new Response(null, { status: 500 })
+            : acknowledging(body);
         world.changes.push({ id: "c2", by: "bob" });
 
         yield* passed();
 
-        const retried = events(world.received).filter(({ eventId }) => eventId === "c2").length;
+        const retried = events(world.received).filter(
+          ({ eventId }) => eventId === "c2"
+        ).length;
 
         expect(retried).toBeGreaterThan(2);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
-  it.effect("retries a suspended subscription its refresh resumes for a fresh retryFor", () => {
-    const { world, server } = makeWorld({ retryFor: "10 seconds" });
+  it.effect(
+    "retries a suspended subscription its refresh resumes for a fresh retryFor",
+    () => {
+      const { world, server } = makeWorld({ retryFor: "10 seconds" });
 
-    return Effect.gen(function* () {
-      yield* subscribed();
+      return Effect.gen(function* () {
+        yield* subscribed();
 
-      world.answer = (body) =>
-        body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
-      world.changes.push({ id: "c1", by: "bob" });
+        world.answer = (body) =>
+          body["type"] === undefined
+            ? new Response(null, { status: 500 })
+            : acknowledging(body);
+        world.changes.push({ id: "c1", by: "bob" });
 
-      yield* passed();
+        yield* passed();
 
-      const suspendedAt = events(world.received).length;
+        const suspendedAt = events(world.received).length;
 
-      yield* subscribed();
-      yield* until(() => events(world.received).length > suspendedAt + 1);
+        yield* subscribed();
+        yield* until(() => events(world.received).length > suspendedAt + 1);
 
-      const resumed = yield* subscribed();
+        const resumed = yield* subscribed();
 
-      expect(resumed.deliveryStatus).toMatchObject({ active: true, lastError: "http_5xx" });
-      expect(events(world.received).length).toBeGreaterThan(suspendedAt + 1);
-    }).pipe(Effect.provide(server));
-  });
+        expect(resumed.deliveryStatus).toMatchObject({
+          active: true,
+          lastError: "http_5xx",
+        });
+        expect(events(world.received).length).toBeGreaterThan(suspendedAt + 1);
+      }).pipe(Effect.provide(server));
+    }
+  );
 
-  it.effect("retries a failing delivery for an hour by default, at most 5 minutes apart", () => {
-    const { world, server } = makeWorld({ maxTtl: "3 hours" });
+  it.effect(
+    "retries a failing delivery for an hour by default, at most 5 minutes apart",
+    () => {
+      const { world, server } = makeWorld({ maxTtl: "3 hours" });
 
-    return Effect.gen(function* () {
-      yield* subscribed(secretOf(1), 3 * 60 * 60 * 1000);
+      return Effect.gen(function* () {
+        yield* subscribed(secretOf(1), 3 * 60 * 60 * 1000);
 
-      world.answer = (body) =>
-        body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
-      world.changes.push({ id: "c1", by: "bob" });
+        world.answer = (body) =>
+          body["type"] === undefined
+            ? new Response(null, { status: 500 })
+            : acknowledging(body);
+        world.changes.push({ id: "c1", by: "bob" });
 
-      yield* Effect.repeat(Effect.andThen(TestClock.adjust("5 seconds"), settled()), {
-        times: (2 * 60 * 60) / 5,
-      });
+        yield* Effect.repeat(
+          Effect.andThen(TestClock.adjust("5 seconds"), settled()),
+          {
+            times: (2 * 60 * 60) / 5,
+          }
+        );
 
-      const sentAt = world.received
-        .filter((delivery) => bodyOf(delivery)["eventId"] === "c1")
-        .map(({ timestamp }) => Number(timestamp));
+        const sentAt = world.received
+          .filter((delivery) => bodyOf(delivery)["eventId"] === "c1")
+          .map(({ timestamp }) => Number(timestamp));
 
-      const apart = sentAt.slice(1).map((at, index) => at - (sentAt[index] ?? at));
-      const span = (sentAt.at(-1) ?? 0) - (sentAt[0] ?? 0);
+        const apart = sentAt
+          .slice(1)
+          .map((at, index) => at - (sentAt[index] ?? at));
 
-      expect(Math.max(...apart)).toBeGreaterThanOrEqual(300);
-      expect(Math.max(...apart)).toBeLessThan(330);
-      expect(span).toBeGreaterThan(3600);
-      expect(span).toBeLessThan(3600 + 330);
-    }).pipe(Effect.provide(server));
-  });
+        const span = (sentAt.at(-1) ?? 0) - (sentAt[0] ?? 0);
+
+        expect(Math.max(...apart)).toBeGreaterThanOrEqual(300);
+        expect(Math.max(...apart)).toBeLessThan(330);
+        expect(span).toBeGreaterThan(3600);
+        expect(span).toBeLessThan(3600 + 330);
+      }).pipe(Effect.provide(server));
+    }
+  );
 
   it.effect(
     "abandons a delivery its callback answers 410 or 413, leaving a gap in its place",
@@ -395,24 +471,28 @@ describe("webhook delivery over HTTP", () => {
         world.answer = (body) => {
           const status = abandoning.get(body["eventId"]);
 
-          return status === undefined ? acknowledging(body) : new Response(null, { status });
+          return status === undefined
+            ? acknowledging(body)
+            : new Response(null, { status });
         };
 
         world.changes.push(
           { id: "gone", by: "bob" },
           { id: "large", by: "bob" },
-          { id: "kept", by: "bob" },
+          { id: "kept", by: "bob" }
         );
 
-        yield* until(() => events(world.received).some(({ eventId }) => eventId === "kept"));
+        yield* until(() =>
+          events(world.received).some(({ eventId }) => eventId === "kept")
+        );
         yield* passed();
 
         expect(
           world.received
             .map(bodyOf)
             .filter(({ type }) => type !== "verification")
-            .map(({ type, eventId, cursor }) => [type ?? eventId, cursor]),
-        ).toEqual([
+            .map(({ type, eventId, cursor }) => [type ?? eventId, cursor])
+        ).toStrictEqual([
           ["gone", "0"],
           ["gap", "0"],
           ["large", "0"],
@@ -420,49 +500,60 @@ describe("webhook delivery over HTTP", () => {
           ["kept", "3"],
         ]);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
-  it.effect("signs with the old secret beside the new one for 5 minutes after a rotation", () => {
-    const { world, server } = makeWorld();
-    const [first, second] = [secretOf(1), secretOf(2)];
-    const grace = 5 * 60 * 1000;
+  it.effect(
+    "signs with the old secret beside the new one for 5 minutes after a rotation",
+    () => {
+      const { world, server } = makeWorld();
+      const [first, second] = [secretOf(1), secretOf(2)];
+      const grace = 5 * 60 * 1000;
 
-    return Effect.gen(function* () {
-      yield* subscribed(first);
-      yield* subscribed(second);
+      return Effect.gen(function* () {
+        yield* subscribed(first);
+        yield* subscribed(second);
 
-      const rotatedAt = yield* Clock.currentTimeMillis;
+        const rotatedAt = yield* Clock.currentTimeMillis;
 
-      const postedAt = (id: string, at: number) =>
-        Effect.gen(function* () {
-          yield* passed(Math.ceil((rotatedAt + at - (yield* Clock.currentTimeMillis)) / 1000));
+        const postedAt = (id: string, at: number) =>
+          Effect.gen(function* () {
+            yield* passed(
+              Math.ceil(
+                (rotatedAt + at - (yield* Clock.currentTimeMillis)) / 1000
+              )
+            );
 
-          world.changes.push({ id, by: "bob" });
+            world.changes.push({ id, by: "bob" });
 
-          yield* until(() => events(world.received).some(({ eventId }) => eventId === id));
-        });
+            yield* until(() =>
+              events(world.received).some(({ eventId }) => eventId === id)
+            );
+          });
 
-      yield* postedAt("before", grace - 10_000);
-      yield* postedAt("after", grace);
+        yield* postedAt("before", grace - 10_000);
+        yield* postedAt("after", grace);
 
-      const signed = yield* Effect.forEach(
-        world.received.filter((delivery) => bodyOf(delivery)["type"] === undefined),
-        (delivery) =>
-          Effect.promise(async () => [
-            bodyOf(delivery)["eventId"],
-            Number(delivery.timestamp) * 1000 - rotatedAt < grace,
-            await signedBy(first, delivery),
-            await signedBy(second, delivery),
-          ]),
-      );
+        const signed = yield* Effect.forEach(
+          world.received.filter(
+            (delivery) => bodyOf(delivery)["type"] === undefined
+          ),
+          (delivery) =>
+            Effect.promise(async () => [
+              bodyOf(delivery)["eventId"],
+              Number(delivery.timestamp) * 1000 - rotatedAt < grace,
+              await signedBy(first, delivery),
+              await signedBy(second, delivery),
+            ])
+        );
 
-      expect(signed).toEqual([
-        ["before", true, true, true],
-        ["after", false, false, true],
-      ]);
-    }).pipe(Effect.provide(server));
-  });
+        expect(signed).toStrictEqual([
+          ["before", true, true, true],
+          ["after", false, false, true],
+        ]);
+      }).pipe(Effect.provide(server));
+    }
+  );
 
   it.effect(
     "grants a lifetime clamped between 1 minute and maxTtl, and ends the subscription when it lapses",
@@ -472,10 +563,12 @@ describe("webhook delivery over HTTP", () => {
       return Effect.gen(function* () {
         const start = yield* Clock.currentTimeMillis;
 
-        const grants = yield* Effect.forEach([1_000, 10 * 60 * 60 * 1000, null], (ttlMs) =>
-          Effect.map(subscribed(secretOf(1), ttlMs), ({ refreshBefore }) =>
-            refreshBefore === null ? null : Date.parse(refreshBefore) - start,
-          ),
+        const grants = yield* Effect.forEach(
+          [1000, 10 * 60 * 60 * 1000, null],
+          (ttlMs) =>
+            Effect.map(subscribed(secretOf(1), ttlMs), ({ refreshBefore }) =>
+              refreshBefore === null ? null : Date.parse(refreshBefore) - start
+            )
         );
 
         yield* TestClock.adjust("61 minutes");
@@ -484,10 +577,10 @@ describe("webhook delivery over HTTP", () => {
 
         yield* passed();
 
-        expect(grants).toEqual([60_000, 3_600_000, 3_600_000]);
-        expect(events(world.received)).toEqual([]);
+        expect(grants).toStrictEqual([60_000, 3_600_000, 3_600_000]);
+        expect(events(world.received)).toStrictEqual([]);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
   it.effect("grants at most 1 hour where maxTtl is not given", () => {
@@ -495,9 +588,15 @@ describe("webhook delivery over HTTP", () => {
 
     return Effect.gen(function* () {
       const start = yield* Clock.currentTimeMillis;
-      const { refreshBefore } = yield* subscribed(secretOf(1), 10 * 60 * 60 * 1000);
 
-      expect(refreshBefore === null ? null : Date.parse(refreshBefore) - start).toBe(3_600_000);
+      const { refreshBefore } = yield* subscribed(
+        secretOf(1),
+        10 * 60 * 60 * 1000
+      );
+
+      expect(
+        refreshBefore === null ? null : Date.parse(refreshBefore) - start
+      ).toBe(3_600_000);
     }).pipe(Effect.provide(server));
   });
 
@@ -514,60 +613,79 @@ describe("webhook delivery over HTTP", () => {
 
         yield* until(() => world.received.length >= 2);
 
-        const gone = yield* sent("alice", "unsubscribe", { input: {}, delivery: { url } });
+        const gone = yield* sent("alice", "unsubscribe", {
+          input: {},
+          delivery: { url },
+        });
 
         expect(world.received.map(bodyOf).at(-1)).toMatchObject({
           type: "terminated",
-          error: { code: -32024, message: "Revoked.", data: { _tag: "Forbidden" } },
+          error: {
+            code: -32_024,
+            message: "Revoked.",
+            data: { _tag: "Forbidden" },
+          },
         });
         expect(world.received.at(-1)?.id).toMatch(/^msg_terminated_/u);
         expect(gone.status).toBe(409);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
-  it.effect("ends delivery at a refresh's shorter grant, after which it is not subscribed", () => {
-    const { world, server } = makeWorld({ maxTtl: "1 hour" });
+  it.effect(
+    "ends delivery at a refresh's shorter grant, after which it is not subscribed",
+    () => {
+      const { world, server } = makeWorld({ maxTtl: "1 hour" });
 
-    return Effect.gen(function* () {
-      yield* subscribed(secretOf(1), null);
-      yield* subscribed(secretOf(1), 60_000);
-      yield* TestClock.adjust("5 minutes");
+      return Effect.gen(function* () {
+        yield* subscribed(secretOf(1), null);
+        yield* subscribed(secretOf(1), 60_000);
+        yield* TestClock.adjust("5 minutes");
 
-      const gone = yield* sent("alice", "unsubscribe", { input: {}, delivery: { url } });
+        const gone = yield* sent("alice", "unsubscribe", {
+          input: {},
+          delivery: { url },
+        });
 
-      world.changes.push({ id: "c1", by: "bob" });
+        world.changes.push({ id: "c1", by: "bob" });
 
-      yield* passed();
+        yield* passed();
 
-      expect(gone.status).toBe(409);
-      expect(events(world.received)).toEqual([]);
-    }).pipe(Effect.provide(server));
-  });
+        expect(gone.status).toBe(409);
+        expect(events(world.received)).toStrictEqual([]);
+      }).pipe(Effect.provide(server));
+    }
+  );
 
-  it.effect("tries a terminated envelope its callback fails four times, then gives it up", () => {
-    const { world, server } = makeWorld();
+  it.effect(
+    "tries a terminated envelope its callback fails four times, then gives it up",
+    () => {
+      const { world, server } = makeWorld();
 
-    return Effect.gen(function* () {
-      yield* subscribed();
+      return Effect.gen(function* () {
+        yield* subscribed();
 
-      world.answer = (body) =>
-        body["type"] === "terminated" ? new Response(null, { status: 500 }) : acknowledging(body);
-      world.revoked.add("alice");
-      world.changes.push({ id: "c1", by: "bob" });
+        world.answer = (body) =>
+          body["type"] === "terminated"
+            ? new Response(null, { status: 500 })
+            : acknowledging(body);
+        world.revoked.add("alice");
+        world.changes.push({ id: "c1", by: "bob" });
 
-      const terminated = () =>
-        world.received.map(bodyOf).filter(({ type }) => type === "terminated").length;
+        const terminated = () =>
+          world.received.map(bodyOf).filter(({ type }) => type === "terminated")
+            .length;
 
-      yield* until(() => terminated() >= 4);
+        yield* until(() => terminated() >= 4);
 
-      const tried = terminated();
+        const tried = terminated();
 
-      yield* passed(10 * 60);
+        yield* passed(10 * 60);
 
-      expect([tried, terminated()]).toEqual([4, 4]);
-    }).pipe(Effect.provide(server));
-  });
+        expect([tried, terminated()]).toStrictEqual([4, 4]);
+      }).pipe(Effect.provide(server));
+    }
+  );
 
   it.effect("closes while a terminated envelope is failing", () => {
     const { world, server } = makeWorld();
@@ -579,11 +697,15 @@ describe("webhook delivery over HTTP", () => {
       yield* subscribed().pipe(Effect.provideContext(context));
 
       world.answer = (body) =>
-        body["type"] === "terminated" ? new Response(null, { status: 500 }) : acknowledging(body);
+        body["type"] === "terminated"
+          ? new Response(null, { status: 500 })
+          : acknowledging(body);
       world.revoked.add("alice");
       world.changes.push({ id: "c1", by: "bob" });
 
-      yield* until(() => world.received.some((each) => bodyOf(each)["type"] === "terminated"));
+      yield* until(() =>
+        world.received.some((each) => bodyOf(each)["type"] === "terminated")
+      );
 
       const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void));
 
@@ -616,11 +738,14 @@ describe("webhook delivery over HTTP", () => {
                 input: {},
                 delivery: { url: callback, secret: secretOf(1) },
               }),
-              (response) => Effect.map(response.json, (body) => [response.status, body]),
-            ),
+              (response) =>
+                Effect.map(response.json, (body) => [response.status, body])
+            )
         );
 
-        const refused = { reason: { _tag: "CallbackFailed", category: "challenge_failed" } };
+        const refused = {
+          reason: { _tag: "CallbackFailed", category: "challenge_failed" },
+        };
 
         expect(answers).toMatchObject([
           [200, {}],
@@ -633,20 +758,22 @@ describe("webhook delivery over HTTP", () => {
           { type: "verification" },
         ]);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
   it("refuses an allowedCallbacks entry that is not an https URL when the layer is made", () => {
-    expect(() => Webhook.layer({ allowedCallbacks: ["hooks.example.com"] })).toThrow(
-      "Invalid allowedCallbacks entry: hooks.example.com (give an https URL, such as https://hooks.example.com/)",
+    expect(() =>
+      Webhook.layer({ allowedCallbacks: ["hooks.example.com"] })
+    ).toThrow(
+      "Invalid allowedCallbacks entry: hooks.example.com (give an https URL, such as https://hooks.example.com/)"
     );
   });
 
   it("refuses a maxTtl of no end when the layer is made, as every grant expires", () => {
     expect(() => Webhook.layer({ maxTtl: Duration.infinity })).toThrow(
       new Error(
-        'Invalid maxTtl: Infinity (every grant expires: give a finite duration, such as "1 hour")',
-      ),
+        'Invalid maxTtl: Infinity (every grant expires: give a finite duration, such as "1 hour")'
+      )
     );
   });
 
@@ -671,59 +798,73 @@ describe("webhook delivery over HTTP", () => {
           { eventId: "kept", cursor: "2" },
         ]);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
-  it.effect("verifies one callback for each principal subscribing to it", () => {
-    const { world, server } = makeWorld();
+  it.effect(
+    "verifies one callback for each principal subscribing to it",
+    () => {
+      const { world, server } = makeWorld();
 
-    return Effect.gen(function* () {
-      yield* subscribed(secretOf(1), undefined, { token: "alice" });
-      yield* subscribed(secretOf(2), undefined, { token: "bob" });
-      yield* subscribed(secretOf(1), undefined, { token: "alice" });
+      return Effect.gen(function* () {
+        yield* subscribed(secretOf(1), undefined, { token: "alice" });
+        yield* subscribed(secretOf(2), undefined, { token: "bob" });
+        yield* subscribed(secretOf(1), undefined, { token: "alice" });
 
-      expect(world.received.map(bodyOf).filter(({ type }) => type === "verification")).toHaveLength(
-        2,
-      );
-    }).pipe(Effect.provide(server));
-  });
-
-  it.effect("delivers a log source's occurrences, from its subscription on", () =>
-    Effect.gen(function* () {
-      const emitted = yield* Queue.unbounded<{ id: string; by: string }>();
-      const { world, server } = makeWorld({ emitted });
-
-      yield* Effect.gen(function* () {
-        yield* subscribed();
-        yield* Queue.offer(emitted, { id: "e1", by: "bob" });
-        yield* until(() => events(world.received).length >= 1);
-
-        expect(events(world.received)).toMatchObject([{ eventId: "e1", data: { by: "bob" } }]);
+        expect(
+          world.received
+            .map(bodyOf)
+            .filter(({ type }) => type === "verification")
+        ).toHaveLength(2);
       }).pipe(Effect.provide(server));
-    }),
+    }
   );
 
-  it.effect("reads the source as the subscriber a refresh names, from then on", () => {
-    const { world, server } = makeWorld();
+  it.effect(
+    "delivers a log source's occurrences, from its subscription on",
+    () =>
+      Effect.gen(function* () {
+        const emitted = yield* Queue.unbounded<{ id: string; by: string }>();
+        const { world, server } = makeWorld({ emitted });
 
-    return Effect.gen(function* () {
-      yield* subscribed();
+        yield* Effect.gen(function* () {
+          yield* subscribed();
+          yield* Queue.offer(emitted, { id: "e1", by: "bob" });
+          yield* until(() => events(world.received).length >= 1);
 
-      world.known.set("alice", { ...actors.alice, tenantId: "other" });
+          expect(events(world.received)).toMatchObject([
+            { eventId: "e1", data: { by: "bob" } },
+          ]);
+        }).pipe(Effect.provide(server));
+      })
+  );
 
-      yield* subscribed();
+  it.effect(
+    "reads the source as the subscriber a refresh names, from then on",
+    () => {
+      const { world, server } = makeWorld();
 
-      world.changes.push(
-        { id: "acme", by: "bob", onlyTenant: "acme" },
-        { id: "other", by: "bob", onlyTenant: "other" },
-      );
+      return Effect.gen(function* () {
+        yield* subscribed();
 
-      yield* until(() => events(world.received).length >= 1);
-      yield* passed();
+        world.known.set("alice", { ...actors.alice, tenantId: "other" });
 
-      expect(events(world.received).map(({ eventId }) => eventId)).toEqual(["other"]);
-    }).pipe(Effect.provide(server));
-  });
+        yield* subscribed();
+
+        world.changes.push(
+          { id: "acme", by: "bob", onlyTenant: "acme" },
+          { id: "other", by: "bob", onlyTenant: "other" }
+        );
+
+        yield* until(() => events(world.received).length >= 1);
+        yield* passed();
+
+        expect(
+          events(world.received).map(({ eventId }) => eventId)
+        ).toStrictEqual(["other"]);
+      }).pipe(Effect.provide(server));
+    }
+  );
 
   it.effect(
     "reads on past an authorizer failing as a refresh's worker starts, still subscribed",
@@ -741,19 +882,24 @@ describe("webhook delivery over HTTP", () => {
 
         yield* until(() => events(world.received).length >= 1);
 
-        const unsubscribed = yield* sent("alice", "unsubscribe", { input: {}, delivery: { url } });
+        const unsubscribed = yield* sent("alice", "unsubscribe", {
+          input: {},
+          delivery: { url },
+        });
 
-        expect(events(world.received).map(({ eventId }) => eventId)).toEqual(["c1"]);
+        expect(
+          events(world.received).map(({ eventId }) => eventId)
+        ).toStrictEqual(["c1"]);
         expect(unsubscribed.status).toBe(204);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
   it.effect(
     "reads again from before an occurrence whose admission fails with no refusal, reported once",
     () => {
       const { world, server } = makeWorld();
-      const reported: Array<string> = [];
+      const reported: string[] = [];
 
       return Effect.gen(function* () {
         yield* subscribed();
@@ -771,14 +917,18 @@ describe("webhook delivery over HTTP", () => {
           world.received
             .map(bodyOf)
             .filter(({ type }) => type !== "verification")
-            .map(({ type, eventId, cursor }) => [type ?? eventId, cursor]),
-        ).toEqual([
+            .map(({ type, eventId, cursor }) => [type ?? eventId, cursor])
+        ).toStrictEqual([
           ["c1", "1"],
           ["c2", "2"],
         ]);
         expect(reported).toHaveLength(1);
-      }).pipe(Effect.provide(server), Effect.provide(ErrorReporter.layer([recorder(reported)])));
-    },
+      }).pipe(
+        Effect.provide(
+          Layer.provideMerge(server, ErrorReporter.layer([recorder(reported)]))
+        )
+      );
+    }
   );
 
   it.effect(
@@ -789,7 +939,10 @@ describe("webhook delivery over HTTP", () => {
       return Effect.gen(function* () {
         const grant = yield* subscribed();
 
-        world.known.set("alice", { ...actors.alice, permissions: ["users:write"] });
+        world.known.set("alice", {
+          ...actors.alice,
+          permissions: ["users:write"],
+        });
 
         const refresh = yield* sent("alice", "subscribe", {
           input: {},
@@ -802,33 +955,43 @@ describe("webhook delivery over HTTP", () => {
 
         world.known.set("alice", actors.alice);
 
-        const unsubscribed = yield* sent("alice", "unsubscribe", { input: {}, delivery: { url } });
+        const unsubscribed = yield* sent("alice", "unsubscribe", {
+          input: {},
+          delivery: { url },
+        });
 
         expect(refresh.status).toBe(403);
         expect(
-          world.received.map(bodyOf).filter(({ type }) => type !== "verification"),
-        ).toMatchObject([{ type: "terminated", error: { message: "Revoked." } }]);
+          world.received
+            .map(bodyOf)
+            .filter(({ type }) => type !== "verification")
+        ).toMatchObject([
+          { type: "terminated", error: { message: "Revoked." } },
+        ]);
         expect(world.received.at(-1)?.subscription).toBe(grant.id);
         expect(unsubscribed.status).toBe(409);
       }).pipe(Effect.provide(server));
-    },
+    }
   );
 
-  it.effect("admits each delivery as the subscriber, without the subscribe request", () => {
-    const { world, server } = makeWorld();
+  it.effect(
+    "admits each delivery as the subscriber, without the subscribe request",
+    () => {
+      const { world, server } = makeWorld();
 
-    return Effect.gen(function* () {
-      yield* subscribed();
+      return Effect.gen(function* () {
+        yield* subscribed();
 
-      world.changes.push({ id: "c1", by: "bob" });
+        world.changes.push({ id: "c1", by: "bob" });
 
-      yield* until(() => events(world.received).length >= 1);
+        yield* until(() => events(world.received).length >= 1);
 
-      expect(world.requested[0]).toBe(true);
-      expect(world.requested.slice(1)).not.toContain(true);
-      expect(world.requested.length).toBeGreaterThan(1);
-    }).pipe(Effect.provide(server));
-  });
+        expect(world.requested[0]).toBe(true);
+        expect(world.requested.slice(1)).not.toContain(true);
+        expect(world.requested.length).toBeGreaterThan(1);
+      }).pipe(Effect.provide(server));
+    }
+  );
 });
 
 describe("Webhook.layer", () => {
@@ -852,12 +1015,12 @@ describe("Webhook.layer", () => {
     Event.implement(
       event,
       { check: () => Effect.succeed({ cursor: "0", events: [] }) },
-      { authorize: Event.allowAll },
+      { authorize: Event.allowAll }
     );
 
   const hookedRoutes = Effect.gen(function* () {
-    const gate = yield* Deferred.make<void>();
-    const hooks: Array<string> = [];
+    const gate = yield* Deferred.make<undefined>();
+    const hooks: string[] = [];
 
     const hooked = Event.implement(
       UserChanged,
@@ -871,25 +1034,27 @@ describe("Webhook.layer", () => {
                 held === 1
                   ? Effect.sync(() => hooks.push("releasing")).pipe(
                       Effect.andThen(Deferred.await(gate)),
-                      Effect.andThen(Effect.sync(() => hooks.push("released"))),
+                      Effect.andThen(Effect.sync(() => hooks.push("released")))
                     )
-                  : Effect.void,
-            ),
+                  : Effect.void
+            )
           ),
       },
-      { authorize: Event.allowAll },
+      { authorize: Event.allowAll }
     );
 
     const routes = ActionHttp.layer(
       ActionHttp.make([UserChanged], { authentication: Login }),
-      hooked,
+      hooked
     ).pipe(
       Layer.provide(Authentication.layer(Login, verify)),
-      Layer.provide(Webhook.layer({ allowedCallbacks: ["https://hooks.example.com/"] })),
+      Layer.provide(
+        Webhook.layer({ allowedCallbacks: ["https://hooks.example.com/"] })
+      ),
       Layer.provide([
         Testing.layer(async () => new Response(null)),
         Dns.layerStatic({ hosts: { "hooks.example.com": ["93.184.216.34"] } }),
-      ]),
+      ])
     );
 
     return { gate, hooks, server: Testing.layer(routes) };
@@ -906,17 +1071,22 @@ describe("Webhook.layer", () => {
           yield* subscribed();
           yield* until(() => hooks.length >= 2);
 
-          const meanwhile = [...hooks];
+          const seen = [...hooks];
 
           yield* Deferred.succeed(gate, undefined);
           yield* until(() => hooks.length >= 4);
 
-          return meanwhile;
+          return seen;
         }).pipe(Effect.provide(server));
 
-        expect(meanwhile).toEqual(["acquired", "releasing"]);
-        expect(hooks).toEqual(["acquired", "releasing", "released", "acquired"]);
-      }).pipe(Effect.provide(Event.layerMemory)),
+        expect(meanwhile).toStrictEqual(["acquired", "releasing"]);
+        expect(hooks).toStrictEqual([
+          "acquired",
+          "releasing",
+          "released",
+          "acquired",
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect(
@@ -934,18 +1104,23 @@ describe("Webhook.layer", () => {
 
           yield* passed();
 
-          const meanwhile = [...hooks];
+          const seen = [...hooks];
 
           yield* Deferred.succeed(gate, undefined);
           yield* Fiber.join(subscribing);
           yield* until(() => hooks.length >= 4);
 
-          return meanwhile;
+          return seen;
         }).pipe(Effect.provide(server));
 
-        expect(meanwhile).toEqual(["acquired", "releasing"]);
-        expect(hooks).toEqual(["acquired", "releasing", "released", "acquired"]);
-      }).pipe(Effect.provide(Event.layerMemory)),
+        expect(meanwhile).toStrictEqual(["acquired", "releasing"]);
+        expect(hooks).toStrictEqual([
+          "acquired",
+          "releasing",
+          "released",
+          "acquired",
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect("refuses to serve two event types of one name", () =>
@@ -953,31 +1128,31 @@ describe("Webhook.layer", () => {
       const surfaces = Layer.mergeAll(
         ActionHttp.layer(
           ActionHttp.make([UserChanged], { authentication: Login }),
-          quiet(UserChanged),
+          quiet(UserChanged)
         ),
         ActionMcp.layerHttp(quiet(AdminChanged), {
           name: "admins",
           version: "1.0.0",
           authentication: Login,
-        }),
+        })
       ).pipe(
         Layer.provide(Authentication.layer(Login, verify)),
         Layer.provide(Webhook.layer()),
         Layer.provide([
           Testing.layer(async () => new Response(null)),
           Dns.layerStatic({ hosts: {} }),
-        ]),
+        ])
       );
 
       const exit = yield* Effect.exit(
         Effect.flatMap(HttpClient.HttpClient, (client) => client.get("/")).pipe(
-          Effect.provide(Testing.layer(surfaces)),
-        ),
+          Effect.provide(Testing.layer(surfaces))
+        )
       );
 
       expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
-        'Webhook.layer serves "user.changed" for two event types of that name (give each event type a name of its own, or each surface its own Webhook.layer)',
+        'Webhook.layer serves "user.changed" for two event types of that name (give each event type a name of its own, or each surface its own Webhook.layer)'
       );
-    }).pipe(Effect.provide(Event.layerMemory)),
+    }).pipe(Effect.provide(Event.layerMemory))
   );
 });

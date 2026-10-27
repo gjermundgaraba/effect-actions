@@ -1,12 +1,23 @@
-import { Clock, Context, Effect, Layer, Option, Redacted, Schema } from "effect";
-import { TestClock } from "effect/testing";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import {
+  Clock,
+  Context,
+  Effect,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+} from "effect";
+import { TestClock } from "effect/testing";
+
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { appended, textsIn, textsSince } from "./texts.js";
 
-export class Subscriber extends Context.Service<Subscriber, string>()("test/Subscriber") {}
+export class Subscriber extends Context.Service<Subscriber, string>()(
+  "test/Subscriber"
+) {}
 
 const HookLogin = Authentication.make("test.HookLogin", Subscriber, {
   principal: (subscriber) => subscriber,
@@ -33,7 +44,7 @@ const hooked = Event.implement(
     check: (_input: typeof Hooked.input.Type, cursor: string | null) =>
       textsSince(storage, hookedKey, "h", cursor),
   })),
-  { authorize: Event.allowAll },
+  { authorize: Event.allowAll }
 );
 
 export const hook = (text: string) => appended(hookedKey, Hooked, text);
@@ -42,7 +53,7 @@ const Body = Schema.fromJsonString(
   Schema.Struct({
     type: Schema.optional(Schema.String),
     challenge: Schema.optional(Schema.String),
-  }),
+  })
 );
 
 const bodyOf = Schema.decodeUnknownOption(Body);
@@ -58,14 +69,21 @@ const callbackRecordingIn = (storage: DurableObjectStorage) => ({
 
     await storage.put(receivedKey, [...received, body]);
 
-    const challenge = Option.flatMap(bodyOf(body), ({ type, challenge }) =>
-      type === "verification" ? Option.fromUndefinedOr(challenge) : Option.none(),
+    const challenge = Option.flatMap(bodyOf(body), (parsed) =>
+      parsed.type === "verification"
+        ? Option.fromUndefinedOr(parsed.challenge)
+        : Option.none()
     );
 
-    if (Option.isSome(challenge)) return Response.json({ challenge: challenge.value });
+    if (Option.isSome(challenge)) {
+      return Response.json({ challenge: challenge.value });
+    }
 
     return new Response(null, {
-      status: Option.getOrElse(statusOf(await storage.get(answerKey)), () => 200),
+      status: Option.getOrElse(
+        statusOf(await storage.get(answerKey)),
+        () => 200
+      ),
     });
   },
 });
@@ -75,15 +93,15 @@ export const hookedRoutes = ActionHttp.layer(HookHttp, [hooked]).pipe(
   Layer.provide(
     Layer.unwrap(
       Effect.map(ActionDurableObject.State, ({ storage }) =>
-        ActionDurableObject.layerHttpClient(callbackRecordingIn(storage)),
-      ),
-    ),
+        ActionDurableObject.layerHttpClient(callbackRecordingIn(storage))
+      )
+    )
   ),
   Layer.provide(
-    Authentication.layer(HookLogin, (token: Redacted.Redacted<string>) =>
-      Effect.succeed(Redacted.value(token)),
-    ),
-  ),
+    Authentication.layer(HookLogin, (token: Redacted.Redacted) =>
+      Effect.succeed(Redacted.value(token))
+    )
+  )
 );
 
 /**
@@ -98,5 +116,5 @@ export const heldTime = Layer.effectContext(
     yield* clock.setTime(Date.now());
 
     return Context.make(Clock.Clock, clock);
-  }),
+  })
 );

@@ -1,8 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, ErrorReporter, Exit, Layer, Schema, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  ErrorReporter,
+  Exit,
+  Layer,
+  Schema,
+  Stream,
+} from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
-import * as Action from "../../src/contract/Action.js";
+
 import * as Authentication from "../../src/authentication/Authentication.js";
+import * as Action from "../../src/contract/Action.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
@@ -11,7 +21,12 @@ import { recorder } from "../support/reporter.js";
 import { overHttp } from "../support/rpc.js";
 import { inMemoryValuesProtocolTo } from "../support/values.js";
 
-class LogGone extends Schema.TaggedError<LogGone>()("LogGone", { at: Schema.Finite }) {}
+class LogGone extends Schema.TaggedError<
+  LogGone,
+  { readonly brand: unique symbol }
+>()("LogGone", {
+  at: Schema.Finite,
+}) {}
 
 const Tail = Action.make("tail", {
   description: "Follow a log, line by line.",
@@ -36,13 +51,20 @@ const Build = Action.make("build", {
 
 const Login = Authentication.make("rpc-stream.Login", CurrentActor);
 
-const lines = (count: number) => Stream.map(Stream.range(1, count), (n) => ({ n }));
+const lines = (count: number) =>
+  Stream.map(Stream.range(1, count), (n) => ({ n }));
 
 const tails = Action.implement(Tail, ({ count, halt }) => {
-  if (halt === "defect")
-    return Stream.concat(lines(count), Stream.die(new Error("the log's secret detail")));
+  if (halt === "defect") {
+    return Stream.concat(
+      lines(count),
+      Stream.die(new Error("the log's secret detail"))
+    );
+  }
 
-  if (halt === "unencodable") return Stream.concat(lines(count), Stream.make({ n: Number.NaN }));
+  if (halt === "unencodable") {
+    return Stream.concat(lines(count), Stream.make({ n: Number.NaN }));
+  }
 
   return lines(count);
 });
@@ -52,136 +74,154 @@ const builds = Action.implement(
   ({ steps }, { progress }) =>
     Stream.mapEffect(Stream.range(1, steps), (step) =>
       Effect.flatMap(CurrentActor, ({ id }) =>
-        Effect.as(progress({ step }), { line: `${id}: step ${step}` }),
-      ),
+        Effect.as(progress({ step }), { line: `${id}: step ${step}` })
+      )
     ),
-  { authorize: () => Effect.void },
+  { authorize: () => Effect.void }
 );
 
 const Rpc = ActionRpc.make([Tail, Build], { authentication: Login });
 
-const server = (reported: Array<string> = []) =>
+const server = (reported: string[] = []) =>
   ActionRpc.layer(Rpc, [tails, builds]).pipe(
     Layer.provide(Authentication.layer(Login, verify)),
-    Layer.provide(ErrorReporter.layer([recorder(reported)])),
+    Layer.provide(ErrorReporter.layer([recorder(reported)]))
   );
 
-const served = (reported: Array<string> = []) => overHttp(server(reported));
+const served = (reported: string[] = []) => overHttp(server(reported));
 
 const Counting = ActionRpc.make([Count]);
 
-const signedInAs = (token: string) => RpcClient.withHeaders({ authorization: `Bearer ${token}` });
+const signedInAs = (token: string) =>
+  RpcClient.withHeaders({ authorization: `Bearer ${token}` });
 
 describe("RPC element streams", () => {
   it.effect("streams the elements, none for an empty stream", () =>
     Effect.gen(function* () {
       const client = yield* ActionRpc.client(Rpc);
 
-      expect(yield* Stream.runCollect(client.tail({ count: 3 }))).toEqual([
-        { n: 1 },
-        { n: 2 },
-        { n: 3 },
-      ]);
-      expect(yield* Stream.runCollect(client.tail({ count: 0 }))).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(served())),
+      expect(yield* Stream.runCollect(client.tail({ count: 3 }))).toStrictEqual(
+        [{ n: 1 }, { n: 2 }, { n: 3 }]
+      );
+      expect(yield* Stream.runCollect(client.tail({ count: 0 }))).toStrictEqual(
+        []
+      );
+    }).pipe(Effect.scoped, Effect.provide(served()))
   );
 
   it.effect.each([
     ["schema-binary", overHttp(server(), RpcSerialization.layerSchemaBinary())],
     ["a protocol passing values", inMemoryValuesProtocolTo(server())],
-  ] as const)("streams the elements and their progress under %s", ([, protocol]) =>
-    Effect.gen(function* () {
-      const client = yield* ActionRpc.client(Rpc);
-      const reported: Array<number> = [];
+  ] as const)(
+    "streams the elements and their progress under %s",
+    ([, protocol]) =>
+      Effect.gen(function* () {
+        const client = yield* ActionRpc.client(Rpc);
+        const reported: number[] = [];
 
-      const tailed = yield* Stream.runCollect(client.tail({ count: 2 }));
+        const tailed = yield* Stream.runCollect(client.tail({ count: 2 }));
 
-      const built = yield* Stream.runCollect(
-        client.build(
-          { steps: 2 },
-          { onProgress: ({ step }) => Effect.sync(() => reported.push(step)) },
-        ),
-      ).pipe(signedInAs("alice"));
+        const built = yield* Stream.runCollect(
+          client.build(
+            { steps: 2 },
+            { onProgress: ({ step }) => Effect.sync(() => reported.push(step)) }
+          )
+        ).pipe(signedInAs("alice"));
 
-      expect([tailed, built, reported]).toEqual([
-        [{ n: 1 }, { n: 2 }],
-        [{ line: "alice: step 1" }, { line: "alice: step 2" }],
-        [1, 2],
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(protocol)),
+        expect([tailed, built, reported]).toStrictEqual([
+          [{ n: 1 }, { n: 2 }],
+          [{ line: "alice: step 1" }, { line: "alice: step 2" }],
+          [1, 2],
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(protocol))
   );
 
-  it.effect("streams each element as an Element to a native client, beside its progress", () =>
-    Effect.gen(function* () {
-      const client = yield* RpcClient.make(Rpc.group);
+  it.effect(
+    "streams each element as an Element to a native client, beside its progress",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* RpcClient.make(Rpc.group);
 
-      const tailed = yield* Stream.runCollect(client.tail({ count: 1 }));
-      const built = yield* Stream.runCollect(client.build({ steps: 1 })).pipe(signedInAs("alice"));
+        const tailed = yield* Stream.runCollect(client.tail({ count: 1 }));
 
-      expect(tailed).toEqual([{ _tag: "Element", value: { n: 1 } }]);
-      expect(built.toSorted((left, right) => left._tag.localeCompare(right._tag))).toEqual([
-        { _tag: "Element", value: { line: "alice: step 1" } },
-        { _tag: "Progress", value: { step: 1 } },
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(served())),
+        const built = yield* Stream.runCollect(client.build({ steps: 1 })).pipe(
+          signedInAs("alice")
+        );
+
+        expect(tailed).toStrictEqual([{ _tag: "Element", value: { n: 1 } }]);
+        expect(
+          built.toSorted((left, right) => left._tag.localeCompare(right._tag))
+        ).toStrictEqual([
+          { _tag: "Element", value: { line: "alice: step 1" } },
+          { _tag: "Progress", value: { step: 1 } },
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(served()))
   );
 
   it.effect(
     "ends a stream whose handler dies, or whose element does not encode, as Internal server error, reported",
     () => {
-      const reported: Array<string> = [];
+      const reported: string[] = [];
 
       return Effect.gen(function* () {
         const client = yield* ActionRpc.client(Rpc);
 
-        const died = yield* Effect.exit(Stream.runDrain(client.tail({ count: 1, halt: "defect" })));
+        const died = yield* Effect.exit(
+          Stream.runDrain(client.tail({ count: 1, halt: "defect" }))
+        );
 
         const unencodable = yield* Effect.exit(
-          Stream.runDrain(client.tail({ count: 1, halt: "unencodable" })),
+          Stream.runDrain(client.tail({ count: 1, halt: "unencodable" }))
         );
 
         for (const exit of [died, unencodable]) {
           expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
-            "Internal server error",
+            "Internal server error"
           );
         }
 
-        expect(Exit.isFailure(died) && Cause.pretty(died.cause)).not.toContain("secret detail");
-        expect(reported).toEqual([
+        expect(Exit.isFailure(died) && Cause.pretty(died.cause)).not.toContain(
+          "secret detail"
+        );
+        expect(reported).toStrictEqual([
           expect.stringContaining("the log's secret detail"),
           expect.stringContaining("Expected a finite number"),
         ]);
       }).pipe(Effect.scoped, Effect.provide(served(reported)));
-    },
+    }
   );
 
-  it.effect("streams a protected action as the call's caller, handing progress to onProgress", () =>
-    Effect.gen(function* () {
-      const client = yield* ActionRpc.client(Rpc);
-      const reported: Array<number> = [];
+  it.effect(
+    "streams a protected action as the call's caller, handing progress to onProgress",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* ActionRpc.client(Rpc);
+        const reported: number[] = [];
 
-      const built = yield* Stream.runCollect(
-        client.build(
-          { steps: 2 },
-          { onProgress: ({ step }) => Effect.sync(() => reported.push(step)) },
-        ),
-      ).pipe(signedInAs("alice"));
+        const built = yield* Stream.runCollect(
+          client.build(
+            { steps: 2 },
+            { onProgress: ({ step }) => Effect.sync(() => reported.push(step)) }
+          )
+        ).pipe(signedInAs("alice"));
 
-      const refused = yield* Effect.exit(Stream.runDrain(client.build({ steps: 1 })));
+        const refused = yield* Effect.exit(
+          Stream.runDrain(client.build({ steps: 1 }))
+        );
 
-      expect([built, reported]).toEqual([
-        [{ line: "alice: step 1" }, { line: "alice: step 2" }],
-        [1, 2],
-      ]);
-      expect(Exit.isFailure(refused) && Cause.squash(refused.cause)).toBeInstanceOf(
-        Action.Unauthenticated,
-      );
-    }).pipe(Effect.scoped, Effect.provide(served())),
+        expect([built, reported]).toStrictEqual([
+          [{ line: "alice: step 1" }, { line: "alice: step 2" }],
+          [1, 2],
+        ]);
+        expect(
+          Exit.isFailure(refused) && Cause.squash(refused.cause)
+        ).toBeInstanceOf(Action.Unauthenticated);
+      }).pipe(Effect.scoped, Effect.provide(served()))
   );
 
   it.effect("closes the handler's stream once the caller stops reading", () =>
     Effect.gen(function* () {
-      const released = yield* Deferred.make<void>();
+      const released = yield* Deferred.make<undefined>();
 
       const counted = yield* Effect.gen(function* () {
         const client = yield* ActionRpc.client(Counting);
@@ -189,12 +229,14 @@ describe("RPC element streams", () => {
         return yield* Stream.runCollect(Stream.take(client.count(), 3));
       }).pipe(
         Effect.scoped,
-        Effect.provide(overHttp(ActionRpc.layer(Counting, countsReleasing(released)))),
+        Effect.provide(
+          overHttp(ActionRpc.layer(Counting, countsReleasing(released)))
+        )
       );
 
       yield* Deferred.await(released);
 
-      expect(counted).toEqual([0, 1, 2]);
-    }),
+      expect(counted).toStrictEqual([0, 1, 2]);
+    })
   );
 });

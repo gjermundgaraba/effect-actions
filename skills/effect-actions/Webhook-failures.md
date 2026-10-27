@@ -1,7 +1,6 @@
 # Webhook failure modes
 
-What you see when something is wrong, and the fix. Search for a fragment of the message.
-The tasks are in [Webhook.md](Webhook.md).
+What you see when something is wrong, and the fix. Search for a fragment of the message. The tasks are in [Webhook.md](Webhook.md).
 
 ## At startup
 

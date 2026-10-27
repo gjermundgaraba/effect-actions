@@ -1,8 +1,9 @@
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+
 import { MemberActions } from "./Actions.js";
-import { IssueChanged } from "./issues/Issues.js";
 import { Admin, OperatorKey } from "./admin/Admin.js";
 import { Login, QuotaExceeded } from "./identity/Identity.js";
+import { IssueChanged } from "./issues/Issues.js";
 import { GetStatus } from "./workspaces/Workspaces.js";
 
 // The members' HTTP binding: every action at `POST /api/v1/<name>`, and `issue.changed` at
@@ -10,11 +11,14 @@ import { GetStatus } from "./workspaces/Workspaces.js";
 // imports no server code, so the server, the CLI, the SDK and a test all import this one value.
 // - `authentication`: how the protected actions' caller proves who it is. `getStatus` is public.
 // - `error`: the quota middleware's, so a client decodes its 429 as a typed `QuotaExceeded`.
-export const Http = ActionHttp.make([GetStatus, ...MemberActions, IssueChanged], {
-  prefix: "/api/v1",
-  authentication: Login,
-  error: QuotaExceeded,
-});
+export const Http = ActionHttp.make(
+  [GetStatus, ...MemberActions, IssueChanged],
+  {
+    prefix: "/api/v1",
+    authentication: Login,
+    error: QuotaExceeded,
+  }
+);
 
 // The operators' binding: other actions, another identity, another descriptor, served on a port
 // of its own.

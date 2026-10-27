@@ -1,3 +1,4 @@
+import { NodeHttpServer } from "@effect/platform-node";
 import { assert, describe, expect, it } from "@effect/vitest";
 import {
   Context,
@@ -11,17 +12,22 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import { NodeHttpServer } from "@effect/platform-node";
 import { HttpRouter, HttpServerResponse } from "effect/http";
-import { HttpApi, HttpApiClient, HttpApiSecurity, OpenApi } from "effect/http-api";
+import {
+  HttpApi,
+  HttpApiClient,
+  HttpApiSecurity,
+  OpenApi,
+} from "effect/http-api";
+
+import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
+import * as Event from "../../src/contract/Event.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
-import * as Authentication from "../../src/authentication/Authentication.js";
-import * as Event from "../../src/contract/Event.js";
 import * as Testing from "../../src/testing/Testing.js";
+import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import { authenticate } from "../support/app/authentication.js";
 import { actors, CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
@@ -33,6 +39,7 @@ import {
   rawToolCall,
   send,
   toolReplyOf,
+  valueOf,
   withBearer,
 } from "../support/requests.js";
 import { serve, serveWithContext } from "../support/serve.js";
@@ -47,112 +54,244 @@ const identity = Action.make("identity", {
   success: Schema.String,
 });
 
-class Greeting extends Context.Service<Greeting, string>()("bindings/Greeting") {}
+class Greeting extends Context.Service<Greeting, string>()(
+  "bindings/Greeting"
+) {}
 
-it("builds an implementation once per layer graph, however many surfaces serve it, and again in another runtime", async () => {
-  let acquired = 0;
-  let finalized = 0;
+describe("an implementation's build", () => {
+  it("builds an implementation once per layer graph, however many surfaces serve it, and again in another runtime", async () => {
+    let acquired = 0;
+    let finalized = 0;
 
-  const app = Action.implement(
-    identity,
-    Effect.gen(function* () {
-      const greeting = yield* Effect.acquireRelease(
-        Effect.gen(function* () {
-          yield* Effect.sync(() => acquired++);
+    const app = Action.implement(
+      identity,
+      Effect.gen(function* () {
+        const greeting = yield* Effect.acquireRelease(
+          Effect.gen(function* () {
+            yield* Effect.sync(() => {
+              acquired += 1;
+            });
 
-          return yield* Greeting;
-        }),
-        () => Effect.sync(() => finalized++),
-      );
+            return yield* Greeting;
+          }),
+          () =>
+            Effect.sync(() => {
+              finalized += 1;
+            })
+        );
 
-      return () => Effect.map(Actor, (actor) => `${greeting}/${actor}`);
-    }),
-  );
-
-  const routes = Layer.mergeAll(
-    ActionHttp.layer(ActionHttp.make([identity]), app),
-    ActionHttp.layer(ActionHttp.make([identity], { prefix: "/v2" }), app),
-    ActionMcp.layerHttp(app, {
-      name: "test",
-      version: "0",
-    }),
-  ).pipe(Layer.provide(Layer.succeed(Greeting, "build")));
-
-  for (let runtime = 1; runtime <= 2; runtime++) {
-    const web = serveWithContext(routes);
-
-    try {
-      const response = await web.handler(post("/api/identity"), Context.make(Actor, "http"));
-
-      expect(await response.json()).toBe("build/http");
-      expect(
-        await (await web.handler(post("/v2/identity"), Context.make(Actor, "v2"))).json(),
-      ).toBe("build/v2");
-      await withMcpClient(
-        {
-          fetch: (request) => web.handler(request, Context.make(Actor, "mcp")),
-        },
-        async (client) => {
-          expect(
-            (await client.callTool({ name: "identity", arguments: {} })).structuredContent,
-          ).toBe("build/mcp");
-        },
-      );
-      expect(acquired).toBe(runtime);
-      expect(finalized).toBe(runtime - 1);
-    } finally {
-      await web.dispose();
-    }
-
-    expect(finalized).toBe(runtime);
-  }
-});
-
-it("releases what an HTTP call acquires when the call ends, before route middleware resumes", async () => {
-  const log: string[] = [];
-
-  const Open = Action.make("open", {
-    description: "Opens a resource of its own",
-    readOnly: false,
-    caller: CurrentActor,
-    success: Schema.String,
-  });
-
-  const logged = (name: string) =>
-    Effect.acquireRelease(
-      Effect.sync(() => log.push(`${name} acquire`)),
-      () => Effect.sync(() => log.push(`${name} release`)),
+        return () => Effect.map(Actor, (actor) => `${greeting}/${actor}`);
+      })
     );
 
-  const app = Action.implement(Open, () => Effect.as(logged("handler"), "opened"), {
-    authorize: () => Effect.asVoid(logged("authorize")),
+    const routes = Layer.mergeAll(
+      ActionHttp.layer(ActionHttp.make([identity]), app),
+      ActionHttp.layer(ActionHttp.make([identity], { prefix: "/v2" }), app),
+      ActionMcp.layerHttp(app, {
+        name: "test",
+        version: "0",
+      })
+    ).pipe(Layer.provide(Layer.succeed(Greeting, "build")));
+
+    for (let runtime = 1; runtime <= 2; runtime += 1) {
+      const web = serveWithContext(routes);
+
+      try {
+        const response = await web.handler(
+          post("/api/identity"),
+          Context.make(Actor, "http")
+        );
+
+        await expect(response.json()).resolves.toBe("build/http");
+
+        const identityResponse = await web.handler(
+          post("/v2/identity"),
+          Context.make(Actor, "v2")
+        );
+
+        await expect(identityResponse.json()).resolves.toBe("build/v2");
+        await withMcpClient(
+          {
+            fetch: async (request) =>
+              await web.handler(request, Context.make(Actor, "mcp")),
+          },
+          async (client) => {
+            const identityResult = await client.callTool({
+              name: "identity",
+              arguments: {},
+            });
+
+            expect(identityResult.structuredContent).toBe("build/mcp");
+          }
+        );
+        expect(acquired).toBe(runtime);
+        expect(finalized).toBe(runtime - 1);
+      } finally {
+        await web.dispose();
+      }
+
+      expect(finalized).toBe(runtime);
+    }
   });
 
-  const around = HttpRouter.middleware((route) =>
-    Effect.gen(function* () {
-      log.push("middleware before");
-      const response = yield* route;
-      log.push("middleware after");
+  it("builds a shared implementation with one set of startup services, not one per surface", async () => {
+    const app = Action.implement(
+      identity,
+      Effect.map(Greeting, (greeting) => () => Effect.succeed(greeting))
+    );
 
-      return response;
-    }),
-  ).layer;
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([identity]), app).pipe(
+          Layer.provide(Layer.succeed(Greeting, "http"))
+        ),
+        ActionMcp.layerHttp(app, { name: "test", version: "0" }).pipe(
+          Layer.provide(Layer.succeed(Greeting, "mcp"))
+        )
+      )
+    );
 
-  const web = serve(
-    ActionHttp.layer(ActionHttp.make([Open], { authentication: Login }), app).pipe(
-      Layer.provide([around, authenticate]),
-    ),
+    const identityResponse = await web.handler(post("/api/identity"));
+
+    const http = await identityResponse.json();
+
+    await withMcpClient({ fetch: web.handler }, async (client) => {
+      const identityResult = await client.callTool({
+        name: "identity",
+        arguments: {},
+      });
+
+      expect(identityResult.structuredContent).toBe(http);
+    });
+  });
+
+  it.effect(
+    "builds once beside routes served apart, when Action.layer is provided above both",
+    () =>
+      Effect.gen(function* () {
+        const Count = Action.make("count", {
+          description: "",
+          readOnly: true,
+          caller: CurrentActor,
+          success: Schema.Finite,
+        });
+
+        const Http = ActionHttp.make([Count], { authentication: Login });
+
+        class Start extends Context.Service<Start, number>()(
+          "bindings/Start"
+        ) {}
+
+        for (const order of ["routes first", "toolkit first"] as const) {
+          let built = 0;
+          let authorizers = 0;
+
+          const app = Action.implement(
+            Count,
+            Effect.map(Start, (start) => {
+              built += 1;
+
+              return () => Effect.succeed(start + built);
+            }),
+            {
+              authorize: Effect.map(Start, () => {
+                authorizers += 1;
+
+                return Action.allowAll;
+              }),
+            }
+          );
+
+          const routes = Testing.layer(
+            ActionHttp.layer(Http, app).pipe(Layer.provide(authenticate))
+          );
+
+          const tools = ActionToolkit.make(app);
+
+          const layers = (
+            order === "routes first"
+              ? Layer.mergeAll(routes, tools.layer)
+              : Layer.mergeAll(tools.layer, routes)
+          ).pipe(
+            Layer.provide(Action.layer(app)),
+            Layer.provide(Layer.succeed(Start, 0))
+          );
+
+          yield* Effect.gen(function* () {
+            const client = yield* ActionHttp.client(Http, as("alice"));
+            const toolkit = yield* tools.toolkit;
+
+            yield* client.count();
+            yield* Effect.flatMap(
+              toolkit.handle("count", {}),
+              Stream.runCollect
+            ).pipe(Effect.provideService(CurrentActor, actors.alice));
+          }).pipe(Effect.provide(layers));
+
+          expect([order, built, authorizers]).toStrictEqual([order, 1, 1]);
+        }
+      })
   );
+});
 
-  expect(await (await web.handler(withBearer(post("/api/open"), "alice"))).json()).toBe("opened");
-  expect(log).toEqual([
-    "middleware before",
-    "authorize acquire",
-    "handler acquire",
-    "handler release",
-    "authorize release",
-    "middleware after",
-  ]);
+const signedIn = (path: string) => send(withBearer(post(path), "alice"));
+
+describe("an HTTP call's scope", () => {
+  it("releases what an HTTP call acquires when the call ends, before route middleware resumes", async () => {
+    const log: string[] = [];
+
+    const Open = Action.make("open", {
+      description: "Opens a resource of its own",
+      readOnly: false,
+      caller: CurrentActor,
+      success: Schema.String,
+    });
+
+    const logged = (name: string) =>
+      Effect.acquireRelease(
+        Effect.sync(() => log.push(`${name} acquire`)),
+        () => Effect.sync(() => log.push(`${name} release`))
+      );
+
+    const app = Action.implement(
+      Open,
+      () => Effect.as(logged("handler"), "opened"),
+      {
+        authorize: () => Effect.asVoid(logged("authorize")),
+      }
+    );
+
+    const around = HttpRouter.middleware((route) =>
+      Effect.gen(function* () {
+        log.push("middleware before");
+        const response = yield* route;
+        log.push("middleware after");
+
+        return response;
+      })
+    ).layer;
+
+    const web = serve(
+      ActionHttp.layer(
+        ActionHttp.make([Open], { authentication: Login }),
+        app
+      ).pipe(Layer.provide([around, authenticate]))
+    );
+
+    const openResponse = await web.handler(
+      withBearer(post("/api/open"), "alice")
+    );
+
+    await expect(openResponse.json()).resolves.toBe("opened");
+    expect(log).toStrictEqual([
+      "middleware before",
+      "authorize acquire",
+      "handler acquire",
+      "handler release",
+      "authorize release",
+      "middleware after",
+    ]);
+  });
 });
 
 describe("selecting an implementation's actions", () => {
@@ -168,41 +307,51 @@ describe("selecting an implementation's actions", () => {
   const counted = <RA = never, EAX = never, RAX = never>(
     authorize:
       | Action.Authorize<typeof secret, RA>
-      | Effect.Effect<Action.Authorize<typeof secret, RA>, EAX, RAX>,
+      | Effect.Effect<Action.Authorize<typeof secret, RA>, EAX, RAX>
   ) => {
     const runs = { built: 0 };
 
     const app = Action.implement(
       [identity, secret],
       Effect.sync(() => {
-        runs.built++;
+        runs.built += 1;
 
-        return { identity: () => Effect.succeed("shared"), secret: () => Effect.succeed("hidden") };
+        return {
+          identity: () => Effect.succeed("shared"),
+          secret: () => Effect.succeed("hidden"),
+        };
       }),
-      { authorize },
+      { authorize }
     );
 
     return { runs, app };
   };
 
   const call = (path: string, name: "identity" | "secret") =>
-    Effect.flatMap(ActionMcp.client([identity, secret], { ...as("alice"), url: path }), (mcp) =>
-      mcp[name]().pipe(Effect.catchTag("Forbidden", ({ _tag }) => Effect.succeed(_tag))),
+    Effect.flatMap(
+      ActionMcp.client([identity, secret], { ...as("alice"), url: path }),
+      (mcp) =>
+        mcp[name]().pipe(
+          Effect.catchTag("Forbidden", ({ _tag }) => Effect.succeed(_tag))
+        )
     );
-
-  const signedIn = (path: string) => send(withBearer(post(path), "alice"));
 
   it.effect(
     "runs the builder once for every surface selecting from an implementation, each behind its authorizer",
     () =>
       Effect.gen(function* () {
-        const { runs, app } = counted(() => Effect.fail(new Action.Forbidden()));
+        const { runs, app } = counted(() =>
+          Effect.fail(new Action.Forbidden())
+        );
 
         const routes = Layer.mergeAll(
           ActionHttp.layer(Http, app),
           ActionHttp.layer(
-            ActionHttp.make([secret], { prefix: "/kept", authentication: Login }),
-            app,
+            ActionHttp.make([secret], {
+              prefix: "/kept",
+              authentication: Login,
+            }),
+            app
           ),
           ActionMcp.layerHttp(app, {
             name: "kept",
@@ -211,62 +360,70 @@ describe("selecting an implementation's actions", () => {
             actions: [secret],
             authentication: Login,
           }),
-          ActionToolkit.make(app, { actions: [identity] }).layer,
+          ActionToolkit.make(app, { actions: [identity] }).layer
         ).pipe(Layer.provide(authenticate));
 
         yield* Effect.gen(function* () {
           expect((yield* signedIn("/kept/secret")).status).toBe(403);
-          expect(yield* (yield* send(post("/api/identity"))).json).toBe("shared");
+          expect(yield* (yield* send(post("/api/identity"))).json).toBe(
+            "shared"
+          );
           expect(yield* call("/mcp/kept", "secret")).toBe("Forbidden");
         }).pipe(Effect.provide(Testing.layer(routes)));
 
         expect(runs.built).toBe(1);
-      }),
+      })
   );
 
-  it.effect("serves only the listed actions as tools, from the builder's one run", () =>
-    Effect.gen(function* () {
-      const { runs, app } = counted(() => Effect.void);
+  it.effect(
+    "serves only the listed actions as tools, from the builder's one run",
+    () =>
+      Effect.gen(function* () {
+        const { runs, app } = counted(() => Effect.void);
 
-      const Count = Action.make("count", {
-        description: "Counts",
-        readOnly: true,
-        caller: Action.Anyone,
-        input: Schema.Number,
-        success: Schema.Number,
-      });
+        const Count = Action.make("count", {
+          description: "Counts",
+          readOnly: true,
+          caller: Action.Anyone,
+          input: Schema.Finite,
+          success: Schema.Finite,
+        });
 
-      const counter = Action.implement(Count, (n) => Effect.succeed(n));
+        const counter = Action.implement(Count, (n) => Effect.succeed(n));
 
-      const routes = Layer.mergeAll(
-        ActionHttp.layer(Http, app).pipe(Layer.provide(authenticate)),
-        ActionMcp.layerHttp([app, counter], {
-          name: "tools",
-          version: "0",
-          actions: [identity],
-        }),
-      );
+        const routes = Layer.mergeAll(
+          ActionHttp.layer(Http, app).pipe(Layer.provide(authenticate)),
+          ActionMcp.layerHttp([app, counter], {
+            name: "tools",
+            version: "0",
+            actions: [identity],
+          })
+        );
 
-      yield* Effect.gen(function* () {
-        const listed = yield* (yield* send(mcpRequest({ method: "tools/list" }))).json;
+        yield* Effect.gen(function* () {
+          const listed = yield* (yield* send(
+            mcpRequest({ method: "tools/list" })
+          )).json;
 
-        expect(listed).toMatchObject({ result: { tools: [{ name: "identity" }] } });
-        expect(yield* call("/mcp", "identity")).toBe("shared");
-        expect(yield* (yield* signedIn("/api/secret")).json).toBe("hidden");
-      }).pipe(Effect.provide(Testing.layer(routes)));
+          expect(listed).toMatchObject({
+            result: { tools: [{ name: "identity" }] },
+          });
+          expect(yield* call("/mcp", "identity")).toBe("shared");
+          expect(yield* (yield* signedIn("/api/secret")).json).toBe("hidden");
+        }).pipe(Effect.provide(Testing.layer(routes)));
 
-      expect(runs.built).toBe(1);
+        expect(runs.built).toBe(1);
 
-      const { toolkit } = ActionToolkit.make(app, { actions: [identity] });
+        const { toolkit } = ActionToolkit.make(app, { actions: [identity] });
 
-      expect(Object.keys(toolkit.tools)).toEqual(["identity"]);
+        expect(Object.keys(toolkit.tools)).toStrictEqual(["identity"]);
 
-      const result = yield* Effect.flatMap(toolkit, (tools) =>
-        Effect.flatMap(tools.handle("identity", {}), Stream.runCollect),
-      ).pipe(Effect.provide(ActionToolkit.make(app).layer));
+        const result = yield* Effect.flatMap(toolkit, (tools) =>
+          Effect.flatMap(tools.handle("identity", {}), Stream.runCollect)
+        ).pipe(Effect.provide(ActionToolkit.make(app).layer));
 
-      expect(result).toMatchObject([{ isFailure: false, result: "shared" }]);
-    }),
+        expect(result).toMatchObject([{ isFailure: false, result: "shared" }]);
+      })
   );
 
   it("refuses a listed action no implementation holds, another contract of its name too", () => {
@@ -280,7 +437,7 @@ describe("selecting an implementation's actions", () => {
     });
 
     const narrowed: Action.AnyImplementation = Action.implement(identity, () =>
-      Effect.succeed("narrowed"),
+      Effect.succeed("narrowed")
     );
 
     expect(() =>
@@ -289,12 +446,14 @@ describe("selecting an implementation's actions", () => {
         version: "0",
         actions: [lookalike],
         authentication: Login,
-      }),
+      })
     ).toThrow(
-      "Listed in actions, but no implementation holds it: identity (another contract) (pass the implementation holding it, or list the contract it implements; one marked (another contract) is a contract of that name they do not hold: list the one they hold)",
+      "Listed in actions, but no implementation holds it: identity (another contract) (pass the implementation holding it, or list the contract it implements; one marked (another contract) is a contract of that name they do not hold: list the one they hold)"
     );
-    expect(() => ActionToolkit.make(narrowed, { actions: [identity, secret] })).toThrow(
-      "Listed in actions, but no implementation holds it: secret (pass the implementation holding it, or list the contract it implements)",
+    expect(() =>
+      ActionToolkit.make(narrowed, { actions: [identity, secret] })
+    ).toThrow(
+      "Listed in actions, but no implementation holds it: secret (pass the implementation holding it, or list the contract it implements)"
     );
   });
 
@@ -302,17 +461,21 @@ describe("selecting an implementation's actions", () => {
     "runs the authorizer for each protected call on every surface, never for a public one",
     () =>
       Effect.gen(function* () {
-        const authorized: Array<string> = [];
+        const authorized: string[] = [];
 
         const { runs, app } = counted((action) =>
           Effect.sync(() => {
             authorized.push(action.name);
-          }),
+          })
         );
 
         const routes = Layer.mergeAll(
           ActionHttp.layer(Http, app),
-          ActionMcp.layerHttp(app, { name: "both", version: "0", authentication: Login }),
+          ActionMcp.layerHttp(app, {
+            name: "both",
+            version: "0",
+            authentication: Login,
+          })
         ).pipe(Layer.provide(authenticate));
 
         yield* Effect.gen(function* () {
@@ -322,141 +485,69 @@ describe("selecting an implementation's actions", () => {
           expect(yield* call("/mcp", "secret")).toBe("hidden");
         }).pipe(Effect.provide(Testing.layer(routes)));
 
-        expect(authorized).toEqual(["secret", "secret"]);
+        expect(authorized).toStrictEqual(["secret", "secret"]);
         expect(runs.built).toBe(1);
-      }),
+      })
   );
 
-  it.effect("builds a built authorizer once per layer graph, however many surfaces serve it", () =>
-    Effect.gen(function* () {
-      const builds = { authorizer: 0 };
+  it.effect(
+    "builds a built authorizer once per layer graph, however many surfaces serve it",
+    () =>
+      Effect.gen(function* () {
+        const builds = { authorizer: 0 };
 
-      const { runs, app } = counted(
-        Effect.sync(() => {
-          builds.authorizer++;
+        const { runs, app } = counted(
+          Effect.sync(() => {
+            builds.authorizer += 1;
 
-          return () => Effect.fail(new Action.Forbidden());
-        }),
-      );
-
-      const both = Layer.mergeAll(
-        ActionHttp.layer(Http, app),
-        ActionHttp.layer(
-          ActionHttp.make([secret], { prefix: "/kept", authentication: Login }),
-          app,
-        ),
-        ActionMcp.layerHttp(app, {
-          name: "kept",
-          version: "0",
-          actions: [secret],
-          authentication: Login,
-        }),
-      ).pipe(Layer.provide(authenticate));
-
-      yield* Effect.gen(function* () {
-        expect((yield* signedIn("/api/secret")).status).toBe(403);
-        expect((yield* signedIn("/kept/secret")).status).toBe(403);
-        expect(yield* call("/mcp", "secret")).toBe("Forbidden");
-      }).pipe(Effect.provide(Testing.layer(both)));
-
-      expect({ ...runs, ...builds }).toEqual({ built: 1, authorizer: 1 });
-
-      const alone = ActionHttp.layer(
-        ActionHttp.make([secret], { authentication: Login }),
-        app,
-      ).pipe(Layer.provide(authenticate));
-
-      yield* Effect.gen(function* () {
-        expect((yield* signedIn("/api/secret")).status).toBe(403);
-      }).pipe(Effect.provide(Testing.layer(alone)));
-
-      expect({ ...runs, ...builds }).toEqual({ built: 2, authorizer: 2 });
-    }),
-  );
-});
-
-it("builds a shared implementation with one set of startup services, not one per surface", async () => {
-  const app = Action.implement(
-    identity,
-    Effect.map(Greeting, (greeting) => () => Effect.succeed(greeting)),
-  );
-
-  const web = serve(
-    Layer.mergeAll(
-      ActionHttp.layer(ActionHttp.make([identity]), app).pipe(
-        Layer.provide(Layer.succeed(Greeting, "http")),
-      ),
-      ActionMcp.layerHttp(app, { name: "test", version: "0" }).pipe(
-        Layer.provide(Layer.succeed(Greeting, "mcp")),
-      ),
-    ),
-  );
-
-  const http = await (await web.handler(post("/api/identity"))).json();
-
-  await withMcpClient({ fetch: web.handler }, async (client) => {
-    expect((await client.callTool({ name: "identity", arguments: {} })).structuredContent).toBe(
-      http,
-    );
-  });
-});
-
-it.effect("builds once beside routes served apart, when Action.layer is provided above both", () =>
-  Effect.gen(function* () {
-    const Count = Action.make("count", {
-      description: "",
-      readOnly: true,
-      caller: CurrentActor,
-      success: Schema.Finite,
-    });
-
-    const Http = ActionHttp.make([Count], { authentication: Login });
-
-    class Start extends Context.Service<Start, number>()("bindings/Start") {}
-
-    for (const order of ["routes first", "toolkit first"] as const) {
-      let built = 0;
-      let authorizers = 0;
-
-      const app = Action.implement(
-        Count,
-        Effect.map(Start, (start) => {
-          built += 1;
-
-          return () => Effect.succeed(start + built);
-        }),
-        {
-          authorize: Effect.map(Start, () => {
-            authorizers += 1;
-
-            return Action.allowAll;
-          }),
-        },
-      );
-
-      const routes = Testing.layer(ActionHttp.layer(Http, app).pipe(Layer.provide(authenticate)));
-      const tools = ActionToolkit.make(app);
-
-      const layers = (
-        order === "routes first"
-          ? Layer.mergeAll(routes, tools.layer)
-          : Layer.mergeAll(tools.layer, routes)
-      ).pipe(Layer.provide(Action.layer(app)), Layer.provide(Layer.succeed(Start, 0)));
-
-      yield* Effect.gen(function* () {
-        const client = yield* ActionHttp.client(Http, as("alice"));
-        const toolkit = yield* tools.toolkit;
-
-        yield* client.count();
-        yield* Effect.flatMap(toolkit.handle("count", {}), Stream.runCollect).pipe(
-          Effect.provideService(CurrentActor, actors.alice),
+            return () => Effect.fail(new Action.Forbidden());
+          })
         );
-      }).pipe(Effect.provide(layers));
 
-      expect([order, built, authorizers]).toEqual([order, 1, 1]);
-    }
-  }),
-);
+        const both = Layer.mergeAll(
+          ActionHttp.layer(Http, app),
+          ActionHttp.layer(
+            ActionHttp.make([secret], {
+              prefix: "/kept",
+              authentication: Login,
+            }),
+            app
+          ),
+          ActionMcp.layerHttp(app, {
+            name: "kept",
+            version: "0",
+            actions: [secret],
+            authentication: Login,
+          })
+        ).pipe(Layer.provide(authenticate));
+
+        yield* Effect.gen(function* () {
+          expect((yield* signedIn("/api/secret")).status).toBe(403);
+          expect((yield* signedIn("/kept/secret")).status).toBe(403);
+          expect(yield* call("/mcp", "secret")).toBe("Forbidden");
+        }).pipe(Effect.provide(Testing.layer(both)));
+
+        expect({ ...runs, ...builds }).toStrictEqual({
+          built: 1,
+          authorizer: 1,
+        });
+
+        const alone = ActionHttp.layer(
+          ActionHttp.make([secret], { authentication: Login }),
+          app
+        ).pipe(Layer.provide(authenticate));
+
+        yield* Effect.gen(function* () {
+          expect((yield* signedIn("/api/secret")).status).toBe(403);
+        }).pipe(Effect.provide(Testing.layer(alone)));
+
+        expect({ ...runs, ...builds }).toStrictEqual({
+          built: 2,
+          authorizer: 2,
+        });
+      })
+  );
+});
 
 describe("a builder beside HttpRouter.serve", () => {
   const Count = Action.make("count", {
@@ -477,8 +568,13 @@ describe("a builder beside HttpRouter.serve", () => {
         builds.count += 1;
         let calls = 0;
 
-        return () => Effect.sync(() => ++calls);
-      }),
+        return () =>
+          Effect.sync(() => {
+            calls += 1;
+
+            return calls;
+          });
+      })
     );
 
     return { app, builds };
@@ -493,23 +589,25 @@ describe("a builder beside HttpRouter.serve", () => {
 
         const job = Layer.effectDiscard(
           Effect.flatMap(tools.toolkit, (toolkit) =>
-            Effect.flatMap(toolkit.handle("count", {}), Stream.runDrain),
-          ),
+            Effect.flatMap(toolkit.handle("count", {}), Stream.runDrain)
+          )
         ).pipe(Layer.provide(tools.layer));
 
         const routes = ActionHttp.layer(Http, app);
 
         const server = HttpRouter.serve(
-          order === "routes first" ? Layer.mergeAll(routes, job) : Layer.mergeAll(job, routes),
-          { disableLogger: true, disableListenLog: true },
+          order === "routes first"
+            ? Layer.mergeAll(routes, job)
+            : Layer.mergeAll(job, routes),
+          { disableLogger: true, disableListenLog: true }
         ).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
 
         const count = yield* Effect.flatMap(ActionHttp.client(Http), (client) =>
-          client.count(),
+          client.count()
         ).pipe(Effect.provide(server));
 
-        expect([builds.count, count]).toEqual([1, 2]);
-      }),
+        expect([builds.count, count]).toStrictEqual([1, 2]);
+      })
   );
 
   it.effect.each(["HTTP first", "MCP first"] as const)(
@@ -531,19 +629,19 @@ describe("a builder beside HttpRouter.serve", () => {
             builds.count += 1;
 
             return () => Effect.succeed(greeting);
-          }),
+          })
         );
 
         const http = Layer.fresh(
           ActionHttp.layer(ActionHttp.make([Greet]), app).pipe(
-            Layer.provide(Layer.succeed(Greeting, "http")),
-          ),
+            Layer.provide(Layer.succeed(Greeting, "http"))
+          )
         );
 
         const mcp = Layer.fresh(
           ActionMcp.layerHttp(app, { name: "test", version: "0" }).pipe(
-            Layer.provide(Layer.succeed(Greeting, "mcp")),
-          ),
+            Layer.provide(Layer.succeed(Greeting, "mcp"))
+          )
         );
 
         const greetings = yield* Effect.gen(function* () {
@@ -554,13 +652,15 @@ describe("a builder beside HttpRouter.serve", () => {
         }).pipe(
           Effect.provide(
             Testing.layer(
-              order === "HTTP first" ? Layer.mergeAll(http, mcp) : Layer.mergeAll(mcp, http),
-            ),
-          ),
+              order === "HTTP first"
+                ? Layer.mergeAll(http, mcp)
+                : Layer.mergeAll(mcp, http)
+            )
+          )
         );
 
-        expect([builds.count, greetings]).toEqual([2, ["http", "mcp"]]);
-      }),
+        expect([builds.count, greetings]).toStrictEqual([2, ["http", "mcp"]]);
+      })
   );
 
   it.effect.each(["route first", "MCP first"] as const)(
@@ -583,379 +683,446 @@ describe("a builder beside HttpRouter.serve", () => {
             tools.toolkit,
             (toolkit) => () =>
               Effect.gen(function* () {
-                const [called] = yield* Stream.runCollect(yield* toolkit.handle("count", {}));
+                const [called] = yield* Stream.runCollect(
+                  yield* toolkit.handle("count", {})
+                );
 
                 return Number(called?.result);
-              }).pipe(Effect.orDie),
-          ),
+              }).pipe(Effect.orDie)
+          )
         );
 
         const ChatHttp = ActionHttp.make([Chat]);
-        const route = ActionHttp.layer(ChatHttp, chat).pipe(Layer.provide(tools.layer));
+
+        const route = ActionHttp.layer(ChatHttp, chat).pipe(
+          Layer.provide(tools.layer)
+        );
+
         const mcp = ActionMcp.layerHttp(app, { name: "test", version: "0" });
 
         const counts = yield* Effect.gen(function* () {
           const client = yield* ActionHttp.client(ChatHttp);
           const endpoint = yield* ActionMcp.client([Count]);
 
-          return [yield* client.chat(), yield* endpoint.count(), yield* client.chat()];
+          return [
+            yield* client.chat(),
+            yield* endpoint.count(),
+            yield* client.chat(),
+          ];
         }).pipe(
           Effect.provide(
             Testing.layer(
-              order === "route first" ? Layer.mergeAll(route, mcp) : Layer.mergeAll(mcp, route),
-            ),
-          ),
+              order === "route first"
+                ? Layer.mergeAll(route, mcp)
+                : Layer.mergeAll(mcp, route)
+            )
+          )
         );
 
-        expect([builds.count, counts]).toEqual([1, [1, 2, 3]]);
-      }),
+        expect([builds.count, counts]).toStrictEqual([1, [1, 2, 3]]);
+      })
   );
 });
 
-it("serves a copy of a binding like the binding itself", async () => {
-  const Http = ActionHttp.make([identity], { prefix: "/v1" });
-  const app = Action.implement(identity, () => Effect.succeed("copied"));
+const recorded = async <A>(call: (tracer: Tracer.Tracer) => Promise<A>) => {
+  const spans: Tracer.Span[] = [];
 
-  const web = serve(ActionHttp.layer({ ...Http }, app));
+  await call(
+    Tracer.make({
+      span(options) {
+        const span = Tracer.nativeTracer.span(options);
+        spans.push(span);
 
-  expect(await (await web.handler(post("/v1/identity"))).json()).toBe("copied");
-});
-
-it("serves a binding with no actions beside one with routes", async () => {
-  const app = Action.implement(identity, () => Effect.succeed("served"));
-
-  const web = serve(
-    Layer.mergeAll(
-      ActionHttp.layer(ActionHttp.make([], { prefix: "/empty" }), []),
-      ActionHttp.layer(ActionHttp.make([identity], { prefix: "/v1" }), app),
-    ),
+        return span;
+      },
+    })
   );
 
-  expect(await (await web.handler(post("/v1/identity"))).json()).toBe("served");
-  expect((await web.handler(post("/empty/identity"))).status).toBe(404);
-});
+  return spans.flatMap((span) => [...span.attributes.values()]);
+};
 
-it("refuses an object that only looks like an implementation", () => {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Fabrication fixture: what a second installed copy of the package would make.
-  const fake = { actions: [identity] } as never;
+describe("serving a binding", () => {
+  it("serves a copy of a binding like the binding itself", async () => {
+    const Http = ActionHttp.make([identity], { prefix: "/v1" });
+    const app = Action.implement(identity, () => Effect.succeed("copied"));
 
-  expect(() => ActionHttp.layer(ActionHttp.make([identity]), fake)).toThrow(
-    "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice",
-  );
-});
+    const web = serve(ActionHttp.layer({ ...Http }, app));
 
-it("keeps same-contract implementations apart over MCP", async () => {
-  const a = Action.implement(identity, () => Effect.succeed("a"));
-  const b = Action.implement(identity, () => Effect.succeed("b"));
+    const identityResponse = await web.handler(post("/v1/identity"));
 
-  const web = serve(
-    Layer.mergeAll(
-      ActionMcp.layerHttp(a, {
-        name: "a",
-        version: "0",
-        path: "/a",
-      }),
-      ActionMcp.layerHttp(b, {
-        name: "b",
-        version: "0",
-        path: "/b",
-      }),
-    ),
-  );
-
-  for (const name of ["a", "b", "a"]) {
-    await withMcpClient({ fetch: web.handler, path: `/${name}` }, async (client) => {
-      expect((await client.callTool({ name: "identity", arguments: {} })).structuredContent).toBe(
-        name,
-      );
-    });
-  }
-});
-
-it("keeps a tool call's arguments off its spans over MCP, as HTTP keeps its body, where Effect's toolkit records them, a Schema.Redacted value included", async () => {
-  const SignIn = Action.make("login", {
-    description: "",
-    readOnly: false,
-    caller: Action.Anyone,
-    input: { password: Schema.Redacted(Schema.String) },
-    success: Schema.String,
+    await expect(identityResponse.json()).resolves.toBe("copied");
   });
 
-  const app = Action.implement(SignIn, () => Effect.succeed("in"));
+  it("serves a binding with no actions beside one with routes", async () => {
+    const app = Action.implement(identity, () => Effect.succeed("served"));
 
-  const recorded = async <A>(call: (tracer: Tracer.Tracer) => Promise<A>) => {
-    const spans: Tracer.Span[] = [];
-
-    await call(
-      Tracer.make({
-        span(options) {
-          const span = Tracer.nativeTracer.span(options);
-          spans.push(span);
-
-          return span;
-        },
-      }),
+    const web = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([], { prefix: "/empty" }), []),
+        ActionHttp.layer(ActionHttp.make([identity], { prefix: "/v1" }), app)
+      )
     );
 
-    return spans.flatMap((span) => [...span.attributes.values()]);
-  };
+    const routed = await web.handler(post("/v1/identity"));
 
-  const web = serveWithContext(
-    Layer.mergeAll(
-      ActionHttp.layer(ActionHttp.make([SignIn]), app),
-      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-    ),
-  );
+    await expect(routed.json()).resolves.toBe("served");
 
-  const tools = ActionToolkit.make(app);
-  const sent = { password: "hunter2" };
+    const unrouted = await web.handler(post("/empty/identity"));
 
-  const http = await recorded((tracer) =>
-    web.handler(post("/api/login", sent), Context.make(Tracer.Tracer, tracer)),
-  );
-
-  const mcp = await recorded((tracer) =>
-    web.handler(rawToolCall("login", sent), Context.make(Tracer.Tracer, tracer)),
-  );
-
-  const toolkit = await recorded((tracer) =>
-    Effect.flatMap(tools.toolkit, (handled) =>
-      Effect.flatMap(handled.handle("login", sent), Stream.runDrain),
-    ).pipe(
-      Effect.withSpan("caller"),
-      Effect.provide(tools.layer),
-      Effect.provideService(Tracer.Tracer, tracer),
-      Effect.runPromise,
-    ),
-  );
-
-  expect(http).toContain("login");
-  expect(mcp).toContain("login");
-  expect(JSON.stringify(http)).not.toContain("hunter2");
-  expect(JSON.stringify(mcp)).not.toContain("hunter2");
-  expect(toolkit).toContainEqual(sent);
-});
-
-describe.each(["HTTP", "MCP"] as const)("request logging and tracing: %s", (transport) => {
-  const requestSpan = transport === "HTTP" ? /^POST$/ : /^McpServer\..*tools\/call$/;
-
-  const Guarded = Action.make("guarded", {
-    description: "Signed in only",
-    readOnly: false,
-    caller: CurrentActor,
-    success: Schema.String,
+    expect(unrouted.status).toBe(404);
   });
 
-  const run = async (
-    handler: () => Effect.Effect<string>,
-    name: "identity" | "guarded" = "identity",
-    authorize: Action.Authorize<typeof Guarded> = Action.allowAll,
-  ) => {
-    const logs: Array<{ message: unknown; annotations: ReadonlyMap<string, unknown> }> = [];
-    const { spans, tracer } = recordSpans();
+  it("refuses an object that only looks like an implementation", () => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Fabrication fixture: what a second installed copy of the package would make.
+    const fake = { actions: [identity] } as never;
 
-    const logger = Logger.make((options) => {
-      logs.push({
-        message: options.message,
-        annotations: new Map(
-          Object.entries(options.fiber.getRef(References.CurrentLogAnnotations)),
-        ),
+    expect(() => ActionHttp.layer(ActionHttp.make([identity]), fake)).toThrow(
+      "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice"
+    );
+  });
+
+  it("keeps same-contract implementations apart over MCP", async () => {
+    const a = Action.implement(identity, () => Effect.succeed("a"));
+    const b = Action.implement(identity, () => Effect.succeed("b"));
+
+    const web = serve(
+      Layer.mergeAll(
+        ActionMcp.layerHttp(a, {
+          name: "a",
+          version: "0",
+          path: "/a",
+        }),
+        ActionMcp.layerHttp(b, {
+          name: "b",
+          version: "0",
+          path: "/b",
+        })
+      )
+    );
+
+    for (const name of ["a", "b", "a"]) {
+      await withMcpClient(
+        { fetch: web.handler, path: `/${name}` },
+        async (client) => {
+          const identityResult = await client.callTool({
+            name: "identity",
+            arguments: {},
+          });
+
+          expect(identityResult.structuredContent).toBe(name);
+        }
+      );
+    }
+  });
+
+  it.each(["HTTP", "MCP"])(
+    "provides request identity through router wiring over %s",
+    async (transport) => {
+      const app = Action.implement(identity, () => Actor);
+
+      const routes =
+        transport === "HTTP"
+          ? ActionHttp.layer(ActionHttp.make([identity]), app)
+          : ActionMcp.layerHttp(app, {
+              name: "test",
+              version: "0",
+            });
+
+      const web = serve(
+        routes.pipe(HttpRouter.provideRequest(Layer.succeed(Actor, "request")))
+      );
+
+      const response = await web.handler(
+        transport === "HTTP" ? post("/api/identity") : rawToolCall("identity")
+      );
+
+      expect(response.status).toBe(200);
+
+      const answer =
+        transport === "HTTP" ? await response.json() : await valueOf(response);
+
+      expect(answer).toBe("request");
+    }
+  );
+});
+
+const Count = Action.make("count", {
+  description: "Answers a value its success cannot encode",
+  readOnly: true,
+  caller: CurrentActor,
+  input: { value: Schema.Finite },
+  success: Schema.Finite,
+});
+
+const count = Action.implement(Count, () => Effect.succeed(Infinity), {
+  authorize: Action.allowAll,
+});
+
+const callCount = async (
+  transport: "HTTP" | "MCP",
+  value: Schema.Json,
+  token: string
+) => {
+  const routes =
+    transport === "HTTP"
+      ? ActionHttp.layer(
+          ActionHttp.make([Count], { authentication: Login }),
+          count
+        )
+      : ActionMcp.layerHttp(count, {
+          name: "test",
+          version: "0",
+          authentication: Login,
+        });
+
+  const request =
+    transport === "HTTP"
+      ? post("/api/count", { value })
+      : rawToolCall("count", { value });
+
+  const { spans, tracer } = recordSpans();
+  const web = serveWithContext(routes.pipe(Layer.provide(authenticate)));
+
+  const response = await web.handler(
+    withBearer(request, token),
+    Context.make(Tracer.Tracer, tracer)
+  );
+
+  return { response, spans };
+};
+
+describe.each(["HTTP", "MCP"] as const)(
+  "request logging and tracing: %s",
+  (transport) => {
+    const requestSpan =
+      transport === "HTTP" ? /^POST$/u : /^McpServer\..*tools\/call$/u;
+
+    const Guarded = Action.make("guarded", {
+      description: "Signed in only",
+      readOnly: false,
+      caller: CurrentActor,
+      success: Schema.String,
+    });
+
+    const run = async (
+      handler: () => Effect.Effect<string>,
+      name: "identity" | "guarded" = "identity",
+      authorize: Action.Authorize<typeof Guarded> = Action.allowAll
+    ) => {
+      const logs: Array<{
+        message: unknown;
+        annotations: ReadonlyMap<string, unknown>;
+      }> = [];
+
+      const { spans, tracer } = recordSpans();
+
+      const logger = Logger.make((options) => {
+        logs.push({
+          message: options.message,
+          annotations: new Map(
+            Object.entries(
+              options.fiber.getRef(References.CurrentLogAnnotations)
+            )
+          ),
+        });
+      });
+
+      const app = Action.implement(
+        [identity, Guarded],
+        { identity: handler, guarded: handler },
+        { authorize }
+      );
+
+      const routes =
+        transport === "HTTP"
+          ? ActionHttp.layer(
+              ActionHttp.make([identity, Guarded], { authentication: Login }),
+              app
+            )
+          : ActionMcp.layerHttp(app, {
+              name: "test",
+              version: "0",
+              authentication: Login,
+            });
+
+      const web = serveWithContext(routes.pipe(Layer.provide(authenticate)));
+
+      const context = Context.make(
+        Logger.CurrentLoggers,
+        new Set([logger])
+      ).pipe(Context.add(Tracer.Tracer, tracer));
+
+      await (transport === "HTTP"
+        ? web.handler(withBearer(post(`/api/${name}`), "alice"), context)
+        : withMcpClient(
+            {
+              fetch: async (request) =>
+                await web.handler(withBearer(request, "alice"), context),
+            },
+            async (client) => await client.callTool({ name, arguments: {} })
+          ));
+
+      return { logs, spans };
+    };
+
+    it("runs the handler in an action span under the request span", async () => {
+      const { logs, spans } = await run(() =>
+        Effect.log("handler ran").pipe(
+          Effect.as("ok"),
+          Effect.withSpan("action.identity")
+        )
+      );
+
+      const action = spans.get("identity");
+      const child = spans.get("action.identity");
+      assert(action && child);
+
+      expect(Option.getOrUndefined(child.parent)).toBe(action);
+
+      const parent = Option.getOrUndefined(action.parent);
+      assert(parent?._tag === "Span");
+      expect(parent.name).toMatch(requestSpan);
+
+      const identityAnnotations = new Map<string, unknown>([
+        ["action.name", "identity"],
+        ["action.read_only", false],
+      ]);
+
+      expect(action.attributes).toStrictEqual(identityAnnotations);
+      expect(logs).toContainEqual({
+        message: ["handler ran"],
+        annotations: identityAnnotations,
       });
     });
 
-    const app = Action.implement(
-      [identity, Guarded],
-      { identity: handler, guarded: handler },
-      { authorize },
-    );
-
-    const routes =
-      transport === "HTTP"
-        ? ActionHttp.layer(ActionHttp.make([identity, Guarded], { authentication: Login }), app)
-        : ActionMcp.layerHttp(app, {
-            name: "test",
-            version: "0",
-            authentication: Login,
-          });
-
-    const web = serveWithContext(routes.pipe(Layer.provide(authenticate)));
-
-    const context = Context.make(Logger.CurrentLoggers, new Set([logger])).pipe(
-      Context.add(Tracer.Tracer, tracer),
-    );
-
-    if (transport === "HTTP") {
-      await web.handler(withBearer(post(`/api/${name}`), "alice"), context);
-    } else {
-      await withMcpClient(
-        {
-          fetch: (request) => web.handler(withBearer(request, "alice"), context),
-        },
-        (client) => client.callTool({ name, arguments: {} }),
+    it("runs the authorizer in the action span with its log annotations", async () => {
+      const { logs, spans } = await run(
+        () => Effect.succeed("ok"),
+        "guarded",
+        () => Effect.withSpan(Effect.log("authorizer ran"), "authorize")
       );
-    }
 
-    return { logs, spans };
-  };
+      expect(logs).toContainEqual({
+        message: ["authorizer ran"],
+        annotations: new Map<string, unknown>([
+          ["action.name", "guarded"],
+          ["action.read_only", false],
+        ]),
+      });
+      const action = spans.get("guarded");
+      const child = spans.get("authorize");
+      assert(action && child);
 
-  it("runs the handler in an action span under the request span", async () => {
-    const { logs, spans } = await run(() =>
-      Effect.log("handler ran").pipe(Effect.as("ok"), Effect.withSpan("action.identity")),
-    );
+      expect(Option.getOrUndefined(child.parent)).toBe(action);
 
-    const action = spans.get("identity");
-    const child = spans.get("action.identity");
-    assert(action && child);
-
-    expect(Option.getOrUndefined(child.parent)).toBe(action);
-
-    const parent = Option.getOrUndefined(action.parent);
-    assert(parent?._tag === "Span");
-    expect(parent.name).toMatch(requestSpan);
-
-    const identity = new Map<string, unknown>([
-      ["action.name", "identity"],
-      ["action.read_only", false],
-    ]);
-
-    expect(action.attributes).toEqual(identity);
-    expect(logs).toContainEqual({ message: ["handler ran"], annotations: identity });
-  });
-
-  it("runs the authorizer in the action span with its log annotations", async () => {
-    const { logs, spans } = await run(
-      () => Effect.succeed("ok"),
-      "guarded",
-      () => Effect.withSpan(Effect.log("authorizer ran"), "authorize"),
-    );
-
-    expect(logs).toContainEqual({
-      message: ["authorizer ran"],
-      annotations: new Map<string, unknown>([
-        ["action.name", "guarded"],
-        ["action.read_only", false],
-      ]),
+      const parent = Option.getOrUndefined(action.parent);
+      assert(parent?._tag === "Span");
+      expect(parent.name).toMatch(requestSpan);
     });
-    const action = spans.get("guarded");
-    const child = spans.get("authorize");
-    assert(action && child);
 
-    expect(Option.getOrUndefined(child.parent)).toBe(action);
+    it("rejects invalid credentials before opening an action span", async () => {
+      const { response, spans } = await callCount(transport, 1, "unknown");
 
-    const parent = Option.getOrUndefined(action.parent);
-    assert(parent?._tag === "Span");
-    expect(parent.name).toMatch(requestSpan);
-  });
+      expect(response.status).toBe(401);
+      expect(spans.has("count")).toBe(false);
+    });
+  }
+);
 
-  const Count = Action.make("count", {
-    description: "Answers a value its success cannot encode",
-    readOnly: true,
-    caller: CurrentActor,
-    input: { value: Schema.Finite },
-    success: Schema.Finite,
-  });
+describe("a call's spans", () => {
+  it("keeps a tool call's arguments off its spans over MCP, as HTTP keeps its body, where Effect's toolkit records them, a Schema.Redacted value included", async () => {
+    const SignIn = Action.make("login", {
+      description: "",
+      readOnly: false,
+      caller: Action.Anyone,
+      input: { password: Schema.Redacted(Schema.String) },
+      success: Schema.String,
+    });
 
-  const count = Action.implement(Count, () => Effect.succeed(Infinity), {
-    authorize: Action.allowAll,
-  });
+    const app = Action.implement(SignIn, () => Effect.succeed("in"));
 
-  const countRoutes = (
-    transport === "HTTP"
-      ? ActionHttp.layer(ActionHttp.make([Count], { authentication: Login }), count)
-      : ActionMcp.layerHttp(count, { name: "test", version: "0", authentication: Login })
-  ).pipe(Layer.provide(authenticate));
-
-  const requestCount = (value: Schema.Json, token: string) =>
-    withBearer(
-      transport === "HTTP" ? post("/api/count", { value }) : rawToolCall("count", { value }),
-      token,
+    const web = serveWithContext(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([SignIn]), app),
+        ActionMcp.layerHttp(app, { name: "test", version: "0" })
+      )
     );
 
-  it("rejects invalid credentials before opening an action span", async () => {
-    const { spans, tracer } = recordSpans();
-    const web = serveWithContext(countRoutes);
+    const tools = ActionToolkit.make(app);
+    const sent = { password: "hunter2" };
 
-    const response = await web.handler(
-      requestCount(1, "unknown"),
-      Context.make(Tracer.Tracer, tracer),
+    const http = await recorded(
+      async (tracer) =>
+        await web.handler(
+          post("/api/login", sent),
+          Context.make(Tracer.Tracer, tracer)
+        )
     );
 
-    expect(response.status).toBe(401);
+    const mcp = await recorded(
+      async (tracer) =>
+        await web.handler(
+          rawToolCall("login", sent),
+          Context.make(Tracer.Tracer, tracer)
+        )
+    );
+
+    const toolkit = await recorded(async (tracer) => {
+      await Effect.flatMap(tools.toolkit, (handled) =>
+        Effect.flatMap(handled.handle("login", sent), Stream.runDrain)
+      ).pipe(
+        Effect.withSpan("caller"),
+        Effect.provide(tools.layer),
+        Effect.provideService(Tracer.Tracer, tracer),
+        Effect.runPromise
+      );
+    });
+
+    expect(http).toContain("login");
+    expect(mcp).toContain("login");
+    expect(JSON.stringify(http)).not.toContain("hunter2");
+    expect(JSON.stringify(mcp)).not.toContain("hunter2");
+    expect(toolkit).toContainEqual(sent);
+  });
+
+  it("opens no action span for input that does not decode, which HTTP answers with a 400", async () => {
+    const { response, spans } = await callCount("HTTP", "invalid", "alice");
+
+    expect(response.status).toBe(400);
     expect(spans.has("count")).toBe(false);
   });
 
-  it("rejects invalid input before opening an action span", async () => {
-    const { spans, tracer } = recordSpans();
-    const web = serveWithContext(countRoutes);
+  it("opens no action span for input that does not decode, which MCP answers as a tool error naming the tool", async () => {
+    const { response, spans } = await callCount("MCP", "invalid", "alice");
+    const reply = await Effect.runPromise(toolReplyOf(await response.text()));
 
-    const response = await web.handler(
-      requestCount("invalid", "alice"),
-      Context.make(Tracer.Tracer, tracer),
-    );
-
-    if (transport === "HTTP") {
-      expect(response.status).toBe(400);
-    } else {
-      const reply = await Effect.runPromise(toolReplyOf(await response.text()));
-      expect(reply.isError).toBe(true);
-      expect(reply.text).toContain("Invalid parameters for tool 'count'");
-    }
-
+    expect(reply.isError).toBe(true);
+    expect(reply.text).toContain("Invalid parameters for tool 'count'");
     expect(spans.has("count")).toBe(false);
   });
 
-  it("ends a successful action span before response encoding fails", async () => {
-    const { spans, tracer } = recordSpans();
-    const web = serveWithContext(countRoutes);
+  it("ends the action span with the handler's success before HTTP fails to encode it, with a 500", async () => {
+    const { response, spans } = await callCount("HTTP", 1, "alice");
 
-    const response = await web.handler(
-      requestCount(1, "alice"),
-      Context.make(Tracer.Tracer, tracer),
-    );
+    expect(response.status).toBe(500);
+    expect(spans.get("count")?.status).toMatchObject({
+      _tag: "Ended",
+      exit: Exit.succeed(Infinity),
+    });
+  });
 
-    if (transport === "HTTP") {
-      expect(response.status).toBe(500);
-    } else {
-      expect(await response.json()).toMatchObject({ result: { isError: true } });
-    }
+  it("ends the action span with the handler's success before MCP fails to encode it, as a tool error", async () => {
+    const { response, spans } = await callCount("MCP", 1, "alice");
 
+    await expect(response.json()).resolves.toMatchObject({
+      result: { isError: true },
+    });
     expect(spans.get("count")?.status).toMatchObject({
       _tag: "Ended",
       exit: Exit.succeed(Infinity),
     });
   });
 });
-
-it.each(["HTTP", "MCP"])(
-  "provides request identity through router wiring over %s",
-  async (transport) => {
-    const app = Action.implement(identity, () => Actor);
-
-    const routes =
-      transport === "HTTP"
-        ? ActionHttp.layer(ActionHttp.make([identity]), app)
-        : ActionMcp.layerHttp(app, {
-            name: "test",
-            version: "0",
-          });
-
-    const web = serve(routes.pipe(HttpRouter.provideRequest(Layer.succeed(Actor, "request"))));
-
-    const response = await web.handler(
-      transport === "HTTP" ? post("/api/identity") : rawToolCall("identity"),
-    );
-
-    expect(response.status).toBe(200);
-
-    if (transport === "HTTP") {
-      expect(await response.json()).toBe("request");
-    } else {
-      expect(await response.json()).toMatchObject({
-        result: { structuredContent: "request" },
-      });
-    }
-  },
-);
 
 class Tenant extends Context.Service<Tenant, string>()("bindings/Tenant") {}
 
@@ -983,7 +1150,7 @@ const Audit = Action.make("audit", {
 
 const whoAmI = Action.implement(
   WhoAmI,
-  Effect.map(Tenant, (tenant) => () => Effect.succeed(`ada@${tenant}`)),
+  Effect.map(Tenant, (tenant) => () => Effect.succeed(`ada@${tenant}`))
 );
 
 const billing = Action.implement([Invoice, Audit], {
@@ -993,201 +1160,281 @@ const billing = Action.implement([Invoice, Audit], {
 
 const Http = ActionHttp.make([WhoAmI, Invoice, Audit]);
 
-it("refuses a binding error with a built-in error's tag, on each binding", () => {
-  class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+describe("a binding's errors", () => {
+  it("refuses a binding error with a built-in error's tag, on each binding", () => {
+    class Forbidden extends Schema.TaggedError<
+      Forbidden,
+      { readonly brand: unique symbol }
+    >()("Forbidden", {}) {}
 
-  const refusal = 'binding of "identity": error _tag "Forbidden" names two error schemas';
+    const refusal =
+      'binding of "identity": error _tag "Forbidden" names two error schemas';
 
-  expect(() => ActionHttp.make([identity], { error: [Forbidden] })).toThrow(
-    `ActionHttp ${refusal}`,
-  );
-  expect(() => ActionRpc.make([identity], { error: [Forbidden] })).toThrow(`ActionRpc ${refusal}`);
-  expect(ActionHttp.make([identity], { error: [Action.Forbidden] }).error).toEqual([
-    Action.Forbidden,
-  ]);
+    expect(() => ActionHttp.make([identity], { error: [Forbidden] })).toThrow(
+      `ActionHttp ${refusal}`
+    );
+    expect(() => ActionRpc.make([identity], { error: [Forbidden] })).toThrow(
+      `ActionRpc ${refusal}`
+    );
+    expect(
+      ActionHttp.make([identity], { error: [Action.Forbidden] }).error
+    ).toStrictEqual([Action.Forbidden]);
+  });
+
+  it("refuses a binding error with a built-in error's tag where it binds an event type alone, on each binding", () => {
+    class Forbidden extends Schema.TaggedError<
+      Forbidden,
+      { readonly brand: unique symbol }
+    >()("Forbidden", {}) {}
+
+    const Ticked = Event.make("clock.ticked", {
+      description: "",
+      payload: {},
+      caller: Action.Anyone,
+    });
+
+    const refusal =
+      'binding of event "clock.ticked": error _tag "Forbidden" names two error schemas';
+
+    expect(() => ActionHttp.make([Ticked], { error: [Forbidden] })).toThrow(
+      `ActionHttp ${refusal}`
+    );
+    expect(() => ActionRpc.make([Ticked], { error: [Forbidden] })).toThrow(
+      `ActionRpc ${refusal}`
+    );
+  });
+
+  it("refuses a binding error tagged SubscriptionError where it offers an event type's webhook routes", () => {
+    const Changed = Event.make("user.changed", {
+      description: "",
+      payload: {},
+      caller: CurrentActor,
+    });
+
+    const Principal = Authentication.make("bindings.Principal", CurrentActor, {
+      principal: (actor) => actor.id,
+    });
+
+    const Shadow = Schema.TaggedStruct("SubscriptionError", {
+      message: Schema.String,
+    });
+
+    expect(() =>
+      ActionHttp.make([Changed], { authentication: Principal, error: Shadow })
+    ).toThrow(
+      `ActionHttp binding of event "user.changed"'s webhook routes: error _tag "SubscriptionError" names two error schemas`
+    );
+    expect(
+      ActionRpc.make([Changed], { authentication: Principal, error: Shadow })
+        .events
+    ).toStrictEqual([Changed]);
+  });
+
+  it("refuses at serving a binding spread with another descriptor than its protected event type names, on each binding", () => {
+    class Stranger extends Context.Service<Stranger, { readonly id: string }>()(
+      "bindings/Stranger"
+    ) {}
+
+    const Changed = Event.make("user.changed", {
+      description: "",
+      payload: {},
+      caller: CurrentActor,
+    });
+
+    const Elsewhere = Authentication.make("bindings.Elsewhere", Stranger);
+
+    const changes = Event.implement(
+      Changed,
+      { check: () => Effect.succeed({ cursor: "0", events: [] }) },
+      { authorize: Event.allowAll }
+    );
+
+    const refusal =
+      "Protected event 'user.changed' requires its matching authentication descriptor";
+
+    expect(() =>
+      ActionHttp.layer(
+        {
+          ...ActionHttp.make([Changed], { authentication: Login }),
+          authentication: Elsewhere,
+        },
+        changes
+      )
+    ).toThrow(refusal);
+    expect(() =>
+      ActionRpc.layer(
+        {
+          ...ActionRpc.make([Changed], { authentication: Login }),
+          authentication: Elsewhere,
+        },
+        changes
+      )
+    ).toThrow(refusal);
+  });
+
+  it("refuses a binding where a call's errors share a _tag across their sources, on each binding", () => {
+    class Down extends Schema.TaggedError<
+      Down,
+      { readonly brand: unique symbol }
+    >()("Down", {}) {}
+
+    const Lookup = Action.make("lookup", {
+      description: "",
+      readOnly: true,
+      caller: Action.Anyone,
+      error: Down,
+    });
+
+    const Guarded = Action.make("guarded", {
+      description: "",
+      readOnly: true,
+      caller: CurrentActor,
+      error: Down,
+    });
+
+    const Verifying = Authentication.make("bindings.Verifying", CurrentActor, {
+      error: Schema.TaggedStruct("Down", { retry: Schema.Finite }),
+    });
+
+    const theBinding = Schema.TaggedStruct("Down", { reason: Schema.String });
+
+    const refusals = [
+      [
+        () => ActionHttp.make([Lookup], { error: theBinding }),
+        'ActionHttp binding of "lookup"',
+      ],
+      [
+        () => ActionRpc.make([Lookup], { error: theBinding }),
+        'ActionRpc binding of "lookup"',
+      ],
+      [
+        () => ActionHttp.make([Guarded], { authentication: Verifying }),
+        'ActionHttp binding of "guarded"',
+      ],
+      [
+        () => ActionRpc.make([Guarded], { authentication: Verifying }),
+        'ActionRpc binding of "guarded"',
+      ],
+    ] as const;
+
+    for (const [make, what] of refusals) {
+      expect(make).toThrow(
+        `${what}: error _tag "Down" names two error schemas`
+      );
+    }
+
+    const LookupOfAUnion = Action.make("lookup", {
+      description: "",
+      readOnly: true,
+      caller: Action.Anyone,
+      error: Schema.Union([Down, Schema.TaggedStruct("Gone", {})]),
+    });
+
+    expect(ActionHttp.make([Lookup], { error: Down }).error).toStrictEqual([
+      Down,
+    ]);
+    expect(
+      ActionHttp.make([LookupOfAUnion], { error: Down }).error
+    ).toStrictEqual([Down]);
+    expect(
+      ActionRpc.make([LookupOfAUnion], { error: Down }).error
+    ).toStrictEqual([Down]);
+    expect(
+      ActionRpc.make([Lookup], { authentication: Verifying }).actions
+    ).toStrictEqual([Lookup]);
+  });
+
+  it("declares an error schema reached twice once, a built-in in a union included", () => {
+    const Gone = Schema.TaggedStruct("Gone", {});
+
+    const Fetch = Action.make("fetch", {
+      description: "",
+      readOnly: true,
+      caller: Action.Anyone,
+      error: [Schema.Union([Action.Forbidden, Gone]), Gone],
+    });
+
+    const responses = OpenApi.fromApi(ActionHttp.make([Fetch]).api).paths[
+      "/api/fetch"
+    ]?.post?.responses;
+
+    expect(
+      responses?.["403"]?.content?.["application/json"]?.schema
+    ).toStrictEqual({
+      $ref: "#/components/schemas/ForbiddenEncoded",
+    });
+    expect(JSON.stringify(responses?.["422"]).match(/Gone/gu)).toHaveLength(1);
+  });
 });
 
-it("refuses a binding error with a built-in error's tag where it binds an event type alone, on each binding", () => {
-  class Forbidden extends Schema.TaggedError<Forbidden>()("Forbidden", {}) {}
+const answerX = () => Effect.succeed("x");
 
-  const Ticked = Event.make("clock.ticked", {
-    description: "",
-    payload: {},
-    caller: Action.Anyone,
-  });
+const answering = (answer: string) => () => Effect.succeed(answer);
 
-  const refusal = 'binding of event "clock.ticked": error _tag "Forbidden" names two error schemas';
+const statuses = async (handler: (request: Request) => Promise<Response>) => {
+  const whoAmIResponse = await handler(post("/api/whoAmI"));
+  const invoiceResponse = await handler(post("/api/invoice", { amount: "2" }));
 
-  expect(() => ActionHttp.make([Ticked], { error: [Forbidden] })).toThrow(`ActionHttp ${refusal}`);
-  expect(() => ActionRpc.make([Ticked], { error: [Forbidden] })).toThrow(`ActionRpc ${refusal}`);
-});
-
-it("refuses a binding error tagged SubscriptionError where it offers an event type's webhook routes", () => {
-  const Changed = Event.make("user.changed", {
-    description: "",
-    payload: {},
-    caller: CurrentActor,
-  });
-
-  const Principal = Authentication.make("bindings.Principal", CurrentActor, {
-    principal: (actor) => actor.id,
-  });
-
-  const Shadow = Schema.TaggedStruct("SubscriptionError", { message: Schema.String });
-
-  expect(() => ActionHttp.make([Changed], { authentication: Principal, error: Shadow })).toThrow(
-    `ActionHttp binding of event "user.changed"'s webhook routes: error _tag "SubscriptionError" names two error schemas`,
-  );
-  expect(ActionRpc.make([Changed], { authentication: Principal, error: Shadow }).events).toEqual([
-    Changed,
-  ]);
-});
-
-it("refuses at serving a binding spread with another descriptor than its protected event type names, on each binding", () => {
-  class Stranger extends Context.Service<Stranger, { readonly id: string }>()(
-    "bindings/Stranger",
-  ) {}
-
-  const Changed = Event.make("user.changed", {
-    description: "",
-    payload: {},
-    caller: CurrentActor,
-  });
-
-  const Elsewhere = Authentication.make("bindings.Elsewhere", Stranger);
-
-  const changes = Event.implement(
-    Changed,
-    { check: () => Effect.succeed({ cursor: "0", events: [] }) },
-    { authorize: Event.allowAll },
-  );
-
-  const refusal = "Protected event 'user.changed' requires its matching authentication descriptor";
-
-  expect(() =>
-    ActionHttp.layer(
-      { ...ActionHttp.make([Changed], { authentication: Login }), authentication: Elsewhere },
-      changes,
-    ),
-  ).toThrow(refusal);
-  expect(() =>
-    ActionRpc.layer(
-      { ...ActionRpc.make([Changed], { authentication: Login }), authentication: Elsewhere },
-      changes,
-    ),
-  ).toThrow(refusal);
-});
-
-it("refuses a binding where a call's errors share a _tag across their sources, on each binding", () => {
-  class Down extends Schema.TaggedError<Down>()("Down", {}) {}
-
-  const Lookup = Action.make("lookup", {
-    description: "",
-    readOnly: true,
-    caller: Action.Anyone,
-    error: Down,
-  });
-
-  const Guarded = Action.make("guarded", {
-    description: "",
-    readOnly: true,
-    caller: CurrentActor,
-    error: Down,
-  });
-
-  const Verifying = Authentication.make("bindings.Verifying", CurrentActor, {
-    error: Schema.TaggedStruct("Down", { retry: Schema.Number }),
-  });
-
-  const theBinding = Schema.TaggedStruct("Down", { reason: Schema.String });
-
-  const refusals = [
-    [() => ActionHttp.make([Lookup], { error: theBinding }), 'ActionHttp binding of "lookup"'],
-    [() => ActionRpc.make([Lookup], { error: theBinding }), 'ActionRpc binding of "lookup"'],
-    [
-      () => ActionHttp.make([Guarded], { authentication: Verifying }),
-      'ActionHttp binding of "guarded"',
-    ],
-    [
-      () => ActionRpc.make([Guarded], { authentication: Verifying }),
-      'ActionRpc binding of "guarded"',
-    ],
-  ] as const;
-
-  for (const [make, what] of refusals) {
-    expect(make).toThrow(`${what}: error _tag "Down" names two error schemas`);
-  }
-
-  const LookupOfAUnion = Action.make("lookup", {
-    description: "",
-    readOnly: true,
-    caller: Action.Anyone,
-    error: Schema.Union([Down, Schema.TaggedStruct("Gone", {})]),
-  });
-
-  expect(ActionHttp.make([Lookup], { error: Down }).error).toEqual([Down]);
-  expect(ActionHttp.make([LookupOfAUnion], { error: Down }).error).toEqual([Down]);
-  expect(ActionRpc.make([LookupOfAUnion], { error: Down }).error).toEqual([Down]);
-  expect(ActionRpc.make([Lookup], { authentication: Verifying }).actions).toEqual([Lookup]);
-});
-
-it("declares an error schema reached twice once, a built-in in a union included", () => {
-  const Gone = Schema.TaggedStruct("Gone", {});
-
-  const Fetch = Action.make("fetch", {
-    description: "",
-    readOnly: true,
-    caller: Action.Anyone,
-    error: [Schema.Union([Action.Forbidden, Gone]), Gone],
-  });
-
-  const responses = OpenApi.fromApi(ActionHttp.make([Fetch]).api).paths["/api/fetch"]?.post
-    ?.responses;
-
-  expect(responses?.["403"]?.content?.["application/json"]?.schema).toEqual({
-    $ref: "#/components/schemas/ForbiddenEncoded",
-  });
-  expect(JSON.stringify(responses?.["422"]).match(/Gone/g)).toHaveLength(1);
-});
+  return [whoAmIResponse.status, invoiceResponse.status];
+};
 
 describe("HTTP bindings", () => {
   it.each([
     { prefix: undefined, mounted: "/api", route: "/api/whoAmI" },
     { prefix: "/", mounted: "/", route: "/whoAmI" },
     { prefix: "/v1/", mounted: "/v1", route: "/v1/whoAmI" },
-    { prefix: "/v1/internal", mounted: "/v1/internal", route: "/v1/internal/whoAmI" },
-  ] as const)("mounts routes and the document under prefix $prefix", async (mount) => {
-    const binding = ActionHttp.make(
-      [WhoAmI],
-      mount.prefix === undefined ? {} : { prefix: mount.prefix },
-    );
+    {
+      prefix: "/v1/internal",
+      mounted: "/v1/internal",
+      route: "/v1/internal/whoAmI",
+    },
+  ] as const)(
+    "mounts routes and the document under prefix $prefix",
+    async (mount) => {
+      const binding = ActionHttp.make(
+        [WhoAmI],
+        mount.prefix === undefined ? {} : { prefix: mount.prefix }
+      );
 
-    const handler = serve(
-      ActionHttp.layer(binding, whoAmI).pipe(Layer.provide(Layer.succeed(Tenant, "acme"))),
-    ).handler;
+      const { handler } = serve(
+        ActionHttp.layer(binding, whoAmI).pipe(
+          Layer.provide(Layer.succeed(Tenant, "acme"))
+        )
+      );
 
-    expect(binding.prefix).toBe(mount.mounted);
-    expect(await (await handler(post(mount.route))).json()).toBe("ada@acme");
-    expect(Object.keys(OpenApi.fromApi(binding.api).paths)).toEqual([mount.route]);
-  });
+      expect(binding.prefix).toBe(mount.mounted);
+
+      const response = await handler(post(mount.route));
+
+      await expect(response.json()).resolves.toBe("ada@acme");
+      expect(Object.keys(OpenApi.fromApi(binding.api).paths)).toStrictEqual([
+        mount.route,
+      ]);
+    }
+  );
 
   it.each([
     ["/api", "/api/whoAmI", "api"],
     ["/v2/api", "/v2/api/whoAmI", "v2/api"],
     ["/", "/whoAmI", "/"],
-  ] as const)("tags the group under prefix %s with its mount path", (prefix, route, tag) => {
-    const document = OpenApi.fromApi(ActionHttp.make([WhoAmI, Invoice, Audit], { prefix }).api);
+  ] as const)(
+    "tags the group under prefix %s with its mount path",
+    (prefix, route, tag) => {
+      const document = OpenApi.fromApi(
+        ActionHttp.make([WhoAmI, Invoice, Audit], { prefix }).api
+      );
 
-    expect(document.tags.map(({ name }) => name)).toEqual([tag]);
-    expect(document.paths[route]?.post?.tags).toEqual([tag]);
-  });
+      expect(document.tags.map(({ name }) => name)).toStrictEqual([tag]);
+      expect(document.paths[route]?.post?.tags).toStrictEqual([tag]);
+    }
+  );
 
   it("preserves action APIs composed into a native host API", () => {
     const combined = HttpApi.make("host")
       .addHttpApi(ActionHttp.make([WhoAmI], { prefix: "/public" }).api)
       .addHttpApi(ActionHttp.make([Invoice, Audit], { prefix: "/admin" }).api);
 
-    expect(Object.keys(OpenApi.fromApi(combined).paths)).toEqual([
+    expect(Object.keys(OpenApi.fromApi(combined).paths)).toStrictEqual([
       "/public/whoAmI",
       "/admin/invoice",
       "/admin/audit",
@@ -1197,7 +1444,10 @@ describe("HTTP bindings", () => {
       .addHttpApi(ActionHttp.make([WhoAmI], { prefix: "/" }).api)
       .addHttpApi(ActionHttp.make([Invoice], { prefix: "/actions" }).api);
 
-    expect(Object.keys(OpenApi.fromApi(rooted).paths)).toEqual(["/whoAmI", "/actions/invoice"]);
+    expect(Object.keys(OpenApi.fromApi(rooted).paths)).toStrictEqual([
+      "/whoAmI",
+      "/actions/invoice",
+    ]);
   });
 
   const Alpha = Action.make("alpha", {
@@ -1229,26 +1479,27 @@ describe("HTTP bindings", () => {
     const beta = Action.implement(Beta, () => Effect.succeed("x"));
 
     expect(() => ActionHttp.layer(bound, lookAlike)).toThrow(
-      "No action of these implementations is in this HTTP binding: alpha (another contract) (pass an implementation of a bound action, or bind one of these)",
+      "No action of these implementations is in this HTTP binding: alpha (another contract) (pass an implementation of a bound action, or bind one of these)"
     );
     expect(() => ActionHttp.layer(bound, beta)).toThrow(
-      "No action of these implementations is in this HTTP binding: beta (pass an implementation of a bound action, or bind one of these)",
+      "No action of these implementations is in this HTTP binding: beta (pass an implementation of a bound action, or bind one of these)"
     );
     expect(() => ActionHttp.layer(bound, [alpha, beta])).not.toThrow();
     expect(() => ActionHttp.layer(bound, [alpha, alpha])).toThrow(
-      "Duplicate served action: alpha (pass one implementation of it, or rename one)",
+      "Duplicate served action: alpha (pass one implementation of it, or rename one)"
     );
     expect(() =>
-      ActionHttp.layer(bound, [alpha, Action.implement(Alpha, () => Effect.succeed("y"))]),
+      ActionHttp.layer(bound, [
+        alpha,
+        Action.implement(Alpha, () => Effect.succeed("y")),
+      ])
     ).toThrow("Duplicate served action: alpha");
-
-    const text = () => Effect.succeed("x");
 
     expect(() =>
       ActionHttp.layer(ActionHttp.make([Alpha, Audit]), [
-        Action.implement([Alpha, Beta], { alpha: text, beta: text }),
-        Action.implement([Audit, Beta], { audit: text, beta: text }),
-      ]),
+        Action.implement([Alpha, Beta], { alpha: answerX, beta: answerX }),
+        Action.implement([Audit, Beta], { audit: answerX, beta: answerX }),
+      ])
     ).not.toThrow();
   });
 
@@ -1272,15 +1523,17 @@ describe("HTTP bindings", () => {
 
     expect(() =>
       // @ts-expect-error -- The binding does not hold it.
-      ActionHttp.layer(bound, apps, { actions: [Beta] }),
+      ActionHttp.layer(bound, apps, { actions: [Beta] })
     ).toThrow(
-      "Listed in actions, but the binding does not hold it: beta (add it to the binding's actions)",
+      "Listed in actions, but the binding does not hold it: beta (add it to the binding's actions)"
     );
-    expect(() => ActionHttp.layer(bound, apps, { actions: [LookAlike] })).toThrow(
-      "Listed in actions, but the binding does not hold it: alpha (another contract) (add it to the binding's actions; one marked (another contract) is a contract of that name it does not hold: list the one it holds)",
+    expect(() =>
+      ActionHttp.layer(bound, apps, { actions: [LookAlike] })
+    ).toThrow(
+      "Listed in actions, but the binding does not hold it: alpha (another contract) (add it to the binding's actions; one marked (another contract) is a contract of that name it does not hold: list the one it holds)"
     );
     expect(() => ActionHttp.layer(bound, apps, { actions: [Audit] })).toThrow(
-      "no implementation holds it: audit",
+      "no implementation holds it: audit"
     );
   });
 
@@ -1290,25 +1543,35 @@ describe("HTTP bindings", () => {
     const app = Action.implement(
       [Alpha, Beta],
       Effect.sync(() => {
-        built++;
+        built += 1;
 
-        return { alpha: () => Effect.succeed("alpha"), beta: () => Effect.succeed("beta") };
-      }),
+        return {
+          alpha: () => Effect.succeed("alpha"),
+          beta: () => Effect.succeed("beta"),
+        };
+      })
     );
 
     const web = serve(
       Layer.mergeAll(
         ActionHttp.layer(ActionHttp.make([Alpha]), app),
-        ActionMcp.layerHttp(app, { name: "test", version: "0" }),
-      ),
+        ActionMcp.layerHttp(app, { name: "test", version: "0" })
+      )
     );
 
-    expect(await (await web.handler(post("/api/alpha"))).json()).toBe("alpha");
-    expect((await web.handler(post("/api/beta"))).status).toBe(404);
+    const alphaResponse = await web.handler(post("/api/alpha"));
+
+    await expect(alphaResponse.json()).resolves.toBe("alpha");
+
+    const betaResponse = await web.handler(post("/api/beta"));
+
+    expect(betaResponse.status).toBe(404);
 
     const tool = await web.handler(rawToolCall("beta"));
 
-    expect(await tool.json()).toMatchObject({ result: { structuredContent: "beta" } });
+    await expect(tool.json()).resolves.toMatchObject({
+      result: { structuredContent: "beta" },
+    });
     expect(built).toBe(1);
   });
 
@@ -1318,63 +1581,75 @@ describe("HTTP bindings", () => {
     const app = Action.implement(
       [Alpha, Beta, Audit],
       Effect.sync(() => {
-        built++;
+        built += 1;
 
         return {
           alpha: () => Effect.succeed("alpha"),
           beta: () => Effect.succeed("beta"),
           audit: () => Effect.succeed("audit"),
         };
-      }),
+      })
     );
 
     const Reads = ActionHttp.make([Alpha, Audit], { prefix: "/reads" });
     const Writes = ActionHttp.make([Beta], { prefix: "/writes" });
 
-    const handler = serve(
-      Layer.mergeAll(ActionHttp.layer(Reads, app), ActionHttp.layer(Writes, app)),
-    ).handler;
-
-    const answers = await Promise.all(
-      ["/reads/alpha", "/reads/audit", "/writes/beta", "/reads/beta", "/writes/alpha"].map(
-        async (path) => {
-          const response = await handler(post(path));
-
-          return response.status === 200 ? await response.json() : response.status;
-        },
-      ),
+    const { handler } = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(Reads, app),
+        ActionHttp.layer(Writes, app)
+      )
     );
 
-    expect(answers).toEqual(["alpha", "audit", "beta", 404, 404]);
+    const answers = await Promise.all(
+      [
+        "/reads/alpha",
+        "/reads/audit",
+        "/writes/beta",
+        "/reads/beta",
+        "/writes/alpha",
+      ].map(async (path) => {
+        const response = await handler(post(path));
+
+        return response.status === 200
+          ? await response.json()
+          : response.status;
+      })
+    );
+
+    expect(answers).toStrictEqual(["alpha", "audit", "beta", 404, 404]);
     expect(built).toBe(1);
   });
 
   it("serves one list of implementations through each area's binding, and a selection per layer", async () => {
-    const text = (answer: string) => () => Effect.succeed(answer);
-
     const apps = [
-      Action.implement(Alpha, text("alpha")),
-      Action.implement([Beta, Audit], { beta: text("beta"), audit: text("audit") }),
+      Action.implement(Alpha, answering("alpha")),
+      Action.implement([Beta, Audit], {
+        beta: answering("beta"),
+        audit: answering("audit"),
+      }),
     ];
 
     const Reads = ActionHttp.make([Alpha], { prefix: "/reads" });
     const Writes = ActionHttp.make([Beta, Audit], { prefix: "/writes" });
 
-    const handler = serve(
+    const { handler } = serve(
       Layer.mergeAll(
         ActionHttp.layer(Reads, apps),
         ActionHttp.layer(Writes, apps, { actions: [Beta] }),
-        ActionHttp.layer(Writes, apps, { actions: [Audit] }),
-      ),
-    ).handler;
-
-    const answers = await Promise.all(
-      ["/reads/alpha", "/writes/beta", "/writes/audit"].map(async (path) =>
-        (await handler(post(path))).json(),
-      ),
+        ActionHttp.layer(Writes, apps, { actions: [Audit] })
+      )
     );
 
-    expect(answers).toEqual(["alpha", "beta", "audit"]);
+    const answers = await Promise.all(
+      ["/reads/alpha", "/writes/beta", "/writes/audit"].map(async (path) => {
+        const response = await handler(post(path));
+
+        return await response.json();
+      })
+    );
+
+    expect(answers).toStrictEqual(["alpha", "beta", "audit"]);
   });
 
   it("leaves an implementation holding none of the actions served unbuilt, owing nothing for it", async () => {
@@ -1390,18 +1665,27 @@ describe("HTTP bindings", () => {
         built += 1;
         const store = yield* Store;
 
-        return { beta: () => Effect.succeed(store), audit: () => Effect.succeed(store) };
-      }),
+        return {
+          beta: () => Effect.succeed(store),
+          audit: () => Effect.succeed(store),
+        };
+      })
     );
 
     const unbound = ActionHttp.layer(ActionHttp.make([Alpha]), [alpha, writes]);
 
-    const unselected = ActionHttp.layer(ActionHttp.make([Alpha, Beta]), [alpha, writes], {
-      actions: [Alpha],
-    });
+    const unselected = ActionHttp.layer(
+      ActionHttp.make([Alpha, Beta]),
+      [alpha, writes],
+      {
+        actions: [Alpha],
+      }
+    );
 
     for (const layer of [unbound, unselected]) {
-      expect(await (await serve(layer).handler(post("/api/alpha"))).json()).toBe("alpha");
+      const alphaResponse = await serve(layer).handler(post("/api/alpha"));
+
+      await expect(alphaResponse.json()).resolves.toBe("alpha");
     }
 
     expect(built).toBe(0);
@@ -1424,7 +1708,9 @@ describe("HTTP bindings", () => {
       success: Schema.String,
     });
 
-    const web = Action.implement(Search, ({ query }) => Effect.succeed(`site:${query}`));
+    const web = Action.implement(Search, ({ query }) =>
+      Effect.succeed(`site:${query}`)
+    );
 
     const agent = Action.implement([Alpha, AgentSearch], {
       alpha: () => Effect.succeed("alpha"),
@@ -1434,37 +1720,51 @@ describe("HTTP bindings", () => {
     const routes = serve(
       Layer.mergeAll(
         ActionHttp.layer(ActionHttp.make([Search, Alpha]), [web, agent]),
-        ActionMcp.layerHttp(agent, { name: "test", version: "0" }),
-      ),
+        ActionMcp.layerHttp(agent, { name: "test", version: "0" })
+      )
     );
 
-    expect(await (await routes.handler(post("/api/search", { query: "x" }))).json()).toBe("site:x");
+    const searchResponse = await routes.handler(
+      post("/api/search", { query: "x" })
+    );
+
+    await expect(searchResponse.json()).resolves.toBe("site:x");
 
     const tool = await routes.handler(rawToolCall("search", { topic: "y" }));
 
-    expect(await tool.json()).toMatchObject({ result: { structuredContent: "notes:y" } });
+    await expect(tool.json()).resolves.toMatchObject({
+      result: { structuredContent: "notes:y" },
+    });
   });
 
   it("serves one binding's actions through several layers; an unserved action has no route", async () => {
     const bound = ActionHttp.make([Alpha, Beta, Audit]);
 
-    const handler = serve(
+    const { handler } = serve(
       Layer.mergeAll(
         ActionHttp.layer(
           bound,
-          Action.implement(Alpha, () => Effect.succeed("alpha")),
+          Action.implement(Alpha, () => Effect.succeed("alpha"))
         ),
         ActionHttp.layer(
           bound,
-          Action.implement(Beta, () => Effect.succeed("beta")),
-        ),
-      ),
-    ).handler;
+          Action.implement(Beta, () => Effect.succeed("beta"))
+        )
+      )
+    );
 
-    expect(await (await handler(post("/api/alpha"))).json()).toBe("alpha");
-    expect(await (await handler(post("/api/beta"))).json()).toBe("beta");
-    expect((await handler(post("/api/audit"))).status).toBe(404);
-    expect(Object.keys(OpenApi.fromApi(bound.api).paths)).toEqual([
+    const alphaResponse = await handler(post("/api/alpha"));
+
+    await expect(alphaResponse.json()).resolves.toBe("alpha");
+
+    const betaResponse = await handler(post("/api/beta"));
+
+    await expect(betaResponse.json()).resolves.toBe("beta");
+
+    const auditResponse = await handler(post("/api/audit"));
+
+    expect(auditResponse.status).toBe(404);
+    expect(Object.keys(OpenApi.fromApi(bound.api).paths)).toStrictEqual([
       "/api/alpha",
       "/api/beta",
       "/api/audit",
@@ -1473,36 +1773,45 @@ describe("HTTP bindings", () => {
 
   it("scopes router middleware to the layer it is provided to", async () => {
     const blocked = HttpRouter.middleware((route) =>
-      Effect.as(route, HttpServerResponse.text("blocked", { status: 403 })),
+      Effect.as(route, HttpServerResponse.text("blocked", { status: 403 }))
     ).layer;
 
-    const users = ActionHttp.layer(Http, whoAmI).pipe(Layer.provide(Layer.succeed(Tenant, "acme")));
+    const users = ActionHttp.layer(Http, whoAmI).pipe(
+      Layer.provide(Layer.succeed(Tenant, "acme"))
+    );
+
     const invoices = ActionHttp.layer(Http, billing);
 
-    const statuses = async (handler: (request: Request) => Promise<Response>) => [
-      (await handler(post("/api/whoAmI"))).status,
-      (await handler(post("/api/invoice", { amount: "2" }))).status,
-    ];
-
-    expect(
-      await statuses(serve(Layer.mergeAll(users.pipe(Layer.provide(blocked)), invoices)).handler),
-    ).toEqual([403, 200]);
-    expect(
-      await statuses(serve(Layer.mergeAll(users, invoices.pipe(Layer.provide(blocked)))).handler),
-    ).toEqual([200, 403]);
-    expect(
-      await statuses(serve(Layer.mergeAll(users, invoices).pipe(Layer.provide(blocked))).handler),
-    ).toEqual([403, 403]);
+    await expect(
+      statuses(
+        serve(Layer.mergeAll(users.pipe(Layer.provide(blocked)), invoices))
+          .handler
+      )
+    ).resolves.toStrictEqual([403, 200]);
+    await expect(
+      statuses(
+        serve(Layer.mergeAll(users, invoices.pipe(Layer.provide(blocked))))
+          .handler
+      )
+    ).resolves.toStrictEqual([200, 403]);
+    await expect(
+      statuses(
+        serve(Layer.mergeAll(users, invoices).pipe(Layer.provide(blocked)))
+          .handler
+      )
+    ).resolves.toStrictEqual([403, 403]);
   });
 
   it("declares a shared error array on every action that spreads it, on both transports", async () => {
-    class Refused extends Schema.TaggedError<Refused>()(
-      "Refused",
-      { reason: Schema.String },
-      { httpApiStatus: 403 },
-    ) {}
+    class Refused extends Schema.TaggedError<
+      Refused,
+      { readonly brand: unique symbol }
+    >()("Refused", { reason: Schema.String }, { httpApiStatus: 403 }) {}
 
-    class Missing extends Schema.TaggedError<Missing>()("Missing", {}, { httpApiStatus: 404 }) {}
+    class Missing extends Schema.TaggedError<
+      Missing,
+      { readonly brand: unique symbol }
+    >()("Missing", {}, { httpApiStatus: 404 }) {}
 
     const shared = [Refused] as const;
 
@@ -1529,18 +1838,20 @@ describe("HTTP bindings", () => {
 
     const bound = ActionHttp.make([Find, List]);
 
-    const handler = serve(
+    const { handler } = serve(
       Layer.mergeAll(
         ActionHttp.layer(bound, apps),
-        ActionMcp.layerHttp(apps, { name: "test", version: "0" }),
-      ),
-    ).handler;
+        ActionMcp.layerHttp(apps, { name: "test", version: "0" })
+      )
+    );
 
-    expect((await handler(post("/api/find"))).status).toBe(404);
+    const findResponse = await handler(post("/api/find"));
+
+    expect(findResponse.status).toBe(404);
     const refused = await handler(post("/api/list"));
     expect(refused.status).toBe(403);
-    expect(await refused.json()).toEqual(
-      Schema.encodeSync(Refused)(new Refused({ reason: "closed" })),
+    await expect(refused.json()).resolves.toStrictEqual(
+      Schema.encodeSync(Refused)(new Refused({ reason: "closed" }))
     );
 
     const tool = await handler(rawToolCall("list"));
@@ -1549,13 +1860,25 @@ describe("HTTP bindings", () => {
     expect(reply).toMatchObject({
       result: {
         isError: true,
-        content: [{ type: "text", text: '{"_tag":"Refused","reason":"closed"}' }],
+        content: [
+          { type: "text", text: '{"_tag":"Refused","reason":"closed"}' },
+        ],
       },
     });
     expect(reply).not.toHaveProperty("result.structuredContent");
-    expect(OpenApi.fromApi(bound.api).paths["/api/list"]?.post?.responses).toHaveProperty("403");
+    expect(
+      OpenApi.fromApi(bound.api).paths["/api/list"]?.post?.responses
+    ).toHaveProperty("403");
   });
 });
+
+const requirements = (document: OpenApi.OpenAPISpec) =>
+  Object.fromEntries(
+    Object.entries(document.paths).map(([path, item]) => [
+      path,
+      item.post?.security,
+    ])
+  );
 
 describe("security from the contracts", () => {
   const Rename = Action.make("rename", {
@@ -1578,27 +1901,26 @@ describe("security from the contracts", () => {
   const rename = Action.implement(
     Rename,
     ({ name }) => Effect.map(CurrentActor, ({ id }) => `${id} is ${name}`),
-    { authorize: Action.allowAll },
+    { authorize: Action.allowAll }
   );
 
-  const requirements = (document: OpenApi.OpenAPISpec) =>
-    Object.fromEntries(
-      Object.entries(document.paths).map(([path, item]) => [path, item.post?.security]),
-    );
-
   it("states the bearer scheme on every protected endpoint, and none on a public one", () => {
-    expect(OpenApi.fromApi(Secured.api).components.securitySchemes).toEqual({
+    expect(
+      OpenApi.fromApi(Secured.api).components.securitySchemes
+    ).toStrictEqual({
       "example.Login": { type: "http", scheme: "Bearer" },
     });
-    expect(requirements(OpenApi.fromApi(Secured.api))).toEqual({
+    expect(requirements(OpenApi.fromApi(Secured.api))).toStrictEqual({
       "/api/whoAmI": [],
       "/api/rename": [{ "example.Login": [] }],
     });
 
     const open = ActionHttp.make([WhoAmI, Invoice]);
 
-    expect(OpenApi.fromApi(open.api).components.securitySchemes).toEqual({});
-    expect(requirements(OpenApi.fromApi(open.api))).toEqual({
+    expect(OpenApi.fromApi(open.api).components.securitySchemes).toStrictEqual(
+      {}
+    );
+    expect(requirements(OpenApi.fromApi(open.api))).toStrictEqual({
       "/api/whoAmI": [],
       "/api/invoice": [],
     });
@@ -1609,36 +1931,40 @@ describe("security from the contracts", () => {
       .addHttpApi(Secured.api)
       .addHttpApi(ActionHttp.make([Ping], { prefix: "/open" }).api);
 
-    expect(requirements(OpenApi.fromApi(combined))).toEqual({
+    expect(requirements(OpenApi.fromApi(combined))).toStrictEqual({
       "/api/whoAmI": [],
       "/api/rename": [{ "example.Login": [] }],
       "/open/ping": [],
     });
   });
 
-  it.effect("enforces what it states: a protected route answers only a signed-in caller", () =>
-    Effect.gen(function* () {
-      expect((yield* send(post("/api/rename", { name: "Ada" }))).status).toBe(401);
-      expect(yield* (yield* send(post("/api/whoAmI"))).json).toBe("ada@acme");
+  it.effect(
+    "enforces what it states: a protected route answers only a signed-in caller",
+    () =>
+      Effect.gen(function* () {
+        expect((yield* send(post("/api/rename", { name: "Ada" }))).status).toBe(
+          401
+        );
+        expect(yield* (yield* send(post("/api/whoAmI"))).json).toBe("ada@acme");
 
-      const client = yield* HttpApiClient.make(Secured.api, {
-        baseUrl: "http://localhost",
-        ...as("alice"),
-      });
+        const client = yield* HttpApiClient.make(Secured.api, {
+          baseUrl: "http://localhost",
+          ...as("alice"),
+        });
 
-      expect([
-        yield* client.whoAmI({ payload: {} }),
-        yield* client.rename({ payload: { name: "Ada" } }),
-      ]).toEqual(["ada@acme", "alice is Ada"]);
-    }).pipe(
-      Effect.provide(
-        Testing.layer(
-          ActionHttp.layer(Secured, [whoAmI, rename]).pipe(
-            Layer.provide([Layer.succeed(Tenant, "acme"), authenticate]),
-          ),
-        ),
-      ),
-    ),
+        expect([
+          yield* client.whoAmI({ payload: {} }),
+          yield* client.rename({ payload: { name: "Ada" } }),
+        ]).toStrictEqual(["ada@acme", "alice is Ada"]);
+      }).pipe(
+        Effect.provide(
+          Testing.layer(
+            ActionHttp.layer(Secured, [whoAmI, rename]).pipe(
+              Layer.provide([Layer.succeed(Tenant, "acme"), authenticate])
+            )
+          )
+        )
+      )
   );
 
   it("states a descriptor's other native scheme, as Effect documents it", () => {
@@ -1647,13 +1973,13 @@ describe("security from the contracts", () => {
     });
 
     const document = OpenApi.fromApi(
-      ActionHttp.make([WhoAmI, Rename], { authentication: Session }).api,
+      ActionHttp.make([WhoAmI, Rename], { authentication: Session }).api
     );
 
-    expect(document.components.securitySchemes).toEqual({
+    expect(document.components.securitySchemes).toStrictEqual({
       "bindings.Session": { type: "apiKey", name: "session", in: "cookie" },
     });
-    expect(requirements(document)).toEqual({
+    expect(requirements(document)).toStrictEqual({
       "/api/whoAmI": [],
       "/api/rename": [{ "bindings.Session": [] }],
     });
@@ -1676,9 +2002,11 @@ describe("security from the contracts", () => {
 
     const combined = HttpApi.make("host")
       .addHttpApi(ActionHttp.make([Rename], { authentication: Session }).api)
-      .addHttpApi(ActionHttp.make([Purge], { authentication: Key, prefix: "/keyed" }).api);
+      .addHttpApi(
+        ActionHttp.make([Purge], { authentication: Key, prefix: "/keyed" }).api
+      );
 
-    expect(OpenApi.fromApi(combined).components.securitySchemes).toEqual({
+    expect(OpenApi.fromApi(combined).components.securitySchemes).toStrictEqual({
       "bindings.Session": { type: "apiKey", name: "session", in: "cookie" },
       "bindings.Key": { type: "apiKey", name: "x-api-key", in: "header" },
     });

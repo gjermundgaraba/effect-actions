@@ -1,20 +1,24 @@
-import { Config, Effect, Redacted } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { Config, Effect, Redacted } from "effect";
+
 import { Login, scopes } from "./Identity.js";
 import { users } from "./users.js";
 
-const isToken = (token: string): token is keyof typeof users => Object.hasOwn(users, token);
+const isToken = (token: string): token is keyof typeof users =>
+  Object.hasOwn(users, token);
 
 // DEMO ONLY: a token is a user's name. A real verifier checks a signed token with your
 // authorization server's library, its audience included. An unknown token is the built-in
 // `Unauthenticated`: a 401 every client decodes.
-const verify = (token: Redacted.Redacted<string>) => {
+const verify = (token: Redacted.Redacted) => {
   const name = Redacted.value(token);
 
   return isToken(name)
     ? Effect.succeed(users[name])
-    : Effect.fail(new Action.Unauthenticated({ message: "Unknown demo token." }));
+    : Effect.fail(
+        new Action.Unauthenticated({ message: "Unknown demo token." })
+      );
 };
 
 // Server only: `Login`'s provider. As an OAuth protected resource it also publishes discovery,
@@ -22,7 +26,9 @@ const verify = (token: Redacted.Redacted<string>) => {
 // is the server's public URL, known only at startup, so it is read from config.
 export const authenticate = Authentication.layer(Login, verify, {
   protectedResource: Effect.map(
-    Config.String("PUBLIC_URL").pipe(Config.withDefault("http://localhost:3000")),
+    Config.String("PUBLIC_URL").pipe(
+      Config.withDefault("http://localhost:3000")
+    ),
     (url) =>
       ({
         resource: `${url}/mcp`,
@@ -30,6 +36,6 @@ export const authenticate = Authentication.layer(Login, verify, {
         authorizationServers: ["https://auth.example.com"],
         scopesSupported: [scopes.read, scopes.write],
         scopesRequired: [scopes.read],
-      }) satisfies Authentication.ProtectedResource,
+      }) satisfies Authentication.ProtectedResource
   ),
 });

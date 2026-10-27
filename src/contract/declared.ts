@@ -1,13 +1,22 @@
-import { Predicate, Schema, SchemaAST, type Types } from "effect";
+import { Predicate, Schema, SchemaAST } from "effect";
+import type { Types } from "effect";
+
 import type * as Action from "./Action.js";
 import { literalValues, members } from "./ast.js";
-import { Anyone, assertAuthentication, type Called, type Proving } from "./caller.js";
+import { Anyone, assertAuthentication } from "./caller.js";
+import type { Called, Proving } from "./caller.js";
 import { builtIns } from "./errors.js";
 import { httpApiStatusOf } from "./status.js";
 
 export const errorList = (
-  error: Action.Errors[number] | Action.Errors | undefined,
-): Action.Errors => (error === undefined ? [] : Schema.isSchema(error) ? [error] : error);
+  error: Action.Errors[number] | Action.Errors | undefined
+): Action.Errors => {
+  if (error === undefined) {
+    return [];
+  }
+
+  return Schema.isSchema(error) ? [error] : error;
+};
 
 type ListOf<G> = G extends Action.Errors ? G : readonly [G];
 
@@ -17,9 +26,18 @@ type ListOf<G> = G extends Action.Errors ? G : readonly [G];
  */
 export type ErrorsOf<O> = O extends unknown
   ? "error" extends keyof O
-    ? O extends { readonly error: infer G extends Action.Errors | Action.Errors[number] }
+    ? O extends {
+        readonly error: infer G extends Action.Errors | Action.Errors[number];
+      }
       ? ListOf<G>
-      : ListOf<Extract<O["error" & keyof O], Action.Errors | Action.Errors[number]>> | []
+      :
+          | ListOf<
+              Extract<
+                O["error" & keyof O],
+                Action.Errors | Action.Errors[number]
+              >
+            >
+          | []
     : []
   : never;
 
@@ -38,16 +56,21 @@ export type Certain<E extends Action.Errors> =
       : { readonly [K in keyof E]: Single<E[K]> }[number];
 
 const ownsNothing = (ast: SchemaAST.AST): boolean =>
-  httpApiStatusOf(ast) === undefined && ast.checks === undefined && ast.encoding === undefined;
+  httpApiStatusOf(ast) === undefined &&
+  ast.checks === undefined &&
+  ast.encoding === undefined;
 
-const schemasOf = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> =>
-  !ownsNothing(ast)
-    ? [ast]
-    : SchemaAST.isSuspend(ast)
-      ? schemasOf(ast.thunk())
-      : SchemaAST.isUnion(ast)
-        ? ast.types.flatMap(schemasOf)
-        : [ast];
+const schemasOf = (ast: SchemaAST.AST): readonly SchemaAST.AST[] => {
+  if (!ownsNothing(ast)) {
+    return [ast];
+  }
+
+  if (SchemaAST.isSuspend(ast)) {
+    return schemasOf(ast.thunk());
+  }
+
+  return SchemaAST.isUnion(ast) ? ast.types.flatMap(schemasOf) : [ast];
+};
 
 // Why: A union or `Schema.suspend` without a status, checks or a transformation of its own decodes
 // as what it holds, and HTTP gives each member its own status; one with any of them is one schema.
@@ -60,7 +83,10 @@ export const errorSchemas = (errors: Action.Errors): Action.Errors => {
   for (const error of errors) {
     for (const ast of schemasOf(error.ast)) {
       if (!schemas.has(ast)) {
-        schemas.set(ast, ast === error.ast ? error : Schema.make<Action.Errors[number]>(ast));
+        schemas.set(
+          ast,
+          ast === error.ast ? error : Schema.make<Action.Errors[number]>(ast)
+        );
       }
     }
   }
@@ -70,7 +96,7 @@ export const errorSchemas = (errors: Action.Errors): Action.Errors => {
 
 export const projectedErrors = (
   action: Pick<Action.Any, "error">,
-  surface: Action.Errors = [],
+  surface: Action.Errors = []
 ): Action.Errors => errorSchemas([...builtIns, ...action.error, ...surface]);
 
 /** The errors a binding declares for every call, and its protected actions' authentication's. */
@@ -88,39 +114,49 @@ export interface Declaring {
  */
 export const bindingErrors = (
   action: Pick<Action.Any, "error" | "caller">,
-  binding: Declaring,
+  binding: Declaring
 ): Action.Errors =>
   projectedErrors(
     action,
     action.caller === Anyone || binding.authentication === undefined
       ? binding.error
-      : [...binding.error, ...binding.authentication.error],
+      : [...binding.error, ...binding.authentication.error]
   );
 
 /**
  * Every error a binding's subscription to `event` declares: the built-in ones, the binding's and,
  * where `event` is protected, its authentication's. An event type declares none of its own.
  */
-export const eventErrors = (event: Pick<Called, "caller">, binding: Declaring): Action.Errors =>
-  bindingErrors({ error: [], caller: event.caller }, binding);
+export const eventErrors = (
+  event: Pick<Called, "caller">,
+  binding: Declaring
+): Action.Errors => bindingErrors({ error: [], caller: event.caller }, binding);
 
-const encodedTags = (ast: SchemaAST.AST): ReadonlyArray<string> =>
+const encodedTags = (ast: SchemaAST.AST): readonly string[] =>
   members(SchemaAST.toEncoded(ast)).flatMap((member) => {
     const tag = SchemaAST.isObjects(member)
-      ? member.propertySignatures.find((property) => property.name === "_tag")?.type
+      ? member.propertySignatures.find((property) => property.name === "_tag")
+          ?.type
       : undefined;
 
-    return tag === undefined ? [] : members(tag).flatMap(literalValues).filter(Predicate.isString);
+    return tag === undefined
+      ? []
+      : members(tag).flatMap(literalValues).filter(Predicate.isString);
   });
 
-const builtInTags = new Set(builtIns.flatMap((schema) => encodedTags(schema.ast)));
+const builtInTags = new Set(
+  builtIns.flatMap((schema) => encodedTags(schema.ast))
+);
 
 // Why: The library joins one call's errors, the built-in ones, the action's, the binding's and the
 // authentication's, and a client decodes a failure as the first schema that accepts it, so two
 // schemas sharing a `_tag` misdecode wherever one accepts the other's values. Effect's `catchTag`
 // cannot tell them apart either. A schema's own variants, behind a transformation, are its own.
 /** Throws where two of the schemas in `errors` encode with one `_tag`. */
-export const assertDistinctTags = (what: string, errors: Action.Errors): void => {
+export const assertDistinctTags = (
+  what: string,
+  errors: Action.Errors
+): void => {
   const seen = new Set<string>();
 
   for (const schema of errorSchemas(errors)) {
@@ -128,8 +164,10 @@ export const assertDistinctTags = (what: string, errors: Action.Errors): void =>
       if (seen.has(tag)) {
         throw new Error(
           `${what}: error _tag "${tag}" names two error schemas, which a client cannot tell apart (reuse one schema value, or merge them into one whose fields tell them apart${
-            builtInTags.has(tag) ? "; for a built-in's tag, fail with the built-in itself" : ""
-          })`,
+            builtInTags.has(tag)
+              ? "; for a built-in's tag, fail with the built-in itself"
+              : ""
+          })`
         );
       }
 
@@ -143,14 +181,16 @@ export const assertDistinctTags = (what: string, errors: Action.Errors): void =>
  * and event type names, and each call's and each subscription's errors distinct by `_tag`.
  * Returns the binding's `error`, as a list, and `authentication`.
  */
-export const bindingOf = <D extends Proving & { readonly error: Action.Errors }>(
+export const bindingOf = <
+  D extends Proving & { readonly error: Action.Errors },
+>(
   what: string,
-  actions: ReadonlyArray<Action.Any>,
-  events: ReadonlyArray<Called>,
+  actions: readonly Action.Any[],
+  events: readonly Called[],
   options: {
     readonly error?: Action.Errors | Action.Errors[number] | undefined;
     readonly authentication?: D | undefined;
-  },
+  }
 ) => {
   const error = errorList(options.error);
 
@@ -160,11 +200,17 @@ export const bindingOf = <D extends Proving & { readonly error: Action.Errors }>
   assertAuthentication(events, bound.authentication, "event");
 
   for (const action of actions) {
-    assertDistinctTags(`${what} of "${action.name}"`, bindingErrors(action, bound));
+    assertDistinctTags(
+      `${what} of "${action.name}"`,
+      bindingErrors(action, bound)
+    );
   }
 
   for (const event of events) {
-    assertDistinctTags(`${what} of event "${event.name}"`, eventErrors(event, bound));
+    assertDistinctTags(
+      `${what} of event "${event.name}"`,
+      eventErrors(event, bound)
+    );
   }
 
   return bound;

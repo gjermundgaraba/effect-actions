@@ -1,5 +1,5 @@
-import { Context, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Context, Schema } from "effect";
 
 /** A teammate: what a sign-in can name. The assistant acts for one in each turn. */
 export interface Member {
@@ -21,9 +21,10 @@ export interface Operator {
  * authenticates anyone: the host provides it around each call, as the member a model acts for
  * or as the operator at the terminal.
  */
-export class CurrentCaller extends Context.Service<CurrentCaller, Member | Operator>()(
-  "assistant/CurrentCaller",
-) {}
+export class CurrentCaller extends Context.Service<
+  CurrentCaller,
+  Member | Operator
+>()("assistant/CurrentCaller") {}
 
 export const WhoAmI = Action.make("whoAmI", {
   description: "Show who the assistant is acting for.",

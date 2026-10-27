@@ -8,17 +8,26 @@ import {
   Layer,
   Option,
   Path,
-  type Scope,
 } from "effect";
-import {
-  Etag,
-  type HttpClient,
-  HttpEffect,
-  HttpPlatform,
-  HttpRouter,
-  type HttpServerRequest,
-} from "effect/http";
-import { clientOf, type Served } from "./memory.js";
+import type { Scope } from "effect";
+import { Etag, HttpEffect, HttpPlatform, HttpRouter } from "effect/http";
+import type { HttpClient, HttpServerRequest } from "effect/http";
+
+import { clientOf } from "./memory.js";
+import type { Served } from "./memory.js";
+
+// Why: A server's request logger shows the cause of an empty 500, and a test runs none: the
+// cause is logged here, or a test sees a status and nothing else. Only a failure that reaches
+// the router unhandled, so a 404 or a refusal stays silent, as every request that succeeds
+// does. Rejected: Effect's request logger, a line for every request of every test. The log is
+// given the process console: `it.effect` provides a `TestConsole`, which would keep it from
+// the test's output.
+const isReported = (cause: Cause.Cause<unknown>): boolean =>
+  cause.reasons.some(
+    (reason) =>
+      (Cause.isFailReason(reason) && !ErrorReporter.isIgnored(reason.error)) ||
+      (Cause.isDieReason(reason) && !ErrorReporter.isIgnored(reason.defect))
+  );
 
 /**
  * The native `HttpClient`, answered by `handler` instead of the network: a web handler the test
@@ -27,7 +36,7 @@ import { clientOf, type Served } from "./memory.js";
  * the client `layer(routes)` gives, building nothing; most tests want that one, below.
  */
 export function layer(
-  handler: (request: Request) => Promise<Response>,
+  handler: (request: Request) => Promise<Response>
 ): Layer.Layer<HttpClient.HttpClient>;
 // Why: The routes overload stays last, since TypeScript reports an argument of neither form against
 // the last overload alone.
@@ -52,7 +61,7 @@ export function layer(
  * - It answers HTTP requests and cannot upgrade a WebSocket: give an rpc layer `RpcServer.layerProtocolHttp` in the test, and its client `RpcClient.layerProtocolHttp` over this layer.
  */
 export function layer<A, E, R>(
-  routes: Layer.Layer<A, E, R>,
+  routes: Layer.Layer<A, E, R>
 ): Layer.Layer<
   HttpClient.HttpClient,
   E,
@@ -64,54 +73,49 @@ export function layer<A, E, R>(
   >
 >;
 export function layer(
-  routes: Layer.Layer<unknown, unknown, unknown> | ((request: Request) => Promise<Response>),
+  routes:
+    | Layer.Layer<unknown, unknown, unknown>
+    | ((request: Request) => Promise<Response>)
 ): Layer.Layer<HttpClient.HttpClient, unknown, unknown> {
-  if (!Layer.isLayer(routes)) return clientOf(routes);
+  if (!Layer.isLayer(routes)) {
+    return clientOf(routes);
+  }
 
   return Layer.unwrap(
     Effect.gen(function* () {
-      const fileSystem = Option.getOrElse(yield* Effect.serviceOption(FileSystem.FileSystem), () =>
-        FileSystem.makeNoop({}),
+      const fileSystem = Option.getOrElse(
+        yield* Effect.serviceOption(FileSystem.FileSystem),
+        () => FileSystem.makeNoop({})
       );
 
       const platform = yield* Layer.build(
         Layer.fresh(
           Layer.mergeAll(HttpPlatform.layer, Path.layer, Etag.layerWeak).pipe(
-            Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, fileSystem)),
-          ),
-        ),
+            Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, fileSystem))
+          )
+        )
       );
 
-      const context = Context.merge(platform, yield* Effect.context<never>());
+      const context = Context.merge(platform, yield* Effect.context());
 
-      const app = yield* HttpRouter.toHttpEffect(routes).pipe(Effect.provideContext(context));
+      const app = yield* HttpRouter.toHttpEffect(routes).pipe(
+        Effect.provideContext(context)
+      );
 
       return clientOf(
-        HttpEffect.toWebHandlerWith<never, HttpServerRequest.HttpServerRequest | Scope.Scope>(
-          context,
-        )(
+        HttpEffect.toWebHandlerWith<
+          never,
+          HttpServerRequest.HttpServerRequest | Scope.Scope
+        >(context)(
           Effect.tapCause(app, (cause) =>
             isReported(cause)
               ? Effect.logError(cause).pipe(
-                  Effect.provideService(Console.Console, globalThis.console),
+                  Effect.provideService(Console.Console, globalThis.console)
                 )
-              : Effect.void,
-          ),
-        ),
+              : Effect.void
+          )
+        )
       );
-    }),
+    })
   );
 }
-
-// Why: A server's request logger shows the cause of an empty 500, and a test runs none: the
-// cause is logged here, or a test sees a status and nothing else. Only a failure that reaches
-// the router unhandled, so a 404 or a refusal stays silent, as every request that succeeds
-// does. Rejected: Effect's request logger, a line for every request of every test. The log is
-// given the process console: `it.effect` provides a `TestConsole`, which would keep it from
-// the test's output.
-const isReported = (cause: Cause.Cause<unknown>): boolean =>
-  cause.reasons.some(
-    (reason) =>
-      (Cause.isFailReason(reason) && !ErrorReporter.isIgnored(reason.error)) ||
-      (Cause.isDieReason(reason) && !ErrorReporter.isIgnored(reason.defect)),
-  );

@@ -1,4 +1,5 @@
 import { Effect, Predicate, Schema } from "effect";
+
 import type { Codec } from "./codec.js";
 import type { ErasedValue } from "./implementation.js";
 
@@ -9,13 +10,18 @@ import type { ErasedValue } from "./implementation.js";
 export const canonical = (value: ErasedValue): string =>
   JSON.stringify(value, (_key, nested: ErasedValue) =>
     Predicate.isObject(nested) && !Array.isArray(nested)
-      ? Object.fromEntries(Object.entries(nested).toSorted(([a], [b]) => (a < b ? -1 : 1)))
-      : nested,
+      ? Object.fromEntries(
+          Object.entries(nested).toSorted(([a], [b]) => (a < b ? -1 : 1))
+        )
+      : nested
   );
 
 /** `input`, encoded to JSON by `schema`, as `canonical` writes it. */
-export const canonicalInput = (schema: Codec, input: ErasedValue): Effect.Effect<string> =>
+export const canonicalInput = (
+  schema: Codec,
+  input: ErasedValue
+): Effect.Effect<string> =>
   Effect.map(
     Effect.orDie(Schema.encodeUnknownEffect(Schema.toCodecJson(schema))(input)),
-    canonical,
+    canonical
   );

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Arbitrary, Effect, Schema, Stream } from "effect";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 
@@ -14,7 +15,7 @@ const Tail = Action.make("tail", {
 });
 
 const binding = ActionToolkit.make(
-  Action.implement(Tail, ({ lines }) => Stream.fromIterable(lines)),
+  Action.implement(Tail, ({ lines }) => Stream.fromIterable(lines))
 );
 
 describe("a tool of an action answering a stream", () => {
@@ -26,13 +27,20 @@ describe("a tool of an action answering a stream", () => {
         const results = yield* Effect.gen(function* () {
           const tools = yield* binding.toolkit;
 
-          return yield* Stream.runCollect(yield* tools.handle("tail", { lines }));
+          return yield* Stream.runCollect(
+            yield* tools.handle("tail", { lines })
+          );
         }).pipe(Effect.provide(binding.layer));
 
         expect(results).toMatchObject([
-          { result: lines, encodedResult: lines, isFailure: false, preliminary: false },
+          {
+            result: lines,
+            encodedResult: lines,
+            isFailure: false,
+            preliminary: false,
+          },
         ]);
       }),
-    { arbitrary: { runs: 100 } },
+    { arbitrary: { runs: 100 } }
   );
 });

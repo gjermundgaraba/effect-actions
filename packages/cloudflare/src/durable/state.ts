@@ -6,7 +6,7 @@ import { Context, Effect } from "effect";
  * over `storage.sql` is a Layer requiring it.
  */
 export class State extends Context.Service<State, DurableObjectState>()(
-  "effect-actions-cloudflare/ActionDurableObject/State",
+  "effect-actions-cloudflare/ActionDurableObject/State"
 ) {}
 
 /**
@@ -23,8 +23,8 @@ export const name: Effect.Effect<string, never, State> = Effect.flatMap(
     id.name === undefined
       ? Effect.die(
           new Error(
-            `ActionDurableObject.name reads the name the Worker reached the object by, and the object ${id.toString()} was reached by an id that carries none, as from idFromString or newUniqueId: reach it with getByName(name)`,
-          ),
+            `ActionDurableObject.name reads the name the Worker reached the object by, and the object ${id.toString()} was reached by an id that carries none, as from idFromString or newUniqueId: reach it with getByName(name)`
+          )
         )
-      : Effect.succeed(id.name),
+      : Effect.succeed(id.name)
 );

@@ -1,8 +1,10 @@
-import { Context, Effect, Layer } from "effect";
 import type * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Context, Effect, Layer } from "effect";
+
 import type { IssueNotFound } from "../issues/Issues.js";
 import { IssueStore } from "../issues/store.js";
-import { type Attachment, AttachmentNotFound } from "./Attachments.js";
+import { AttachmentNotFound } from "./Attachments.js";
+import type { Attachment } from "./Attachments.js";
 
 type Image = typeof Action.Image.Type;
 
@@ -19,9 +21,12 @@ export class AttachmentStore extends Context.Service<
       workspace: string,
       issue: string,
       name: string,
-      image: Image,
+      image: Image
     ) => Effect.Effect<Attachment, IssueNotFound>;
-    readonly get: (workspace: string, id: string) => Effect.Effect<Stored, AttachmentNotFound>;
+    readonly get: (
+      workspace: string,
+      id: string
+    ) => Effect.Effect<Stored, AttachmentNotFound>;
   }
 >()("tracker/AttachmentStore") {
   // DEMO ONLY: memory. A service captures what it depends on when it is built, here the issue
@@ -33,26 +38,28 @@ export class AttachmentStore extends Context.Service<
       const stored = new Map<string, Stored>();
 
       return AttachmentStore.of({
-        add: Effect.fn("AttachmentStore.add")(function* (workspace, issue, name, image) {
-          yield* issues.get(workspace, issue);
+        add: Effect.fn("AttachmentStore.add")(
+          function* (workspace, issue, name, image) {
+            yield* issues.get(workspace, issue);
 
-          const attachment = {
-            id: crypto.randomUUID(),
-            issue,
-            name,
-            mimeType: image.mimeType,
-            size: image.data.byteLength,
-          };
+            const attachment = {
+              id: crypto.randomUUID(),
+              issue,
+              name,
+              mimeType: image.mimeType,
+              size: image.data.byteLength,
+            };
 
-          stored.set(`${workspace}/${attachment.id}`, { attachment, image });
+            stored.set(`${workspace}/${attachment.id}`, { attachment, image });
 
-          return attachment;
-        }),
+            return attachment;
+          }
+        ),
         get: (workspace, id) =>
           Effect.fromNullishOr(stored.get(`${workspace}/${id}`)).pipe(
-            Effect.mapError(() => new AttachmentNotFound({ id })),
+            Effect.mapError(() => new AttachmentNotFound({ id }))
           ),
       });
-    }),
+    })
   );
 }

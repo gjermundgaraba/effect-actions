@@ -1,4 +1,5 @@
 import { Clock, Context, Effect } from "effect";
+
 import type { Schedule } from "./alarm.js";
 
 /** The alarm owner a task's time is kept under, one per task name. */
@@ -26,7 +27,7 @@ export class Tasks extends Context.Service<
      */
     readonly runAfter: <A, E, R>(
       name: string,
-      change: Effect.Effect<A, E, R>,
+      change: Effect.Effect<A, E, R>
     ) => Effect.Effect<A, E, R>;
   }
 >()("effect-actions-cloudflare/ActionDurableObject/Tasks") {}
@@ -35,9 +36,9 @@ export class Tasks extends Context.Service<
  * The instance's `Tasks` over its `schedule`, and the alarm owners that run each of `tasks`, by
  * the name `runAfter` takes.
  */
-export const makeTasks = <R>(
+export const makeTasks = <E, R>(
   schedule: Schedule,
-  tasks: { readonly [name: string]: Effect.Effect<void, unknown, R> },
+  tasks: { readonly [name: string]: Effect.Effect<void, E, R> }
 ) => ({
   tasks: Tasks.of({
     runAfter: (name, change) =>
@@ -45,15 +46,18 @@ export const makeTasks = <R>(
         if (!Object.hasOwn(tasks, name)) {
           return yield* Effect.die(
             new Error(
-              `ActionDurableObject.Tasks: this object has no task ${name} (give make or handlers a tasks entry named ${name})`,
-            ),
+              `ActionDurableObject.Tasks: this object has no task ${name} (give make or handlers a tasks entry named ${name})`
+            )
           );
         }
 
         // Why: marked before the change, so a crash in it leaves the task to the alarm, and again
         // as it ends, as an alarm run as the change waited dropped the mark once that run ended.
         // Marked again at the same time, a mark still waiting costs a read, not a write.
-        const marked = schedule.set(taskOwner(name), yield* Clock.currentTimeMillis);
+        const marked = schedule.set(
+          taskOwner(name),
+          yield* Clock.currentTimeMillis
+        );
 
         yield* marked;
 
@@ -61,6 +65,6 @@ export const makeTasks = <R>(
       }),
   }),
   owners: Object.fromEntries(
-    Object.entries(tasks).map(([name, task]) => [taskOwner(name), () => task]),
+    Object.entries(tasks).map(([name, task]) => [taskOwner(name), () => task])
   ),
 });

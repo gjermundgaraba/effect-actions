@@ -1,7 +1,8 @@
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
-import { Effect } from "effect";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { Effect } from "effect";
+
 import { Tools } from "./Actions.js";
 import { attachments } from "./attachments/handlers.js";
 import { identity } from "./identity/handlers.js";
@@ -29,8 +30,13 @@ ActionMcp.runStdio([status, identity, issues, attachments], {
   // The host names the caller itself, around every call. DEMO ONLY: a real host reads who
   // started it, from its own login or configuration.
   Effect.provideService(CurrentMember, members.ada),
-  Effect.provide([NodeStdio.layer, stores, limiter, WorkspaceRegistry.layerMemory]),
+  Effect.provide([
+    NodeStdio.layer,
+    stores,
+    limiter,
+    WorkspaceRegistry.layerMemory,
+  ]),
   // stdout carries the protocol alone, so logs and failures go to stderr.
   ActionCli.logToStderr,
-  NodeRuntime.runMain,
+  NodeRuntime.runMain()
 );

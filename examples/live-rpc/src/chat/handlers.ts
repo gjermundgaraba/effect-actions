@@ -1,6 +1,7 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 import { authorize } from "./authorize.js";
 import { ListRooms, MessagePosted, Messages } from "./Chat.js";
@@ -14,7 +15,7 @@ export const rooms = Action.implement(
     const store = yield* MessageStore;
 
     return () => Effect.map(store.rooms, (found) => ({ rooms: found }));
-  }),
+  })
 );
 
 // The builder runs once, at startup: it is where a handler gets its startup services. The
@@ -53,5 +54,5 @@ export const messages = Action.implement(
         }),
     };
   }),
-  { authorize },
+  { authorize }
 );

@@ -1,13 +1,17 @@
+import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Config, Console, Effect, FileSystem, Schema } from "effect";
 import { Argument, CliError, Command } from "effect/cli";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+
 import { Http } from "./Api.js";
 
 // What a command fails with when no token is configured: a tagged error of the CLI's own, printed
 // on stderr as `MissingToken: <message>` under an `ERROR` heading, and exit 1.
-class MissingToken extends Schema.TaggedError<MissingToken>()("MissingToken", {
+class MissingToken extends Schema.TaggedError<
+  MissingToken,
+  { readonly brand: unique symbol }
+>()("MissingToken", {
   message: Schema.String,
 }) {}
 
@@ -15,7 +19,7 @@ class MissingToken extends Schema.TaggedError<MissingToken>()("MissingToken", {
 // from config. Every command here, the derived ones and your own, calls through this one.
 const api = Effect.gen(function* () {
   const baseUrl = yield* Config.String("NOTES_URL").pipe(
-    Config.withDefault("http://127.0.0.1:3000"),
+    Config.withDefault("http://127.0.0.1:3000")
   );
 
   // Required, since every command but `get-status` is refused without one, and mapped so that a
@@ -24,14 +28,17 @@ const api = Effect.gen(function* () {
     Effect.mapError(
       () =>
         new MissingToken({
-          message: "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>",
-        }),
-    ),
+          message:
+            "NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>",
+        })
+    )
   );
 
   return yield* ActionHttp.client(Http, {
     baseUrl,
-    transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+    transformClient: HttpClient.mapRequest(
+      HttpClientRequest.bearerToken(token)
+    ),
   });
 });
 
@@ -49,17 +56,26 @@ const unescape = (body: string) => body.replaceAll(/^\\(?=\\*# )/gmu, "");
 // `FileSystem` every Effect CLI command has.
 const exportNotes = Command.make(
   "export",
-  { file: Argument.String("file").pipe(Argument.withDescription("The Markdown file to write.")) },
+  {
+    file: Argument.String("file").pipe(
+      Argument.withDescription("The Markdown file to write.")
+    ),
+  },
   ({ file }) =>
     Effect.gen(function* () {
       const client = yield* api;
       const files = yield* FileSystem.FileSystem;
       const { notes } = yield* client.listNotes();
-      const whole = yield* Effect.forEach(notes, ({ id }) => client.getNote({ id }));
+
+      const whole = yield* Effect.forEach(notes, ({ id }) =>
+        client.getNote({ id })
+      );
 
       yield* files.writeFileString(
         file,
-        whole.map((note) => `# ${note.title}\n\n${escape(note.body)}`).join("\n\n"),
+        whole
+          .map((note) => `# ${note.title}\n\n${escape(note.body)}`)
+          .join("\n\n")
       );
 
       yield* Console.log(`Wrote ${whole.length} notes to ${file}`);
@@ -67,10 +83,12 @@ const exportNotes = Command.make(
       // Context of your own for a failure, on stderr before it. The line prints for every
       // failure of the command, a file that cannot be written included, so it says only what is
       // true of them all.
-      Effect.tapError(() => Console.error(`The export to ${file} did not finish.`)),
+      Effect.tapError(() =>
+        Console.error(`The export to ${file} did not finish.`)
+      ),
       // So the export fails as a derived command does.
-      ActionCli.toUserError(Http),
-    ),
+      ActionCli.toUserError(Http)
+    )
 ).pipe(Command.withDescription("Write every note to a file, as Markdown."));
 
 // The other half of `export`: it reads such a file and creates its notes with one call of the
@@ -84,19 +102,22 @@ const importNotes = Command.make(
   "import",
   {
     text: Argument.FileText("file").pipe(
-      Argument.withDescription("A Markdown file as `notes export` writes it."),
+      Argument.withDescription("A Markdown file as `notes export` writes it.")
     ),
   },
   ({ text }) =>
     Effect.gen(function* () {
       const client = yield* api;
 
-      if (text === "") return yield* Console.log("Created 0 notes");
+      if (text === "") {
+        return yield* Console.log("Created 0 notes");
+      }
 
       if (!text.startsWith("# ")) {
         return yield* new CliError.UserError({
           cause: text.split("\n", 1)[0],
-          userMessage: "The file does not start with a `# ` title, as `notes export` writes one.",
+          userMessage:
+            "The file does not start with a `# ` title, as `notes export` writes one.",
         });
       }
 
@@ -109,9 +130,11 @@ const importNotes = Command.make(
       const { notes: created } = yield* client.importNotes({ notes });
 
       yield* Console.log(`Created ${created.length} notes`);
-    }).pipe(ActionCli.toUserError(Http)),
+    }).pipe(ActionCli.toUserError(Http))
 ).pipe(
-  Command.withDescription("Create the notes of a file `export` wrote, all or none, at most 100."),
+  Command.withDescription(
+    "Create the notes of a file `export` wrote, all or none, at most 100."
+  )
 );
 
 // A command per action of the binding, a flag per input field, each calling the server over
@@ -123,7 +146,10 @@ export const commands = ActionCli.remote(Http, {
   commands: {
     // `notes create-note --title Draft < draft.md`: the body is piped in, not a flag.
     createNote: { stdin: "body" },
-    getNote: { positional: ["id"], render: (note) => `# ${note.title}\n\n${note.body}` },
+    getNote: {
+      positional: ["id"],
+      render: (note) => `# ${note.title}\n\n${note.body}`,
+    },
     // `notes update-note <id> --revision 1 < draft.md`: an argument, a flag and stdin together.
     updateNote: { positional: ["id"], stdin: "body" },
   },

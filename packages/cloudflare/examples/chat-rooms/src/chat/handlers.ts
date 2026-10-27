@@ -1,6 +1,7 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 import { Activity } from "./activity.js";
 import { authorize } from "./authorize.js";
@@ -18,18 +19,20 @@ export const messages = Action.implement(
     const activity = yield* Activity;
 
     return {
-      readMessages: ({ after }) => Effect.map(store.read(after), (messages) => ({ messages })),
+      readMessages: ({ after }) =>
+        Effect.map(store.read(after), (read) => ({ messages: read })),
       // The message is in the store, which `MessagePosted`'s check reads: notifying wakes the
       // pages watching the room to read it now. The lobby is another object, whose event this
       // one cannot notify: the room tells it over its stub instead, and the lobby notifies.
       postMessage: ({ text }) =>
-        Effect.flatMap(CurrentMember, (member) => store.post(member.id, text)).pipe(
-          Effect.tap(events.notify(MessagePosted)),
-          activity.changing,
-        ),
+        Effect.flatMap(CurrentMember, (member) =>
+          store.post(member.id, text)
+        ).pipe(Effect.tap(events.notify(MessagePosted)), activity.changing),
       deleteMessage: ({ id }) =>
-        activity.changing(Effect.flatMap(CurrentMember, (member) => store.remove(member.id, id))),
+        activity.changing(
+          Effect.flatMap(CurrentMember, (member) => store.remove(member.id, id))
+        ),
     };
   }),
-  { authorize },
+  { authorize }
 );

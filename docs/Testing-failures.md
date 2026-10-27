@@ -1,10 +1,6 @@
 # Testing failure modes
 
-What you see when something is wrong, and the fix. Search for a fragment of the message.
-A missing service's error can start
-`… with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined'`: search a line
-beneath it, `is missing the following properties from type 'Scope'`, instead.
-The tasks are in [Testing.md](Testing.md).
+What you see when something is wrong, and the fix. Search for a fragment of the message. A missing service's error can start `… with 'exactOptionalPropertyTypes: true'. Consider adding 'undefined'`: search a line beneath it, `is missing the following properties from type 'Scope'`, instead. The tasks are in [Testing.md](Testing.md).
 
 - A route answers an empty 500, which a client method reports as `HttpClientError: Decode error (500 …)`: a defect, or a result that does not encode. `Testing.layer(routes)` logs its cause on the process console, under `it.effect` too: read the test's output, or collect it with a `Logger` provided around the layer.
 - `Type 'Provider<CurrentUser, "notes-service.Login">' is missing the following properties from type 'Scope'` at `it.effect`, or `… is not assignable to type 'never'` at `Effect.runPromise`: the routes serve a protected action without a provider of its descriptor. Provide the real one or a test verifier to the routes; a caller provided around `Testing.layer` does not satisfy them.

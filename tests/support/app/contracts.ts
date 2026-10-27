@@ -1,5 +1,6 @@
-import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Schema } from "effect";
+
 import { CurrentActor } from "./authorization.js";
 
 export const User = Schema.Struct({
@@ -7,11 +8,10 @@ export const User = Schema.Struct({
   name: Schema.String,
 });
 
-export class UserNotFound extends Schema.TaggedError<UserNotFound>()(
-  "UserNotFound",
-  { id: Schema.String },
-  { httpApiStatus: 404 },
-) {}
+export class UserNotFound extends Schema.TaggedError<
+  UserNotFound,
+  { readonly brand: unique symbol }
+>()("UserNotFound", { id: Schema.String }, { httpApiStatus: 404 }) {}
 
 export const Status = Action.make("status", {
   description: "Report whether the service is up.",

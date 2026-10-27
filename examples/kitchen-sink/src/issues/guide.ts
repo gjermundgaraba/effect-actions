@@ -1,6 +1,7 @@
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { Effect, Layer, Schema } from "effect";
 import { McpServer } from "effect/ai";
-import * as Action from "@gjermundgaraba/effect-actions/Action";
+
 import { Issues } from "./Issues.js";
 
 const guide = `# Triage
@@ -30,7 +31,7 @@ export const features = Layer.mergeAll(
     parameters: { focus: Schema.String },
     content: ({ focus }) =>
       Effect.succeed(
-        `Call ${tools.listIssues.name} for the open issues and ${tools.getIssue.name} for those about ${focus}. For each, propose ${tools.commentOnIssue.name} or ${tools.closeIssue.name}. Follow tracker://guides/triage.`,
+        `Call ${tools.listIssues.name} for the open issues and ${tools.getIssue.name} for those about ${focus}. For each, propose ${tools.commentOnIssue.name} or ${tools.closeIssue.name}. Follow tracker://guides/triage.`
       ),
-  }),
+  })
 );

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "@effect/vitest";
+
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   Cause,
   Context,
@@ -25,61 +26,90 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
+
+import * as Action from "../../src/contract/Action.js";
+import * as ActionHttp from "../../src/http/ActionHttp.js";
+import * as ActionMcp from "../../src/mcp/ActionMcp.js";
+import * as Testing from "../../src/testing/Testing.js";
 import { layer as host } from "../support/app/app.js";
 import { authenticate } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { Http, Login } from "../support/app/binding.js";
 import { GetUser } from "../support/app/contracts.js";
-import * as Action from "../../src/contract/Action.js";
-import * as ActionHttp from "../../src/http/ActionHttp.js";
-import * as ActionMcp from "../../src/mcp/ActionMcp.js";
-import * as Testing from "../../src/testing/Testing.js";
 import { as } from "../support/requests.js";
 
+const textOf = (url: string) =>
+  Effect.flatMap(HttpClient.get(url), (response) => response.text);
+
+const text = (request: HttpClientRequest.HttpClientRequest) =>
+  Effect.flatMap(HttpClient.execute(request), (response) => response.text);
+
+const network: typeof globalThis.fetch = async () => new Response("network");
+
+const readData = (fs: FileSystem.FileSystem, path: Path.Path, name: string) =>
+  fs.readFileString(path.join("data", name));
+
 describe("layer", () => {
-  it.effect("runs requests in the program's context, middleware and handlers alike", () =>
-    Effect.gen(function* () {
-      const Stage = Context.Reference<string>("testing-test/Stage", {
-        defaultValue: () => "real",
-      });
+  it.effect(
+    "runs requests in the program's context, middleware and handlers alike",
+    () =>
+      Effect.gen(function* () {
+        const Stage = Context.Reference<string>("testing-test/Stage", {
+          defaultValue: () => "real",
+        });
 
-      const stamped = HttpRouter.middleware((route) =>
-        Effect.flatMap(Effect.service(Stage), (stage) =>
-          Effect.map(route, (response) => HttpServerResponse.setHeader(response, "x-stage", stage)),
-        ),
-      ).layer;
+        const stamped = HttpRouter.middleware((route) =>
+          Effect.flatMap(Effect.service(Stage), (stage) =>
+            Effect.map(route, (response) =>
+              HttpServerResponse.setHeader(response, "x-stage", stage)
+            )
+          )
+        ).layer;
 
-      const routes = HttpRouter.add(
-        "GET",
-        "/stage",
-        Effect.map(Effect.service(Stage), HttpServerResponse.text),
-      ).pipe(Layer.provide(stamped));
+        const routes = HttpRouter.add(
+          "GET",
+          "/stage",
+          Effect.map(Effect.service(Stage), HttpServerResponse.text)
+        ).pipe(Layer.provide(stamped));
 
-      const [header, body] = yield* Effect.gen(function* () {
-        const response = yield* HttpClient.get("/stage");
+        const [header, body] = yield* Effect.gen(function* () {
+          const response = yield* HttpClient.get("/stage");
 
-        return [response.headers["x-stage"], yield* response.text] as const;
-      }).pipe(Effect.provide(Testing.layer(routes)), Effect.provideService(Stage, "test"));
+          return [response.headers["x-stage"], yield* response.text] as const;
+        }).pipe(
+          Effect.provide(Testing.layer(routes)),
+          Effect.provideService(Stage, "test")
+        );
 
-      expect([header, body]).toEqual(["test", "test"]);
-    }),
+        expect([header, body]).toStrictEqual(["test", "test"]);
+      })
   );
 
-  class Visits extends Context.Service<Visits, { count: number }>()("testing/Visits") {}
+  class Visits extends Context.Service<Visits, { count: number }>()(
+    "testing/Visits"
+  ) {}
 
   it("answers through a web handler the test serves, which it neither builds nor disposes", async () => {
-    const web = HttpRouter.toWebHandler(host.pipe(Layer.provide(HttpServer.layerServices)), {
-      disableLogger: true,
-    });
+    const web = HttpRouter.toWebHandler(
+      host.pipe(Layer.provide(HttpServer.layerServices)),
+      {
+        disableLogger: true,
+      }
+    );
 
-    const run = <A, E>(program: Effect.Effect<A, E, HttpClient.HttpClient>) =>
-      program.pipe(Effect.provide(Testing.layer(web.handler)), Effect.runPromise);
+    const run = async <A, E>(
+      program: Effect.Effect<A, E, HttpClient.HttpClient>
+    ) =>
+      await program.pipe(
+        Effect.provide(Testing.layer(web.handler)),
+        Effect.runPromise
+      );
 
     try {
       const renamed = await run(
         Effect.flatMap(ActionHttp.client(Http, as("alice")), (client) =>
-          client.renameUser({ id: "1", name: "Grace" }),
-        ),
+          client.renameUser({ id: "1", name: "Grace" })
+        )
       );
 
       const answeredBySecondLayer = await run(
@@ -87,19 +117,25 @@ describe("layer", () => {
           const client = yield* ActionHttp.client(Http, as("alice"));
 
           const listed = yield* HttpClient.execute(
-            ActionMcp.request("tools/list", {}, { headers: { authorization: "Bearer alice" } }),
+            ActionMcp.request(
+              "tools/list",
+              {},
+              { headers: { authorization: "Bearer alice" } }
+            )
           );
 
           return [
             yield* client.getUser({ id: "1" }),
-            yield* (yield* ActionMcp.client([GetUser], as("alice"))).getUser({ id: "1" }),
+            yield* (yield* ActionMcp.client([GetUser], as("alice"))).getUser({
+              id: "1",
+            }),
             listed.status,
           ];
-        }),
+        })
       );
 
-      expect(renamed).toEqual({ id: "1", name: "Grace" });
-      expect(answeredBySecondLayer).toEqual([
+      expect(renamed).toStrictEqual({ id: "1", name: "Grace" });
+      expect(answeredBySecondLayer).toStrictEqual([
         { id: "1", name: "Grace" },
         { id: "1", name: "Grace" },
         200,
@@ -117,21 +153,20 @@ describe("layer", () => {
           "GET",
           "/where",
           Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
-            HttpServerResponse.text(request.originalUrl),
-          ),
+            HttpServerResponse.text(request.originalUrl)
+          )
         );
 
-        const get = (url: string) =>
-          Effect.flatMap(HttpClient.get(url), (response) => response.text);
-
-        const relativeAfterClientBaseUrl = get("/where").pipe(
+        const relativeAfterClientBaseUrl = textOf("/where").pipe(
           Effect.provideServiceEffect(
             HttpClient.HttpClient,
             Effect.map(
               HttpClient.HttpClient,
-              HttpClient.mapRequest(HttpClientRequest.prependUrl("https://api.example")),
-            ),
-          ),
+              HttpClient.mapRequest(
+                HttpClientRequest.prependUrl("https://api.example")
+              )
+            )
+          )
         );
 
         const urls = yield* Effect.all([
@@ -141,11 +176,11 @@ describe("layer", () => {
             "./where?x=1",
             "http://localhost/where",
             "https://api.example/where",
-          ].map(get),
+          ].map(textOf),
           relativeAfterClientBaseUrl,
         ]).pipe(Effect.provide(Testing.layer(routes)));
 
-        expect(urls).toEqual([
+        expect(urls).toStrictEqual([
           "http://localhost/where",
           "http://localhost/where",
           "http://localhost/where?x=1",
@@ -154,44 +189,49 @@ describe("layer", () => {
           "https://api.example/where",
         ]);
 
-        const unresolvableUrlFailures = yield* Effect.all(
-          ["http://", "http://[invalid"].map((url) => Effect.flip(get(url))),
+        const unresolvableUrlFailures = yield* Effect.forEach(
+          ["http://", "http://[invalid"],
+          (url) => Effect.flip(textOf(url))
         ).pipe(Effect.provide(Testing.layer(routes)));
 
         expect(
           unresolvableUrlFailures.map(
-            (error) => HttpClientError.isHttpClientError(error) && error.reason._tag,
+            (error) =>
+              HttpClientError.isHttpClientError(error) && error.reason._tag
+          )
+        ).toStrictEqual(["InvalidUrlError", "InvalidUrlError"]);
+      })
+  );
+
+  it.effect(
+    "sends the Host header of the request's URL, as the network does",
+    () =>
+      Effect.gen(function* () {
+        const routes = HttpRouter.add(
+          "GET",
+          "/host",
+          Effect.map(HttpServerRequest.HttpServerRequest, ({ headers }) =>
+            HttpServerResponse.text(headers["host"] ?? "none")
+          )
+        );
+
+        const hosts = yield* Effect.all([
+          text(HttpClientRequest.get("/host")),
+          text(HttpClientRequest.get("https://api.example.com:8443/host")),
+          text(
+            HttpClientRequest.get("/host").pipe(
+              HttpClientRequest.setHeader("host", "given")
+            )
           ),
-        ).toEqual(["InvalidUrlError", "InvalidUrlError"]);
-      }),
+        ]).pipe(Effect.provide(Testing.layer(routes)));
+
+        expect(hosts).toStrictEqual([
+          "localhost",
+          "api.example.com:8443",
+          "given",
+        ]);
+      })
   );
-
-  it.effect("sends the Host header of the request's URL, as the network does", () =>
-    Effect.gen(function* () {
-      const routes = HttpRouter.add(
-        "GET",
-        "/host",
-        Effect.map(HttpServerRequest.HttpServerRequest, ({ headers }) =>
-          HttpServerResponse.text(headers["host"] ?? "none"),
-        ),
-      );
-
-      const text = (request: HttpClientRequest.HttpClientRequest) =>
-        Effect.flatMap(HttpClient.execute(request), (response) => response.text);
-
-      const hosts = yield* Effect.all([
-        text(HttpClientRequest.get("/host")),
-        text(HttpClientRequest.get("https://api.example.com:8443/host")),
-        text(HttpClientRequest.get("/host").pipe(HttpClientRequest.setHeader("host", "given"))),
-      ]).pipe(Effect.provide(Testing.layer(routes)));
-
-      expect(hosts).toEqual(["localhost", "api.example.com:8443", "given"]);
-    }),
-  );
-
-  const network: typeof globalThis.fetch = () => Promise.resolve(new Response("network"));
-
-  const textOf = (url: string) => Effect.flatMap(HttpClient.get(url), (response) => response.text);
 
   class OtherFetchClient extends Context.Service<
     OtherFetchClient,
@@ -202,28 +242,31 @@ describe("layer", () => {
     OtherFetchClient,
     Effect.map(HttpClient.HttpClient, (client) =>
       textOf("https://elsewhere.example/").pipe(
-        Effect.provideService(HttpClient.HttpClient, client),
-      ),
-    ),
+        Effect.provideService(HttpClient.HttpClient, client)
+      )
+    )
   ).pipe(
     Layer.provide(FetchHttpClient.layer),
-    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, network)),
+    Layer.provide(Layer.succeed(FetchHttpClient.Fetch, network))
   );
 
   const postWhereAfterReadingBody = HttpRouter.add(
     "POST",
     "/where",
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-      Effect.as(request.text, HttpServerResponse.text("routes")),
-    ),
+      Effect.as(request.text, HttpServerResponse.text("routes"))
+    )
   );
 
   const where = Layer.merge(
     HttpRouter.add("GET", "/where", HttpServerResponse.text("routes")),
-    postWhereAfterReadingBody,
+    postWhereAfterReadingBody
   );
 
-  const routesAndOtherClient = Effect.all([textOf("/where"), Effect.flatten(OtherFetchClient)]);
+  const routesAndOtherClient = Effect.all([
+    textOf("/where"),
+    Effect.flatten(OtherFetchClient),
+  ]);
 
   const insideAndOutsideLayer = Effect.all([
     textOf("/where").pipe(Effect.provide(Testing.layer(where))),
@@ -231,33 +274,35 @@ describe("layer", () => {
   ]);
 
   const requestMappingCallsOtherClient = Effect.gen(function* () {
-    const answers: Array<string> = [];
+    const answers: string[] = [];
     const call = yield* OtherFetchClient;
 
-    const client = HttpClient.mapRequestEffect(yield* HttpClient.HttpClient, (request) =>
-      call.pipe(
-        Effect.tap((answer) => Effect.sync(() => answers.push(answer))),
-        Effect.as(request),
-      ),
+    const client = HttpClient.mapRequestEffect(
+      yield* HttpClient.HttpClient,
+      (request) =>
+        call.pipe(
+          Effect.tap((answer) => Effect.sync(() => answers.push(answer))),
+          Effect.as(request)
+        )
     );
 
     const answer = yield* textOf("/where").pipe(
-      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.provideService(HttpClient.HttpClient, client)
     );
 
     return [answer, ...answers];
   });
 
   const streamedBodyCallsOtherClient = Effect.gen(function* () {
-    const answers: Array<string> = [];
+    const answers: string[] = [];
     const call = yield* OtherFetchClient;
 
     const body = Stream.fromEffect(
-      call.pipe(Effect.tap((answer) => Effect.sync(() => answers.push(answer)))),
+      call.pipe(Effect.tap((answer) => Effect.sync(() => answers.push(answer))))
     ).pipe(Stream.encodeText);
 
     const answer = yield* HttpClient.execute(
-      HttpClientRequest.post("/where").pipe(HttpClientRequest.bodyStream(body)),
+      HttpClientRequest.post("/where").pipe(HttpClientRequest.bodyStream(body))
     ).pipe(Effect.flatMap((response) => response.text));
 
     return [answer, ...answers];
@@ -267,46 +312,48 @@ describe("layer", () => {
     [
       "a FetchHttpClient merged after it",
       routesAndOtherClient.pipe(
-        Effect.provide(Layer.mergeAll(Testing.layer(where), otherFetchClient)),
+        Effect.provide(Layer.mergeAll(Testing.layer(where), otherFetchClient))
       ),
     ],
     [
       "a FetchHttpClient merged before it",
       routesAndOtherClient.pipe(
-        Effect.provide(Layer.mergeAll(otherFetchClient, Testing.layer(where))),
+        Effect.provide(Layer.mergeAll(otherFetchClient, Testing.layer(where)))
       ),
     ],
     [
       "FetchHttpClient.layer provided around the program",
       insideAndOutsideLayer.pipe(
         Effect.provide(
-          FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, network))),
-        ),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, network))
+          )
+        )
       ),
     ],
     [
       "FetchHttpClient.Fetch provided around the program",
       insideAndOutsideLayer.pipe(
         Effect.provide(FetchHttpClient.layer),
-        Effect.provideService(FetchHttpClient.Fetch, network),
+        Effect.provideService(FetchHttpClient.Fetch, network)
       ),
     ],
     [
       "a FetchHttpClient called while mapping its request",
       requestMappingCallsOtherClient.pipe(
-        Effect.provide(Layer.mergeAll(otherFetchClient, Testing.layer(where))),
+        Effect.provide(Layer.mergeAll(otherFetchClient, Testing.layer(where)))
       ),
     ],
     [
       "a FetchHttpClient called while its streamed body is read",
       streamedBodyCallsOtherClient.pipe(
-        Effect.provide(Layer.mergeAll(otherFetchClient, Testing.layer(where))),
+        Effect.provide(Layer.mergeAll(otherFetchClient, Testing.layer(where)))
       ),
     ],
   ] as const)("keeps its client apart from %s", ([, program]) =>
     Effect.gen(function* () {
-      expect(yield* program).toEqual(["routes", "network"]);
-    }),
+      expect(yield* program).toStrictEqual(["routes", "network"]);
+    })
   );
 
   it.effect(
@@ -320,28 +367,45 @@ describe("layer", () => {
           HttpRouter.add(
             "GET",
             "/visits",
-            Effect.map(Visits, (seen) => HttpServerResponse.text(String(++seen.count))),
+            Effect.map(Visits, (seen) => {
+              seen.count += 1;
+
+              return HttpServerResponse.text(String(seen.count));
+            })
           ).pipe(HttpRouter.provideRequest(Layer.succeed(Visits, visits))),
-          Layer.effectDiscard(Effect.addFinalizer(() => Effect.sync(() => (released = true)))),
+          Layer.effectDiscard(
+            Effect.addFinalizer(() => Effect.sync(() => (released = true)))
+          )
         );
 
         const [visited, missing] = yield* Effect.gen(function* () {
           const response = yield* HttpClient.get("/visits");
-          const visited = [response.status, yield* response.text, released] as const;
 
-          return [visited, (yield* HttpClient.get("/missing")).status] as const;
+          const answered = [
+            response.status,
+            yield* response.text,
+            released,
+          ] as const;
+
+          return [
+            answered,
+            (yield* HttpClient.get("/missing")).status,
+          ] as const;
         }).pipe(Effect.provide(Testing.layer(routes)));
 
-        expect(visited).toEqual([200, "1", false]);
+        expect(visited).toStrictEqual([200, "1", false]);
         expect(missing).toBe(404);
         expect(visits.count).toBe(1);
         expect(released).toBe(true);
-      }),
+      })
   );
 
   it.effect("fails with the routes' build failure", () =>
     Effect.gen(function* () {
-      class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {}) {}
+      class Unavailable extends Schema.TaggedError<
+        Unavailable,
+        { readonly brand: unique symbol }
+      >()("Unavailable", {}) {}
 
       const Ping = Action.make("ping", {
         description: "Ping",
@@ -352,22 +416,15 @@ describe("layer", () => {
 
       const routes = ActionHttp.layer(
         ActionHttp.make([Ping]),
-        Action.implement(
-          Ping,
-          Effect.gen(function* () {
-            yield* new Unavailable();
-
-            return () => Effect.succeed(true);
-          }),
-        ),
+        Action.implement(Ping, Effect.fail(new Unavailable()))
       );
 
       const failure = yield* HttpClient.get("/api/ping").pipe(
         Effect.provide(Testing.layer(routes)),
-        Effect.flip,
+        Effect.flip
       );
 
-      expect(failure).toEqual(new Unavailable());
+      expect(failure).toStrictEqual(new Unavailable());
 
       const Guarded = Action.make("ping", {
         description: "Ping",
@@ -380,30 +437,52 @@ describe("layer", () => {
         ActionHttp.make([Guarded], { authentication: Login }),
         Action.implement(Guarded, () => Effect.succeed(true), {
           authorize: Effect.fail(new Unavailable()),
-        }),
+        })
       ).pipe(Layer.provide(authenticate));
 
       const authorizeFailure = yield* HttpClient.get("/api/ping").pipe(
         Effect.provide(Testing.layer(guarded)),
-        Effect.flip,
+        Effect.flip
       );
 
-      expect(authorizeFailure).toEqual(new Unavailable());
-    }),
+      expect(authorizeFailure).toStrictEqual(new Unavailable());
+    })
   );
 
   it.effect(
     "logs the cause of a request a reporter would be given, a route's own failure included, and of no other",
     () =>
       Effect.gen(function* () {
-        class Missing extends Schema.TaggedError<Missing>()("Missing", {}) {}
+        class Missing extends Schema.TaggedError<
+          Missing,
+          { readonly brand: unique symbol }
+        >()("Missing", {}) {}
 
-        const options = { description: "Probe", readOnly: true, caller: Action.Anyone } as const;
+        class RouteFailed extends Schema.TaggedError<
+          RouteFailed,
+          { readonly brand: unique symbol }
+        >()("RouteFailed", { message: Schema.String }) {}
+
+        const options = {
+          description: "Probe",
+          readOnly: true,
+          caller: Action.Anyone,
+        } as const;
+
         const Crash = Action.make("crash", options);
-        const Count = Action.make("count", { ...options, success: Schema.Finite });
+
+        const Count = Action.make("count", {
+          ...options,
+          success: Schema.Finite,
+        });
+
         const Find = Action.make("find", { ...options, error: Missing });
         const Fine = Action.make("fine", options);
-        const Secret = Action.make("secret", { ...options, caller: CurrentActor });
+
+        const Secret = Action.make("secret", {
+          ...options,
+          caller: CurrentActor,
+        });
 
         const Probes = ActionHttp.make([Crash, Count, Find, Fine, Secret], {
           authentication: Login,
@@ -416,20 +495,32 @@ describe("layer", () => {
             find: () => Effect.fail(new Missing()),
             fine: () => Effect.void,
           }),
-          Action.implement(Secret, () => Effect.void, { authorize: Action.allowAll }),
+          Action.implement(Secret, () => Effect.void, {
+            authorize: Action.allowAll,
+          }),
         ]).pipe(
           Layer.provide(authenticate),
-          Layer.merge(HttpRouter.add("GET", "/own", Effect.fail(new Error("a route of its own")))),
+          Layer.merge(
+            HttpRouter.add(
+              "GET",
+              "/own",
+              Effect.fail(new RouteFailed({ message: "a route of its own" }))
+            )
+          ),
           Layer.merge(
             HttpRouter.add(
               "GET",
               "/unreported",
-              Effect.die(Object.assign(new Error("marked"), { [ErrorReporter.ignore]: true })),
-            ),
-          ),
+              Effect.die(
+                Object.assign(new Error("marked"), {
+                  [ErrorReporter.ignore]: true,
+                })
+              )
+            )
+          )
         );
 
-        const logged: Array<string> = [];
+        const logged: string[] = [];
 
         yield* Effect.gen(function* () {
           const client = yield* ActionHttp.client(Probes);
@@ -440,137 +531,200 @@ describe("layer", () => {
           yield* HttpClient.get("/nowhere");
           yield* HttpClient.get("/unreported");
 
-          expect(logged).toEqual([]);
+          expect(logged).toStrictEqual([]);
 
           yield* Effect.exit(client.crash());
           yield* Effect.exit(client.count());
           yield* HttpClient.get("/own");
         }).pipe(
-          Effect.provide(Testing.layer(routes)),
           Effect.provide(
-            Logger.layer([
-              Logger.make(
-                ({ cause, logLevel }) => void logged.push(`${logLevel} ${Cause.pretty(cause)}`),
-              ),
-            ]),
-          ),
+            Layer.provideMerge(
+              Testing.layer(routes),
+              Logger.layer([
+                Logger.make(({ cause, logLevel }) => {
+                  logged.push(`${logLevel} ${Cause.pretty(cause)}`);
+                }),
+              ])
+            )
+          )
         );
 
-        expect(logged).toEqual([
-          expect.stringMatching(/^Error Error: db password hunter2/),
-          expect.stringMatching(/^Error HttpApiSchemaError[^]*Expected a finite number/),
-          expect.stringMatching(/^Error Error: a route of its own/),
+        expect(logged).toStrictEqual([
+          expect.stringMatching(/^Error Error: db password hunter2/u),
+          expect.stringMatching(
+            /^Error HttpApiSchemaError[^]*Expected a finite number/u
+          ),
+          expect.stringMatching(/^Error RouteFailed: a route of its own/u),
         ]);
-      }),
+      })
   );
 
   it.effect(
     "answers a route's defect as an empty 500, logging the cause on the process console, which it.effect's TestConsole would keep",
     () =>
       Effect.gen(function* () {
-        const printed: Array<string> = [];
+        const printed: string[] = [];
 
-        const print = (...args: ReadonlyArray<unknown>) =>
-          void printed.push(args.map(String).join(" "));
+        const print = (...args: readonly unknown[]) => {
+          printed.push(args.map(String).join(" "));
+        };
 
         const spies = [vi.spyOn(console, "log"), vi.spyOn(console, "error")];
 
-        for (const spy of spies) spy.mockImplementation(print);
+        for (const spy of spies) {
+          spy.mockImplementation(print);
+        }
 
-        const answer = yield* Effect.flatMap(HttpClient.get("/crash"), (response) =>
-          Effect.map(response.text, (body) => ({ status: response.status, body })),
+        const answer = yield* Effect.flatMap(
+          HttpClient.get("/crash"),
+          (response) =>
+            Effect.map(response.text, (body) => ({
+              status: response.status,
+              body,
+            }))
         ).pipe(
           Effect.provide(
-            Testing.layer(HttpRouter.add("GET", "/crash", Effect.die(new Error("printed defect")))),
+            Testing.layer(
+              HttpRouter.add(
+                "GET",
+                "/crash",
+                Effect.die(new Error("printed defect"))
+              )
+            )
           ),
-          Effect.ensuring(Effect.sync(() => spies.forEach((spy) => spy.mockRestore()))),
+          Effect.ensuring(
+            Effect.sync(() => {
+              for (const spy of spies) {
+                spy.mockRestore();
+              }
+            })
+          )
         );
 
-        expect(answer).toEqual({ status: 500, body: "" });
-        expect(printed).toEqual([expect.stringContaining("printed defect")]);
-      }),
+        expect(answer).toStrictEqual({ status: 500, body: "" });
+        expect(printed).toStrictEqual([
+          expect.stringContaining("printed defect"),
+        ]);
+      })
   );
 
-  it.effect("leaves the routes' startup services to the program, which shares them", () =>
-    Effect.gen(function* () {
-      let built = 0;
+  it.effect(
+    "leaves the routes' startup services to the program, which shares them",
+    () =>
+      Effect.gen(function* () {
+        let built = 0;
 
-      const Visit = Action.make("visit", {
-        description: "Count a visit.",
-        readOnly: false,
-        caller: Action.Anyone,
-        success: Schema.Finite,
-      });
+        const Visit = Action.make("visit", {
+          description: "Count a visit.",
+          readOnly: false,
+          caller: Action.Anyone,
+          success: Schema.Finite,
+        });
 
-      const visit = Action.implement(
-        Visit,
-        Effect.map(Visits, (seen) => () => Effect.sync(() => ++seen.count)),
-      );
+        const visit = Action.implement(
+          Visit,
+          Effect.map(
+            Visits,
+            (seen) => () =>
+              Effect.sync(() => {
+                seen.count += 1;
 
-      const Http = ActionHttp.make([Visit]);
+                return seen.count;
+              })
+          )
+        );
 
-      const answered = yield* Effect.gen(function* () {
-        const client = yield* ActionHttp.client(Http);
+        const VisitHttp = ActionHttp.make([Visit]);
 
-        return [yield* client.visit(), (yield* Visits).count];
-      }).pipe(
-        Effect.provide(
-          Testing.layer(ActionHttp.layer(Http, visit)).pipe(
-            Layer.provideMerge(Layer.sync(Visits, () => (built++, { count: 0 }))),
-          ),
-        ),
-      );
+        const answered = yield* Effect.gen(function* () {
+          const client = yield* ActionHttp.client(VisitHttp);
 
-      expect(answered).toEqual([1, 1]);
-      expect(built).toBe(1);
-    }),
+          return [yield* client.visit(), (yield* Visits).count];
+        }).pipe(
+          Effect.provide(
+            Testing.layer(ActionHttp.layer(VisitHttp, visit)).pipe(
+              Layer.provideMerge(
+                Layer.sync(Visits, () => {
+                  built += 1;
+
+                  return { count: 0 };
+                })
+              )
+            )
+          )
+        );
+
+        expect(answered).toStrictEqual([1, 1]);
+        expect(built).toBe(1);
+      })
   );
 
-  it.effect("serves a per-request service provided around it, such as the caller", () =>
-    Effect.gen(function* () {
-      const routes = HttpRouter.add(
-        "GET",
-        "/visits",
-        Effect.map(Visits, (seen) => HttpServerResponse.text(String(++seen.count))),
-      );
+  it.effect(
+    "serves a per-request service provided around it, such as the caller",
+    () =>
+      Effect.gen(function* () {
+        const routes = HttpRouter.add(
+          "GET",
+          "/visits",
+          Effect.map(Visits, (seen) => {
+            seen.count += 1;
 
-      const answered = yield* HttpClient.get("/visits").pipe(
-        Effect.flatMap((response) => response.text),
-        Effect.provide(
-          Testing.layer(routes).pipe(Layer.provide(Layer.succeed(Visits, { count: 0 }))),
-        ),
-      );
+            return HttpServerResponse.text(String(seen.count));
+          })
+        );
 
-      expect(answered).toBe("1");
-    }),
+        const answered = yield* HttpClient.get("/visits").pipe(
+          Effect.flatMap((response) => response.text),
+          Effect.provide(
+            Testing.layer(routes).pipe(
+              Layer.provide(Layer.succeed(Visits, { count: 0 }))
+            )
+          )
+        );
+
+        expect(answered).toBe("1");
+      })
   );
 
-  it.effect("serves a global middleware the per-request service provided around it", () =>
-    Effect.gen(function* () {
-      const globalCountingMiddleware = HttpRouter.middleware(
-        (route) =>
-          Effect.flatMap(Visits, (seen) =>
-            Effect.map(route, (response) =>
-              HttpServerResponse.setHeader(response, "x-visits", String(++seen.count)),
+  it.effect(
+    "serves a global middleware the per-request service provided around it",
+    () =>
+      Effect.gen(function* () {
+        const globalCountingMiddleware = HttpRouter.middleware(
+          (route) =>
+            Effect.flatMap(Visits, (seen) =>
+              Effect.map(route, (response) => {
+                seen.count += 1;
+
+                return HttpServerResponse.setHeader(
+                  response,
+                  "x-visits",
+                  String(seen.count)
+                );
+              })
             ),
-          ),
-        { global: true },
-      );
+          { global: true }
+        );
 
-      const routes = Layer.mergeAll(
-        HttpRouter.add("GET", "/", HttpServerResponse.empty()),
-        globalCountingMiddleware,
-      );
+        const routes = Layer.mergeAll(
+          HttpRouter.add("GET", "/", HttpServerResponse.empty()),
+          globalCountingMiddleware
+        );
 
-      const visits = yield* HttpClient.get("/").pipe(
-        Effect.map((response) => [response.status, response.headers["x-visits"]]),
-        Effect.provide(
-          Testing.layer(routes).pipe(Layer.provide(Layer.succeed(Visits, { count: 0 }))),
-        ),
-      );
+        const visits = yield* HttpClient.get("/").pipe(
+          Effect.map((response) => [
+            response.status,
+            response.headers["x-visits"],
+          ]),
+          Effect.provide(
+            Testing.layer(routes).pipe(
+              Layer.provide(Layer.succeed(Visits, { count: 0 }))
+            )
+          )
+        );
 
-      expect(visits).toEqual([204, "1"]);
-    }),
+        expect(visits).toStrictEqual([204, "1"]);
+      })
   );
 
   it.effect(
@@ -579,24 +733,27 @@ describe("layer", () => {
       Effect.gen(function* () {
         let built = 0;
 
-        const instanceNamingFileSystem = Layer.sync(FileSystem.FileSystem, () => {
-          const instance = ++built;
+        const instanceNamingFileSystem = Layer.sync(
+          FileSystem.FileSystem,
+          () => {
+            built += 1;
 
-          return FileSystem.makeNoop({
-            readFileString: (file) => Effect.succeed(`${instance}:${file}`),
-          });
-        });
+            const instance = built;
+
+            return FileSystem.makeNoop({
+              readFileString: (file) => Effect.succeed(`${instance}:${file}`),
+            });
+          }
+        );
 
         const Read = Action.make("read", {
-          description: "Reads a file with its builder's services and with its request's.",
+          description:
+            "Reads a file with its builder's services and with its request's.",
           readOnly: true,
           caller: Action.Anyone,
           input: { name: Schema.String },
           success: Schema.Array(Schema.String),
         });
-
-        const readData = (fs: FileSystem.FileSystem, path: Path.Path, name: string) =>
-          fs.readFileString(path.join("data", name));
 
         const read = Action.implement(
           Read,
@@ -611,90 +768,114 @@ describe("layer", () => {
                 const perRequest = yield* readData(
                   yield* FileSystem.FileSystem,
                   yield* Path.Path,
-                  name,
+                  name
                 );
 
                 return [atStartup, perRequest];
               }).pipe(Effect.orDie);
-          }),
+          })
         );
 
-        const Http = ActionHttp.make([Read]);
+        const ReadHttp = ActionHttp.make([Read]);
 
         const answered = yield* Effect.gen(function* () {
-          const client = yield* ActionHttp.client(Http);
+          const client = yield* ActionHttp.client(ReadHttp);
           const fs = yield* FileSystem.FileSystem;
 
-          return [...(yield* client.read({ name: "a.txt" })), yield* fs.readFileString("a.txt")];
+          return [
+            ...(yield* client.read({ name: "a.txt" })),
+            yield* fs.readFileString("a.txt"),
+          ];
         }).pipe(
           Effect.provide(
-            Testing.layer(ActionHttp.layer(Http, read)).pipe(
+            Testing.layer(ActionHttp.layer(ReadHttp, read)).pipe(
               Layer.provide(NodePath.layerWin32),
-              Layer.provideMerge(instanceNamingFileSystem),
-            ),
-          ),
+              Layer.provideMerge(instanceNamingFileSystem)
+            )
+          )
         );
 
-        expect(answered).toEqual(["1:data\\a.txt", "1:data\\a.txt", "1:a.txt"]);
+        expect(answered).toStrictEqual([
+          "1:data\\a.txt",
+          "1:data\\a.txt",
+          "1:a.txt",
+        ]);
         expect(built).toBe(1);
-      }),
+      })
   );
 
-  const packageJson = fileURLToPath(new URL("../../package.json", import.meta.url));
+  const packageJson = fileURLToPath(
+    new URL("../../package.json", import.meta.url)
+  );
 
-  const fileRoute = HttpRouter.add("GET", "/package.json", HttpServerResponse.file(packageJson));
+  const fileRoute = HttpRouter.add(
+    "GET",
+    "/package.json",
+    HttpServerResponse.file(packageJson)
+  );
 
   const getFile = Effect.flatMap(HttpClient.get("/package.json"), (response) =>
-    Effect.map(response.text, (body) => [response.status, body]),
+    Effect.map(response.text, (body) => [response.status, body])
   );
 
-  it.effect("reads files through the FileSystem provided around it, or else a no-op one", () =>
-    Effect.gen(function* () {
-      const Exists = Action.make("exists", {
-        description: "Whether a file exists, to its builder's file system and to its request's.",
-        readOnly: true,
-        caller: Action.Anyone,
-        input: { path: Schema.String },
-        success: Schema.Array(Schema.Boolean),
-      });
+  it.effect(
+    "reads files through the FileSystem provided around it, or else a no-op one",
+    () =>
+      Effect.gen(function* () {
+        const Exists = Action.make("exists", {
+          description:
+            "Whether a file exists, to its builder's file system and to its request's.",
+          readOnly: true,
+          caller: Action.Anyone,
+          input: { path: Schema.String },
+          success: Schema.Array(Schema.Boolean),
+        });
 
-      const exists = Action.implement(
-        Exists,
-        Effect.map(
-          FileSystem.FileSystem,
-          (fs) =>
-            ({ path }) =>
-              Effect.flatMap(FileSystem.FileSystem, (perRequest) =>
-                Effect.all([fs.exists(path), perRequest.exists(path)]),
-              ).pipe(Effect.orDie),
-        ),
-      );
+        const exists = Action.implement(
+          Exists,
+          Effect.map(
+            FileSystem.FileSystem,
+            (fs) =>
+              ({ path }) =>
+                Effect.flatMap(FileSystem.FileSystem, (perRequest) =>
+                  Effect.all([fs.exists(path), perRequest.exists(path)])
+                ).pipe(Effect.orDie)
+          )
+        );
 
-      const Http = ActionHttp.make([Exists]);
-      const routes = Layer.mergeAll(ActionHttp.layer(Http, exists), fileRoute);
+        const ExistsHttp = ActionHttp.make([Exists]);
 
-      const program = Effect.gen(function* () {
-        const client = yield* ActionHttp.client(Http);
+        const routes = Layer.mergeAll(
+          ActionHttp.layer(ExistsHttp, exists),
+          fileRoute
+        );
 
-        return [yield* client.exists({ path: packageJson }), yield* getFile];
-      });
+        const program = Effect.gen(function* () {
+          const client = yield* ActionHttp.client(ExistsHttp);
 
-      const real = yield* program.pipe(
-        Effect.provide(Testing.layer(routes).pipe(Layer.provide(NodeFileSystem.layer))),
-      );
+          return [yield* client.exists({ path: packageJson }), yield* getFile];
+        });
 
-      expect(real).toEqual([
-        [true, true],
-        [200, readFileSync(packageJson, "utf8")],
-      ]);
+        const real = yield* program.pipe(
+          Effect.provide(
+            Testing.layer(routes).pipe(Layer.provide(NodeFileSystem.layer))
+          )
+        );
 
-      const withNothingProvided = yield* program.pipe(Effect.provide(Testing.layer(routes)));
+        expect(real).toStrictEqual([
+          [true, true],
+          [200, readFileSync(packageJson, "utf-8")],
+        ]);
 
-      expect(withNothingProvided).toEqual([
-        [false, false],
-        [500, expect.any(String)],
-      ]);
-    }),
+        const withNothingProvided = yield* program.pipe(
+          Effect.provide(Testing.layer(routes))
+        );
+
+        expect(withNothingProvided).toStrictEqual([
+          [false, false],
+          [500, expect.any(String)],
+        ]);
+      })
   );
 
   it.effect(
@@ -707,14 +888,18 @@ describe("layer", () => {
           Effect.gen(function* () {
             const file = new File(["hello"], "hello.txt");
             const path = yield* Path.Path;
-            const etag = yield* Effect.flatMap(Etag.Generator, (etags) => etags.fromFileWeb(file));
+
+            const etag = yield* Effect.flatMap(Etag.Generator, (etags) =>
+              etags.fromFileWeb(file)
+            );
+
             const response = yield* HttpServerResponse.fileWeb(file);
 
             return HttpServerResponse.setHeaders(response, {
               "x-separator": path.sep,
               "x-etag": Etag.toString(etag),
             });
-          }),
+          })
         );
 
         const answered = yield* HttpClient.get("/defaults").pipe(
@@ -724,13 +909,18 @@ describe("layer", () => {
               body,
               response.headers["x-separator"],
               response.headers["x-etag"],
-            ]),
+            ])
           ),
-          Effect.provide(Testing.layer(routes)),
+          Effect.provide(Testing.layer(routes))
         );
 
-        expect(answered).toEqual([200, "hello", "/", expect.stringMatching(/^W\//)]);
-      }),
+        expect(answered).toStrictEqual([
+          200,
+          "hello",
+          "/",
+          expect.stringMatching(/^W\//u),
+        ]);
+      })
   );
 
   it.effect(
@@ -738,18 +928,23 @@ describe("layer", () => {
     () =>
       Effect.gen(function* () {
         const platformBuiltElsewhere = Layer.effectDiscard(Effect.void).pipe(
-          Layer.provide(HttpServer.layerServices),
+          Layer.provide(HttpServer.layerServices)
         );
 
         const answered = yield* getFile.pipe(
           Effect.provide(
             Testing.layer(fileRoute).pipe(
-              Layer.provide(Layer.merge(NodeFileSystem.layer, platformBuiltElsewhere)),
-            ),
-          ),
+              Layer.provide(
+                Layer.merge(NodeFileSystem.layer, platformBuiltElsewhere)
+              )
+            )
+          )
         );
 
-        expect(answered).toEqual([200, readFileSync(packageJson, "utf8")]);
-      }),
+        expect(answered).toStrictEqual([
+          200,
+          readFileSync(packageJson, "utf-8"),
+        ]);
+      })
   );
 });

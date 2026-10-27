@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { format } from "node:util";
+
+import { describe, expect, it, onTestFinished } from "@effect/vitest";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
@@ -17,16 +19,19 @@ import {
 } from "effect";
 import { McpServer } from "effect/ai";
 import { TestClock } from "effect/testing";
-import { describe, expect, it, onTestFinished } from "@effect/vitest";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
-import * as Testing from "../../src/testing/Testing.js";
 import { statelessRequest } from "../../src/mcp/request.js";
+import * as Testing from "../../src/testing/Testing.js";
 import { everyConsoleMethod } from "../support/console-methods.js";
 import { rawToolCall, send } from "../support/requests.js";
 import { converse, negotiate } from "../support/stdio-host.js";
 
-const connectSubprocess = async (revision: string, script = "tests/support/app/mcp-stdio.ts") => {
+const connectSubprocess = async (
+  revision: string,
+  script = "tests/support/app/mcp-stdio.ts"
+) => {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ["--import", "tsx", script],
@@ -43,12 +48,17 @@ const connectSubprocess = async (revision: string, script = "tests/support/app/m
     ? { versionNegotiation: { mode: { pin: revision } } }
     : { supportedProtocolVersions: [revision] };
 
-  const client = new Client({ name: "stdio-test", version: "0" }, pinnedOrOnlyLegacyOffered);
+  const client = new Client(
+    { name: "stdio-test", version: "0" },
+    pinnedOrOnlyLegacyOffered
+  );
 
   return { client, output, connected: client.connect(transport) };
 };
 
 const subprocessCompilingTypeScriptTimeout = 30_000;
+
+const joinedLines = (...printed: readonly string[]) => printed.join("\n");
 
 describe("the test app's stdio server, as a subprocess", () => {
   it.each(["2026-07-28", "2025-11-25"])(
@@ -59,30 +69,40 @@ describe("the test app's stdio server, as a subprocess", () => {
       try {
         await connected;
         expect(client.getNegotiatedProtocolVersion()).toBe(revision);
-        expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["status"]);
+        const { tools } = await client.listTools();
+        expect(tools.map((tool) => tool.name)).toStrictEqual(["status"]);
         const called = await client.callTool({ name: "status", arguments: {} });
-        const [text] = called.content.map((part) => (part.type === "text" ? part.text : ""));
+
+        const [text] = called.content.map((part) =>
+          part.type === "text" ? part.text : ""
+        );
 
         expect(called.isError).toBe(false);
-        expect(JSON.parse(text ?? "")).toEqual({ ready: true });
-        expect(called.structuredContent).toEqual({ ready: true });
+        expect(JSON.parse(text ?? "")).toStrictEqual({ ready: true });
+        expect(called.structuredContent).toStrictEqual({ ready: true });
       } finally {
         await client.close();
       }
 
       expect(output.stderr).toContain("status called");
     },
-    subprocessCompilingTypeScriptTimeout,
+    subprocessCompilingTypeScriptTimeout
   );
 
   it(
     "writes every console method and logger to stderr, and only the answer to stdout",
     async () => {
-      const child = spawn(process.execPath, ["--import", "tsx", "tests/support/stdio-console.ts"], {
-        cwd: process.cwd(),
-      });
+      const child = spawn(
+        process.execPath,
+        ["--import", "tsx", "tests/support/stdio-console.ts"],
+        {
+          cwd: process.cwd(),
+        }
+      );
 
-      onTestFinished(() => void child.kill());
+      onTestFinished(() => {
+        child.kill();
+      });
 
       const output = { stdout: "", stderr: "" };
 
@@ -101,26 +121,45 @@ describe("the test app's stdio server, as a subprocess", () => {
       });
 
       const exitCodeAndSignal = once(child, "close");
-      const call = statelessRequest("tools/call", { name: "status", arguments: {} }).body;
+
+      const call = statelessRequest("tools/call", {
+        name: "status",
+        arguments: {},
+      }).body;
 
       child.stdin.write(`${JSON.stringify(call)}\n`);
-      expect(await exitCodeAndSignal).toEqual([0, null]);
+      await expect(exitCodeAndSignal).resolves.toStrictEqual([0, null]);
 
       const [answer = "", ...after] = output.stdout.split("\n");
-      const lines = (...printed: ReadonlyArray<string>) => printed.join("\n");
 
-      expect(after).toEqual([""]);
-      expect(JSON.parse(answer)).toMatchObject({ id: 1, result: { isError: false } });
+      expect(after).toStrictEqual([""]);
+      expect(JSON.parse(answer)).toMatchObject({
+        id: 1,
+        result: { isError: false },
+      });
       expect(output.stderr).toContain('"message":"json logger"');
       expect(output.stderr).toContain("console log");
-      expect(output.stderr).toContain(lines("log", "info", "debug", "warn", "error", "dirxml"));
-      expect(output.stderr).toContain(lines("{ dir: true }", "[ { table: 1 } ]"));
       expect(output.stderr).toContain(
-        lines("group", "inside", "collapsed", "deeper", "second line", "{ nested: true }"),
+        joinedLines("log", "info", "debug", "warn", "error", "dirxml")
       );
-      expect(output.stderr).toContain(lines("'dir\\nvalue'", "unlabeled", ""));
+      expect(output.stderr).toContain(
+        joinedLines("{ dir: true }", "[ { table: 1 } ]")
+      );
+      expect(output.stderr).toContain(
+        joinedLines(
+          "group",
+          "inside",
+          "collapsed",
+          "deeper",
+          "second line",
+          "{ nested: true }"
+        )
+      );
+      expect(output.stderr).toContain(
+        joinedLines("'dir\\nvalue'", "unlabeled", "")
+      );
     },
-    subprocessCompilingTypeScriptTimeout,
+    subprocessCompilingTypeScriptTimeout
   );
 });
 
@@ -142,7 +181,7 @@ describe("runStdio's invalid arguments", () => {
         }),
       }),
       Schema.Struct({ error: Schema.Struct({ message: Schema.String }) }),
-    ]),
+    ])
   );
 
   it.effect.each([
@@ -154,19 +193,24 @@ describe("runStdio's invalid arguments", () => {
       const [line] = yield* converse(
         ActionMcp.runStdio(ping, { name: "ping", version: "0" }),
         revision,
-        [{ method: "tools/call", params: { name: "ping", arguments: { invented: true } } }],
+        [
+          {
+            method: "tools/call",
+            params: { name: "ping", arguments: { invented: true } },
+          },
+        ]
       );
 
-      const answered = Schema.decodeUnknownSync(Answered)(line);
+      const answered = yield* Schema.decodeUnknownEffect(Answered)(line);
 
       const message =
         "result" in answered
           ? answered.result.content.map(({ text }) => text).join("\n")
           : answered.error.message;
 
-      expect(Object.keys(answered)).toEqual([kind]);
+      expect(Object.keys(answered)).toStrictEqual([kind]);
       expect(message).toContain("Invalid parameters for tool 'ping'");
-    }),
+    })
   );
 });
 
@@ -177,13 +221,22 @@ describe("runStdio's successes", () => {
     caller: Action.Anyone,
   } as const;
 
-  const Ready = Action.make("ready", { ...read, success: { ready: Schema.Boolean } });
+  const Ready = Action.make("ready", {
+    ...read,
+    success: { ready: Schema.Boolean },
+  });
+
   const Count = Action.make("count", { ...read, success: Schema.Finite });
   const Greeting = Action.make("greeting", { ...read, success: Schema.String });
-  const List = Action.make("list", { ...read, success: Schema.Array(Schema.Finite) });
+
+  const List = Action.make("list", {
+    ...read,
+    success: Schema.Array(Schema.Finite),
+  });
+
   const Reset = Action.make("reset", read);
 
-  const shapes = Action.implement([Ready, Count, Greeting, List, Reset], {
+  const assorted = Action.implement([Ready, Count, Greeting, List, Reset], {
     ready: () => Effect.succeed({ ready: true }),
     count: () => Effect.succeed(42),
     greeting: () => Effect.succeed('say "hi"'),
@@ -203,10 +256,13 @@ describe("runStdio's successes", () => {
     Schema.Struct({
       result: Schema.Struct({
         tools: Schema.Array(
-          Schema.Struct({ name: Schema.String, outputSchema: Schema.optionalKey(Schema.Json) }),
+          Schema.Struct({
+            name: Schema.String,
+            outputSchema: Schema.optionalKey(Schema.Json),
+          })
         ),
       }),
-    }),
+    })
   );
 
   const Called = Schema.fromJsonString(
@@ -214,51 +270,68 @@ describe("runStdio's successes", () => {
       result: Schema.Struct({
         isError: Schema.Boolean,
         structuredContent: Schema.optionalKey(Schema.Json),
-        content: Schema.Array(Schema.Struct({ type: Schema.Literal("text"), text: Schema.String })),
+        content: Schema.Array(
+          Schema.Struct({ type: Schema.Literal("text"), text: Schema.String })
+        ),
       }),
-    }),
+    })
   );
 
   it.effect.each([
     ["2026-07-28", ["ready", "count", "greeting", "list", "reset"]],
     ["2025-11-25", ["ready"]],
     ["2025-06-18", ["ready"]],
-  ] as const)("sends each success as it is to a %s host", ([revision, structured]) =>
-    Effect.gen(function* () {
-      const [listed, ...called] = yield* converse(
-        ActionMcp.runStdio(shapes, { name: "shapes", version: "0" }),
-        revision,
-        [
-          { method: "tools/list" },
-          ...successes.map(([name]) => ({ method: "tools/call", params: { name, arguments: {} } })),
-        ],
-      );
+  ] as const)(
+    "sends each success as it is to a %s host",
+    ([revision, structured]) =>
+      Effect.gen(function* () {
+        const [listed, ...called] = yield* converse(
+          ActionMcp.runStdio(assorted, { name: "shapes", version: "0" }),
+          revision,
+          [
+            { method: "tools/list" },
+            ...successes.map(([name]) => ({
+              method: "tools/call",
+              params: { name, arguments: {} },
+            })),
+          ]
+        );
 
-      const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
-      const listing = tools.filter(({ outputSchema }) => outputSchema !== undefined);
+        const { tools } = (yield* Schema.decodeUnknownEffect(Listed)(listed))
+          .result;
 
-      expect(listing.map(({ name }) => name)).toEqual(structured);
+        const listing = tools.filter(
+          ({ outputSchema }) => outputSchema !== undefined
+        );
 
-      for (const [index, [name, success]] of successes.entries()) {
-        const { result } = Schema.decodeUnknownSync(Called)(called[index]);
-        const isStructured = structured.some((tool) => tool === name);
+        expect(listing.map(({ name }) => name)).toStrictEqual(structured);
 
-        expect(result.isError).toBe(false);
+        for (const [index, [name, success]] of successes.entries()) {
+          const { result } = yield* Schema.decodeUnknownEffect(Called)(
+            called[index]
+          );
 
-        if (isStructured) {
-          expect(result.structuredContent).toEqual(success);
-        } else {
-          expect(result).not.toHaveProperty("structuredContent");
+          const isStructured = structured.some((tool) => tool === name);
+
+          expect(result.isError).toBe(false);
+
+          if (isStructured) {
+            expect(result.structuredContent).toStrictEqual(success);
+          } else {
+            expect(result).not.toHaveProperty("structuredContent");
+          }
+
+          expect(result.content).toStrictEqual([
+            {
+              type: "text",
+              text:
+                !isStructured && Predicate.isString(success)
+                  ? success
+                  : JSON.stringify(success),
+            },
+          ]);
         }
-
-        expect(result.content).toEqual([
-          {
-            type: "text",
-            text: !isStructured && Predicate.isString(success) ? success : JSON.stringify(success),
-          },
-        ]);
-      }
-    }),
+      })
   );
 
   it.effect(
@@ -274,15 +347,21 @@ describe("runStdio's successes", () => {
         };
 
         const options = { ...serverInfo, instructions: "Call any tool." };
-        const stdio = ActionMcp.runStdio(shapes, options);
-        const call = [{ method: "tools/call", params: { name: "ready", arguments: {} } }];
+        const stdio = ActionMcp.runStdio(assorted, options);
+
+        const call = [
+          { method: "tools/call", params: { name: "ready", arguments: {} } },
+        ];
+
         const [current = ""] = yield* converse(stdio, "2026-07-28", call);
         const [earlier = ""] = yield* converse(stdio, "2025-11-25", call);
 
         const http = yield* Effect.flatMap(
           send(rawToolCall("ready")),
-          (response) => response.text,
-        ).pipe(Effect.provide(Testing.layer(ActionMcp.layerHttp(shapes, options))));
+          (response) => response.text
+        ).pipe(
+          Effect.provide(Testing.layer(ActionMcp.layerHttp(assorted, options)))
+        );
 
         const own = {
           isError: false,
@@ -290,7 +369,7 @@ describe("runStdio's successes", () => {
           content: [{ type: "text", text: '{"ready":true}' }],
         };
 
-        expect(JSON.parse(current)).toEqual({
+        expect(JSON.parse(current)).toStrictEqual({
           jsonrpc: "2.0",
           id: 1,
           result: {
@@ -300,8 +379,12 @@ describe("runStdio's successes", () => {
           },
         });
         expect(http.trimEnd()).toBe(current);
-        expect(JSON.parse(earlier)).toEqual({ jsonrpc: "2.0", id: 1, result: own });
-      }),
+        expect(JSON.parse(earlier)).toStrictEqual({
+          jsonrpc: "2.0",
+          id: 1,
+          result: own,
+        });
+      })
   );
 });
 
@@ -323,26 +406,34 @@ it.effect(
         id: 1,
       };
 
-      const answered = yield* Deferred.make<void>();
+      const answered = yield* Deferred.make<undefined>();
       const decoder = new TextDecoder();
       let output = "";
 
-      const stdin = Stream.make("not json\n", "{\n", `${JSON.stringify(request)}\n`).pipe(
+      const stdin = Stream.make(
+        "not json\n",
+        "{\n",
+        `${JSON.stringify(request)}\n`
+      ).pipe(
         Stream.concat(Stream.fromEffectDrain(Deferred.await(answered))),
-        Stream.encodeText,
+        Stream.encodeText
       );
 
       const stdout = () =>
         Sink.forEach((chunk: string | Uint8Array) =>
           Effect.suspend(() => {
-            output += Predicate.isString(chunk) ? chunk : decoder.decode(chunk, { stream: true });
+            output += Predicate.isString(chunk)
+              ? chunk
+              : decoder.decode(chunk, { stream: true });
 
-            return output.endsWith("\n") ? Deferred.succeed(answered, undefined) : Effect.void;
-          }),
+            return output.endsWith("\n")
+              ? Deferred.succeed(answered, undefined)
+              : Effect.void;
+          })
         );
 
       yield* ActionMcp.runStdio(ping, { name: "ping", version: "0" }).pipe(
-        Effect.provide(Stdio.layerTest({ stdin, stdout })),
+        Effect.provide(Stdio.layerTest({ stdin, stdout }))
       );
 
       const lines = output.trimEnd().split("\n");
@@ -352,8 +443,13 @@ it.effect(
         id: 1,
         result: { structuredContent: "pong" },
       });
-    }),
+    })
 );
+
+const commitCall = (id: number) => ({
+  ...statelessRequest("tools/call", { name: "commit", arguments: {} }).body,
+  id,
+});
 
 it.live("answers every call piped before stdin closes, then ends", () =>
   Effect.gen(function* () {
@@ -363,79 +459,93 @@ it.live("answers every call piped before stdin closes, then ends", () =>
       caller: Action.Anyone,
     });
 
-    const call = (id: number) => ({
-      ...statelessRequest("tools/call", { name: "commit", arguments: {} }).body,
-      id,
-    });
-
     const decoder = new TextDecoder();
     let written = "";
 
-    const stillRunningWhenStdinCloses = Action.implement(Commit, () => Effect.sleep(100));
-
-    const stdin = Stream.make(`${JSON.stringify(call(1))}\n${JSON.stringify(call(2))}\n`).pipe(
-      Stream.encodeText,
+    const stillRunningWhenStdinCloses = Action.implement(Commit, () =>
+      Effect.sleep(100)
     );
+
+    const stdin = Stream.make(
+      `${JSON.stringify(commitCall(1))}\n${JSON.stringify(commitCall(2))}\n`
+    ).pipe(Stream.encodeText);
 
     const stdout = () =>
       Sink.forEach((chunk: string | Uint8Array) =>
-        Effect.sync(() => (written += Predicate.isString(chunk) ? chunk : decoder.decode(chunk))),
+        Effect.sync(
+          () =>
+            (written += Predicate.isString(chunk)
+              ? chunk
+              : decoder.decode(chunk))
+        )
       );
 
-    yield* ActionMcp.runStdio(stillRunningWhenStdinCloses, { name: "commit", version: "0" }).pipe(
-      Effect.provide(Stdio.layerTest({ stdin, stdout })),
-    );
+    yield* ActionMcp.runStdio(stillRunningWhenStdinCloses, {
+      name: "commit",
+      version: "0",
+    }).pipe(Effect.provide(Stdio.layerTest({ stdin, stdout })));
 
     const Answer = Schema.fromJsonString(
-      Schema.Struct({ id: Schema.Finite, result: Schema.Struct({ isError: Schema.Boolean }) }),
+      Schema.Struct({
+        id: Schema.Finite,
+        result: Schema.Struct({ isError: Schema.Boolean }),
+      })
     );
 
-    const decode = Schema.decodeUnknownSync(Answer);
+    const answers = yield* Effect.forEach(written.trim().split("\n"), (line) =>
+      Schema.decodeEffect(Answer)(line)
+    );
 
-    const answers = written
-      .trim()
-      .split("\n")
-      .map((line) => decode(line));
-
-    expect(answers.toSorted((a, b) => a.id - b.id)).toEqual([
+    expect(answers.toSorted((a, b) => a.id - b.id)).toStrictEqual([
       { id: 1, result: { isError: false } },
       { id: 2, result: { isError: false } },
     ]);
-  }),
+  })
 );
 
-it.live("keeps running a call that never completes after stdin closes, until interrupted", () =>
-  Effect.gen(function* () {
-    const Hang = Action.make("hang", {
-      description: "Never answer",
-      readOnly: true,
-      caller: Action.Anyone,
-    });
+it.live(
+  "keeps running a call that never completes after stdin closes, until interrupted",
+  () =>
+    Effect.gen(function* () {
+      const Hang = Action.make("hang", {
+        description: "Never answer",
+        readOnly: true,
+        caller: Action.Anyone,
+      });
 
-    const call = { ...statelessRequest("tools/call", { name: "hang", arguments: {} }).body, id: 1 };
-    const started = yield* Deferred.make<void>();
+      const call = {
+        ...statelessRequest("tools/call", { name: "hang", arguments: {} }).body,
+        id: 1,
+      };
 
-    const hang = Action.implement(Hang, () =>
-      Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
-    );
+      const started = yield* Deferred.make<undefined>();
 
-    const fiber = yield* ActionMcp.runStdio(hang, { name: "hang", version: "0" }).pipe(
-      Effect.provide(
-        Stdio.layerTest({
-          stdin: Stream.make(`${JSON.stringify(call)}\n`).pipe(Stream.encodeText),
-          stdout: () => Sink.drain,
-        }),
-      ),
-      Effect.forkChild,
-    );
+      const hang = Action.implement(Hang, () =>
+        Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))
+      );
 
-    yield* Deferred.await(started);
-    yield* Effect.sleep(50);
-    expect(fiber.pollUnsafe()).toBeUndefined();
+      const fiber = yield* ActionMcp.runStdio(hang, {
+        name: "hang",
+        version: "0",
+      }).pipe(
+        Effect.provide(
+          Stdio.layerTest({
+            stdin: Stream.make(`${JSON.stringify(call)}\n`).pipe(
+              Stream.encodeText
+            ),
+            stdout: () => Sink.drain,
+          })
+        ),
+        Effect.forkChild
+      );
 
-    yield* Fiber.interrupt(fiber);
-    expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
-  }),
+      yield* Deferred.await(started);
+      yield* Effect.sleep(50);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+
+      yield* Fiber.interrupt(fiber);
+      expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
+    })
 );
 
 it.effect("serves native features given as features beside the tools", () =>
@@ -452,42 +562,53 @@ it.effect("serves native features given as features beside the tools", () =>
         {
           name: "test",
           version: "0",
-          features: McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage.") }),
-        },
+          features: McpServer.prompt({
+            name: "triage",
+            content: () => Effect.succeed("Triage."),
+          }),
+        }
       ),
       "2025-11-25",
-      [{ method: "prompts/list" }],
+      [{ method: "prompts/list" }]
     );
 
-    expect(JSON.parse(listed)).toMatchObject({ result: { prompts: [{ name: "triage" }] } });
-  }),
+    expect(JSON.parse(listed)).toMatchObject({
+      result: { prompts: [{ name: "triage" }] },
+    });
+  })
 );
 
-it.effect.each(["2025-03-26", "2024-11-05"])("offers 2025-11-25 to a host asking for %s", (asked) =>
-  Effect.gen(function* () {
-    const Ping = Action.make("ping", {
-      description: "Ping",
-      readOnly: true,
-      caller: Action.Anyone,
-    });
+it.effect.each(["2025-03-26", "2024-11-05"])(
+  "offers 2025-11-25 to a host asking for %s",
+  (asked) =>
+    Effect.gen(function* () {
+      const Ping = Action.make("ping", {
+        description: "Ping",
+        readOnly: true,
+        caller: Action.Anyone,
+      });
 
-    const line = yield* negotiate(
-      ActionMcp.runStdio(
-        Action.implement(Ping, () => Effect.void),
-        {
-          name: "test",
-          version: "0",
-        },
-      ),
-      asked,
-    );
+      const line = yield* negotiate(
+        ActionMcp.runStdio(
+          Action.implement(Ping, () => Effect.void),
+          {
+            name: "test",
+            version: "0",
+          }
+        ),
+        asked
+      );
 
-    expect(JSON.parse(line)).toMatchObject({ result: { protocolVersion: "2025-11-25" } });
-  }),
+      expect(JSON.parse(line)).toMatchObject({
+        result: { protocolVersion: "2025-11-25" },
+      });
+    })
 );
 
 describe("runStdio's input schemas", () => {
-  const Item = Schema.Struct({ id: Schema.String }).annotate({ identifier: "Item" });
+  const Item = Schema.Struct({ id: Schema.String }).annotate({
+    identifier: "Item",
+  });
 
   const Put = Action.make("put", {
     description: "Store an item",
@@ -503,7 +624,7 @@ describe("runStdio's input schemas", () => {
       result: Schema.Struct({
         tools: Schema.Array(Schema.Struct({ inputSchema: Schema.JsonObject })),
       }),
-    }),
+    })
   );
 
   const closedWithItsDefinitions = {
@@ -528,13 +649,16 @@ describe("runStdio's input schemas", () => {
         const [listed] = yield* converse(
           ActionMcp.runStdio(put, { name: "items", version: "0" }),
           revision,
-          [{ method: "tools/list" }],
+          [{ method: "tools/list" }]
         );
 
-        const { tools } = Schema.decodeUnknownSync(Listed)(listed).result;
+        const { tools } = (yield* Schema.decodeUnknownEffect(Listed)(listed))
+          .result;
 
-        expect(tools.map(({ inputSchema }) => inputSchema)).toEqual([closedWithItsDefinitions]);
-      }),
+        expect(tools.map(({ inputSchema }) => inputSchema)).toStrictEqual([
+          closedWithItsDefinitions,
+        ]);
+      })
   );
 
   it.effect(
@@ -559,30 +683,34 @@ describe("runStdio's input schemas", () => {
         const [listed] = yield* converse(
           ActionMcp.runStdio(
             Action.implement(Checked, () => Effect.void),
-            { name: "checked", version: "0" },
+            { name: "checked", version: "0" }
           ),
           "2026-07-28",
-          [{ method: "tools/list" }],
+          [{ method: "tools/list" }]
         );
 
-        const [tool] = Schema.decodeUnknownSync(Listed)(listed).result.tools;
+        const [tool] = (yield* Schema.decodeUnknownEffect(Listed)(listed))
+          .result.tools;
 
-        expect(tool?.inputSchema["properties"]).toEqual({
+        expect(tool?.inputSchema["properties"]).toStrictEqual({
           unicode: { type: "string", pattern: "^[a-z]+$" },
           plain: { type: "string" },
           describedFirst: { type: "string", description: "Some text." },
           describedAfter: { type: "string" },
         });
-      }),
+      })
   );
 });
 
 const recordingHostConsole = () => {
-  const calls: Array<{ readonly method: string; readonly args: ReadonlyArray<unknown> }> = [];
+  const calls: Array<{
+    readonly method: string;
+    readonly args: readonly unknown[];
+  }> = [];
 
   const record =
     (method: string) =>
-    (...args: ReadonlyArray<unknown>) => {
+    (...args: readonly unknown[]) => {
       calls.push({ method, args });
     };
 
@@ -624,7 +752,7 @@ describe("runStdio's console", () => {
 
       const loggingFromBuilderAtStartup = Action.implement(
         Status,
-        Effect.as(everyConsoleMethod(TestClock.adjust), () => Effect.void),
+        Effect.as(everyConsoleMethod(TestClock.adjust), () => Effect.void)
       );
 
       yield* ActionMcp.runStdio(loggingFromBuilderAtStartup, {
@@ -632,11 +760,13 @@ describe("runStdio's console", () => {
         version: "0",
       }).pipe(
         Effect.provideService(Console.Console, host.console),
-        Effect.provide(Stdio.layerTest({})),
+        Effect.provide(Stdio.layerTest({}))
       );
 
-      expect(host.calls.filter(({ method }) => method !== "error")).toEqual([]);
-      expect(host.calls.map(({ args }) => format(...args))).toEqual([
+      expect(
+        host.calls.filter(({ method }) => method !== "error")
+      ).toStrictEqual([]);
+      expect(host.calls.map(({ args }) => format(...args))).toStrictEqual([
         "log",
         "info",
         "debug",
@@ -647,7 +777,7 @@ describe("runStdio's console", () => {
         "[ { table: 1 } ]",
         "Assertion failed: assert failed",
         "Trace: trace",
-        expect.stringMatching(/^ {4}at .*console-methods\.ts/),
+        expect.stringMatching(/^ {4}at .*console-methods\.ts/u),
         "default: 1",
         "default: 2",
         "calls: 1",
@@ -664,6 +794,6 @@ describe("runStdio's console", () => {
         "scoped: 250ms",
         "after",
       ]);
-    }),
+    })
   );
 });

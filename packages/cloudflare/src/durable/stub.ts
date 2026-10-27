@@ -1,13 +1,18 @@
-import { Context, Effect, Layer, Option, Predicate, Schema, type Scope } from "effect";
 import {
-  RpcClient,
-  RpcClientError,
-  type RpcMessage,
-  RpcSchema,
-  type Rpc,
-  type RpcGroup,
-} from "effect/rpc";
-import { codecFor, type StubRequest } from "./calls.js";
+  Context,
+  Effect,
+  Function,
+  Layer,
+  Option,
+  Predicate,
+  Schema,
+} from "effect";
+import type { Scope } from "effect";
+import { RpcClient, RpcClientError, RpcSchema } from "effect/rpc";
+import type { RpcMessage, Rpc, RpcGroup } from "effect/rpc";
+
+import { codecFor } from "./calls.js";
+import type { StubRequest } from "./calls.js";
 import { RequestId } from "./frames.js";
 
 /**
@@ -17,22 +22,23 @@ import { RequestId } from "./frames.js";
  * tuple as an array.
  */
 export interface Stub {
-  readonly effectActionsRpc: (request: StubRequest) => Promise<ReadonlyArray<unknown>>;
+  readonly effectActionsRpc: (
+    request: StubRequest
+  ) => Promise<readonly unknown[]>;
 }
 
 const clientError = (reason: RpcClientError.RpcClientDefect) =>
   new RpcClientError.RpcClientError({ reason });
 
-const isAnswer = Schema.is(Schema.Array(Schema.Struct({ _tag: Schema.String })));
+const isAnswer = Schema.is(
+  Schema.Array(Schema.Struct({ _tag: Schema.String }))
+);
 
 const completionOf = Schema.decodeUnknownOption(
   Schema.Union([
-    Schema.Struct({
-      _tag: Schema.Literal("Exit"),
-      requestId: RequestId,
-    }),
+    Schema.TaggedStruct("Exit", { requestId: RequestId }),
     Schema.Struct({ _tag: Schema.Literals(["Defect", "ClientProtocolError"]) }),
-  ]),
+  ])
 );
 
 const makeProtocol = (target: Effect.Effect<Stub>) =>
@@ -42,19 +48,18 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
         // Why: a call over the stub is answered once, so an interruption or an acknowledgement
         // has nowhere to go: an interrupted call's answer is dropped, as over Effect's HTTP
         // protocol.
-        !Predicate.isTagged(request, "Request")
-          ? Effect.void
-          : Effect.gen(function* () {
+        Predicate.isTagged(request, "Request")
+          ? Effect.gen(function* () {
               const stub = yield* target;
 
               const answer = yield* Effect.tryPromise({
-                try: () => stub.effectActionsRpc([request]),
+                try: async () => await stub.effectActionsRpc([request]),
                 catch: (cause) =>
                   clientError(
                     new RpcClientError.RpcClientDefect({
                       message: "The object's stub refused the call",
                       cause,
-                    }),
+                    })
                   ),
               });
 
@@ -69,8 +74,8 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
                     completionOf(response),
                     (completion) =>
                       !Predicate.isTagged(completion, "Exit") ||
-                      completion.requestId === request.id,
-                  ),
+                      completion.requestId === request.id
+                  )
                 );
 
               if (!completes) {
@@ -79,21 +84,22 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
                     message:
                       "The object's answer ended before the call completed: delegate effectActionsRpc to handlers' own, returning its answer",
                     cause: request,
-                  }),
+                  })
                 );
               }
 
               yield* Effect.forEach(
-                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- What the object answered: an array of tagged responses, one completing this call, as checked above; the native client decodes each exit and chunk it reads with the rpc's schemas.
-                answer as ReadonlyArray<RpcMessage.FromServerEncoded>,
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: What the object answered: an array of tagged responses, one completing this call, as checked above; the native client decodes each exit and chunk it reads with the rpc's schemas.
+                answer as readonly RpcMessage.FromServerEncoded[],
                 (response) => write(clientId, response),
-                { discard: true },
+                { discard: true }
               );
-            }),
+            })
+          : Effect.void,
       supportsAck: false,
       supportsTransferables: false,
       codecFor,
-    }),
+    })
   );
 
 /**
@@ -115,20 +121,26 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
-export const layerStubClient = (stub: Stub | (() => Stub)): Layer.Layer<RpcClient.Protocol> =>
+export const layerStubClient = (
+  stub: Stub | (() => Stub)
+): Layer.Layer<RpcClient.Protocol> =>
   Layer.effect(RpcClient.Protocol)(
     // Why: a stub is an object, `typeof` reporting it so whatever its proxy answers to `in`, so
     // a function is the factory.
-    makeProtocol(Predicate.isFunction(stub) ? Effect.sync(stub) : Effect.succeed(stub)),
+    makeProtocol(
+      Predicate.isFunction(stub) ? Effect.sync(stub) : Effect.succeed(stub)
+    )
   );
 
 const CurrentStub = Context.Reference<(() => Stub) | undefined>(
   "effect-actions-cloudflare/ActionDurableObject/CurrentStub",
-  { defaultValue: () => undefined },
+  { defaultValue: Function.constUndefined }
 );
 
 const currentStub = Effect.flatMap(Effect.service(CurrentStub), (stubOf) =>
-  stubOf === undefined ? Effect.die(new Error("No stub for the call")) : Effect.sync(stubOf),
+  stubOf === undefined
+    ? Effect.die(new Error("No stub for the call"))
+    : Effect.sync(stubOf)
 );
 
 type Unary<Rpcs extends Rpc.Any> = Rpcs extends Rpc.Any
@@ -137,9 +149,14 @@ type Unary<Rpcs extends Rpc.Any> = Rpcs extends Rpc.Any
     : Rpcs
   : never;
 
-type NativeMethod = (payload: never, options?: never) => Effect.Effect<unknown, unknown>;
+type NativeMethod = (
+  payload: never,
+  options?: never
+) => Effect.Effect<unknown, unknown>;
 
-type NativeClient = { readonly [tag: string]: NativeMethod };
+interface NativeClient {
+  readonly [tag: string]: NativeMethod;
+}
 
 /**
  * A group's rpcs, as `client.<rpc>(payload)`: Effect's native client, each call failing with
@@ -170,7 +187,7 @@ export type Client<Group> = RpcClient.RpcClient<
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
 export const client = <Rpcs extends Rpc.Any>(
-  group: RpcGroup.RpcGroup<Rpcs>,
+  group: RpcGroup.RpcGroup<Rpcs>
 ): Effect.Effect<
   (stubOf: () => Stub) => Client<RpcGroup.RpcGroup<Rpcs>>,
   never,
@@ -181,20 +198,25 @@ export const client = <Rpcs extends Rpc.Any>(
     // stub factory is a reference set around it, and one client serves every object. The factory
     // runs at each send: a stub an exception broke fails every later call through it.
     const native: NativeClient = yield* RpcClient.make(group).pipe(
-      Effect.provideServiceEffect(RpcClient.Protocol, makeProtocol(currentStub)),
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased native client: one method per rpc of the group, by its tag, each taking its payload and options.
-      Effect.map((made) => made as NativeClient),
+      Effect.provideServiceEffect(
+        RpcClient.Protocol,
+        makeProtocol(currentStub)
+      ),
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased native client: one method per rpc of the group, by its tag, each taking its payload and options.
+      Effect.map((made) => made as NativeClient)
     );
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native group boundary: every rpc of a group is a native `Rpc`, carrying its schemas.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Native group boundary: every rpc of a group is a native `Rpc`, carrying its schemas.
     const rpcs = group.requests.values() as Iterable<Rpc.AnyWithProps>;
 
     const unary = new Set(
-      [...rpcs].flatMap((rpc) => (RpcSchema.isStreamSchema(rpc.successSchema) ? [] : [rpc._tag])),
+      [...rpcs].flatMap((rpc) =>
+        RpcSchema.isStreamSchema(rpc.successSchema) ? [] : [rpc._tag]
+      )
     );
 
     return (stubOf: () => Stub) =>
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased client: one method per rpc of the group, each the native client's, whose declared errors, `RpcClientError` and successes `Client` types.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased client: one method per rpc of the group, each the native client's, whose declared errors, `RpcClientError` and successes `Client` types.
       Object.fromEntries(
         Object.entries(native).flatMap(([tag, method]) =>
           unary.has(tag)
@@ -202,10 +224,12 @@ export const client = <Rpcs extends Rpc.Any>(
                 [
                   tag,
                   (...args: Parameters<NativeMethod>) =>
-                    method(...args).pipe(Effect.provideService(CurrentStub, stubOf)),
+                    method(...args).pipe(
+                      Effect.provideService(CurrentStub, stubOf)
+                    ),
                 ],
               ]
-            : [],
-        ),
+            : []
+        )
       ) as Client<RpcGroup.RpcGroup<Rpcs>>;
   });

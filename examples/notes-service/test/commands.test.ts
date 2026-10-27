@@ -1,5 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import {
   Arbitrary,
   ConfigProvider,
@@ -13,8 +15,7 @@ import {
 import { CliError, Command } from "effect/cli";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { TestConsole } from "effect/testing";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+
 import { Http } from "../src/Api.js";
 import { commands } from "../src/commands.js";
 import { ImportNotes, Note, NoteNotFound } from "../src/notes/Notes.js";
@@ -30,21 +31,30 @@ const served = Testing.layer(routes).pipe(Layer.provide(NoteStore.layerMemory));
 // the environment as a Layer, so the test decides whether a token is configured, whatever the
 // shell holds. The console of `it.effect` keeps every line printed, so a run returns the lines
 // it added.
-const connected = (environment: Record<string, string>, args: ReadonlyArray<string>, stdin = "") =>
+const connected = (
+  environment: Record<string, string>,
+  args: readonly string[],
+  stdin = ""
+) =>
   Effect.gen(function* () {
     const before = (yield* TestConsole.logLines).length;
 
     yield* Command.runWith(commands, { version: "0" })(args).pipe(
-      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment))),
-      Effect.provide(Stdio.layerTest({ stdin: Stream.make(new TextEncoder().encode(stdin)) })),
-      Effect.provide(NodeServices.layer),
+      Effect.provide(
+        Layer.merge(
+          ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment)),
+          Stdio.layerTest({
+            stdin: Stream.make(new TextEncoder().encode(stdin)),
+          })
+        ).pipe(Layer.provideMerge(NodeServices.layer))
+      )
     );
 
     return (yield* TestConsole.logLines).slice(before);
   });
 
 // A run as the caller `token` names.
-const run = (token: string, args: ReadonlyArray<string>, stdin = "") =>
+const run = (token: string, args: readonly string[], stdin = "") =>
   connected({ NOTES_TOKEN: token }, args, stdin);
 
 const fitsAFile = (text: string) =>
@@ -61,8 +71,8 @@ const trickyLines = Arbitrary.array(
       "#tag",
       "\r# After a carriage return",
       "\u2028# After a line separator",
-    ]),
-  ),
+    ])
+  )
 );
 
 const importable = Arbitrary.all([
@@ -73,35 +83,62 @@ const importable = Arbitrary.all([
     notes.map(({ title, body }, place) => ({
       title,
       body: [body, ...(extra[place] ?? [])].join("\n"),
-    })),
+    }))
   ),
   Arbitrary.filter((notes) =>
-    notes.every(({ title, body }) => fitsAFile(title) && fitsAFile(body)),
-  ),
+    notes.every(({ title, body }) => fitsAFile(title) && fitsAFile(body))
+  )
 );
 
-describe("the commands", () => {
-  it.effect("take an argument, a flag and stdin, and print what `render` returns", () =>
-    Effect.gen(function* () {
-      // A command without `render` prints its result as JSON.
-      const [created] = yield* run("ada", ["create-note", "--title", "Plan"], "First draft\n");
-      const { id } = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Note))(created);
-
-      expect(yield* run("ada", ["get-note", id])).toEqual(["# Plan\n\nFirst draft"]);
-
-      yield* run("ada", ["update-note", id, "--revision", "1"], "Second draft\n");
-
-      expect(yield* run("ada", ["get-note", id])).toEqual(["# Plan\n\nSecond draft"]);
-    }).pipe(Effect.provide(served)),
+const as = (token: string) =>
+  ActionHttp.client(Http).pipe(
+    Effect.updateService(
+      HttpClient.HttpClient,
+      HttpClient.mapRequest(HttpClientRequest.bearerToken(token))
+    )
   );
 
-  it.effect("describe a flag in `--help` as the contract describes its field", () =>
-    Effect.gen(function* () {
-      // Help is one printed text. The description is the `revision` field's, from Notes.ts.
-      expect(yield* run("ada", ["update-note", "--help"])).toEqual([
-        expect.stringContaining("The revision you read: 1 for a new note"),
-      ]);
-    }).pipe(Effect.provide(served)),
+describe("the commands", () => {
+  it.effect(
+    "take an argument, a flag and stdin, and print what `render` returns",
+    () =>
+      Effect.gen(function* () {
+        // A command without `render` prints its result as JSON.
+        const [created] = yield* run(
+          "ada",
+          ["create-note", "--title", "Plan"],
+          "First draft\n"
+        );
+
+        const { id } = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Note)
+        )(created);
+
+        expect(yield* run("ada", ["get-note", id])).toStrictEqual([
+          "# Plan\n\nFirst draft",
+        ]);
+
+        yield* run(
+          "ada",
+          ["update-note", id, "--revision", "1"],
+          "Second draft\n"
+        );
+
+        expect(yield* run("ada", ["get-note", id])).toStrictEqual([
+          "# Plan\n\nSecond draft",
+        ]);
+      }).pipe(Effect.provide(served))
+  );
+
+  it.effect(
+    "describe a flag in `--help` as the contract describes its field",
+    () =>
+      Effect.gen(function* () {
+        // Help is one printed text. The description is the `revision` field's, from Notes.ts.
+        expect(yield* run("ada", ["update-note", "--help"])).toStrictEqual([
+          expect.stringContaining("The revision you read: 1 for a new note"),
+        ]);
+      }).pipe(Effect.provide(served))
   );
 
   it.effect("run a command of their own beside the derived ones", () =>
@@ -113,11 +150,13 @@ describe("the commands", () => {
       const files = yield* FileSystem.FileSystem;
       const file = `${yield* files.makeTempDirectoryScoped()}/notes.md`;
 
-      expect(yield* run("ada", ["export", file])).toEqual([`Wrote 2 notes to ${file}`]);
+      expect(yield* run("ada", ["export", file])).toStrictEqual([
+        `Wrote 2 notes to ${file}`,
+      ]);
       expect(yield* files.readFileString(file)).toBe(
-        "# Plan\n\nFirst draft\n\n# Budget\n\nToo small",
+        "# Plan\n\nFirst draft\n\n# Budget\n\nToo small"
       );
-    }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.merge(served, NodeServices.layer)))
   );
 
   it.effect("import a file `export` wrote, all its notes or none", () =>
@@ -126,38 +165,52 @@ describe("the commands", () => {
       const directory = yield* files.makeTempDirectoryScoped();
       const file = `${directory}/notes.md`;
 
-      yield* files.writeFileString(file, "# Plan\n\nFirst draft\n\n# Budget\n\nToo small");
+      yield* files.writeFileString(
+        file,
+        "# Plan\n\nFirst draft\n\n# Budget\n\nToo small"
+      );
 
-      expect(yield* run("ada", ["import", file])).toEqual(["Created 2 notes"]);
-      expect(yield* run("grace", ["import", file])).toEqual(["Created 2 notes"]);
+      expect(yield* run("ada", ["import", file])).toStrictEqual([
+        "Created 2 notes",
+      ]);
+      expect(yield* run("grace", ["import", file])).toStrictEqual([
+        "Created 2 notes",
+      ]);
 
-      yield* files.writeFileString(`${directory}/untitled.md`, "# Plan\n\nKept?\n\n# \n\nNo title");
+      yield* files.writeFileString(
+        `${directory}/untitled.md`,
+        "# Plan\n\nKept?\n\n# \n\nNo title"
+      );
 
-      const refused = yield* Effect.flip(run("ada", ["import", `${directory}/untitled.md`]));
+      const refused = yield* Effect.flip(
+        run("ada", ["import", `${directory}/untitled.md`])
+      );
 
       expect(refused).toHaveProperty(
         "userMessage",
-        expect.stringContaining("A note needs a title."),
+        expect.stringContaining("A note needs a title.")
       );
       const [listed = ""] = yield* run("ada", ["list-notes"]);
 
       const { notes } = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(
-          Schema.Struct({ notes: Schema.Array(Schema.Struct({ title: Schema.String })) }),
-        ),
+          Schema.Struct({
+            notes: Schema.Array(Schema.Struct({ title: Schema.String })),
+          })
+        )
       )(listed);
 
-      expect(notes.map(({ title }) => title)).toEqual(["Plan", "Budget"]);
+      expect(notes.map(({ title }) => title)).toStrictEqual(["Plan", "Budget"]);
 
       // A missing file is a usage error: the command's help, and the file named on stderr.
       yield* Effect.flip(run("ada", ["import", `${directory}/nowhere.md`]));
 
       expect(yield* TestConsole.errorLines).toContainEqual(
         expect.stringMatching(
-          /Invalid value for argument <file>: .*nowhere\.md.*File does not exist/su,
-        ),
+          /Invalid value for argument <file>: .*nowhere\.md.*File does not exist/su
+        )
       );
-    }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(Layer.merge(served, NodeServices.layer)))
   );
 
   // Any notes the contract accepts, generated from its schema, with lines that start as a title
@@ -171,14 +224,6 @@ describe("the commands", () => {
         const files = yield* FileSystem.FileSystem;
         const file = `${yield* files.makeTempDirectoryScoped()}/notes.md`;
 
-        const as = (token: string) =>
-          ActionHttp.client(Http).pipe(
-            Effect.updateService(
-              HttpClient.HttpClient,
-              HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
-            ),
-          );
-
         const [ada, grace] = [yield* as("ada"), yield* as("grace")];
 
         yield* ada.importNotes({ notes });
@@ -186,11 +231,16 @@ describe("the commands", () => {
         yield* run("grace", ["import", file]);
 
         const { notes: listed } = yield* grace.listNotes();
-        const read = yield* Effect.forEach(listed, ({ id }) => grace.getNote({ id }));
 
-        expect(read.map(({ title, body }) => ({ title, body }))).toEqual(notes);
-      }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
-    { arbitrary: { runs: 50 } },
+        const read = yield* Effect.forEach(listed, ({ id }) =>
+          grace.getNote({ id })
+        );
+
+        expect(read.map(({ title, body }) => ({ title, body }))).toStrictEqual(
+          notes
+        );
+      }).pipe(Effect.provide(Layer.merge(served, NodeServices.layer))),
+    { arbitrary: { runs: 50 } }
   );
 
   it.effect(
@@ -202,82 +252,105 @@ describe("the commands", () => {
 
         yield* files.writeFileString(`${directory}/empty.md`, "");
 
-        expect(yield* run("grace", ["import", `${directory}/empty.md`])).toEqual([
-          "Created 0 notes",
-        ]);
-
-        yield* files.writeFileString(`${directory}/preamble.md`, "My notes\n\n# Plan\n\nDraft");
-
         expect(
-          yield* Effect.flip(run("grace", ["import", `${directory}/preamble.md`])),
-        ).toHaveProperty(
-          "userMessage",
-          "The file does not start with a `# ` title, as `notes export` writes one.",
+          yield* run("grace", ["import", `${directory}/empty.md`])
+        ).toStrictEqual(["Created 0 notes"]);
+
+        yield* files.writeFileString(
+          `${directory}/preamble.md`,
+          "My notes\n\n# Plan\n\nDraft"
         );
 
-        const many = Array.from({ length: 101 }, (_, place) => `# Note ${place}\n\nBody`);
+        expect(
+          yield* Effect.flip(
+            run("grace", ["import", `${directory}/preamble.md`])
+          )
+        ).toHaveProperty(
+          "userMessage",
+          "The file does not start with a `# ` title, as `notes export` writes one."
+        );
+
+        const many = Array.from(
+          { length: 101 },
+          (_, place) => `# Note ${place}\n\nBody`
+        );
 
         yield* files.writeFileString(`${directory}/many.md`, many.join("\n\n"));
 
-        expect(yield* Effect.flip(run("grace", ["import", `${directory}/many.md`]))).toHaveProperty(
+        expect(
+          yield* Effect.flip(run("grace", ["import", `${directory}/many.md`]))
+        ).toHaveProperty(
           "userMessage",
-          expect.stringContaining("An import holds at most 100 notes."),
+          expect.stringContaining("An import holds at most 100 notes.")
         );
 
-        expect(yield* run("grace", ["list-notes"])).toEqual([
+        expect(yield* run("grace", ["list-notes"])).toStrictEqual([
           JSON.stringify({ notes: [] }, null, 2),
         ]);
-      }).pipe(Effect.provide(served), Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.merge(served, NodeServices.layer)))
   );
 
   it.effect("fail as the server refuses, a command of their own included", () =>
     Effect.gen(function* () {
-      const refused = yield* Effect.flip(run("mallory", ["export", "notes.md"]));
+      const refused = yield* Effect.flip(
+        run("mallory", ["export", "notes.md"])
+      );
 
       expect(refused).toBeInstanceOf(CliError.UserError);
       expect(refused).toHaveProperty(
         "userMessage",
-        '{"_tag":"Unauthenticated","message":"Unknown demo token."}',
+        '{"_tag":"Unauthenticated","message":"Unknown demo token."}'
       );
       // The command's own context is a line of its own on stderr, the JSON left as it is.
-      expect(yield* TestConsole.errorLines).toContain("The export to notes.md did not finish.");
+      expect(yield* TestConsole.errorLines).toContain(
+        "The export to notes.md did not finish."
+      );
 
       // Not an action's error: the file system's, named in the message.
-      const unwritable = yield* Effect.flip(run("ada", ["export", "no-such-directory/notes.md"]));
+      const unwritable = yield* Effect.flip(
+        run("ada", ["export", "no-such-directory/notes.md"])
+      );
 
       expect(unwritable).toBeInstanceOf(CliError.UserError);
-      expect(unwritable).toHaveProperty("userMessage", expect.stringMatching(/^PlatformError: /));
+      expect(unwritable).toHaveProperty(
+        "userMessage",
+        expect.stringMatching(/^PlatformError: /u)
+      );
 
       const missing = yield* Effect.flip(run("ada", ["get-note", "9"]));
 
       expect(missing).toHaveProperty("cause", new NoteNotFound({ id: "9" }));
-    }).pipe(Effect.provide(served)),
+    }).pipe(Effect.provide(served))
   );
 
-  it.effect("call as the configured token names, and ask for one where none is configured", () =>
-    Effect.gen(function* () {
-      yield* connected({ NOTES_TOKEN: "reader" }, ["who-am-i"]);
+  it.effect(
+    "call as the configured token names, and ask for one where none is configured",
+    () =>
+      Effect.gen(function* () {
+        yield* connected({ NOTES_TOKEN: "reader" }, ["who-am-i"]);
 
-      expect(yield* TestConsole.logLines).toEqual([expect.stringContaining('"id": "reader"')]);
+        expect(yield* TestConsole.logLines).toStrictEqual([
+          expect.stringContaining('"id": "reader"'),
+        ]);
 
-      const refused = yield* Effect.flip(connected({}, ["list-notes"]));
+        const refused = yield* Effect.flip(connected({}, ["list-notes"]));
 
-      expect(refused).toBeInstanceOf(CliError.UserError);
-      expect(refused).toHaveProperty("cause._tag", "MissingToken");
-      expect(refused).toHaveProperty(
-        "userMessage",
-        "MissingToken: NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>",
-      );
+        expect(refused).toBeInstanceOf(CliError.UserError);
+        expect(refused).toHaveProperty("cause._tag", "MissingToken");
+        expect(refused).toHaveProperty(
+          "userMessage",
+          "MissingToken: NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>"
+        );
 
-      // What a person sees: that message, once, on stderr, and no report of a `ConfigError`.
-      expect(yield* TestConsole.errorLines).toEqual([
-        expect.stringContaining("NOTES_TOKEN is not set."),
-      ]);
+        // What a person sees: that message, once, on stderr, and no report of a `ConfigError`.
+        expect(yield* TestConsole.errorLines).toStrictEqual([
+          expect.stringContaining("NOTES_TOKEN is not set."),
+        ]);
 
-      // The token is read when a command runs, so help needs none.
-      yield* connected({}, ["list-notes", "--help"]);
+        // The token is read when a command runs, so help needs none.
+        yield* connected({}, ["list-notes", "--help"]);
 
-      expect(yield* TestConsole.logLines).toHaveLength(2);
-    }).pipe(Effect.provide(served)),
+        expect(yield* TestConsole.logLines).toHaveLength(2);
+      }).pipe(Effect.provide(served))
   );
 });

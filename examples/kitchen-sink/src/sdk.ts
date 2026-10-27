@@ -1,6 +1,7 @@
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Effect, flow, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+
 import { Http } from "./Api.js";
 import type { Issue } from "./issues/Issues.js";
 
@@ -19,32 +20,37 @@ export const connect = (options: {
     transformClient: HttpClient.mapRequest(
       flow(
         HttpClientRequest.bearerToken(options.token),
-        HttpClientRequest.setHeader("x-workspace", options.workspace),
-      ),
+        HttpClientRequest.setHeader("x-workspace", options.workspace)
+      )
     ),
   });
 
   return {
     // A method takes the action's decoded input, so a field with a decoding default is given
     // here; only a call without any argument sends `{}` and gets the defaults.
-    openIssues: (limit = 20) =>
-      Effect.runPromise(
-        Effect.map(api.listIssues({ status: "open", limit }), ({ issues }) => issues),
+    openIssues: async (limit = 20) =>
+      await Effect.runPromise(
+        Effect.map(
+          api.listIssues({ status: "open", limit }),
+          ({ issues }) => issues
+        )
       ),
 
     // A declared error is a typed failure, handled by its tag: a missing issue is `undefined`.
-    issue: (id: string): Promise<Issue | undefined> =>
-      api.getIssue({ id }).pipe(
-        Effect.catchTag("IssueNotFound", () => Effect.succeed(undefined)),
-        Effect.runPromise,
+    issue: async (id: string): Promise<Issue | undefined> =>
+      await api.getIssue({ id }).pipe(
+        Effect.catchTag("IssueNotFound", () => Effect.undefined),
+        Effect.runPromise
       ),
 
     // Left unhandled, a declared error rejects the promise as its decoded value, so a caller's
     // `catch` may test `error instanceof RateLimited`.
-    file: (title: string, body: string) => Effect.runPromise(api.createIssue({ title, body })),
+    file: async (title: string, body: string) =>
+      await Effect.runPromise(api.createIssue({ title, body })),
 
     // A stream action's method returns a `Stream`; as an async iterable, `for await` reads each
     // issue as the server sends it.
-    exportAll: (): AsyncIterable<Issue> => Stream.toAsyncIterable(api.exportIssues({})),
+    exportAll: (): AsyncIterable<Issue> =>
+      Stream.toAsyncIterable(api.exportIssues({})),
   };
 };

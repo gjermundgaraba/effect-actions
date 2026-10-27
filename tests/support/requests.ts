@@ -1,9 +1,12 @@
 import { Cause, Effect, Exit, Predicate, Result, Schema } from "effect";
-import { type Headers, HttpClient, HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import type { Headers } from "effect/http";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 
-export const send = (request: Request) => HttpClient.execute(HttpClientRequest.fromWeb(request));
+export const send = (request: Request) =>
+  HttpClient.execute(HttpClientRequest.fromWeb(request));
 
 export const post = (path: string, body: Schema.Json = {}): Request =>
   new Request(`http://localhost${path}`, {
@@ -27,8 +30,11 @@ export const mcpRequest = ({
 }: McpRequestOptions): Request =>
   Result.getOrThrow(
     HttpClientRequest.toWebResult(
-      ActionMcp.request(method, params, { url: `http://localhost${path}`, headers }),
-    ),
+      ActionMcp.request(method, params, {
+        url: `http://localhost${path}`,
+        headers,
+      })
+    )
   );
 
 interface SessionRequestOptions {
@@ -48,7 +54,7 @@ export const initializeParams = {
 export const sessionMessage = (
   method: string,
   params?: Schema.Json | ActionMcp.Params,
-  id = 1,
+  id = 1
 ) => ({
   jsonrpc: "2.0",
   ...(method.startsWith("notifications/") ? {} : { id }),
@@ -77,7 +83,10 @@ export const sessionRequest = ({
 export const endSession = (session: string, path = "/mcp"): Request =>
   new Request(`http://localhost${path}`, {
     method: "DELETE",
-    headers: { "mcp-session-id": session, "mcp-protocol-version": "2025-11-25" },
+    headers: {
+      "mcp-session-id": session,
+      "mcp-protocol-version": "2025-11-25",
+    },
   });
 
 export const rawToolCall = (name: string, args: Schema.Json = {}): Request =>
@@ -97,17 +106,18 @@ const ToolReply = Schema.fromJsonString(
       isError: Schema.Boolean,
       content: Schema.Array(Schema.Struct({ text: Schema.String })),
     }),
-  }),
+  })
 );
 
 export const toolReplyOf = (text: string) =>
-  Effect.map(Schema.decodeUnknownEffect(ToolReply)(text), ({ result }) => ({
+  Effect.map(Schema.decodeEffect(ToolReply)(text), ({ result }) => ({
     isError: result.isError,
     text: result.content[0]?.text,
   }));
 
 export const valueOf = async (response: Response): Promise<Schema.Json> =>
-  Schema.decodeUnknownSync(RawToolCallSuccess)(await response.json()).result.structuredContent;
+  Schema.decodeUnknownSync(RawToolCallSuccess)(await response.json()).result
+    .structuredContent;
 
 export const withBearer = (request: Request, token: string): Request => {
   request.headers.set("authorization", `Bearer ${token}`);
@@ -124,8 +134,10 @@ const RawRequest = Schema.TaggedStruct("Request", {
 
 const RawAnswer = Schema.fromJsonString(
   Schema.Struct({
-    exit: Schema.toCodecJson(Schema.Exit(Schema.Json, Action.BuiltIn, Schema.Defect())),
-  }),
+    exit: Schema.toCodecJson(
+      Schema.Exit(Schema.Json, Action.BuiltIn, Schema.Defect())
+    ),
+  })
 );
 
 export const valueOrSquashedCause = <A, E>(exit: Exit.Exit<A, E>) =>
@@ -137,20 +149,27 @@ export interface RawMessage {
   readonly headers?: ReadonlyArray<readonly [string, string]>;
 }
 
-export const sendRawNdjson = (messages: ReadonlyArray<RawMessage>, token?: string) =>
+export const sendRawNdjson = (
+  messages: readonly RawMessage[],
+  token?: string
+) =>
   Effect.gen(function* () {
     const body = messages
       .map(({ tag, payload, headers = [] }, id) =>
-        JSON.stringify(RawRequest.make({ id: String(id), tag, payload, headers })),
+        JSON.stringify(
+          RawRequest.make({ id: String(id), tag, payload, headers })
+        )
       )
       .join("\n");
 
     const request = HttpClientRequest.post("/rpc").pipe(
-      HttpClientRequest.bodyText(`${body}\n`, "application/ndjson"),
+      HttpClientRequest.bodyText(`${body}\n`, "application/ndjson")
     );
 
     const response = yield* HttpClient.execute(
-      token === undefined ? request : HttpClientRequest.bearerToken(request, token),
+      token === undefined
+        ? request
+        : HttpClientRequest.bearerToken(request, token)
     );
 
     const text = yield* response.text;
@@ -160,6 +179,6 @@ export const sendRawNdjson = (messages: ReadonlyArray<RawMessage>, token?: strin
       exits: text
         .split("\n")
         .filter((line) => line !== "")
-        .map((line) => Schema.decodeUnknownSync(RawAnswer)(line).exit),
+        .map((line) => Schema.decodeSync(RawAnswer)(line).exit),
     };
   });

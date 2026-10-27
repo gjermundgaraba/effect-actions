@@ -1,5 +1,6 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Effect } from "effect";
+
 import { authorize } from "../identity/authorize.js";
 import { CurrentMember } from "../identity/Identity.js";
 import { Issues } from "./Issues.js";
@@ -22,16 +23,28 @@ export const issues = Action.implement(
           const member = yield* CurrentMember;
           const listed = yield* store.list(member.workspace, status, limit);
 
-          return { issues: listed.map(({ id, title, status }) => ({ id, title, status })) };
+          return {
+            issues: listed.map((issue) => ({
+              id: issue.id,
+              title: issue.title,
+              status: issue.status,
+            })),
+          };
         }),
       getIssue: ({ id }) =>
-        Effect.flatMap(CurrentMember, (member) => store.get(member.workspace, id)),
+        Effect.flatMap(CurrentMember, (member) =>
+          store.get(member.workspace, id)
+        ),
       // One function wraps every limited handler, and gives it the member it counted.
-      createIssue: (draft) => limited((member) => store.create(member.workspace, draft)),
+      createIssue: (draft) =>
+        limited((member) => store.create(member.workspace, draft)),
       commentOnIssue: ({ id, text }) =>
-        limited((member) => store.comment(member.workspace, id, { author: member.id, text })),
-      closeIssue: ({ id }) => limited((member) => store.close(member.workspace, id)),
+        limited((member) =>
+          store.comment(member.workspace, id, { author: member.id, text })
+        ),
+      closeIssue: ({ id }) =>
+        limited((member) => store.close(member.workspace, id)),
     };
   }),
-  { authorize },
+  { authorize }
 );

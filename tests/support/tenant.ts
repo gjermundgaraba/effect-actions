@@ -1,10 +1,13 @@
 import { Context, Effect, Redacted, Schema } from "effect";
 import { HttpRouter, HttpServerRequest } from "effect/http";
+
+import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
-import * as Authentication from "../../src/authentication/Authentication.js";
 
-export class Tenant extends Context.Service<Tenant, string>()("tenant/Tenant") {}
+export class Tenant extends Context.Service<Tenant, string>()(
+  "tenant/Tenant"
+) {}
 
 export class Actor extends Context.Service<Actor, string>()("tenant/Actor") {}
 
@@ -25,19 +28,26 @@ export const Public = Action.make("public", {
 export const app = Action.implement(
   [Who, Public],
   { who: () => Actor, public: () => Effect.succeed("public") },
-  { authorize: Action.allowAll },
+  { authorize: Action.allowAll }
 );
 
 export const Login = Authentication.make("tenant.Login", Actor);
 
 export const Http = ActionHttp.make([Who, Public], { authentication: Login });
 
-export const authenticate = Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
-  Effect.map(Tenant, (tenant) => `${tenant}:${Redacted.value(token)}`),
+export const authenticate = Authentication.layer(
+  Login,
+  (token: Redacted.Redacted) =>
+    Effect.map(Tenant, (tenant) => `${tenant}:${Redacted.value(token)}`)
 );
 
-export const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
-  Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-    Effect.provideService(route, Tenant, request.headers["x-tenant"] ?? "default"),
-  ),
+export const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()(
+  (route) =>
+    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+      Effect.provideService(
+        route,
+        Tenant,
+        request.headers["x-tenant"] ?? "default"
+      )
+    )
 );

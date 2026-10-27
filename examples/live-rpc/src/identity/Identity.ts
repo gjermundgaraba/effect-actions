@@ -1,9 +1,9 @@
-import { Context } from "effect";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { Context } from "effect";
 
 export interface Member {
   readonly id: string;
-  readonly rooms: ReadonlyArray<string>;
+  readonly rooms: readonly string[];
 }
 
 /**
@@ -11,7 +11,7 @@ export interface Member {
  * provides it for each message, and a test calling in process provides it itself.
  */
 export class CurrentMember extends Context.Service<CurrentMember, Member>()(
-  "live-rpc/CurrentMember",
+  "live-rpc/CurrentMember"
 ) {}
 
 // How a remote caller proves it is CurrentMember: a bearer token, the default scheme. Clients

@@ -1,5 +1,6 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Effect } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 import { CurrentRoom } from "./room.js";
 

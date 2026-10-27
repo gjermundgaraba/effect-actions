@@ -1,13 +1,17 @@
 import { Cause, Effect, Match, Predicate, Schema, Stream } from "effect";
 import { HttpClientError } from "effect/http";
 import { RpcClientError } from "effect/rpc";
+
 import * as Event from "../contract/Event.js";
-import { type Pushed, readOn } from "../contract/push.js";
+import { readOn } from "../contract/push.js";
+import type { Pushed } from "../contract/push.js";
 import { isTransientReason, receivedFrom } from "../contract/transient.js";
 import type { Transport } from "../contract/watch.js";
 
 /** One subscription's stream over an event type's stream rpc, from the cursor it resumes from. */
-export type StreamMethod = (cursor: string | null) => Stream.Stream<Pushed, unknown>;
+export type StreamMethod = (
+  cursor: string | null
+) => Stream.Stream<Pushed, unknown>;
 
 const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 
@@ -16,7 +20,7 @@ const isAnsweredReason = Schema.is(
     Schema.instanceOf(HttpClientError.TransportError),
     Schema.instanceOf(HttpClientError.StatusCodeError),
     Schema.instanceOf(HttpClientError.DecodeError),
-  ]),
+  ])
 );
 
 // Why: Effect's HTTP protocol reads any status's body as frames, and fails one that ends before
@@ -39,14 +43,22 @@ export const isRpcTransient = Predicate.or(
   (error) =>
     isRpcClientError(error) &&
     Match.value(error.reason).pipe(
-      Match.tag("SocketReadError", "SocketWriteError", "SocketOpenError", () => true),
-      Match.tag("SocketCloseError", ({ code }) => code < 4000 || code > 4999),
-      Match.tag("HttpError", ({ cause }) => isAnsweredReason(cause) && isTransientReason(cause)),
-      Match.tag("RpcClientDefect", ({ message }) =>
-        cutResponses.some((fragment) => message.includes(fragment)),
+      Match.tag(
+        "SocketReadError",
+        "SocketWriteError",
+        "SocketOpenError",
+        () => true
       ),
-      Match.orElse(() => false),
-    ),
+      Match.tag("SocketCloseError", ({ code }) => code < 4000 || code > 4999),
+      Match.tag(
+        "HttpError",
+        ({ cause }) => isAnsweredReason(cause) && isTransientReason(cause)
+      ),
+      Match.tag("RpcClientDefect", ({ message }) =>
+        cutResponses.some((fragment) => message.includes(fragment))
+      ),
+      Match.orElse(() => false)
+    )
 );
 
 // Why: Effect's server answers a tag no layer serves with a defect its message alone names, as
@@ -61,7 +73,7 @@ const isUnknownTag = (tag: string) => {
         Cause.isDieReason(reason) &&
         (Predicate.hasProperty(reason.defect, "message")
           ? reason.defect.message === message
-          : reason.defect === message),
+          : reason.defect === message)
     );
 };
 
@@ -73,9 +85,12 @@ const isUnknownTag = (tag: string) => {
 export const transportOf = (
   event: Event.Any,
   stream: StreamMethod,
-  silenceEnds: boolean,
+  silenceEnds: boolean
 ): Transport<unknown, never> => {
-  const notServed = Stream.fail(Event.SubscriptionError.of(event.name, new Event.NotServed()));
+  const notServed = Stream.fail(
+    Event.SubscriptionError.of(event.name, new Event.NotServed())
+  );
+
   const unknownTag = isUnknownTag(event.name);
 
   return {
@@ -84,13 +99,15 @@ export const transportOf = (
       Effect.fail(
         Event.SubscriptionError.of(
           event.name,
-          new Event.Unsupported({ feature: "deliveryMode", value: "poll" }),
-        ),
+          new Event.Unsupported({ feature: "deliveryMode", value: "poll" })
+        )
       ),
     stream: (cursor) =>
       stream(cursor).pipe(
         Stream.catchCauseIf(unknownTag, () => notServed),
-        silenceEnds ? receivedFrom("RPC", event.name) : readOn("RPC", event.name),
+        silenceEnds
+          ? receivedFrom("RPC", event.name)
+          : readOn("RPC", event.name)
       ),
     transient: isRpcTransient,
   };

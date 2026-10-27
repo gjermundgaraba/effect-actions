@@ -1,38 +1,49 @@
 import { Effect, Option, Schema, Stream } from "effect";
-import { HttpClient, type HttpClientError } from "effect/http";
 import { McpSchema } from "effect/ai";
-import type { Any as Authentication, VerifierError } from "../authentication/provider.js";
+import { HttpClient } from "effect/http";
+import type { HttpClientError } from "effect/http";
+
+import type {
+  Any as Authentication,
+  VerifierError,
+} from "../authentication/provider.js";
 import type * as Action from "../contract/Action.js";
 import {
-  type Call,
   checked,
   checkedStream,
-  type ErasedMethod,
-  type ErasedStreamMethod,
   sendingJson,
   watchInput,
 } from "../contract/call.js";
-import { type BuiltIn, Refusal } from "../contract/errors.js";
-import type * as Event from "../contract/Event.js";
-import { type CallOptions, progressSink, type Reporting } from "../contract/progress.js";
-import { type WatchArgs, type WatchRequirement, watching } from "../contract/watch.js";
+import type {
+  Call,
+  ErasedMethod,
+  ErasedStreamMethod,
+} from "../contract/call.js";
 import { Anyone } from "../contract/caller.js";
 import { projectedErrors } from "../contract/declared.js";
+import { Refusal } from "../contract/errors.js";
+import type { BuiltIn } from "../contract/errors.js";
+import type * as Event from "../contract/Event.js";
 import { split } from "../contract/listed.js";
 import { assertOnce } from "../contract/names.js";
-import { type Answer, elementOf } from "../contract/stream.js";
+import { progressSink } from "../contract/progress.js";
+import type { CallOptions, Reporting } from "../contract/progress.js";
+import { elementOf } from "../contract/stream.js";
+import type { Answer } from "../contract/stream.js";
+import { watching } from "../contract/watch.js";
+import type { WatchArgs, WatchRequirement } from "../contract/watch.js";
 import { defaultPath, liftOf, unliftedFrom } from "./protocol.js";
 import {
   bodyOf,
   callError,
   failWith,
-  type McpCallError,
   NoReply,
   NoStructuredContent,
   ProtocolError,
   StatusError,
   UndeclaredError,
 } from "./reply.js";
+import type { McpCallError } from "./reply.js";
 import { request } from "./request.js";
 import { transportOf } from "./watch.js";
 
@@ -55,7 +66,9 @@ export interface ClientOptions<
    * Wraps the native `HttpClient`, as `ActionHttp.client` takes it: a bearer token is
    * `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`.
    */
-  readonly transformClient?: (client: HttpClient.HttpClient) => HttpClient.HttpClient.With<E, R>;
+  readonly transformClient?: (
+    client: HttpClient.HttpClient
+  ) => HttpClient.HttpClient.With<E, R>;
   /**
    * The endpoint's descriptor, as `layerHttp` takes it: an error its verifier declares, the
    * endpoint's HTTP answer for a protected tool, is then that error's decoded value, as over
@@ -110,7 +123,11 @@ type Watching<Listed extends Event.Any, D, E, R> = [Listed] extends [never]
       >(
         event: W,
         ...args: WatchArgs<W, SE, O>
-      ) => Stream.Stream<Event.Received<W>, WatchError<W, D> | E | SE, R | WatchRequirement<O>>;
+      ) => Stream.Stream<
+        Event.Received<W>,
+        WatchError<W, D> | E | SE,
+        R | WatchRequirement<O>
+      >;
     };
 
 type Block = McpSchema.CallToolResult["content"][number];
@@ -120,26 +137,33 @@ const textOf = (block: Block | undefined): string | undefined =>
 
 const ToolCallReply = Schema.Union([
   Schema.Struct({ result: McpSchema.CallToolResult }),
-  Schema.Struct({ error: Schema.Struct({ code: Schema.Finite, message: Schema.String }) }),
+  Schema.Struct({
+    error: Schema.Struct({ code: Schema.Finite, message: Schema.String }),
+  }),
 ]);
 
-const decodeReply = Schema.decodeUnknownOption(Schema.fromJsonString(ToolCallReply));
+const decodeReply = Schema.decodeUnknownOption(
+  Schema.fromJsonString(ToolCallReply)
+);
 
 /** `onProgress` given each `notifications/progress` value decoded, one that does not logged and dropped. */
 const decodedSink = (
   progress: Action.Any["progress"],
-  onProgress: CallOptions<unknown>["onProgress"],
+  onProgress: CallOptions<unknown>["onProgress"]
 ): Reporting | undefined => {
   const sink = progressSink(onProgress);
 
-  if (progress === undefined || sink === undefined) return undefined;
+  if (progress === undefined || sink === undefined) {
+    return undefined;
+  }
 
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(progress));
 
   return {
     progress: (json) =>
       Effect.matchEffect(decode(json), {
-        onFailure: (error) => Effect.logWarning("A progress value did not decode", error),
+        onFailure: (error) =>
+          Effect.logWarning("A progress value did not decode", error),
         onSuccess: sink.progress,
       }),
   };
@@ -154,7 +178,7 @@ const callTool = <S extends Action.Any["success"]>(
   success: S,
   refusedWith: Action.Errors,
   input: Schema.Json,
-  sink: Reporting | undefined,
+  sink: Reporting | undefined
 ): Effect.Effect<S["Type"], unknown, unknown> => {
   const { name } = action;
   const lift = liftOf(success);
@@ -168,10 +192,12 @@ const callTool = <S extends Action.Any["success"]>(
           name,
           arguments: input,
           // Why: Any token will do, since a stateless request's notifications are its own.
-          ...(sink === undefined ? {} : { _meta: { progressToken: "progress" } }),
+          ...(sink === undefined
+            ? {}
+            : { _meta: { progressToken: "progress" } }),
         },
-        { url },
-      ),
+        { url }
+      )
     );
 
     const messages = yield* bodyOf(method, name, response, sink);
@@ -181,40 +207,53 @@ const callTool = <S extends Action.Any["success"]>(
       return yield* failWith(
         refusedWith,
         text,
-        callError(method, name, new StatusError({ status: response.status, body: text })),
+        callError(
+          method,
+          name,
+          new StatusError({ status: response.status, body: text })
+        )
       );
     }
 
     const reply = Option.fromNullishOr(
-      messages.flatMap((message) => Option.toArray(decodeReply(message))).at(-1),
+      messages.flatMap((message) => Option.toArray(decodeReply(message))).at(-1)
     );
 
     if (Option.isNone(reply)) {
-      return yield* Effect.fail(callError(method, name, new NoReply({ body: text })));
+      return yield* callError(method, name, new NoReply({ body: text }));
     }
 
     if ("error" in reply.value) {
-      return yield* Effect.fail(callError(method, name, new ProtocolError(reply.value.error)));
+      return yield* callError(
+        method,
+        name,
+        new ProtocolError(reply.value.error)
+      );
     }
 
     const { result } = reply.value;
 
     if (result.isError === true) {
-      const error = textOf(result.content.find((block) => block.type === "text")) ?? "";
+      const error =
+        textOf(result.content.find((block) => block.type === "text")) ?? "";
 
       return yield* failWith(
         projectedErrors(action),
         error,
-        callError(method, name, new UndeclaredError({ text: error })),
+        callError(method, name, new UndeclaredError({ text: error }))
       );
     }
 
     if (result.structuredContent === undefined && lift.rest !== undefined) {
-      return yield* Effect.fail(callError(method, name, new NoStructuredContent({ body: text })));
+      return yield* callError(
+        method,
+        name,
+        new NoStructuredContent({ body: text })
+      );
     }
 
     return yield* Schema.decodeUnknownEffect(Schema.toCodecJson(success))(
-      unliftedFrom(lift, result),
+      unliftedFrom(lift, result)
     );
   });
 };
@@ -245,7 +284,7 @@ export function client<
   D extends Authentication | undefined = undefined,
 >(
   contracts: Contracts,
-  options?: ClientOptions<D>,
+  options?: ClientOptions<D>
 ): Effect.Effect<Client<Contracts, D>, never, HttpClient.HttpClient>;
 export function client<
   const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
@@ -254,7 +293,7 @@ export function client<
   D extends Authentication | undefined = undefined,
 >(
   contracts: Contracts,
-  options: ClientOptions<D, E, R>,
+  options: ClientOptions<D, E, R>
 ): Effect.Effect<Client<Contracts, D, E, R>, never, HttpClient.HttpClient>;
 export function client(
   contracts: ReadonlyArray<Action.Any | Event.Any>,
@@ -262,7 +301,9 @@ export function client(
     url = defaultPath,
     transformClient,
     authentication,
-  }: ClientOptions | ClientOptions<Authentication | undefined, unknown, unknown> = {},
+  }:
+    | ClientOptions
+    | ClientOptions<Authentication | undefined, unknown, unknown> = {}
 ): Effect.Effect<unknown, never, HttpClient.HttpClient> {
   const { actions, events } = split(contracts);
 
@@ -275,30 +316,39 @@ export function client(
   ];
 
   return Effect.map(HttpClient.HttpClient, (native) => {
-    const http = transformClient === undefined ? native : transformClient(native);
+    const http =
+      transformClient === undefined ? native : transformClient(native);
 
     const watch = (
       event: Event.Any,
       input?: Event.Any["input"]["Type"],
-      options?: Event.WatchOptions<unknown>,
+      options?: Event.WatchOptions<unknown>
     ) =>
       Stream.unwrap(
         Effect.map(watchInput(event, input), ({ json }) =>
           watching(
-            transportOf({ http, url, event, refusedWith: refusedWith(event) }, json),
-            options,
-          ),
-        ),
+            transportOf(
+              { http, url, event, refusedWith: refusedWith(event) },
+              json
+            ),
+            options
+          )
+        )
       );
 
     return {
       ...Object.fromEntries(
         actions.map(
-          (action): readonly [string, ErasedMethod<unknown> | ErasedStreamMethod<unknown>] => {
+          (
+            action
+          ): readonly [
+            string,
+            ErasedMethod<unknown> | ErasedStreamMethod<unknown>,
+          ] => {
             const call = <S extends Action.Any["success"]>(
               success: S,
               input: Schema.Json,
-              onProgress: CallOptions<unknown>["onProgress"],
+              onProgress: CallOptions<unknown>["onProgress"]
             ) =>
               callTool(
                 http,
@@ -307,7 +357,7 @@ export function client(
                 success,
                 refusedWith(action),
                 input,
-                decodedSink(action.progress, onProgress),
+                decodedSink(action.progress, onProgress)
               );
 
             const element = elementOf(action.success);
@@ -320,7 +370,7 @@ export function client(
               return [
                 action.name,
                 checkedStream(action, sendingJson, (input, onProgress) =>
-                  Stream.fromIterableEffect(call(elements, input, onProgress)),
+                  Stream.fromIterableEffect(call(elements, input, onProgress))
                 ),
               ];
             }
@@ -328,11 +378,11 @@ export function client(
             return [
               action.name,
               checked(action, sendingJson, (input, onProgress) =>
-                call(action.success, input, onProgress),
+                call(action.success, input, onProgress)
               ),
             ];
-          },
-        ),
+          }
+        )
       ),
       ...(events.length === 0 ? {} : { watch }),
     };

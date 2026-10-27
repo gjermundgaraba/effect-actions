@@ -1,5 +1,6 @@
-import { Effect, Stream, Struct } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect, Stream, Struct } from "effect";
+
 import { authorize } from "../identity/authorize.js";
 import { CurrentMember } from "../identity/Identity.js";
 import { IssueChanged } from "./Issues.js";
@@ -20,7 +21,10 @@ export const issueEvents = Event.implement(
         // store's would have to stay unique across restarts, as a subscriber drops a repeated
         // one. Each change is keyed by its workspace, which reaches that workspace's
         // subscribers alone.
-        emit: Stream.map(store.changes, (data) => ({ data, key: data.workspace })),
+        emit: Stream.map(store.changes, (data) => ({
+          data,
+          key: data.workspace,
+        })),
         // One log holds every workspace's changes: a subscriber resuming within an hour, and
         // within the last thousand changes of all workspaces, misses nothing; one resuming
         // later receives a gap first, then what is kept. A busy workspace shortens a quiet
@@ -31,11 +35,12 @@ export const issueEvents = Event.implement(
       // Tenant isolation, as the store's methods hold it for the actions: a member follows
       // their own workspace's key. It is never `undefined`, which would follow every key.
       key: () => Effect.map(CurrentMember, (member) => member.workspace),
-      match: ({ status }, change) => status === undefined || change.status === status,
+      match: ({ status }, change) =>
+        status === undefined || change.status === status,
       transform: ({ comments }, change) =>
         comments === false ? Struct.omit(change, ["comment"]) : change,
     };
   }),
   // The members' rule, as for the actions: a subscription needs the read scope.
-  { authorize },
+  { authorize }
 );

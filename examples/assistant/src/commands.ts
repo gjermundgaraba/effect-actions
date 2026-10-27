@@ -1,4 +1,5 @@
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
+
 import { identity } from "./identity/handlers.js";
 import { tasks } from "./tasks/handlers.js";
 
@@ -12,11 +13,15 @@ export const commands = ActionCli.make([tasks, identity], {
     // per task for a person, and adds `--json` for the JSON a script reads. `description` is the
     // command's help, saying what a line holds; the action's stays what a model reads.
     listTasks: {
-      description: "Print one line per task: [x] when done, then its id, title and assignee.",
+      description:
+        "Print one line per task: [x] when done, then its id, title and assignee.",
       aliases: { assignee: "a" },
-      render: ({ tasks }) =>
-        tasks
-          .map((task) => `${task.done ? "[x]" : "[ ]"} ${task.id} ${task.title} (${task.assignee})`)
+      render: ({ tasks: listed }) =>
+        listed
+          .map(
+            (task) =>
+              `${task.done ? "[x]" : "[ ]"} ${task.id} ${task.title} (${task.assignee})`
+          )
           .join("\n"),
     },
     // `assistant complete-task 2`: an argument instead of `--id 2`.

@@ -1,5 +1,6 @@
-import { Effect } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 import { PipelineStatus } from "./Builds.js";
 import { BuildStore } from "./store.js";
@@ -23,5 +24,5 @@ export const statusEvents = Event.implement(
     };
   }),
   // Every member may watch; which pipelines each sees is the store's check.
-  { authorize: Event.allowAll },
+  { authorize: Event.allowAll }
 );

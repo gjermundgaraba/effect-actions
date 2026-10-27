@@ -1,5 +1,6 @@
-import { Effect } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 import { BuildFinished } from "./Builds.js";
 import { BuildStore } from "./store.js";
@@ -16,9 +17,14 @@ export const buildEvents = Event.implement(
       check: ({ pipeline, status }, cursor) =>
         Effect.gen(function* () {
           const member = yield* CurrentMember;
+
           // A first subscription asks with `null`: the store answers the current position, so
           // the subscriber starts from now.
-          const page = yield* store.finishedSince(member.pipelines, cursor, 100);
+          const page = yield* store.finishedSince(
+            member.pipelines,
+            cursor,
+            100
+          );
 
           return {
             cursor: page.cursor,
@@ -26,16 +32,23 @@ export const buildEvents = Event.implement(
             // A cursor the store cannot resume from: the subscriber is sent a gap first.
             truncated: page.truncated,
             events: page.builds
-              .filter((build) => pipeline === undefined || build.pipeline === pipeline)
-              .filter((build) => status === undefined || build.status === status)
+              .filter(
+                (build) => pipeline === undefined || build.pipeline === pipeline
+              )
+              .filter(
+                (build) => status === undefined || build.status === status
+              )
               // The store's own id, within its epoch: a subscriber that sees a build twice,
               // after a reconnect, drops the second, and never drops a build of a restarted store
               // as one it saw before.
-              .map((build) => ({ eventId: `${page.epoch}/${build.id}`, data: build })),
+              .map((build) => ({
+                eventId: `${page.epoch}/${build.id}`,
+                data: build,
+              })),
           };
         }),
     };
   }),
   // Every member may watch; which builds each sees is the store's check, by pipeline.
-  { authorize: Event.allowAll },
+  { authorize: Event.allowAll }
 );

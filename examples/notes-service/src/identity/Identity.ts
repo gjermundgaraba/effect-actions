@@ -1,6 +1,6 @@
-import { Context, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { Context, Schema } from "effect";
 
 export const scopes = { read: "notes:read", write: "notes:write" } as const;
 
@@ -16,7 +16,7 @@ export interface User {
  * provides it per request, and a local host, such as the stdio server, provides it itself.
  */
 export class CurrentUser extends Context.Service<CurrentUser, User>()(
-  "notes-service/CurrentUser",
+  "notes-service/CurrentUser"
 ) {}
 
 // How a remote caller proves it is CurrentUser: a bearer token, the default scheme. Clients

@@ -1,6 +1,7 @@
 import { ErrorReporter, Schema, Struct } from "effect";
 import { McpSchema } from "effect/ai";
 import { Rpc, RpcGroup } from "effect/rpc";
+
 import { eventCodes } from "../contract/codes.js";
 import {
   Subscribed,
@@ -18,10 +19,10 @@ export const subscriptionIdKey = "io.modelcontextprotocol/subscriptionId";
 // Why: Beside SEP-3415's codes, `eventCodes`, provisional until it is accepted, core MCP's and
 // JSON-RPC's. tests/mcp/events.test.ts asserts them as sent.
 export const codes = {
-  headerMismatch: -32020,
+  headerMismatch: -32_020,
   ...eventCodes,
-  invalidParams: -32602,
-  internal: -32603,
+  invalidParams: -32_602,
+  internal: -32_603,
 } as const;
 
 const Meta = Schema.optional(Schema.Record(Schema.String, Schema.Json));
@@ -41,9 +42,10 @@ export const WireError = Schema.Struct({
 export type WireError = typeof WireError.Type;
 
 /** What an `events/*` handler fails with: the JSON-RPC error it answers. */
-export class EventsError extends Schema.Error<EventsError>("effect-actions/McpEventsError")(
-  WireError.fields,
-) {
+export class EventsError extends Schema.Error<
+  EventsError,
+  { readonly brand: unique symbol }
+>("effect-actions/McpEventsError")(WireError.fields) {
   // Why: Each is the subscriber's answer, a refusal or a request it got wrong, as a tool call's
   // is, and goes to no reporter; an internal failure's cause is reported where it is answered.
   override readonly [ErrorReporter.ignore] = true;
@@ -105,14 +107,19 @@ export class PollEvents extends Rpc.make("events/poll", {
 
 export class StreamEvents extends Rpc.make("events/stream", {
   payload: subscription,
-  success: Schema.Struct({ resultType: Schema.Literal("complete"), _meta: Meta }),
+  success: Schema.Struct({
+    resultType: Schema.Literal("complete"),
+    _meta: Meta,
+  }),
   error: EventsError,
 }) {}
 
 export class SubscribeEvents extends Rpc.make("events/subscribe", {
   payload: {
     ...subscription,
-    delivery: WebhookCallback.mapFields(Struct.assign({ mode: Schema.Literal("webhook") })),
+    delivery: WebhookCallback.mapFields(
+      Struct.assign({ mode: Schema.Literal("webhook") })
+    ),
     ttlMs: webhookFields.ttlMs,
   },
   success: Schema.Struct({
@@ -130,12 +137,19 @@ export class UnsubscribeEvents extends Rpc.make("events/unsubscribe", {
     arguments: Arguments,
     delivery: WebhookTarget,
   },
-  success: Schema.Struct({ resultType: Schema.Literal("complete"), _meta: Meta }),
+  success: Schema.Struct({
+    resultType: Schema.Literal("complete"),
+    _meta: Meta,
+  }),
   error: EventsError,
 }) {}
 
 export const Active = Rpc.make("notifications/events/active", {
-  payload: { _meta: Meta, cursor: Cursor, truncated: Schema.optional(Schema.Boolean) },
+  payload: {
+    _meta: Meta,
+    cursor: Cursor,
+    truncated: Schema.optional(Schema.Boolean),
+  },
 });
 
 export const Occurred = Rpc.make("notifications/events/event", {
@@ -159,7 +173,13 @@ export const Requests = RpcGroup.make(
   PollEvents,
   StreamEvents,
   SubscribeEvents,
-  UnsubscribeEvents,
+  UnsubscribeEvents
 );
 
-export const Notifications = RpcGroup.make(Active, Occurred, Heartbeat, Failed, Terminated);
+export const Notifications = RpcGroup.make(
+  Active,
+  Occurred,
+  Heartbeat,
+  Failed,
+  Terminated
+);

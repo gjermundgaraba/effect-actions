@@ -1,18 +1,21 @@
-import { type Context, Effect, Option } from "effect";
+import { Effect, Option } from "effect";
+import type { Context } from "effect";
 import type { HttpRouter, HttpServerResponse } from "effect/http";
 import type { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
+
 import type * as Action from "../contract/Action.js";
-import type * as Event from "../contract/Event.js";
 import type { Anyone } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
+import { Unauthenticated } from "../contract/errors.js";
+import type { Refusal } from "../contract/errors.js";
+import type * as Event from "../contract/Event.js";
+import type { EventOf, ServingEvents } from "../contract/feed.js";
 import type {
   BuildServices,
   Protected,
   ServedRequest,
   Serving,
 } from "../contract/implementation.js";
-import { type Refusal, Unauthenticated } from "../contract/errors.js";
-import type { EventOf, ServingEvents } from "../contract/feed.js";
 
 /** One native security scheme: Bearer unless a descriptor names another. */
 export type Security = HttpApiSecurity.HttpApiSecurity;
@@ -42,7 +45,11 @@ export interface SecurityMiddleware<I, Name extends string = string> {
   };
 }
 
-type Response = Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>;
+type Response = Effect.Effect<
+  HttpServerResponse.HttpServerResponse,
+  unknown,
+  unknown
+>;
 
 /** What a provider holds for the surfaces serving its descriptor, beside its identity. */
 export interface Runtime {
@@ -53,10 +60,18 @@ export interface Runtime {
    * credential to the identity, or a refusal, or an error the descriptor declares. An empty
    * credential, as the native decoder gives an absent one, is refused without reaching it.
    */
-  readonly authenticate: (credential: Credential) => Effect.Effect<unknown, unknown, unknown>;
+  readonly authenticate: (
+    credential: Credential
+  ) => Effect.Effect<unknown, unknown, unknown>;
   /** The native security middleware's implementation, keyed by its scheme. */
   readonly middleware: Readonly<
-    Record<string, (route: Response, options: { readonly credential: Credential }) => Response>
+    Record<
+      string,
+      (
+        route: Response,
+        options: { readonly credential: Credential }
+      ) => Response
+    >
   >;
   /**
    * A protected HTTP route as it leaves the layer's middleware, a step-up refusal it fails with
@@ -70,14 +85,18 @@ export interface Runtime {
    */
   readonly http: <E, R>(
     route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
-    optional: boolean,
-  ) => Effect.Effect<HttpServerResponse.HttpServerResponse, E, R | HttpRouter.Provided>;
+    optional: boolean
+  ) => Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    E,
+    R | HttpRouter.Provided
+  >;
   /**
    * A route of the host's own: the request is decoded here, the route gets the identity
    * itself, and a refusal it fails with is answered as an action route's.
    */
   readonly route: <E, R>(
-    route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+    route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>
   ) => Effect.Effect<
     HttpServerResponse.HttpServerResponse,
     Exclude<E, Refusal>,
@@ -128,10 +147,14 @@ export type Identity<A extends Pick<Action.Any, "caller">> = [A] extends [never]
     : never;
 
 type Covered<A extends Pick<Action.Any, "caller">> =
-  Exclude<A["caller"], typeof Anyone> extends Context.Key<infer I, unknown> ? I : never;
+  Exclude<A["caller"], typeof Anyone> extends Context.Key<infer I, unknown>
+    ? I
+    : never;
 
 /** The `authentication` a binding of these actions takes: required once one is protected. */
-export type Required<A extends Pick<Action.Any, "caller">> = [Protected<A>] extends [never]
+export type Required<A extends Pick<Action.Any, "caller">> = [
+  Protected<A>,
+] extends [never]
   ? { readonly authentication?: Any }
   : {
       readonly authentication: Descriptor<
@@ -150,14 +173,20 @@ export type ProviderOf<D> =
     : never;
 
 /** Actions a binding takes without options: public ones, as a protected one names its descriptor. */
-export type PublicOnly<Actions extends ReadonlyArray<Pick<Action.Any, "caller">>> = [
-  Exclude<Actions[number], { readonly caller: typeof Anyone }>,
-] extends [never]
+export type PublicOnly<
+  Actions extends ReadonlyArray<Pick<Action.Any, "caller">>,
+> = [Exclude<Actions[number], { readonly caller: typeof Anyone }>] extends [
+  never,
+]
   ? unknown
-  : { readonly "Protected actions take options naming their authentication": never };
+  : {
+      readonly "Protected actions take options naming their authentication": never;
+    };
 
 /** The descriptor options `O` name, where they always name one. */
-export type DescriptorOf<O> = [O] extends [{ readonly authentication: infer D extends Any }]
+export type DescriptorOf<O> = [O] extends [
+  { readonly authentication: infer D extends Any },
+]
   ? D
   : undefined;
 
@@ -168,11 +197,21 @@ export type Matching<A extends Pick<Action.Any, "caller">, D> =
     : [
           Exclude<
             Covered<Protected<A>>,
-            D extends Descriptor<infer I, unknown, Security, string, Action.Errors> ? I : never
+            D extends Descriptor<
+              infer I,
+              unknown,
+              Security,
+              string,
+              Action.Errors
+            >
+              ? I
+              : never
           >,
         ] extends [never]
       ? unknown
-      : { readonly "Authentication descriptor does not cover every protected action": never };
+      : {
+          readonly "Authentication descriptor does not cover every protected action": never;
+        };
 
 /** Keep public requirements separate, without rescanning all handlers for every action. */
 export type RemoteRequest<App, A extends Action.Any> =
@@ -232,9 +271,12 @@ export type VerifierError<
  * The provider a surface's startup reads under the descriptor `D`, where the implementations
  * `App` serve a protected action of `A` or a protected event type of `E`.
  */
-export type ServedProvider<App, A extends Action.Any, D, E extends Event.Any = EventOf<App>> = [
-  Protected<Serving<App, A>> | Protected<E>,
-] extends [never]
+export type ServedProvider<
+  App,
+  A extends Action.Any,
+  D,
+  E extends Event.Any = EventOf<App>,
+> = [Protected<Serving<App, A>> | Protected<E>] extends [never]
   ? never
   : ProviderOf<D>;
 
@@ -242,26 +284,27 @@ export type ServedProvider<App, A extends Action.Any, D, E extends Event.Any = E
 // else tells them apart. Rejected: comparing the schemes, which takes per-kind rules following
 // Effect's decoders and still lets the errors differ.
 export const providerOf = <I, Name extends string>(
-  auth: Descriptor<I, unknown, Security, Name, Action.Errors>,
+  auth: Descriptor<I, unknown, Security, Name, Action.Errors>
 ): Effect.Effect<Runtime, never, Provider<I, Name>> =>
-  Effect.flatMap(Effect.service(auth["~provider"]), (provider) =>
-    provider.descriptor === auth
-      ? Effect.succeed(provider)
-      : Effect.die(
-          new Error(
-            `Authentication "${auth.name}": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
-          ),
-        ),
+  Effect.filterOrElse(
+    Effect.service(auth["~provider"]),
+    (provider) => provider.descriptor === auth,
+    () =>
+      Effect.die(
+        new Error(
+          `Authentication "${auth.name}": the descriptor named here is not the one its provider was built from (build both from one descriptor)`
+        )
+      )
   );
 
 export const promote = <A, E, R>(
   auth: Any,
-  run: Effect.Effect<A, E, R>,
+  run: Effect.Effect<A, E, R>
 ): Effect.Effect<A, E | Unauthenticated, R> =>
   Effect.flatMap(
     Effect.serviceOption(auth["~verified"]),
     (actor): Effect.Effect<A, E | Unauthenticated, R> =>
       Option.isSome(actor)
         ? Effect.provideService(run, auth.identity, actor.value)
-        : Effect.fail(new Unauthenticated()),
+        : Effect.fail(new Unauthenticated())
   );

@@ -1,6 +1,7 @@
-import { Effect, Match, Option, Predicate, Schema } from "effect";
-import type { RpcMessage } from "effect/rpc";
 import type * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { Effect, Function, Match, Option, Predicate, Schema } from "effect";
+import type { RpcMessage } from "effect/rpc";
+
 import { deleted } from "./batches.js";
 import { closeQuietly, groupTag, RequestId, socketIdOf } from "./frames.js";
 
@@ -11,7 +12,7 @@ const Request = Schema.TaggedStruct("Request", {
   id: RequestId,
   tag: Schema.String,
   headers: Schema.mutable(
-    Schema.Array(Schema.mutable(Schema.Tuple([Schema.String, Schema.String]))),
+    Schema.Array(Schema.mutable(Schema.Tuple([Schema.String, Schema.String])))
   ),
 });
 
@@ -19,7 +20,15 @@ const requestOf = Schema.decodeUnknownOption(Request);
 
 const payloadOf = Schema.decodeUnknownOption(Schema.Json);
 
-const unresumable = "This server could not resume this socket's subscriptions: connect again";
+const unresumable =
+  "This server could not resume this socket's subscriptions: connect again";
+
+// Why: Effect's request id is a number or a string, `1` and `"1"` two ids, so the key says which.
+const suffixOf = (socket: number, id: string | number) =>
+  `${socket}#${Predicate.isNumber(id) ? "n" : "s"}${id}`;
+
+const socketOf = (suffix: string) =>
+  Number(suffix.slice(0, suffix.indexOf("#")));
 
 /**
  * The event subscriptions of the sockets one `layerWebSocket` path accepted, kept in storage:
@@ -29,7 +38,7 @@ const unresumable = "This server could not resume this socket's subscriptions: c
  * from there.
  */
 export const makeSubscriptions = (state: DurableObjectState, path: string) => {
-  const storage = state.storage;
+  const { storage } = state;
   const group = groupTag(path);
 
   // Why: the request, its headers included, is written once, as it is admitted, and only the
@@ -37,12 +46,10 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
   const requests = `${keptPrefix}request/${path}#`;
   const payloads = `${keptPrefix}payload/${path}#`;
 
-  // Why: Effect's request id is a number or a string, `1` and `"1"` two ids, so the key says which.
-  const suffixOf = (socket: number, id: string | number) =>
-    `${socket}#${Predicate.isNumber(id) ? "n" : "s"}${id}`;
-
-  const keysOf = (suffix: string) => [`${requests}${suffix}`, `${payloads}${suffix}`];
-  const socketOf = (suffix: string) => Number(suffix.slice(0, suffix.indexOf("#")));
+  const keysOf = (suffix: string) => [
+    `${requests}${suffix}`,
+    `${payloads}${suffix}`,
+  ];
 
   // Why: once `resumed` has run, as the build making the protocol runs it, storage holds this
   // path's subscriptions exactly as this map does, every other one resumed or forgotten, so a
@@ -52,15 +59,22 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
 
   const listed = (prefix: string) =>
     Effect.map(
-      Effect.promise(() => storage.list<unknown>({ prefix })),
-      (found) => [...found].map(([key, value]) => [key.slice(prefix.length), value] as const),
+      Effect.promise(async () => await storage.list({ prefix })),
+      (found) =>
+        [...found].map(
+          ([key, value]) => [key.slice(prefix.length), value] as const
+        )
     );
 
   const closed = (socket: number) =>
     Effect.suspend(() => {
-      const owned = [...live.keys()].filter((suffix) => socketOf(suffix) === socket);
+      const owned = [...live.keys()].filter(
+        (suffix) => socketOf(suffix) === socket
+      );
 
-      for (const suffix of owned) live.delete(suffix);
+      for (const suffix of owned) {
+        live.delete(suffix);
+      }
 
       return deleted(storage, owned.flatMap(keysOf));
     });
@@ -74,44 +88,56 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
         live.set(suffix, resumeFrom);
 
         // Why: a request `resumed` wrote is stored as it is, its payload the one it resumed from.
-        if (resuming) return Effect.void;
+        if (resuming) {
+          return Effect.void;
+        }
 
-        return Effect.promise(() =>
-          storage.put({
+        return Effect.promise(async () => {
+          await storage.put({
             [`${requests}${suffix}`]: Request.make({
               id: requestId,
               tag,
               headers: headers.map(([name, value]) => [name, value]),
             }),
             [`${payloads}${suffix}`]: payload,
-          }),
-        );
+          });
+        });
       }),
   };
 
-  const moved = (suffix: string, values: RpcMessage.ResponseChunkEncoded["values"]) =>
+  const moved = (
+    suffix: string,
+    values: RpcMessage.ResponseChunkEncoded["values"]
+  ) =>
     Effect.suspend(() => {
       const payload = live.get(suffix)?.(values);
 
       return payload === undefined
         ? Effect.void
-        : Effect.promise(() => storage.put(`${payloads}${suffix}`, payload));
+        : Effect.promise(async () => {
+            await storage.put(`${payloads}${suffix}`, payload);
+          });
     });
 
-  const sent = (socket: number, response: RpcMessage.FromServerEncoded): Effect.Effect<void> =>
+  const sent = (
+    socket: number,
+    response: RpcMessage.FromServerEncoded
+  ): Effect.Effect<void> =>
     Match.value(response).pipe(
       Match.tag("Defect", () => closed(socket)),
-      Match.tag("Chunk", ({ requestId, values }) => moved(suffixOf(socket, requestId), values)),
+      Match.tag("Chunk", ({ requestId, values }) =>
+        moved(suffixOf(socket, requestId), values)
+      ),
       Match.tag("Exit", ({ requestId }) =>
         Effect.suspend(() => {
           const suffix = suffixOf(socket, requestId);
 
           return live.delete(suffix)
-            ? Effect.promise(() => storage.delete(keysOf(suffix)))
+            ? Effect.promise(async () => await storage.delete(keysOf(suffix)))
             : Effect.void;
-        }),
+        })
       ),
-      Match.orElse(() => Effect.void),
+      Match.orElse(() => Effect.void)
     );
 
   // Why: a kept subscription that cannot be resumed, such as one a later version of this package
@@ -121,9 +147,11 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
   const unresumed = (socket: WebSocket) =>
     Effect.andThen(
       Effect.logWarning(
-        `layerWebSocket at ${path} could not resume a socket's kept event subscriptions, and closes it`,
+        `layerWebSocket at ${path} could not resume a socket's kept event subscriptions, and closes it`
       ),
-      Effect.sync(() => closeQuietly(socket, 1000, unresumable)),
+      Effect.sync(() => {
+        closeQuietly(socket, 1000, unresumable);
+      })
     );
 
   /**
@@ -132,8 +160,14 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
    * one of its requests is a subscription kept for it, and closes one that does not.
    */
   const resumed = (
-    write: (socket: number, request: RpcMessage.FromClientEncoded) => Effect.Effect<void>,
-    held: (socket: WebSocket, kept: (requestId: string | number) => boolean) => boolean,
+    write: (
+      socket: number,
+      request: RpcMessage.FromClientEncoded
+    ) => Effect.Effect<void>,
+    held: (
+      socket: WebSocket,
+      kept: (requestId: string | number) => boolean
+    ) => boolean
   ) =>
     Effect.gen(function* () {
       const kept = yield* listed(requests);
@@ -149,7 +183,9 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
       for (const socket of state.getWebSockets(group)) {
         const id = socketIdOf(state.getTags(socket));
 
-        if (held(socket, (requestId) => keptIds.has(suffixOf(id, requestId)))) open.set(id, socket);
+        if (held(socket, (requestId) => keptIds.has(suffixOf(id, requestId)))) {
+          open.set(id, socket);
+        }
       }
 
       const entries = kept.map(([suffix, value]) => ({
@@ -158,26 +194,26 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
         request: Option.zipWith(
           requestOf(value),
           payloadOf(resumeFrom.get(suffix)),
-          (request, payload) => ({ ...request, payload }),
+          (request, payload) => ({ ...request, payload })
         ),
       }));
 
       const unread = new Set(
         entries.flatMap(({ socket, request }) =>
-          open.has(socket) && Option.isNone(request) ? [socket] : [],
-        ),
+          open.has(socket) && Option.isNone(request) ? [socket] : []
+        )
       );
 
-      const gone = [...resumeFrom.keys()]
-        .filter((suffix) => !keptIds.has(suffix))
-        .map((suffix) => `${payloads}${suffix}`);
+      const gone = [...resumeFrom.keys()].flatMap((suffix) =>
+        keptIds.has(suffix) ? [] : [`${payloads}${suffix}`]
+      );
 
       for (const { suffix, socket, request } of entries) {
         if (open.has(socket) && !unread.has(socket) && Option.isSome(request)) {
           // Why: marked live before `keep` admits the request again, so its stored request is
           // not written over, and an exit before then, such as a refused authentication,
           // forgets it.
-          live.set(suffix, () => undefined);
+          live.set(suffix, Function.constUndefined);
 
           yield* write(socket, request.value);
         } else {
@@ -187,7 +223,11 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
 
       yield* deleted(storage, gone);
 
-      for (const [id, socket] of open) if (unread.has(id)) yield* unresumed(socket);
+      for (const [id, socket] of open) {
+        if (unread.has(id)) {
+          yield* unresumed(socket);
+        }
+      }
     });
 
   return { keeper, sent, closed, resumed };

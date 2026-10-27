@@ -1,4 +1,8 @@
-import { NodeHttpServer, NodeSocket, NodeSocketServer } from "@effect/platform-node";
+import {
+  NodeHttpServer,
+  NodeSocket,
+  NodeSocketServer,
+} from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
@@ -24,6 +28,11 @@ import {
   RpcServer,
 } from "effect/rpc";
 import { SocketServer } from "effect/socket";
+
+import * as Authentication from "../../src/authentication/Authentication.js";
+import * as Action from "../../src/contract/Action.js";
+import * as ActionRpc from "../../src/rpc/ActionRpc.js";
+import * as Testing from "../../src/testing/Testing.js";
 import { authenticate, verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
@@ -37,10 +46,6 @@ import {
 } from "../support/app/contracts.js";
 import { double, status, userActions } from "../support/app/handlers.js";
 import { Users } from "../support/app/users.js";
-import * as Action from "../../src/contract/Action.js";
-import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import * as Authentication from "../../src/authentication/Authentication.js";
-import * as Testing from "../../src/testing/Testing.js";
 import { recorder } from "../support/reporter.js";
 import { sendRawNdjson, valueOrSquashedCause } from "../support/requests.js";
 import { inMemoryValuesProtocolTo } from "../support/values.js";
@@ -51,121 +56,145 @@ const Rpc = ActionRpc.make([Status, GetUser, RenameUser, Double, WhoAmI], {
 
 const servedAtRpcOverHttp = <A, E, R>(
   server: Layer.Layer<A, E, R>,
-  serialization: Layer.Layer<RpcSerialization.RpcSerialization> = RpcSerialization.layerNdjson,
+  serialization: Layer.Layer<RpcSerialization.RpcSerialization> = RpcSerialization.layerNdjson
 ) =>
   server.pipe(
     Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-    Layer.provide(serialization),
+    Layer.provide(serialization)
   );
 
-const routes = servedAtRpcOverHttp(ActionRpc.layer(Rpc, [status, userActions, double])).pipe(
-  Layer.provide(authenticate),
-);
+const routes = servedAtRpcOverHttp(
+  ActionRpc.layer(Rpc, [status, userActions, double])
+).pipe(Layer.provide(authenticate));
 
 const inMemoryProtocolTo = <E, R>(
   server: Layer.Layer<never, E, R>,
-  serialization: Layer.Layer<RpcSerialization.RpcSerialization> = RpcSerialization.layerNdjson,
+  serialization: Layer.Layer<RpcSerialization.RpcSerialization> = RpcSerialization.layerNdjson
 ) =>
   RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
     Layer.provide(serialization),
-    Layer.provide(Testing.layer(server)),
+    Layer.provide(Testing.layer(server))
   );
 
-const signedInAs = (token: string) => RpcClient.withHeaders({ authorization: `Bearer ${token}` });
+const signedInAs = (token: string) =>
+  RpcClient.withHeaders({ authorization: `Bearer ${token}` });
 
 const withClient = <A, E, R>(
-  program: (client: ActionRpc.Client<typeof Rpc>) => Effect.Effect<A, E, R>,
+  program: (client: ActionRpc.Client<typeof Rpc>) => Effect.Effect<A, E, R>
 ) =>
   Effect.flatMap(ActionRpc.client(Rpc), program).pipe(
     Effect.scoped,
-    Effect.provide(inMemoryProtocolTo(routes)),
-    Effect.provide(Users.layerMemory),
+    Effect.provide(
+      Layer.provideMerge(inMemoryProtocolTo(routes), Users.layerMemory)
+    )
   );
 
 const internalServerErrorDefect = new Error("Internal server error");
 
 describe("ActionRpc over the HTTP protocol", () => {
-  it.effect("answers a public action without a credential, its input left out", () =>
-    Effect.gen(function* () {
-      const answer = yield* withClient((client) => client.status());
+  it.effect(
+    "answers a public action without a credential, its input left out",
+    () =>
+      Effect.gen(function* () {
+        const answer = yield* withClient((client) => client.status());
 
-      expect(answer).toEqual({ service: "effect-actions", users: 2 });
-    }),
+        expect(answer).toStrictEqual({ service: "effect-actions", users: 2 });
+      })
   );
 
-  it.effect("refuses a protected action without a credential with a typed Unauthenticated", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(withClient((client) => client.whoAmI()));
+  it.effect(
+    "refuses a protected action without a credential with a typed Unauthenticated",
+    () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          withClient((client) => client.whoAmI())
+        );
 
-      expect(error).toBeInstanceOf(Action.Unauthenticated);
-      expect(error).toMatchObject({ message: "A bearer token is required." });
-    }),
+        expect(error).toBeInstanceOf(Action.Unauthenticated);
+        expect(error).toMatchObject({ message: "A bearer token is required." });
+      })
   );
 
   it.effect("refuses an unknown token with the verifier's own refusal", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(
-        withClient((client) => client.whoAmI().pipe(signedInAs("mallory"))),
+        withClient((client) => client.whoAmI().pipe(signedInAs("mallory")))
       );
 
       expect(error).toBeInstanceOf(Action.Unauthenticated);
       expect(error).toMatchObject({ message: "Unknown demo token." });
-    }),
+    })
   );
 
   it.effect("provides the authenticated identity to the handler", () =>
     Effect.gen(function* () {
-      const answer = yield* withClient((client) => client.whoAmI().pipe(signedInAs("alice")));
-
-      expect(answer).toEqual({ id: "alice", tenantId: "acme" });
-    }),
-  );
-
-  it.effect("runs the input's codec: the string a number encodes to decodes back", () =>
-    Effect.gen(function* () {
       const answer = yield* withClient((client) =>
-        client.double({ value: 21 }).pipe(signedInAs("alice")),
+        client.whoAmI().pipe(signedInAs("alice"))
       );
 
-      expect(answer).toBe(42);
-    }),
+      expect(answer).toStrictEqual({ id: "alice", tenantId: "acme" });
+    })
   );
 
-  it.effect("fails with the authorizer's Forbidden, its scopes kept, before the handler", () =>
-    Effect.gen(function* () {
-      const [error, user] = yield* withClient((client) =>
-        Effect.all([
-          Effect.flip(client.renameUser({ id: "1", name: "Bea" }).pipe(signedInAs("reader"))),
-          client.getUser({ id: "1" }).pipe(signedInAs("reader")),
-        ]),
-      );
+  it.effect(
+    "runs the input's codec: the string a number encodes to decodes back",
+    () =>
+      Effect.gen(function* () {
+        const answer = yield* withClient((client) =>
+          client.double({ value: 21 }).pipe(signedInAs("alice"))
+        );
 
-      expect(error).toBeInstanceOf(Action.Forbidden);
-      expect(error).toMatchObject({ scopes: ["users:write"] });
-      expect(user).toEqual({ id: "1", name: "Ada" });
-    }),
+        expect(answer).toBe(42);
+      })
+  );
+
+  it.effect(
+    "fails with the authorizer's Forbidden, its scopes kept, before the handler",
+    () =>
+      Effect.gen(function* () {
+        const [error, user] = yield* withClient((client) =>
+          Effect.all([
+            Effect.flip(
+              client
+                .renameUser({ id: "1", name: "Bea" })
+                .pipe(signedInAs("reader"))
+            ),
+            client.getUser({ id: "1" }).pipe(signedInAs("reader")),
+          ])
+        );
+
+        expect(error).toBeInstanceOf(Action.Forbidden);
+        expect(error).toMatchObject({ scopes: ["users:write"] });
+        expect(user).toStrictEqual({ id: "1", name: "Ada" });
+      })
   );
 
   it.effect("decodes a declared error as itself", () =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(
-        withClient((client) => client.getUser({ id: "9" }).pipe(signedInAs("alice"))),
+        withClient((client) =>
+          client.getUser({ id: "9" }).pipe(signedInAs("alice"))
+        )
       );
 
       expect(error).toBeInstanceOf(UserNotFound);
       expect(error).toMatchObject({ id: "9" });
-    }),
+    })
   );
 
-  it.effect("fails with InvalidInput for input that does not encode, sending nothing", () =>
-    Effect.gen(function* () {
-      const error = yield* Effect.flip(
-        withClient((client) => client.renameUser({ id: "1", name: "" }).pipe(signedInAs("alice"))),
-      );
+  it.effect(
+    "fails with InvalidInput for input that does not encode, sending nothing",
+    () =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          withClient((client) =>
+            client.renameUser({ id: "1", name: "" }).pipe(signedInAs("alice"))
+          )
+        );
 
-      expect(error).toBeInstanceOf(Action.InvalidInput);
-      expect(error).toMatchObject({ issues: [{ path: ["name"] }] });
-    }),
+        expect(error).toBeInstanceOf(Action.InvalidInput);
+        expect(error).toMatchObject({ issues: [{ path: ["name"] }] });
+      })
   );
 });
 
@@ -179,7 +208,7 @@ describe("ActionRpc refusals, in order", () => {
             { tag: "renameUser", payload: { id: "1", name: "" } },
             { tag: "getUser", payload: { id: "1", extra: true } },
           ],
-          "alice",
+          "alice"
         );
 
         const [short, extra] = exits.map(valueOrSquashedCause);
@@ -188,63 +217,89 @@ describe("ActionRpc refusals, in order", () => {
         expect(short).toMatchObject({ issues: [{ path: ["name"] }] });
         expect(extra).toBeInstanceOf(Action.InvalidInput);
         expect(extra).toMatchObject({ issues: [{ path: ["extra"] }] });
-      }).pipe(Effect.provide(Testing.layer(routes)), Effect.provide(Users.layerMemory)),
+      }).pipe(
+        Effect.provide(
+          Layer.provideMerge(Testing.layer(routes), Users.layerMemory)
+        )
+      )
   );
 
-  it.effect("decodes no input of a protected rpc whose message is not authenticated", () => {
-    let decoded = 0;
+  it.effect(
+    "decodes no input of a protected rpc whose message is not authenticated",
+    () => {
+      let decoded = 0;
 
-    const CountedDecoding = Schema.String.pipe(
-      Schema.decodeTo(
-        Schema.String,
-        SchemaTransformation.transform({
-          decode: (name: string) => {
-            decoded += 1;
+      const CountedDecoding = Schema.String.pipe(
+        Schema.decodeTo(
+          Schema.String,
+          SchemaTransformation.transform({
+            decode: (name: string) => {
+              decoded += 1;
 
-            return name;
-          },
-          encode: (name: string) => name,
-        }),
-      ),
-    );
+              return name;
+            },
+            encode: (name: string) => name,
+          })
+        )
+      );
 
-    const Greet = Action.make("greet", {
-      description: "Echo a name.",
-      input: { name: CountedDecoding },
-      success: Schema.String,
-      readOnly: true,
-      caller: CurrentActor,
-    });
+      const Greet = Action.make("greet", {
+        description: "Echo a name.",
+        input: { name: CountedDecoding },
+        success: Schema.String,
+        readOnly: true,
+        caller: CurrentActor,
+      });
 
-    const greet = Action.implement(Greet, ({ name }) => Effect.succeed(name), {
-      authorize: Action.allowAll,
-    });
+      const greet = Action.implement(
+        Greet,
+        ({ name }) => Effect.succeed(name),
+        {
+          authorize: Action.allowAll,
+        }
+      );
 
-    const server = servedAtRpcOverHttp(
-      ActionRpc.layer(ActionRpc.make([Greet], { authentication: Login }), greet),
-    ).pipe(Layer.provide(authenticate));
+      const server = servedAtRpcOverHttp(
+        ActionRpc.layer(
+          ActionRpc.make([Greet], { authentication: Login }),
+          greet
+        )
+      ).pipe(Layer.provide(authenticate));
 
-    return Effect.gen(function* () {
-      const anonymous = yield* sendRawNdjson([{ tag: "greet", payload: { name: "Ada" } }]);
-      const before = decoded;
-      const signed = yield* sendRawNdjson([{ tag: "greet", payload: { name: "Ada" } }], "alice");
+      return Effect.gen(function* () {
+        const anonymous = yield* sendRawNdjson([
+          { tag: "greet", payload: { name: "Ada" } },
+        ]);
 
-      expect(anonymous.exits.map(valueOrSquashedCause)).toEqual([
-        new Action.Unauthenticated({ message: "A bearer token is required." }),
-      ]);
-      expect(before).toBe(0);
-      expect(signed.exits.map(valueOrSquashedCause)).toEqual(["Ada"]);
-      expect(decoded).toBe(1);
-    }).pipe(Effect.provide(Testing.layer(server)));
-  });
+        const before = decoded;
+
+        const signed = yield* sendRawNdjson(
+          [{ tag: "greet", payload: { name: "Ada" } }],
+          "alice"
+        );
+
+        expect(anonymous.exits.map(valueOrSquashedCause)).toStrictEqual([
+          new Action.Unauthenticated({
+            message: "A bearer token is required.",
+          }),
+        ]);
+        expect(before).toBe(0);
+        expect(signed.exits.map(valueOrSquashedCause)).toStrictEqual(["Ada"]);
+        expect(decoded).toBe(1);
+      }).pipe(Effect.provide(Testing.layer(server)));
+    }
+  );
 });
 
-describe("ActionRpc serializations", () => {
-  const serving = (serialization: Layer.Layer<RpcSerialization.RpcSerialization>) =>
-    servedAtRpcOverHttp(ActionRpc.layer(Rpc, [status, userActions, double]), serialization).pipe(
-      Layer.provide(authenticate),
-    );
+const serving = (
+  serialization: Layer.Layer<RpcSerialization.RpcSerialization>
+) =>
+  servedAtRpcOverHttp(
+    ActionRpc.layer(Rpc, [status, userActions, double]),
+    serialization
+  ).pipe(Layer.provide(authenticate));
 
+describe("ActionRpc serializations", () => {
   it.effect.each([
     ["json", RpcSerialization.layerJson],
     ["ndjson", RpcSerialization.layerNdjson],
@@ -263,16 +318,25 @@ describe("ActionRpc serializations", () => {
     Effect.gen(function* () {
       const client = yield* ActionRpc.client(Rpc);
 
-      const doubled = yield* client.double({ value: 21 }).pipe(signedInAs("alice"));
-      const missing = yield* Effect.flip(client.getUser({ id: "9" }).pipe(signedInAs("alice")));
+      const doubled = yield* client
+        .double({ value: 21 })
+        .pipe(signedInAs("alice"));
+
+      const missing = yield* Effect.flip(
+        client.getUser({ id: "9" }).pipe(signedInAs("alice"))
+      );
 
       expect(doubled).toBe(42);
       expect(missing).toBeInstanceOf(UserNotFound);
     }).pipe(
       Effect.scoped,
-      Effect.provide(inMemoryProtocolTo(serving(serialization), serialization)),
-      Effect.provide(Users.layerMemory),
-    ),
+      Effect.provide(
+        Layer.provideMerge(
+          inMemoryProtocolTo(serving(serialization), serialization),
+          Users.layerMemory
+        )
+      )
+    )
   );
 });
 
@@ -282,9 +346,14 @@ const Crashy = Action.make("crashy", {
   caller: Action.Anyone,
 });
 
-const crashy = Action.implement(Crashy, () => Effect.die(new Error("db password hunter2")));
+const crashy = Action.implement(Crashy, () =>
+  Effect.die(new Error("db password hunter2"))
+);
 
-class ThrowsWhenEncoded extends Schema.TaggedError<ThrowsWhenEncoded>()("Fragile", {
+class ThrowsWhenEncoded extends Schema.TaggedError<
+  ThrowsWhenEncoded,
+  { readonly brand: unique symbol }
+>()("Fragile", {
   note: Schema.String.pipe(
     Schema.decodeTo(
       Schema.String,
@@ -293,13 +362,14 @@ class ThrowsWhenEncoded extends Schema.TaggedError<ThrowsWhenEncoded>()("Fragile
         encode: (): string => {
           throw new Error("encoder secret");
         },
-      }),
-    ),
+      })
+    )
   ),
 }) {}
 
 const Twice = Action.make("twice", {
-  description: "Fails with two declared errors at once, the second of which does not encode.",
+  description:
+    "Fails with two declared errors at once, the second of which does not encode.",
   readOnly: true,
   caller: Action.Anyone,
   error: [UserNotFound, ThrowsWhenEncoded],
@@ -309,9 +379,9 @@ const twice = Action.implement(Twice, () =>
   Effect.failCause(
     Cause.combine(
       Cause.fail(new UserNotFound({ id: "9" })),
-      Cause.fail(new ThrowsWhenEncoded({ note: "second" })),
-    ),
-  ),
+      Cause.fail(new ThrowsWhenEncoded({ note: "second" }))
+    )
+  )
 );
 
 const Faulty = ActionRpc.make([Twice, Status]);
@@ -319,49 +389,58 @@ const Faulty = ActionRpc.make([Twice, Status]);
 const faulty = servedAtRpcOverHttp(ActionRpc.layer(Faulty, [twice, status]));
 
 describe("ActionRpc internal errors", () => {
-  it.effect("answers the first of several failures alone, as it is encoded", () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.flatMap(ActionRpc.client(Faulty), (client) =>
-        Effect.exit(client.twice()),
-      ).pipe(
-        Effect.scoped,
-        Effect.provide(inMemoryProtocolTo(faulty)),
-        Effect.provide(Users.layerMemory),
-      );
+  it.effect(
+    "answers the first of several failures alone, as it is encoded",
+    () =>
+      Effect.gen(function* () {
+        const exit = yield* Effect.flatMap(ActionRpc.client(Faulty), (client) =>
+          Effect.exit(client.twice())
+        ).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.provideMerge(inMemoryProtocolTo(faulty), Users.layerMemory)
+          )
+        );
 
-      expect(Exit.isFailure(exit) && exit.cause.reasons).toEqual([
-        expect.objectContaining({ error: new UserNotFound({ id: "9" }) }),
-      ]);
-    }),
+        expect(Exit.isFailure(exit) && exit.cause.reasons).toStrictEqual([
+          expect.objectContaining({ error: new UserNotFound({ id: "9" }) }),
+        ]);
+      })
   );
 
   it.effect(
     "answers what the verifier or a layer middleware fails with undeclared, or throws, generically, each its own request's",
     () => {
-      const logged: Array<string> = [];
+      const logged: string[] = [];
 
       class Boom extends RpcMiddleware.Service<Boom>()("rpc-test/Boom") {}
 
-      const Guarded = ActionRpc.make([WhoAmI, Status], { authentication: Login });
+      const Guarded = ActionRpc.make([WhoAmI, Status], {
+        authentication: Login,
+      });
 
       const server = servedAtRpcOverHttp(
-        ActionRpc.layer(Guarded, [userActions, status], { middleware: [Boom] }),
+        ActionRpc.layer(Guarded, [userActions, status], { middleware: [Boom] })
       ).pipe(
         Layer.provide([
           Layer.succeed(Boom, (effect, { headers }) => {
-            if (headers["x-throw"] !== undefined) throw new Error("thrown secret");
+            if (headers["x-throw"] !== undefined) {
+              throw new Error("thrown secret");
+            }
 
             return headers["x-boom"] === undefined
               ? effect
               : Effect.die(new Error("middleware secret"));
           }),
-          Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
+          Authentication.layer(Login, (token: Redacted.Redacted) =>
             Redacted.value(token) === "broken"
-              ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: the descriptor broken, as plain JavaScript could.
-                Effect.fail(new UserNotFound({ id: "verifier secret" }) as never)
-              : verify(token),
+              ? Effect.fail(
+                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The failure under test: the descriptor broken, as plain JavaScript could.
+                  new UserNotFound({ id: "verifier secret" }) as never
+                )
+              : verify(token)
           ),
-        ]),
+        ])
       );
 
       return Effect.gen(function* () {
@@ -372,36 +451,43 @@ describe("ActionRpc internal errors", () => {
             { tag: "status", payload: {}, headers: [["x-throw", "1"]] },
             { tag: "status", payload: {} },
           ],
-          "broken",
+          "broken"
         );
 
-        expect(exits.map(valueOrSquashedCause)).toEqual([
+        expect(exits.map(valueOrSquashedCause)).toStrictEqual([
           internalServerErrorDefect,
           internalServerErrorDefect,
           internalServerErrorDefect,
           { service: "effect-actions", users: 2 },
         ]);
         expect(text).not.toContain("secret");
-        expect(logged).toEqual([
+        expect(logged).toStrictEqual([
           expect.stringContaining("UserNotFound"),
           expect.stringContaining("middleware secret"),
           expect.stringContaining("thrown secret"),
         ]);
       }).pipe(
-        Effect.provide(Testing.layer(server)),
-        Effect.provide(Users.layerMemory),
         Effect.provide(
-          Logger.layer([Logger.make(({ cause }) => void logged.push(Cause.pretty(cause)))]),
-        ),
+          Layer.provideMerge(
+            Layer.provideMerge(Testing.layer(server), Users.layerMemory),
+            Logger.layer([
+              Logger.make(({ cause }) => {
+                logged.push(Cause.pretty(cause));
+              }),
+            ])
+          )
+        )
       );
-    },
+    }
   );
 
-  const Reported = ActionRpc.make([Crashy, GetUser, RenameUser], { authentication: Login });
+  const Reported = ActionRpc.make([Crashy, GetUser, RenameUser], {
+    authentication: Login,
+  });
 
   const callReported = <E, R>(
     server: Layer.Layer<never, E, R>,
-    outer: Layer.Layer<never> = Layer.empty,
+    outer: Layer.Layer<never> = Layer.empty
   ) =>
     Effect.gen(function* () {
       const client = yield* ActionRpc.client(Reported);
@@ -409,43 +495,58 @@ describe("ActionRpc internal errors", () => {
       yield* Effect.exit(client.crashy());
       yield* Effect.exit(client.getUser({ id: "9" }).pipe(signedInAs("alice")));
       yield* Effect.exit(client.getUser({ id: "1" }));
-      yield* Effect.exit(client.renameUser({ id: "1", name: "Bea" }).pipe(signedInAs("reader")));
+      yield* Effect.exit(
+        client.renameUser({ id: "1", name: "Bea" }).pipe(signedInAs("reader"))
+      );
 
       const { exits } = yield* sendRawNdjson(
         [{ tag: "getUser", payload: { id: "1", extra: true } }],
-        "alice",
+        "alice"
       );
 
       return exits.map(valueOrSquashedCause);
     }).pipe(
       Effect.scoped,
       Effect.provide(
-        RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-          Layer.provide(RpcSerialization.layerNdjson),
-          Layer.provideMerge(Testing.layer(server).pipe(Layer.provide(outer))),
-        ),
-      ),
-      Effect.provide(Users.layerMemory),
+        Layer.provideMerge(
+          RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+            Layer.provide(RpcSerialization.layerNdjson),
+            Layer.provideMerge(Testing.layer(server).pipe(Layer.provide(outer)))
+          ),
+          Users.layerMemory
+        )
+      )
     );
 
   it.effect(
     "reports a defect once with its cause, and neither a declared failure, a refusal, input that does not decode nor the generic answer",
     () =>
       Effect.gen(function* () {
-        const reported: Array<string> = [];
+        const reported: string[] = [];
 
         const [undecoded] = yield* callReported(
-          servedAtRpcOverHttp(ActionRpc.layer(Reported, [crashy, userActions])).pipe(
+          servedAtRpcOverHttp(
+            ActionRpc.layer(Reported, [crashy, userActions])
+          ).pipe(
             Layer.provide(authenticate),
-            Layer.provide(ErrorReporter.layer([recorder(reported)])),
-          ),
+            Layer.provide(ErrorReporter.layer([recorder(reported)]))
+          )
         );
 
         expect(undecoded).toBeInstanceOf(Action.InvalidInput);
-        expect(reported).toEqual([expect.stringContaining("db password hunter2")]);
-      }),
+        expect(reported).toStrictEqual([
+          expect.stringContaining("db password hunter2"),
+        ]);
+      })
   );
 });
+
+const iteratingOtherwise = (json: Schema.Json): Schema.Json =>
+  Array.isArray(json)
+    ? Object.defineProperty(json, Symbol.iterator, {
+        value: () => ["another"].values(),
+      })
+    : json;
 
 it.effect(
   "answers a declared failure as the JSON it is, whatever it is made of, reports none, and traces it as that JSON",
@@ -461,13 +562,8 @@ it.effect(
     const Refusing = ActionRpc.make([Refuse]);
     const jsonOf = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
 
-    const iteratingOtherwise = (json: Schema.Json): Schema.Json =>
-      Array.isArray(json)
-        ? Object.defineProperty(json, Symbol.iterator, { value: () => ["another"].values() })
-        : json;
-
     const refuse = Action.implement(Refuse, ({ json }) =>
-      Effect.fail(Object.freeze(iteratingOtherwise(jsonOf(json)))),
+      Effect.fail(Object.freeze(iteratingOtherwise(jsonOf(json))))
     );
 
     const failures = [
@@ -479,8 +575,8 @@ it.effect(
       "null",
     ];
 
-    const reported: Array<string> = [];
-    const spans: Array<Tracer.Span> = [];
+    const reported: string[] = [];
+    const spans: Tracer.Span[] = [];
 
     const tracer = Tracer.make({
       span(options) {
@@ -493,23 +589,29 @@ it.effect(
     });
 
     const tracedFailures = () =>
-      spans.flatMap(({ kind, status }) =>
-        kind === "server" && Predicate.isTagged(status, "Ended") && Exit.isFailure(status.exit)
-          ? Cause.prettyErrors(status.exit.cause).map(({ message }) => message)
-          : [],
+      spans.flatMap(({ kind, status: spanStatus }) =>
+        kind === "server" &&
+        Predicate.isTagged(spanStatus, "Ended") &&
+        Exit.isFailure(spanStatus.exit)
+          ? Cause.prettyErrors(spanStatus.exit.cause).map(
+              ({ message }) => message
+            )
+          : []
       );
 
     return Effect.gen(function* () {
       const client = yield* ActionRpc.client(Refusing);
 
       const answered = yield* Effect.forEach(failures, (json) =>
-        Effect.map(Effect.flip(client.refuse({ json })), (failure) => JSON.stringify(failure)),
+        Effect.map(Effect.flip(client.refuse({ json })), (failure) =>
+          JSON.stringify(failure)
+        )
       );
 
-      expect(answered).toEqual(failures);
-      expect(reported).toEqual([]);
-      expect(tracedFailures()).toEqual(
-        failures.map((json) => (json === '"declined"' ? "declined" : json)),
+      expect(answered).toStrictEqual(failures);
+      expect(reported).toStrictEqual([]);
+      expect(tracedFailures()).toStrictEqual(
+        failures.map((json) => (json === '"declined"' ? "declined" : json))
       );
     }).pipe(
       Effect.scoped,
@@ -517,24 +619,31 @@ it.effect(
         inMemoryProtocolTo(
           servedAtRpcOverHttp(ActionRpc.layer(Refusing, refuse)).pipe(
             Layer.provide(ErrorReporter.layer([recorder(reported)])),
-            Layer.provide(Layer.succeed(Tracer.Tracer, tracer)),
-          ),
-        ),
-      ),
+            Layer.provide(Layer.succeed(Tracer.Tracer, tracer))
+          )
+        )
+      )
     );
-  },
+  }
 );
 
 it.effect(
   "answers a protected rpc with the error its verifier declares, and a public one without verifying",
   () => {
-    class Caller extends Context.Service<Caller, { readonly id: string }>()("rpc-test/Caller") {}
+    class Caller extends Context.Service<Caller, { readonly id: string }>()(
+      "rpc-test/Caller"
+    ) {}
 
-    class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", {
+    class Unavailable extends Schema.TaggedError<
+      Unavailable,
+      { readonly brand: unique symbol }
+    >()("Unavailable", {
       retryAfter: Schema.Finite,
     }) {}
 
-    const Checked = Authentication.make("rpc-test.Checked", Caller, { error: Unavailable });
+    const Checked = Authentication.make("rpc-test.Checked", Caller, {
+      error: Unavailable,
+    });
 
     const Secret = Action.make("secret", {
       description: "Reads what only a caller may",
@@ -561,84 +670,104 @@ it.effect(
 
     const server = servedAtRpcOverHttp(ActionRpc.layer(Guarded, apps)).pipe(
       Layer.provide(
-        Authentication.layer(Checked, () => Effect.fail(new Unavailable({ retryAfter: 30 }))),
-      ),
+        Authentication.layer(Checked, () =>
+          Effect.fail(new Unavailable({ retryAfter: 30 }))
+        )
+      )
     );
 
     return Effect.gen(function* () {
       const client = yield* ActionRpc.client(Guarded);
 
-      expect(yield* Effect.flip(client.secret().pipe(signedInAs("down")))).toEqual(
-        new Unavailable({ retryAfter: 30 }),
-      );
+      expect(
+        yield* Effect.flip(client.secret().pipe(signedInAs("down")))
+      ).toStrictEqual(new Unavailable({ retryAfter: 30 }));
       expect(yield* client.open().pipe(signedInAs("down"))).toBe("open");
     }).pipe(Effect.scoped, Effect.provide(inMemoryProtocolTo(server)));
-  },
+  }
 );
 
 describe("ActionRpc selection", () => {
-  it.effect("serves the listed actions only, owing no provider when none is protected", () =>
-    Effect.gen(function* () {
-      const selected = servedAtRpcOverHttp(
-        ActionRpc.layer(Rpc, [status, userActions, double], { actions: [Status] }),
-      );
+  it.effect(
+    "serves the listed actions only, owing no provider when none is protected",
+    () =>
+      Effect.gen(function* () {
+        const selected = servedAtRpcOverHttp(
+          ActionRpc.layer(Rpc, [status, userActions, double], {
+            actions: [Status],
+          })
+        );
 
-      const [up, unserved] = yield* Effect.gen(function* () {
-        const client = yield* ActionRpc.client(Rpc);
+        const [up, unserved] = yield* Effect.gen(function* () {
+          const client = yield* ActionRpc.client(Rpc);
 
-        return yield* Effect.all([client.status(), Effect.exit(client.double({ value: 1 }))]);
-      }).pipe(Effect.scoped, Effect.provide(inMemoryProtocolTo(selected)));
+          return yield* Effect.all([
+            client.status(),
+            Effect.exit(client.double({ value: 1 })),
+          ]);
+        }).pipe(Effect.scoped, Effect.provide(inMemoryProtocolTo(selected)));
 
-      expect(up.service).toBe("effect-actions");
-      expect(Exit.isFailure(unserved) && Cause.pretty(unserved.cause)).toContain(
-        "Unknown request tag",
-      );
-    }).pipe(Effect.provide(Users.layerMemory)),
+        expect(up.service).toBe("effect-actions");
+        expect(
+          Exit.isFailure(unserved) && Cause.pretty(unserved.cause)
+        ).toContain("Unknown request tag");
+      }).pipe(Effect.provide(Users.layerMemory))
   );
 
   it("refuses a listed action the binding does not hold, and implementations holding none of its", () => {
     expect(() =>
       // @ts-expect-error -- As plain JavaScript may: Crashy is not the binding's.
-      ActionRpc.layer(Rpc, [status, crashy], { actions: [Crashy] }),
+      ActionRpc.layer(Rpc, [status, crashy], { actions: [Crashy] })
     ).toThrow(
-      "Listed in actions, but the binding does not hold it: crashy (add it to the binding's actions)",
+      "Listed in actions, but the binding does not hold it: crashy (add it to the binding's actions)"
     );
 
     expect(() => ActionRpc.layer(Rpc, crashy)).toThrow(
-      "No action of these implementations is in this RPC binding: crashy (pass an implementation of a bound action, or bind one of these)",
+      "No action of these implementations is in this RPC binding: crashy (pass an implementation of a bound action, or bind one of these)"
     );
   });
 
   it("refuses middleware listed twice", () => {
-    class Twice extends RpcMiddleware.Service<Twice>()("rpc-test/Twice") {}
+    class ListedTwice extends RpcMiddleware.Service<ListedTwice>()(
+      "rpc-test/Twice"
+    ) {}
 
-    expect(() => ActionRpc.layer(Rpc, status, { middleware: [Twice, Twice] })).toThrow(
-      "Duplicate middleware: rpc-test/Twice",
-    );
+    expect(() =>
+      ActionRpc.layer(Rpc, status, { middleware: [ListedTwice, ListedTwice] })
+    ).toThrow("Duplicate middleware: rpc-test/Twice");
   });
 
-  it.effect("dies when the provider is another descriptor's of the binding's name", () =>
-    Effect.gen(function* () {
-      const Impostor = Authentication.make("example.Login", CurrentActor);
+  it.effect(
+    "dies when the provider is another descriptor's of the binding's name",
+    () =>
+      Effect.gen(function* () {
+        const Impostor = Authentication.make("example.Login", CurrentActor);
 
-      const server = servedAtRpcOverHttp(ActionRpc.layer(Rpc, userActions)).pipe(
-        Layer.provide(Authentication.layer(Impostor, verify)),
-      );
+        const server = servedAtRpcOverHttp(
+          ActionRpc.layer(Rpc, userActions)
+        ).pipe(Layer.provide(Authentication.layer(Impostor, verify)));
 
-      const built = yield* Effect.exit(Effect.void.pipe(Effect.provide(Testing.layer(server))));
+        const built = yield* Effect.exit(
+          Effect.void.pipe(Effect.provide(Testing.layer(server)))
+        );
 
-      expect(Exit.isFailure(built) && Cause.squash(built.cause)).toEqual(
-        new Error(
-          `Authentication "example.Login": the descriptor named here is not the one its provider was built from (build both from one descriptor)`,
-        ),
-      );
-    }).pipe(Effect.provide(Users.layerMemory)),
+        expect(
+          Exit.isFailure(built) && Cause.squash(built.cause)
+        ).toStrictEqual(
+          new Error(
+            `Authentication "example.Login": the descriptor named here is not the one its provider was built from (build both from one descriptor)`
+          )
+        );
+      }).pipe(Effect.provide(Users.layerMemory))
   );
 });
 
 class Tenant extends Context.Service<Tenant, string>()("rpc-test/Tenant") {}
 
-class RateLimited extends Schema.TaggedError<RateLimited>()("RateLimited", {
+class RateLimited extends Schema.TaggedError<
+  RateLimited,
+  { readonly brand: unique symbol }
+>()("RateLimited", {
   retryAfter: Schema.Finite,
 }) {}
 
@@ -651,20 +780,26 @@ const TenantName = Action.make("tenantName", {
 
 const tenantName = Action.implement(TenantName, () => Tenant);
 
-class ResolveTenant extends RpcMiddleware.Service<ResolveTenant, { provides: Tenant }>()(
-  "rpc-test/ResolveTenant",
+class ResolveTenant extends RpcMiddleware.Service<
+  ResolveTenant,
+  { provides: Tenant }
+>()("rpc-test/ResolveTenant") {}
+
+class LimitOnXLimitHeader extends RpcMiddleware.Service<LimitOnXLimitHeader>()(
+  "rpc-test/Limit",
+  {
+    error: RateLimited,
+  }
 ) {}
 
-class LimitOnXLimitHeader extends RpcMiddleware.Service<LimitOnXLimitHeader>()("rpc-test/Limit", {
-  error: RateLimited,
-}) {}
-
 const resolveTenant = Layer.succeed(ResolveTenant, (effect, { headers }) =>
-  Effect.provideService(effect, Tenant, headers["x-tenant"] ?? "default"),
+  Effect.provideService(effect, Tenant, headers["x-tenant"] ?? "default")
 );
 
 const limit = Layer.succeed(LimitOnXLimitHeader, (effect, { headers }) =>
-  headers["x-limit"] === undefined ? effect : Effect.fail(new RateLimited({ retryAfter: 30 })),
+  headers["x-limit"] === undefined
+    ? effect
+    : Effect.fail(new RateLimited({ retryAfter: 30 }))
 );
 
 describe("ActionRpc layer middleware", () => {
@@ -677,47 +812,58 @@ describe("ActionRpc layer middleware", () => {
         const server = servedAtRpcOverHttp(
           ActionRpc.layer(Limited, tenantName, {
             middleware: [ResolveTenant, LimitOnXLimitHeader],
-          }),
+          })
         ).pipe(Layer.provide([resolveTenant, limit]));
 
         const [acme, fallback, limited] = yield* Effect.gen(function* () {
           const client = yield* ActionRpc.client(Limited);
 
           return yield* Effect.all([
-            client.tenantName().pipe(RpcClient.withHeaders({ "x-tenant": "acme" })),
+            client
+              .tenantName()
+              .pipe(RpcClient.withHeaders({ "x-tenant": "acme" })),
             client.tenantName(),
-            Effect.flip(client.tenantName().pipe(RpcClient.withHeaders({ "x-limit": "1" }))),
+            Effect.flip(
+              client
+                .tenantName()
+                .pipe(RpcClient.withHeaders({ "x-limit": "1" }))
+            ),
           ]);
         }).pipe(Effect.scoped, Effect.provide(inMemoryProtocolTo(server)));
 
-        expect([acme, fallback]).toEqual(["acme", "default"]);
+        expect([acme, fallback]).toStrictEqual(["acme", "default"]);
         expect(limited).toBeInstanceOf(RateLimited);
         expect(limited).toMatchObject({ retryAfter: 30 });
-      }),
+      })
   );
 
   it.effect(
     "takes a request service from the router's request context, as an HTTP route does",
     () =>
       Effect.gen(function* () {
-        const server = servedAtRpcOverHttp(ActionRpc.layer(Limited, tenantName)).pipe(
-          HttpRouter.provideRequest(Layer.succeed(Tenant, "router")),
-        );
+        const server = servedAtRpcOverHttp(
+          ActionRpc.layer(Limited, tenantName)
+        ).pipe(HttpRouter.provideRequest(Layer.succeed(Tenant, "router")));
 
-        const answer = yield* Effect.flatMap(ActionRpc.client(Limited), (client) =>
-          client.tenantName(),
+        const answer = yield* Effect.flatMap(
+          ActionRpc.client(Limited),
+          (client) => client.tenantName()
         ).pipe(Effect.scoped, Effect.provide(inMemoryProtocolTo(server)));
 
         expect(answer).toBe("router");
-      }),
+      })
   );
 
   it.effect(
     "runs authentication, the middleware, the first listed innermost, decoding, the authorizer, then the handler",
     () =>
       Effect.gen(function* () {
-        const seen: Array<string> = [];
-        const note = (step: string) => Effect.sync(() => void seen.push(step));
+        const seen: string[] = [];
+
+        const note = (step: string) =>
+          Effect.sync(() => {
+            seen.push(step);
+          });
 
         const Noted = Action.make("noted", {
           description: "Echo a name.",
@@ -727,26 +873,38 @@ describe("ActionRpc layer middleware", () => {
           caller: CurrentActor,
         });
 
-        const noted = Action.implement(Noted, ({ name }) => Effect.as(note("handler"), name), {
-          authorize: () => note("authorize"),
-        });
+        const noted = Action.implement(
+          Noted,
+          ({ name }) => Effect.as(note("handler"), name),
+          {
+            authorize: () => note("authorize"),
+          }
+        );
 
         class Inner extends RpcMiddleware.Service<Inner>()("rpc-test/Inner") {}
 
         class Outer extends RpcMiddleware.Service<Outer>()("rpc-test/Outer") {}
 
         const server = servedAtRpcOverHttp(
-          ActionRpc.layer(ActionRpc.make([Noted], { authentication: Login }), noted, {
-            middleware: [Inner, Outer],
-          }),
+          ActionRpc.layer(
+            ActionRpc.make([Noted], { authentication: Login }),
+            noted,
+            {
+              middleware: [Inner, Outer],
+            }
+          )
         ).pipe(
           Layer.provide([
-            Layer.succeed(Inner, (effect) => Effect.andThen(note("inner"), effect)),
-            Layer.succeed(Outer, (effect) => Effect.andThen(note("outer"), effect)),
-            Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
-              Effect.andThen(note("authenticate"), verify(token)),
+            Layer.succeed(Inner, (effect) =>
+              Effect.andThen(note("inner"), effect)
             ),
-          ]),
+            Layer.succeed(Outer, (effect) =>
+              Effect.andThen(note("outer"), effect)
+            ),
+            Authentication.layer(Login, (token: Redacted.Redacted) =>
+              Effect.andThen(note("authenticate"), verify(token))
+            ),
+          ])
         );
 
         const { exits } = yield* sendRawNdjson(
@@ -754,7 +912,7 @@ describe("ActionRpc layer middleware", () => {
             { tag: "noted", payload: { name: "Ada" } },
             { tag: "noted", payload: { name: "" } },
           ],
-          "alice",
+          "alice"
         ).pipe(Effect.provide(Testing.layer(server)));
 
         const [named, invalid] = exits.map(valueOrSquashedCause);
@@ -762,7 +920,7 @@ describe("ActionRpc layer middleware", () => {
         expect(named).toBe("Ada");
         expect(invalid).toBeInstanceOf(Action.InvalidInput);
 
-        expect(seen).toEqual([
+        expect(seen).toStrictEqual([
           "authenticate",
           "outer",
           "inner",
@@ -772,106 +930,126 @@ describe("ActionRpc layer middleware", () => {
           "outer",
           "inner",
         ]);
-      }),
+      })
   );
 });
 
 describe("ActionRpc over a WebSocket", () => {
-  const Socketed = ActionRpc.make([Status, WhoAmI, Crashy], { authentication: Login });
+  const Socketed = ActionRpc.make([Status, WhoAmI, Crashy], {
+    authentication: Login,
+  });
 
   const server = HttpRouter.serve(
     ActionRpc.layer(Socketed, [status, userActions, crashy]).pipe(
       Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
       Layer.provide(RpcSerialization.layerJson),
-      Layer.provide(authenticate),
+      Layer.provide(authenticate)
     ),
-    { disableLogger: true, disableListenLog: true },
+    { disableLogger: true, disableListenLog: true }
   ).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
 
   const overSocket = <A, E, R>(
-    program: (client: ActionRpc.Client<typeof Socketed>) => Effect.Effect<A, E, R>,
+    program: (
+      client: ActionRpc.Client<typeof Socketed>
+    ) => Effect.Effect<A, E, R>
   ) =>
     HttpServer.addressFormattedWith((address) =>
       Effect.flatMap(ActionRpc.client(Socketed), program).pipe(
         Effect.scoped,
         Effect.provide(
           RpcClient.layerProtocolSocket().pipe(
-            Layer.provide(NodeSocket.layerWebSocket(`${address.replace(/^http/, "ws")}/rpc`)),
-            Layer.provide(RpcSerialization.layerJson),
-          ),
-        ),
-      ),
-    ).pipe(Effect.provide(server), Effect.provide(Users.layerMemory));
+            Layer.provide(
+              NodeSocket.layerWebSocket(
+                `${address.replace(/^http/u, "ws")}/rpc`
+              )
+            ),
+            Layer.provide(RpcSerialization.layerJson)
+          )
+        )
+      )
+    ).pipe(Effect.provide(Layer.provideMerge(server, Users.layerMemory)));
 
   it.effect("serves a public action", () =>
     Effect.map(
       overSocket((client) => client.status()),
       (answer) => {
         expect(answer.service).toBe("effect-actions");
-      },
-    ),
+      }
+    )
   );
 
-  it.effect("authenticates each message by its own token, several callers on one connection", () =>
-    Effect.map(
-      overSocket((client) =>
-        Effect.all([
-          client.whoAmI().pipe(signedInAs("alice")),
-          Effect.flip(client.whoAmI()),
-          client.whoAmI().pipe(signedInAs("bob")),
-        ]),
-      ),
-      ([alice, anonymous, bob]) => {
-        expect(alice).toEqual({ id: "alice", tenantId: "acme" });
-        expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
-        expect(bob).toEqual({ id: "bob", tenantId: "other" });
-      },
-    ),
-  );
-
-  it.effect("takes a request service from the upgrade request's router context", () =>
-    Effect.gen(function* () {
-      const Named = ActionRpc.make([TenantName]);
-
-      const named = HttpRouter.serve(
-        ActionRpc.layer(Named, tenantName).pipe(
-          Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
-          Layer.provide(RpcSerialization.layerJson),
-          HttpRouter.provideRequest(Layer.succeed(Tenant, "upgrade")),
+  it.effect(
+    "authenticates each message by its own token, several callers on one connection",
+    () =>
+      Effect.map(
+        overSocket((client) =>
+          Effect.all([
+            client.whoAmI().pipe(signedInAs("alice")),
+            Effect.flip(client.whoAmI()),
+            client.whoAmI().pipe(signedInAs("bob")),
+          ])
         ),
-        { disableLogger: true, disableListenLog: true },
-      ).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
+        ([alice, anonymous, bob]) => {
+          expect(alice).toStrictEqual({ id: "alice", tenantId: "acme" });
+          expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
+          expect(bob).toStrictEqual({ id: "bob", tenantId: "other" });
+        }
+      )
+  );
 
-      const answers = yield* HttpServer.addressFormattedWith((address) =>
-        Effect.flatMap(ActionRpc.client(Named), (client) =>
-          Effect.all([client.tenantName(), client.tenantName()]),
-        ).pipe(
-          Effect.scoped,
-          Effect.provide(
-            RpcClient.layerProtocolSocket().pipe(
-              Layer.provide(NodeSocket.layerWebSocket(`${address.replace(/^http/, "ws")}/rpc`)),
-              Layer.provide(RpcSerialization.layerJson),
-            ),
+  it.effect(
+    "takes a request service from the upgrade request's router context",
+    () =>
+      Effect.gen(function* () {
+        const Named = ActionRpc.make([TenantName]);
+
+        const named = HttpRouter.serve(
+          ActionRpc.layer(Named, tenantName).pipe(
+            Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
+            Layer.provide(RpcSerialization.layerJson),
+            HttpRouter.provideRequest(Layer.succeed(Tenant, "upgrade"))
           ),
-        ),
-      ).pipe(Effect.provide(named));
+          { disableLogger: true, disableListenLog: true }
+        ).pipe(Layer.provideMerge(NodeHttpServer.layerTest));
 
-      expect(answers).toEqual(["upgrade", "upgrade"]);
-    }),
+        const answers = yield* HttpServer.addressFormattedWith((address) =>
+          Effect.flatMap(ActionRpc.client(Named), (client) =>
+            Effect.all([client.tenantName(), client.tenantName()])
+          ).pipe(
+            Effect.scoped,
+            Effect.provide(
+              RpcClient.layerProtocolSocket().pipe(
+                Layer.provide(
+                  NodeSocket.layerWebSocket(
+                    `${address.replace(/^http/u, "ws")}/rpc`
+                  )
+                ),
+                Layer.provide(RpcSerialization.layerJson)
+              )
+            )
+          )
+        ).pipe(Effect.provide(named));
+
+        expect(answers).toStrictEqual(["upgrade", "upgrade"]);
+      })
   );
 
-  it.effect("fails a defect's call alone: a concurrent call on the connection still succeeds", () =>
-    Effect.map(
-      overSocket((client) =>
-        Effect.all([Effect.exit(client.crashy()), client.status()], { concurrency: "unbounded" }),
-      ),
-      ([crashed, up]) => {
-        expect(Exit.isFailure(crashed) && Cause.squash(crashed.cause)).toEqual(
-          internalServerErrorDefect,
-        );
-        expect(up.service).toBe("effect-actions");
-      },
-    ),
+  it.effect(
+    "fails a defect's call alone: a concurrent call on the connection still succeeds",
+    () =>
+      Effect.map(
+        overSocket((client) =>
+          Effect.all([Effect.exit(client.crashy()), client.status()], {
+            concurrency: "unbounded",
+          })
+        ),
+        ([crashed, up]) => {
+          expect(
+            Exit.isFailure(crashed) && Cause.squash(crashed.cause)
+          ).toStrictEqual(internalServerErrorDefect);
+          expect(up.service).toBe("effect-actions");
+        }
+      )
   );
 });
 
@@ -880,34 +1058,38 @@ describe("ActionRpc over a socket server", () => {
     Layer.provide(RpcServer.layerProtocolSocketServer),
     Layer.provide(RpcSerialization.layerNdjson),
     Layer.provide(Authentication.layer(Login, verify)),
-    Layer.provideMerge(NodeSocketServer.layer({ host: "127.0.0.1", port: 0 })),
+    Layer.provideMerge(NodeSocketServer.layer({ host: "127.0.0.1", port: 0 }))
   );
 
-  it.effect("serves public and protected actions with no router, authenticating each message", () =>
-    Effect.gen(function* () {
-      const { address } = yield* SocketServer.SocketServer;
-      const port = "port" in address ? address.port : 0;
+  it.effect(
+    "serves public and protected actions with no router, authenticating each message",
+    () =>
+      Effect.gen(function* () {
+        const { address } = yield* SocketServer.SocketServer;
+        const port = "port" in address ? address.port : 0;
 
-      const [up, alice, anonymous] = yield* Effect.flatMap(ActionRpc.client(Rpc), (client) =>
-        Effect.all([
-          client.status(),
-          client.whoAmI().pipe(signedInAs("alice")),
-          Effect.flip(client.whoAmI()),
-        ]),
-      ).pipe(
-        Effect.scoped,
-        Effect.provide(
-          RpcClient.layerProtocolSocket().pipe(
-            Layer.provide(NodeSocket.layerNet({ host: "127.0.0.1", port })),
-            Layer.provide(RpcSerialization.layerNdjson),
-          ),
-        ),
-      );
+        const [up, alice, anonymous] = yield* Effect.flatMap(
+          ActionRpc.client(Rpc),
+          (client) =>
+            Effect.all([
+              client.status(),
+              client.whoAmI().pipe(signedInAs("alice")),
+              Effect.flip(client.whoAmI()),
+            ])
+        ).pipe(
+          Effect.scoped,
+          Effect.provide(
+            RpcClient.layerProtocolSocket().pipe(
+              Layer.provide(NodeSocket.layerNet({ host: "127.0.0.1", port })),
+              Layer.provide(RpcSerialization.layerNdjson)
+            )
+          )
+        );
 
-      expect(up.service).toBe("effect-actions");
-      expect(alice).toEqual({ id: "alice", tenantId: "acme" });
-      expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
-    }).pipe(Effect.provide(server), Effect.provide(Users.layerMemory)),
+        expect(up.service).toBe("effect-actions");
+        expect(alice).toStrictEqual({ id: "alice", tenantId: "acme" });
+        expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
+      }).pipe(Effect.provide(Layer.provideMerge(server, Users.layerMemory)))
   );
   it.effect(
     "gives a verifier reading the request one holding the message's headers, as no socket gives one",
@@ -917,16 +1099,18 @@ describe("ActionRpc over a socket server", () => {
           Layer.provide(RpcServer.layerProtocolSocketServer),
           Layer.provide(RpcSerialization.layerNdjson),
           Layer.provide(
-            Authentication.layer(Login, (token: Redacted.Redacted<string>) =>
+            Authentication.layer(Login, (token: Redacted.Redacted) =>
               Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
                 Effect.map(verify(token), (actor) => ({
                   ...actor,
                   tenantId: request.headers["x-tenant"] ?? "none",
-                })),
-              ),
-            ),
+                }))
+              )
+            )
           ),
-          Layer.provideMerge(NodeSocketServer.layer({ host: "127.0.0.1", port: 0 })),
+          Layer.provideMerge(
+            NodeSocketServer.layer({ host: "127.0.0.1", port: 0 })
+          )
         );
 
         const answers = yield* Effect.gen(function* () {
@@ -935,27 +1119,39 @@ describe("ActionRpc over a socket server", () => {
 
           return yield* Effect.flatMap(ActionRpc.client(Rpc), (client) =>
             Effect.all([
-              client.whoAmI().pipe(signedInAs("alice"), RpcClient.withHeaders({ "x-tenant": "a" })),
-              client.whoAmI().pipe(signedInAs("bob"), RpcClient.withHeaders({ "x-tenant": "b" })),
+              client
+                .whoAmI()
+                .pipe(
+                  signedInAs("alice"),
+                  RpcClient.withHeaders({ "x-tenant": "a" })
+                ),
+              client
+                .whoAmI()
+                .pipe(
+                  signedInAs("bob"),
+                  RpcClient.withHeaders({ "x-tenant": "b" })
+                ),
               client.whoAmI().pipe(signedInAs("bob")),
-            ]),
+            ])
           ).pipe(
             Effect.scoped,
             Effect.provide(
               RpcClient.layerProtocolSocket().pipe(
                 Layer.provide(NodeSocket.layerNet({ host: "127.0.0.1", port })),
-                Layer.provide(RpcSerialization.layerNdjson),
-              ),
-            ),
+                Layer.provide(RpcSerialization.layerNdjson)
+              )
+            )
           );
-        }).pipe(Effect.provide(tenanted), Effect.provide(Users.layerMemory));
+        }).pipe(
+          Effect.provide(Layer.provideMerge(tenanted, Users.layerMemory))
+        );
 
-        expect(answers).toEqual([
+        expect(answers).toStrictEqual([
           { id: "alice", tenantId: "a" },
           { id: "bob", tenantId: "b" },
           { id: "bob", tenantId: "none" },
         ]);
-      }),
+      })
   );
 });
 
@@ -963,28 +1159,38 @@ const Crashes = ActionRpc.make([Crashy]);
 
 describe("ActionRpc over a protocol passing values", () => {
   const served = ActionRpc.layer(Rpc, [status, userActions, double]).pipe(
-    Layer.provide(Authentication.layer(Login, verify)),
+    Layer.provide(Authentication.layer(Login, verify))
   );
 
   const overValues = <A, E, R>(
-    program: (client: ActionRpc.Client<typeof Rpc>) => Effect.Effect<A, E, R>,
+    program: (client: ActionRpc.Client<typeof Rpc>) => Effect.Effect<A, E, R>
   ) =>
     Effect.flatMap(ActionRpc.client(Rpc), program).pipe(
       Effect.scoped,
-      Effect.provide(inMemoryValuesProtocolTo(served)),
-      Effect.provide(Users.layerMemory),
+      Effect.provide(
+        Layer.provideMerge(inMemoryValuesProtocolTo(served), Users.layerMemory)
+      )
     );
 
-  it.effect("carries an action's input, success and declared error as their JSON", () =>
-    overValues((client) =>
-      Effect.gen(function* () {
-        expect(yield* client.double({ value: 21 }).pipe(signedInAs("alice"))).toBe(42);
-        expect(yield* Effect.flip(client.getUser({ id: "9" }).pipe(signedInAs("alice")))).toEqual(
-          new UserNotFound({ id: "9" }),
-        );
-        expect(yield* client.status()).toEqual({ service: "effect-actions", users: 2 });
-      }),
-    ),
+  it.effect(
+    "carries an action's input, success and declared error as their JSON",
+    () =>
+      overValues((client) =>
+        Effect.gen(function* () {
+          expect(
+            yield* client.double({ value: 21 }).pipe(signedInAs("alice"))
+          ).toBe(42);
+          expect(
+            yield* Effect.flip(
+              client.getUser({ id: "9" }).pipe(signedInAs("alice"))
+            )
+          ).toStrictEqual(new UserNotFound({ id: "9" }));
+          expect(yield* client.status()).toStrictEqual({
+            service: "effect-actions",
+            users: 2,
+          });
+        })
+      )
   );
 
   it.effect(
@@ -992,27 +1198,36 @@ describe("ActionRpc over a protocol passing values", () => {
     () =>
       Effect.gen(function* () {
         const Clocked = ActionRpc.make([Status], {
-          rpcs: RpcGroup.make(NativeRpc.make("startedAt", { success: Schema.instanceOf(Date) })),
+          rpcs: RpcGroup.make(
+            NativeRpc.make("startedAt", { success: Schema.instanceOf(Date) })
+          ),
         });
 
         const startedAt = new Date(0);
 
-        const answered = yield* Effect.flatMap(ActionRpc.client(Clocked), (client) =>
-          client.startedAt(),
+        const answered = yield* Effect.flatMap(
+          ActionRpc.client(Clocked),
+          (client) => client.startedAt()
         ).pipe(
           Effect.scoped,
           Effect.provide(
-            inMemoryValuesProtocolTo(
-              ActionRpc.layer(Clocked, status).pipe(
-                Layer.provide(Clocked.rpcs.toLayer({ startedAt: () => Effect.succeed(startedAt) })),
+            Layer.provideMerge(
+              inMemoryValuesProtocolTo(
+                ActionRpc.layer(Clocked, status).pipe(
+                  Layer.provide(
+                    Clocked.rpcs.toLayer({
+                      startedAt: () => Effect.succeed(startedAt),
+                    })
+                  )
+                )
               ),
-            ),
-          ),
-          Effect.provide(Users.layerMemory),
+              Users.layerMemory
+            )
+          )
         );
 
-        expect(answered).toEqual(startedAt);
-      }),
+        expect(answered).toStrictEqual(startedAt);
+      })
   );
 
   it.effect(
@@ -1022,53 +1237,66 @@ describe("ActionRpc over a protocol passing values", () => {
         const Sharing = ActionRpc.make([Double], {
           authentication: Login,
           rpcs: RpcGroup.make(
-            NativeRpc.make("half", { payload: Double.input, success: Schema.Finite }),
+            NativeRpc.make("half", {
+              payload: Double.input,
+              success: Schema.Finite,
+            }),
             NativeRpc.make("total", {
               payload: Schema.Array(Double.input),
               success: Schema.Finite,
-            }),
+            })
           ),
         });
 
-        const answered = yield* Effect.flatMap(ActionRpc.client(Sharing), (client) =>
-          Effect.all([
-            client.half({ value: 3 }),
-            client.total([{ value: 1 }, { value: 2 }]),
-            client.double({ value: 4 }),
-          ]).pipe(signedInAs("alice")),
+        const answered = yield* Effect.flatMap(
+          ActionRpc.client(Sharing),
+          (client) =>
+            Effect.all([
+              client.half({ value: 3 }),
+              client.total([{ value: 1 }, { value: 2 }]),
+              client.double({ value: 4 }),
+            ]).pipe(signedInAs("alice"))
         ).pipe(
           Effect.scoped,
           Effect.provide(
-            inMemoryValuesProtocolTo(
-              ActionRpc.layer(Sharing, double).pipe(
-                Layer.provide(
-                  Sharing.rpcs.toLayer({
-                    half: ({ value }) => Effect.succeed(value / 2),
-                    total: (values) =>
-                      Effect.succeed(values.reduce((sum, { value }) => sum + value, 0)),
-                  }),
-                ),
-                Layer.provide(Authentication.layer(Login, verify)),
+            Layer.provideMerge(
+              inMemoryValuesProtocolTo(
+                ActionRpc.layer(Sharing, double).pipe(
+                  Layer.provide(
+                    Sharing.rpcs.toLayer({
+                      half: ({ value }) => Effect.succeed(value / 2),
+                      total: (values) =>
+                        Effect.succeed(
+                          values.reduce((sum, { value }) => sum + value, 0)
+                        ),
+                    })
+                  ),
+                  Layer.provide(Authentication.layer(Login, verify))
+                )
               ),
-            ),
-          ),
-          Effect.provide(Users.layerMemory),
+              Users.layerMemory
+            )
+          )
         );
 
-        expect(answered).toEqual([1.5, 3, 8]);
-      }),
+        expect(answered).toStrictEqual([1.5, 3, 8]);
+      })
   );
 
   it.effect("answers a defect as its request's generic failure", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.flatMap(ActionRpc.client(Crashes), (client) =>
-        Effect.exit(client.crashy()),
+        Effect.exit(client.crashy())
       ).pipe(
         Effect.scoped,
-        Effect.provide(inMemoryValuesProtocolTo(ActionRpc.layer(Crashes, crashy))),
+        Effect.provide(
+          inMemoryValuesProtocolTo(ActionRpc.layer(Crashes, crashy))
+        )
       );
 
-      expect(valueOrSquashedCause(exit)).toEqual(internalServerErrorDefect);
-    }),
+      expect(valueOrSquashedCause(exit)).toStrictEqual(
+        internalServerErrorDefect
+      );
+    })
   );
 });

@@ -1,4 +1,5 @@
-import { type Member, scopes } from "./Identity.js";
+import { scopes } from "./Identity.js";
+import type { Member } from "./Identity.js";
 
 // DEMO ONLY: the people of the demo, each a member of one workspace. A real application has no
 // such table: its directory reads a member from a signed token or a stored session. A local
@@ -9,5 +10,9 @@ export const members = {
   linus: { id: "linus", workspace: "acme", scopes: [scopes.read] },
   // Invited to acme, granted nothing yet.
   kay: { id: "kay", workspace: "acme", scopes: [] },
-  grace: { id: "grace", workspace: "globex", scopes: [scopes.read, scopes.write] },
+  grace: {
+    id: "grace",
+    workspace: "globex",
+    scopes: [scopes.read, scopes.write],
+  },
 } as const satisfies Readonly<Record<string, Member>>;

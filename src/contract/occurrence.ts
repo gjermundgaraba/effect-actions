@@ -1,11 +1,14 @@
 import { Effect, Schema, Struct } from "effect";
+
 import type * as Event from "./Event.js";
 
 /**
  * Occurrences were missed: the cursor resumed from was no longer served, or delivery skipped
  * some. `cursor` is where delivery continues.
  */
-export const Gap = Schema.TaggedStruct("Gap", { cursor: Schema.NullOr(Schema.String) });
+export const Gap = Schema.TaggedStruct("Gap", {
+  cursor: Schema.NullOr(Schema.String),
+});
 
 /** A gap in what a subscriber received. */
 export type Gap = typeof Gap.Type;
@@ -14,19 +17,26 @@ export type Gap = typeof Gap.Type;
  * Where a feed has read up to without an occurrence to show for it, such as a quiet page or an
  * occurrence a subscriber's `match` rejected: a watch keeps it as its cursor and never yields it.
  */
-export const Checked = Schema.TaggedStruct("Checked", { cursor: Schema.NullOr(Schema.String) });
+export const Checked = Schema.TaggedStruct("Checked", {
+  cursor: Schema.NullOr(Schema.String),
+});
 
 export type Checked = typeof Checked.Type;
 
-const fieldsOf = <Name extends Schema.Top, Data extends Schema.Top>(name: Name, data: Data) => ({
+const fieldsOf = <Name extends Schema.Top, Data extends Schema.Top>(
+  name: Name,
+  data: Data
+) => ({
   eventId: Schema.String.annotate({
-    description: "The source's id for it, or one generated: a subscriber deduplicates by it.",
+    description:
+      "The source's id for it, or one generated: a subscriber deduplicates by it.",
   }),
   name,
   timestamp: Schema.DateTimeUtc,
   data,
   cursor: Schema.NullOr(Schema.String).annotate({
-    description: "Where to resume after it, null for an event type that cannot be resumed.",
+    description:
+      "Where to resume after it, null for an event type that cannot be resumed.",
   }),
 });
 
@@ -37,13 +47,18 @@ export type OccurrenceSchema<E extends Event.Any> = Schema.TaggedStruct<
 >;
 
 /** An occurrence of `event`, as a subscriber decodes it. */
-export const OccurrenceOf = <E extends Event.Any>(event: E): OccurrenceSchema<E> =>
-  Schema.TaggedStruct("Occurrence", fieldsOf(Schema.Literal(event.name), event.payload));
+export const OccurrenceOf = <E extends Event.Any>(
+  event: E
+): OccurrenceSchema<E> =>
+  Schema.TaggedStruct(
+    "Occurrence",
+    fieldsOf(Schema.Literal(event.name), event.payload)
+  );
 
 /** Any occurrence, its data erased, as a feed makes it. */
 export const AnyOccurrence = Schema.TaggedStruct(
   "Occurrence",
-  fieldsOf(Schema.String, Schema.Unknown),
+  fieldsOf(Schema.String, Schema.Unknown)
 );
 
 /** What a subscriber of `event` decodes: an occurrence, or a gap. */
@@ -77,5 +92,6 @@ export const untaggedOccurrenceOf = (event: Event.Any) => {
 export const encodeUntaggedOf = (event: Event.Any) => {
   const encode = Schema.encodeEffect(untaggedOf(event));
 
-  return (occurrence: Event.Occurrence<Event.Any>) => Effect.orDie(encode(occurrence));
+  return (occurrence: Event.Occurrence<Event.Any>) =>
+    Effect.orDie(encode(occurrence));
 };

@@ -1,18 +1,34 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Arbitrary, Context, Effect, Layer, Redacted, Schema, Stream, Struct } from "effect";
+import {
+  Arbitrary,
+  Context,
+  Effect,
+  Layer,
+  Redacted,
+  Schema,
+  Stream,
+  Struct,
+} from "effect";
 import { CliError } from "effect/cli";
 import type { HttpClientResponse } from "effect/http";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
-import * as Action from "../../src/contract/Action.js";
+
+import * as Authentication from "../../src/authentication/Authentication.js";
 import * as ActionCli from "../../src/cli/ActionCli.js";
+import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
-import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Testing from "../../src/testing/Testing.js";
+import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import { exec, logged } from "../support/cli-services.js";
-import { as, rawToolCall, send, toolReplyOf, withBearer } from "../support/requests.js";
+import {
+  as,
+  rawToolCall,
+  send,
+  toolReplyOf,
+  withBearer,
+} from "../support/requests.js";
 
 const jsonTextOf = <T, E>(schema: Schema.Codec<T, E>) =>
   Schema.fromJsonString(Schema.toCodecJson(schema));
@@ -39,18 +55,27 @@ const Payload = Schema.Struct({
   enabled: Schema.Boolean,
   note: Schema.optional(Schema.String),
   level: Schema.Literals(["low", "high"]),
-  owner: Schema.Struct({ name: Schema.String, weight: Schema.optionalKey(Schema.Finite) }),
+  owner: Schema.Struct({
+    name: Schema.String,
+    weight: Schema.optionalKey(Schema.Finite),
+  }),
   tags: Schema.Array(Schema.String),
 });
 
-class Rejected extends Schema.TaggedError<Rejected>()("Rejected", {
+class Rejected extends Schema.TaggedError<
+  Rejected,
+  { readonly brand: unique symbol }
+>()("Rejected", {
   reason: Schema.String,
   code: Schema.Int,
   retryable: Schema.Boolean,
   detail: Schema.optionalKey(Schema.String),
 }) {}
 
-class OverLimit extends Schema.TaggedError<OverLimit>()("OverLimit", {
+class OverLimit extends Schema.TaggedError<
+  OverLimit,
+  { readonly brand: unique symbol }
+>()("OverLimit", {
   limit: Schema.Finite,
   tags: Schema.Array(Schema.String),
 }) {}
@@ -67,11 +92,15 @@ const failureAsJson = Schema.encodeUnknownSync(Schema.toCodecJson(Failure));
 
 const FailureInput = Schema.Struct({ failure: Failure });
 
-class Caller extends Context.Service<Caller, string>()("surfaces-agree/Caller") {}
+class Caller extends Context.Service<Caller, string>()(
+  "surfaces-agree/Caller"
+) {}
 
 const SignedIn = Authentication.make("surfaces-agree.SignedIn", Caller);
 
-const signIn = Authentication.layer(SignedIn, (token) => Effect.succeed(Redacted.value(token)));
+const signIn = Authentication.layer(SignedIn, (token) =>
+  Effect.succeed(Redacted.value(token))
+);
 
 const token = "caller";
 
@@ -97,7 +126,7 @@ const Fail = Action.make("fail", {
 const app = Action.implement(
   [Echo, Fail],
   { echo: Effect.succeed, fail: ({ failure }) => Effect.fail(failure) },
-  { authorize: Action.allowAll },
+  { authorize: Action.allowAll }
 );
 
 const Http = ActionHttp.make([Echo, Fail], { authentication: SignedIn });
@@ -106,11 +135,15 @@ const Rpc = ActionRpc.make([Echo, Fail], { authentication: SignedIn });
 
 const routes = Layer.mergeAll(
   ActionHttp.layer(Http, app),
-  ActionMcp.layerHttp(app, { name: "surfaces", version: "0", authentication: SignedIn }),
+  ActionMcp.layerHttp(app, {
+    name: "surfaces",
+    version: "0",
+    authentication: SignedIn,
+  }),
   ActionRpc.layer(Rpc, app).pipe(
     Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-    Layer.provide(RpcSerialization.layerJson),
-  ),
+    Layer.provide(RpcSerialization.layerJson)
+  )
 ).pipe(Layer.provide(signIn));
 
 const tools = ActionToolkit.make(app);
@@ -118,9 +151,9 @@ const tools = ActionToolkit.make(app);
 const comparedSurfaces = Layer.mergeAll(
   RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
     Layer.provide(RpcSerialization.layerJson),
-    Layer.provideMerge(Testing.layer(routes)),
+    Layer.provideMerge(Testing.layer(routes))
   ),
-  tools.layer,
+  tools.layer
 );
 
 const echoArguments = modelArgumentsOf(Payload);
@@ -137,7 +170,7 @@ const successOnEachSurface = (input: typeof Payload.Type) =>
 
     const [toolResult] = yield* Effect.flatMap(
       toolkit.handle("echo", yield* echoArguments(input)),
-      Stream.runCollect,
+      Stream.runCollect
     );
 
     return {
@@ -156,11 +189,11 @@ const encodedFailure = Schema.encodeEffect(jsonTextOf(Failure));
 const decodeFailureText = Schema.decodeUnknownEffect(jsonTextOf(Failure));
 
 const failureTextOf = (response: HttpClientResponse.HttpClientResponse) =>
-  Effect.flatMap(response.text, (text) =>
-    response.status === 200
-      ? Effect.map(toolReplyOf(text), (reply) => reply.text)
-      : Effect.succeed(text),
-  );
+  response.status === 200
+    ? Effect.flatMap(response.text, (text) =>
+        Effect.map(toolReplyOf(text), (reply) => reply.text)
+      )
+    : response.text;
 
 const failureOnEachSurface = (failure: typeof Failure.Type) =>
   Effect.gen(function* () {
@@ -172,33 +205,43 @@ const failureOnEachSurface = (failure: typeof Failure.Type) =>
 
     const [toolResult] = yield* Effect.flatMap(
       toolkit.handle("fail", yield* failArguments({ failure })),
-      Stream.runCollect,
+      Stream.runCollect
     ).pipe(asCaller);
 
     return {
       http: yield* Effect.flip(http.fail({ failure })),
       rpc: yield* Effect.flip(
-        rpc.fail({ failure }).pipe(RpcClient.withHeaders({ authorization: `Bearer ${token}` })),
+        rpc
+          .fail({ failure })
+          .pipe(RpcClient.withHeaders({ authorization: `Bearer ${token}` }))
       ),
       mcp: yield* Effect.flip(mcp.fail({ failure })),
       rawMcp: yield* send(
-        withBearer(rawToolCall("fail", yield* failArguments({ failure })), token),
+        withBearer(
+          rawToolCall("fail", yield* failArguments({ failure })),
+          token
+        )
       ).pipe(Effect.flatMap(failureTextOf), Effect.flatMap(decodeFailureText)),
       toolkit: toolResult?.isFailure === true ? toolResult.result : toolResult,
       inProcess: yield* Effect.flip(inProcess.fail({ failure }).pipe(asCaller)),
-      cli: yield* exec(failCommand, ["--failure", yield* encodedFailure(failure)]).pipe(
+      cli: yield* exec(failCommand, [
+        "--failure",
+        yield* encodedFailure(failure),
+      ]).pipe(
         asCaller,
         Effect.flip,
         Effect.flatMap((error) =>
           error instanceof CliError.UserError
             ? decodeFailureText(error.userMessage)
-            : Effect.die(error),
-        ),
+            : Effect.die(error)
+        )
       ),
     };
   }).pipe(Effect.provide(comparedSurfaces));
 
-const Flat = Schema.Struct(Struct.pick(Payload.fields, ["text", "amount", "count", "enabled"]));
+const Flat = Schema.Struct(
+  Struct.pick(Payload.fields, ["text", "amount", "count", "enabled"])
+);
 
 const FlatEcho = Action.make("flatEcho", {
   description: "Return the flat input as the success.",
@@ -208,9 +251,17 @@ const FlatEcho = Action.make("flatEcho", {
   success: Flat,
 });
 
-const flatCommand = ActionCli.command(Action.implement(FlatEcho, Effect.succeed), FlatEcho);
+const flatCommand = ActionCli.command(
+  Action.implement(FlatEcho, Effect.succeed),
+  FlatEcho
+);
 
-const attachedFlagsOf = ({ text, amount, count, enabled }: typeof Flat.Type) => [
+const attachedFlagsOf = ({
+  text,
+  amount,
+  count,
+  enabled,
+}: typeof Flat.Type) => [
   `--text=${text}`,
   `--amount=${amount}`,
   `--count=${count}`,
@@ -233,7 +284,12 @@ const FlagLikePrefix = Schema.Literals([
 const flatInputsWithFlagLikeText = Arbitrary.all([
   Arbitrary.schema(Flat),
   Arbitrary.schema(FlagLikePrefix),
-]).pipe(Arbitrary.map(([input, prefix]) => ({ ...input, text: `${prefix}${input.text}` })));
+]).pipe(
+  Arbitrary.map(([input, prefix]) => ({
+    ...input,
+    text: `${prefix}${input.text}`,
+  }))
+);
 
 const printedFlat = Schema.decodeUnknownEffect(Schema.fromJsonString(Flat));
 
@@ -246,10 +302,10 @@ describe("surfaces answer one call alike", () => {
         const sent = sentAsJsonText(Payload)(input);
 
         for (const [surface, answer] of Object.entries(answers)) {
-          expect(answer, surface).toEqual(sent);
+          expect(answer, surface).toStrictEqual(sent);
         }
       }),
-    { timeout: 30_000, arbitrary: { runs: 200 } },
+    { timeout: 30_000, arbitrary: { runs: 200 } }
   );
 
   it.effect.prop(
@@ -260,11 +316,13 @@ describe("surfaces answer one call alike", () => {
         const sent = sentAsJsonText(Failure)(failure);
 
         for (const [surface, answer] of Object.entries(answers)) {
-          expect(answer, surface).toEqual(sent);
-          expect(failureAsJson(answer), surface).toEqual(failureAsJson(sent));
+          expect(answer, surface).toStrictEqual(sent);
+          expect(failureAsJson(answer), surface).toStrictEqual(
+            failureAsJson(sent)
+          );
         }
       }),
-    { timeout: 30_000, arbitrary: { runs: 200 } },
+    { timeout: 30_000, arbitrary: { runs: 200 } }
   );
 
   it.effect.prop(
@@ -272,10 +330,14 @@ describe("surfaces answer one call alike", () => {
     [flatInputsWithFlagLikeText],
     ([input]) =>
       Effect.gen(function* () {
-        const [, lines] = yield* logged(exec(flatCommand, attachedFlagsOf(input)));
+        const [, lines] = yield* logged(
+          exec(flatCommand, attachedFlagsOf(input))
+        );
 
-        expect(yield* printedFlat(lines.join("\n"))).toEqual(sentAsJsonText(Flat)(input));
+        expect(yield* printedFlat(lines.join("\n"))).toStrictEqual(
+          sentAsJsonText(Flat)(input)
+        );
       }),
-    { arbitrary: { runs: 500 } },
+    { arbitrary: { runs: 500 } }
   );
 });

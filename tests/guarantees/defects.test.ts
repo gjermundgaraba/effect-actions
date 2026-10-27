@@ -15,13 +15,14 @@ import {
 import { AiError } from "effect/ai";
 import { CliError } from "effect/cli";
 import { RpcSerialization, RpcServer } from "effect/rpc";
-import * as Action from "../../src/contract/Action.js";
+
 import * as ActionCli from "../../src/cli/ActionCli.js";
+import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Testing from "../../src/testing/Testing.js";
+import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import { exec } from "../support/cli-services.js";
 import { recorder } from "../support/reporter.js";
 import {
@@ -33,17 +34,34 @@ import {
   valueOrSquashedCause,
 } from "../support/requests.js";
 
-const anyone = { readOnly: true, caller: Action.Anyone, input: { value: Schema.String } } as const;
+const anyone = {
+  readOnly: true,
+  caller: Action.Anyone,
+  input: { value: Schema.String },
+} as const;
 
 const payload = { value: "x" };
 
-class Leaked extends Schema.TaggedError<Leaked>()("Leaked", { id: Schema.String }) {}
+class Leaked extends Schema.TaggedError<
+  Leaked,
+  { readonly brand: unique symbol }
+>()("Leaked", {
+  id: Schema.String,
+}) {}
 
-class Fragile extends Schema.TaggedError<Fragile>()("Fragile", { value: Schema.Finite }) {}
+class Fragile extends Schema.TaggedError<
+  Fragile,
+  { readonly brand: unique symbol }
+>()("Fragile", {
+  value: Schema.Finite,
+}) {}
 
 const Crash = Action.make("crash", { ...anyone, description: "Dies." });
 
-const Leak = Action.make("leak", { ...anyone, description: "Fails undeclared." });
+const Leak = Action.make("leak", {
+  ...anyone,
+  description: "Fails undeclared.",
+});
 
 const Count = Action.make("count", {
   ...anyone,
@@ -78,7 +96,7 @@ const Garbled = Action.make("garbled", {
           throw decoderDefect;
         }),
         encode: SchemaGetter.passthrough(),
-      }),
+      })
     ),
   },
 });
@@ -97,11 +115,13 @@ const served = [...failing, Status] as const;
 
 const app = Action.implement(served, {
   crash: () => Effect.die(defect),
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: the contract broken, as plain JavaScript could.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The failure under test: the contract broken, as plain JavaScript could.
   leak: () => Effect.fail(new Leaked({ id: "secret-id" }) as never),
   count: () => Effect.succeed(Infinity),
-  brittle: () => Effect.fail(new Fragile({ value: Infinity }, { disableChecks: true })),
-  strict: () => Effect.fail(Domain.make({ value: Infinity }, { disableChecks: true })),
+  brittle: () =>
+    Effect.fail(new Fragile({ value: Infinity }, { disableChecks: true })),
+  strict: () =>
+    Effect.fail(Domain.make({ value: Infinity }, { disableChecks: true })),
   garbled: () => Effect.void,
   status: () => Effect.succeed("up"),
 });
@@ -111,8 +131,8 @@ const routes = Layer.mergeAll(
   ActionMcp.layerHttp(app, { name: "defects", version: "0" }),
   ActionRpc.layer(ActionRpc.make(served), app).pipe(
     Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-    Layer.provide(RpcSerialization.layerNdjson),
-  ),
+    Layer.provide(RpcSerialization.layerNdjson)
+  )
 );
 
 const tools = ActionToolkit.make(app);
@@ -128,9 +148,9 @@ const died = (cause: Cause.Cause<unknown>) => ({
   died: cause.reasons
     .filter(Cause.isDieReason)
     .map(
-      ({ defect: died }) =>
-        defectNames.get(died) ??
-        (Predicate.hasProperty(died, "_tag") ? died._tag : "another defect"),
+      ({ defect: thrown }) =>
+        defectNames.get(thrown) ??
+        (Predicate.hasProperty(thrown, "_tag") ? thrown._tag : "another defect")
     ),
 });
 
@@ -143,49 +163,69 @@ const toolkitCall = ({ name }: Failing) =>
     Effect.provide(tools.layer),
     Effect.exit,
     Effect.map((exit) => {
-      if (Exit.isSuccess(exit)) return { answered: "a result", sent: "" };
+      if (Exit.isSuccess(exit)) {
+        return { answered: "a result", sent: "" };
+      }
 
-      if (Cause.hasDies(exit.cause)) return { answered: died(exit.cause), sent: "" };
+      if (Cause.hasDies(exit.cause)) {
+        return { answered: died(exit.cause), sent: "" };
+      }
 
       return Cause.findErrorOption(exit.cause).pipe(
         Option.filter(AiError.isAiError),
         Option.match({
           onNone: () => ({ answered: "another failure", sent: "" }),
           onSome: ({ reason }) => ({
-            answered: reason.message.startsWith(`Failed to encode result for tool '${name}'`)
+            answered: reason.message.startsWith(
+              `Failed to encode result for tool '${name}'`
+            )
               ? "an AiError naming the tool"
               : reason.message,
             sent: reason.message,
           }),
-        }),
+        })
       );
-    }),
+    })
   );
 
 const command = (action: Failing) =>
   exec(ActionCli.command(app, action), ["--value", payload.value]).pipe(
     Effect.exit,
     Effect.map((exit) => {
-      if (Exit.isSuccess(exit)) return { answered: "a success", sent: "" };
+      if (Exit.isSuccess(exit)) {
+        return { answered: "a success", sent: "" };
+      }
 
-      if (Cause.hasDies(exit.cause)) return { answered: died(exit.cause), sent: "" };
+      if (Cause.hasDies(exit.cause)) {
+        return { answered: died(exit.cause), sent: "" };
+      }
 
       const error = Cause.squash(exit.cause);
 
       return error instanceof CliError.UserError
-        ? { answered: { printed: error.userMessage }, sent: error.userMessage ?? "" }
+        ? {
+            answered: { printed: error.userMessage },
+            sent: error.userMessage ?? "",
+          }
         : { answered: String(error), sent: String(error) };
-    }),
+    })
   );
 
-const internalToolError = "Tool execution failed due to an internal server error.";
+const internalToolError =
+  "Tool execution failed due to an internal server error.";
 
-const defectMessages = [defect.message, decoderDefect.message, "Leaked", "Domain"];
+const defectMessages = [
+  defect.message,
+  decoderDefect.message,
+  "Leaked",
+  "Domain",
+];
 
 const surfaces = [
   {
     surface: "HTTP",
-    reporting: "each, some twice as Effect's HTTP server reports a failed response again",
+    reporting:
+      "each, some twice as Effect's HTTP server reports a failed response again",
     reports: { atLeast: failing.length, atMost: 2 * failing.length },
     logs: failing.length,
     logsNaming: defectMessages,
@@ -195,8 +235,8 @@ const surfaces = [
         Effect.map(response.text, (body) => ({
           answered: { status: response.status, body },
           sent: body,
-        })),
-      ),
+        }))
+      )
     ).pipe(Effect.provide(Testing.layer(routes))),
     guaranteed: failing.map(() => ({ status: 500, body: "" })),
   },
@@ -210,9 +250,12 @@ const surfaces = [
     answers: Effect.forEach(failing, ({ name }) =>
       Effect.flatMap(send(rawToolCall(name, payload)), (response) =>
         Effect.flatMap(response.text, (text) =>
-          Effect.map(toolReplyOf(text), (answered) => ({ answered, sent: text })),
-        ),
-      ),
+          Effect.map(toolReplyOf(text), (answered) => ({
+            answered,
+            sent: text,
+          }))
+        )
+      )
     ).pipe(Effect.provide(Testing.layer(routes))),
     guaranteed: failing.map(() => ({ isError: true, text: internalToolError })),
   },
@@ -226,9 +269,15 @@ const surfaces = [
     answers: Effect.map(
       sendRawNdjson(served.map(({ name }) => ({ tag: name, payload }))),
       ({ text, exits }) =>
-        exits.map((exit) => ({ answered: valueOrSquashedCause(exit), sent: text })),
+        exits.map((exit) => ({
+          answered: valueOrSquashedCause(exit),
+          sent: text,
+        }))
     ).pipe(Effect.provide(Testing.layer(routes))),
-    guaranteed: [...failing.map(() => new Error("Internal server error")), "up"],
+    guaranteed: [
+      ...failing.map(() => new Error("Internal server error")),
+      "up",
+    ],
   },
   {
     surface: "Toolkit",
@@ -247,7 +296,7 @@ const surfaces = [
           brittle: "an AiError naming the tool",
           strict: { died: ["Domain", "SchemaError"] },
           garbled: { died: ["the decoder's defect"] },
-        })[name],
+        })[name]
     ),
   },
   {
@@ -267,7 +316,7 @@ const surfaces = [
           brittle: { printed: "Fragile" },
           strict: { died: ["Domain", "SchemaError"] },
           garbled: { died: ["the decoder's defect"] },
-        })[name],
+        })[name]
     ),
   },
 ] as const;
@@ -276,23 +325,27 @@ it.effect.each(surfaces)(
   "answers a defect, an undeclared failure, and a success or an error that does not encode as its surface's declaration states, sending no cause, over $surface, logging and reporting $reporting",
   ({ answers, guaranteed, reports, logs, logsNaming, reportsNaming }) =>
     Effect.gen(function* () {
-      const reported: Array<string> = [];
-      const logged: Array<string> = [];
+      const reported: string[] = [];
+      const logged: string[] = [];
 
       const calls = yield* answers.pipe(
-        Effect.provide(ErrorReporter.layer([recorder(reported)])),
-        Effect.provide(
+        Effect.provide([
+          ErrorReporter.layer([recorder(reported)]),
           Logger.layer([
             Logger.make(({ cause }) => {
-              if (cause.reasons.length > 0) logged.push(Cause.pretty(cause));
+              if (cause.reasons.length > 0) {
+                logged.push(Cause.pretty(cause));
+              }
             }),
           ]),
-        ),
+        ])
       );
 
-      expect(calls.map(({ answered }) => answered)).toEqual(guaranteed);
+      expect(calls.map(({ answered }) => answered)).toStrictEqual(guaranteed);
 
-      for (const { sent } of calls) expect(sent).not.toMatch(/hunter2|secret-id/);
+      for (const { sent } of calls) {
+        expect(sent).not.toMatch(/hunter2|secret-id/u);
+      }
 
       expect(reported.length).toBeGreaterThanOrEqual(reports.atLeast);
       expect(reported.length).toBeLessThanOrEqual(reports.atMost);
@@ -301,15 +354,15 @@ it.effect.each(surfaces)(
       for (const fragment of reportsNaming) {
         expect(
           reported.some((report) => report.includes(fragment)),
-          fragment,
+          fragment
         ).toBe(true);
       }
 
       for (const fragment of logsNaming) {
         expect(
           logged.some((log) => log.includes(fragment)),
-          fragment,
+          fragment
         ).toBe(true);
       }
-    }),
+    })
 );

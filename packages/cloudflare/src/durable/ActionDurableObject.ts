@@ -1,22 +1,35 @@
+import type * as Action from "@gjermundgaraba/effect-actions/Action";
+import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import { DurableObject } from "cloudflare:workers";
-import { Cause, Context, Effect, Exit, Layer, Scheduler, Scope } from "effect";
+import {
+  Cause,
+  Context,
+  Effect,
+  Exit,
+  Function,
+  Layer,
+  Scheduler,
+  Scope,
+} from "effect";
 import {
   HttpEffect,
   HttpMiddleware,
   HttpRouter,
   HttpServer,
-  type HttpServerRequest,
 } from "effect/http";
-import { type RpcMessage, RpcServer } from "effect/rpc";
-import type * as Action from "@gjermundgaraba/effect-actions/Action";
-import type * as Event from "@gjermundgaraba/effect-actions/Event";
+import type { HttpServerRequest } from "effect/http";
+import { RpcServer } from "effect/rpc";
+import type { RpcMessage } from "effect/rpc";
+
 import { Alarm, alarmOf, applicationOwner, makeSchedule } from "./alarm.js";
-import { makeStubProtocol, type StubRequest } from "./calls.js";
+import { makeStubProtocol } from "./calls.js";
+import type { StubRequest } from "./calls.js";
 import { layerEvents } from "./events.js";
 import { layerIdempotency } from "./idempotency.js";
+import { layerInputCheck } from "./placed.js";
+import type { AnyPlacement } from "./placed.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
-import { type AnyPlacement, layerInputCheck } from "./placed.js";
 import { makeTasks, Tasks } from "./tasks.js";
 import { clockOwner, makeWaits, Waits } from "./webhooks.js";
 
@@ -33,7 +46,11 @@ export {
   type Sockets,
 } from "./sockets.js";
 
-export { layerWebhooks, type LayerWebhooksOptions, type Waits } from "./webhooks.js";
+export {
+  layerWebhooks,
+  type LayerWebhooksOptions,
+  type Waits,
+} from "./webhooks.js";
 
 export { name, State } from "./state.js";
 
@@ -53,7 +70,14 @@ type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
 
 // Why: each request is served in the context the routes are built in, so a handler reads the
 // object's own services as the routes' Layers do.
-type ObjectServices = State | Alarm | Tasks | Event.Events | Action.Idempotency | Sockets | Waits;
+type ObjectServices =
+  | State
+  | Alarm
+  | Tasks
+  | Event.Events
+  | Action.Idempotency
+  | Sockets
+  | Waits;
 
 type Allowed<A, S> =
   | ObjectServices
@@ -61,15 +85,30 @@ type Allowed<A, S> =
   | HttpRouter.HttpRouter
   | Layer.Success<typeof HttpServer.layerServices>
   | HttpRouter.Request<"Requires", ServedPerRequest | ObjectServices | A | S>
-  | HttpRouter.Request<"GlobalRequires", ServedPerRequest | ObjectServices | A | S>
+  | HttpRouter.Request<
+      "GlobalRequires",
+      ServedPerRequest | ObjectServices | A | S
+    >
   | HttpRouter.Request<"Error", unknown>
   | HttpRouter.Request<"GlobalError", unknown>;
 
 // Why: the signatures consumers call write these unions out, since a diagnostic prints an
 // alias by its name, which tells no one what the option may require.
-type ServicesRequire = State | Alarm | Tasks | Event.Events | Action.Idempotency;
+type ServicesRequire =
+  | State
+  | Alarm
+  | Tasks
+  | Event.Events
+  | Action.Idempotency;
 
-type RunRequires<S> = S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope;
+type RunRequires<S> =
+  | S
+  | State
+  | Alarm
+  | Tasks
+  | Event.Events
+  | Action.Idempotency
+  | Scope.Scope;
 
 type CallsRequire<S> =
   | RpcServer.Protocol
@@ -178,7 +217,9 @@ export interface Options<
    * - A run an eviction, a deploy or a crash cuts off runs again at its retry's time, counted in `retryCount` as a failure, so a run may repeat: make what it sends idempotent.
    * - It runs once per `Alarm.set`: setting a time again replaces it, so a store setting it for its next expiry sets the earliest, and the option sets its next one itself.
    */
-  readonly alarm?: ((info: AlarmInvocationInfo) => Effect.Effect<void, AE, AR>) | undefined;
+  readonly alarm?:
+    | ((info: AlarmInvocationInfo) => Effect.Effect<void, AE, AR>)
+    | undefined;
   /**
    * Work the object does at least once, by name, such as telling another object of a change:
    * `Tasks.runAfter(name, change)` marks it due now in the object's storage and runs the change,
@@ -190,7 +231,13 @@ export interface Options<
         readonly [name: string]: Effect.Effect<
           void,
           unknown,
-          NoInfer<S> | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope
+          | NoInfer<S>
+          | State
+          | Alarm
+          | Tasks
+          | Event.Events
+          | Action.Idempotency
+          | Scope.Scope
         >;
       }
     | undefined;
@@ -207,9 +254,7 @@ export interface Options<
   readonly disableLogger?: boolean | undefined;
 }
 
-type HandlerOf<K extends keyof DurableObject<Cloudflare.Env>> = NonNullable<
-  DurableObject<Cloudflare.Env>[K]
->;
+type HandlerOf<K extends keyof DurableObject> = NonNullable<DurableObject[K]>;
 
 /**
  * The handlers `handlers` returns and the class `make` returns defines, each taking the runtime's
@@ -224,21 +269,29 @@ export interface Handlers<S = never> {
    * Hands the message to the protocol whose socket it is, and resolves for a socket no protocol
    * accepted.
    */
-  webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>): Promise<void>;
+  webSocketMessage(
+    ...args: Parameters<HandlerOf<"webSocketMessage">>
+  ): Promise<void>;
   /**
    * Completes the closing handshake of any socket, replying with the client's code and reason,
    * and ends the socket's protocol client, if a protocol accepted it.
    */
-  webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>): Promise<void>;
+  webSocketClose(
+    ...args: Parameters<HandlerOf<"webSocketClose">>
+  ): Promise<void>;
   /** Ends the socket's protocol client, and resolves for a socket no protocol accepted. */
-  webSocketError(...args: Parameters<HandlerOf<"webSocketError">>): Promise<void>;
+  webSocketError(
+    ...args: Parameters<HandlerOf<"webSocketError">>
+  ): Promise<void>;
   /**
    * Answers one call over the object's stub, the messages `layerStubClient` sends, with its
    * responses, as values, through the `calls` option's server, once every request it carries
    * has its exit, or rejects without `calls`. Workers RPC calls it by this name, the package's,
    * so it does not collide with the class's own methods.
    */
-  effectActionsRpc(request: StubRequest): Promise<ReadonlyArray<RpcMessage.FromServerEncoded>>;
+  effectActionsRpc(
+    request: StubRequest
+  ): Promise<readonly RpcMessage.FromServerEncoded[]>;
   /**
    * Runs, through `run`, each time the object's schedule holds that has come: the `alarm`
    * option's, which `Alarm.set` gave, and the package's own.
@@ -260,8 +313,14 @@ export interface Handlers<S = never> {
     effect: Effect.Effect<
       A,
       E,
-      S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope
-    >,
+      | S
+      | State
+      | Alarm
+      | Tasks
+      | Event.Events
+      | Action.Idempotency
+      | Scope.Scope
+    >
   ): Promise<A>;
 }
 
@@ -275,12 +334,18 @@ const scheduler = new Scheduler.MixedScheduler("sync");
 
 const handlersOf = <S>(
   ctx: DurableObjectState,
-  options: Omit<ErasedOptions<S>, "routes"> & { readonly routes?: Layer.Any | undefined },
+  options: Omit<ErasedOptions<S>, "routes"> & {
+    readonly routes?: Layer.Any | undefined;
+  }
 ): Handlers<S> => {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
-  const services = (options.services ?? Layer.empty) as Layer.Layer<S, unknown, ServicesRequire>;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
+  const services = (options.services ?? Layer.empty) as Layer.Layer<
+    S,
+    unknown,
+    ServicesRequire
+  >;
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased routes: the signature checked every requirement against `Allowed<A, S>`, the built services supply `S`, merged in, and the router gives each request the services the routes provide, `A`, and its request markers, as `HttpRouter.toWebHandler`'s types say; only those subtractions, which a generic `A` and `S` keep unresolved, are erased.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased routes: the signature checked every requirement against `Allowed<A, S>`, the built services supply `S`, merged in, and the router gives each request the services the routes provide, `A`, and its request markers, as `HttpRouter.toWebHandler`'s types say; only those subtractions, which a generic `A` and `S` keep unresolved, are erased.
   const routes = options.routes as
     | Layer.Layer<
         never,
@@ -297,7 +362,7 @@ const handlersOf = <S>(
       >
     | undefined;
 
-  const calls = options.calls;
+  const { calls } = options;
 
   const state = Layer.succeed(State, ctx);
 
@@ -326,8 +391,8 @@ const handlersOf = <S>(
               Layer.succeed(Waits)(waits),
               Layer.succeed(Tasks)(tasks.tasks),
               layerEvents,
-              layerIdempotency(ctx),
-            ),
+              layerIdempotency(ctx)
+            )
           ),
           Layer.provideMerge(state),
           Layer.provideMerge(
@@ -335,12 +400,12 @@ const handlersOf = <S>(
               Layer.succeed(Scheduler.Scheduler)(scheduler),
               options.placed === undefined
                 ? Layer.empty
-                : layerInputCheck(options.placed, ctx.id.name),
-            ),
-          ),
+                : layerInputCheck(options.placed, ctx.id.name)
+            )
+          )
         ),
         memoMap,
-        scope,
+        scope
       );
 
       const given = Layer.succeedContext(context);
@@ -349,49 +414,56 @@ const handlersOf = <S>(
 
       const call =
         calls === undefined
-          ? () =>
-              Promise.reject(
-                new Error(
-                  "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer",
-                ),
-              )
+          ? async () => {
+              throw new Error(
+                "This Durable Object serves no rpcs over its stub: give handlers or make a calls Layer"
+              );
+            }
           : yield* Effect.gen(function* () {
-              const stub = yield* Effect.provideContext(makeStubProtocol, context);
+              const stub = yield* Effect.provideContext(
+                makeStubProtocol,
+                context
+              );
 
               yield* Layer.buildWithMemoMap(
                 calls.pipe(
-                  Layer.provide(Layer.succeed(RpcServer.Protocol)(stub.protocol)),
-                  Layer.provide(given),
+                  Layer.provide(
+                    Layer.succeed(RpcServer.Protocol)(stub.protocol)
+                  ),
+                  Layer.provide(given)
                 ),
                 memoMap,
-                scope,
+                scope
               );
 
               yield* stub.served;
 
-              return (request: StubRequest) => Effect.runPromise(stub.serve(request));
+              return async (request: StubRequest) =>
+                await Effect.runPromise(stub.serve(request));
             });
 
       const sockets = yield* Layer.buildWithMemoMap(
         Sockets.layer.pipe(Layer.provide(given)),
         memoMap,
-        scope,
+        scope
       );
 
       const serve =
         routes === undefined
-          ? () => Promise.resolve(new Response(null, { status: 404 }))
+          ? async () => new Response(null, { status: 404 })
           : yield* Effect.gen(function* () {
               const routed = yield* Layer.buildWithMemoMap(
                 routes.pipe(
                   Layer.provideMerge(
-                    Layer.succeedContext<ObjectServices>(Context.merge(context, sockets)),
+                    Layer.succeedContext<ObjectServices>(
+                      Context.merge(context, sockets)
+                    )
                   ),
                   Layer.provide(HttpServer.layerServices),
-                  Layer.provideMerge(HttpRouter.layer),
+                  Layer.provideMerge(HttpRouter.layer)
                 ),
                 memoMap,
-                scope,
+                scope
               );
 
               // Why: the handler is made here, as `HttpRouter.toWebHandler` makes it once its
@@ -404,15 +476,19 @@ const handlersOf = <S>(
                   HttpServerRequest.HttpServerRequest | Scope.Scope
                 >(routed)(
                   Context.get(routed, HttpRouter.HttpRouter).asHttpEffect(),
-                  options.disableLogger === true ? undefined : HttpMiddleware.logger,
-                ),
+                  options.disableLogger === true
+                    ? undefined
+                    : HttpMiddleware.logger
+                )
               );
             });
 
       return { context, call, sockets: Context.get(sockets, Sockets), serve };
     });
 
-    return yield* built.pipe(Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause))));
+    return yield* built.pipe(
+      Effect.onError((cause) => Scope.close(scope, Exit.failCause(cause)))
+    );
   });
 
   type Built = Effect.Success<typeof build>;
@@ -424,7 +500,7 @@ const handlersOf = <S>(
 
   let instance: Built | undefined;
   let building = false;
-  const waiting: Array<Waiting> = [];
+  const waiting: Waiting[] = [];
 
   // Why: built as the instance is constructed, under `blockConcurrencyWhile`, so the runtime holds
   // every event, the first included, until the build ends, and each then finds `instance` set
@@ -441,95 +517,130 @@ const handlersOf = <S>(
   const start = () => {
     building = true;
 
-    void ctx
-      .blockConcurrencyWhile(async () => {
+    void (async () => {
+      const built = await ctx.blockConcurrencyWhile(async () => {
         const exit = await Effect.runPromiseExit(build, { scheduler });
 
         building = false;
 
         if (Exit.isFailure(exit)) {
-          for (const next of waiting.splice(0)) next.fail(exit.cause);
+          for (const next of waiting.splice(0)) {
+            next.fail(exit.cause);
+          }
 
-          return undefined;
+          return;
         }
 
         instance = exit.value;
 
         return instance;
-      })
-      .then(async (built) => {
-        if (built === undefined) return;
-
-        for (let next = waiting.shift(); next !== undefined; next = waiting.shift()) {
-          await next.use(built);
-        }
       });
+
+      if (built === undefined) {
+        return;
+      }
+
+      for (
+        let next = waiting.shift();
+        next !== undefined;
+        next = waiting.shift()
+      ) {
+        await next.use(built);
+      }
+    })();
   };
 
   start();
 
-  const withBuilt = <A>(use: (built: Built) => A | Promise<A>): Promise<A> => {
+  const withBuilt = async <A>(
+    use: (built: Built) => A | Promise<A>
+  ): Promise<A> => {
     const held = instance;
 
-    if (held !== undefined) return new Promise<A>((resolve) => resolve(use(held)));
+    if (held !== undefined) {
+      return await use(held);
+    }
 
-    return new Promise<A>((resolve, reject) => {
-      waiting.push({
-        use: (built) => {
-          const used = new Promise<A>((done) => done(use(built)));
+    const { promise, resolve, reject } = Promise.withResolvers<A>();
 
-          resolve(used);
+    waiting.push({
+      use: async (built) => {
+        const used = (async () => await use(built))();
 
-          return used.then(
-            () => undefined,
-            () => undefined,
-          );
-        },
-        fail: (cause) => reject(Cause.squash(cause)),
-      });
+        resolve(used);
 
-      if (!building) start();
+        await used.then(Function.constUndefined, Function.constUndefined);
+      },
+      fail: (cause) => {
+        reject(Cause.squash(cause));
+      },
     });
+
+    if (!building) {
+      start();
+    }
+
+    return await promise;
   };
 
   // Why: the services' context carries the instance's memo map, which `run` gave every effect
   // before, so a Layer it provided itself was shared when the services or routes had built that
   // very value, and rebuilt per call otherwise, without a word. A map of its own makes the rule
   // one: the services are shared, and what a `run` or a task provides is per call.
-  const provided = <A, E>({ context }: Built, effect: Effect.Effect<A, E, RunRequires<S>>) =>
+  const provided = <A, E>(
+    { context }: Built,
+    effect: Effect.Effect<A, E, RunRequires<S>>
+  ) =>
     Effect.scopedWith((scope) =>
       Effect.provideContext(
         effect,
         context.pipe(
           Context.add(Scope.Scope, scope),
-          Context.add(Layer.CurrentMemoMap, Layer.makeMemoMapUnsafe()),
-        ),
-      ),
+          Context.add(Layer.CurrentMemoMap, Layer.makeMemoMapUnsafe())
+        )
+      )
     );
 
   // Why: the services' context carries the object's scheduler, which `provided` gives `run`, as
   // the calls' and the protocols' own context gives each call and socket event.
-  const run = <A, E>(effect: Effect.Effect<A, E, RunRequires<S>>): Promise<A> =>
-    withBuilt((built) => Effect.runPromise(provided(built, effect)));
+  const run = async <A, E>(
+    effect: Effect.Effect<A, E, RunRequires<S>>
+  ): Promise<A> =>
+    await withBuilt(
+      async (built) => await Effect.runPromise(provided(built, effect))
+    );
 
-  const dispatch = (event: (sockets: Sockets["Service"]) => Effect.Effect<boolean>) =>
-    withBuilt(({ sockets }) => Effect.runPromise(Effect.asVoid(event(sockets))));
+  const dispatch = async (
+    event: (sockets: Sockets["Service"]) => Effect.Effect<boolean>
+  ) => {
+    await withBuilt(async ({ sockets }) => {
+      await Effect.runPromise(Effect.asVoid(event(sockets)));
+    });
+  };
 
   return {
-    fetch: (request) => withBuilt(({ serve }) => serve(request)),
-    webSocketMessage: (socket, message) => dispatch((sockets) => sockets.message(socket, message)),
-    webSocketClose: (socket, code, reason) =>
-      dispatch((sockets) => sockets.close(socket, code, reason)),
-    webSocketError: (socket) => dispatch((sockets) => sockets.error(socket)),
-    effectActionsRpc: (request) => withBuilt(({ call }) => call(request)),
-    alarm: () =>
-      run(
+    fetch: async (request) =>
+      await withBuilt(async ({ serve }) => await serve(request)),
+    webSocketMessage: async (socket, message) => {
+      await dispatch((sockets) => sockets.message(socket, message));
+    },
+    webSocketClose: async (socket, code, reason) => {
+      await dispatch((sockets) => sockets.close(socket, code, reason));
+    },
+    webSocketError: async (socket) => {
+      await dispatch((sockets) => sockets.error(socket));
+    },
+    effectActionsRpc: async (request) =>
+      await withBuilt(async ({ call }) => await call(request)),
+    alarm: async () => {
+      await run(
         schedule.runDue({
           [applicationOwner]: (info) => options.alarm?.(info) ?? Effect.void,
           [clockOwner]: () => wakeDue,
           ...tasks.owners,
-        }),
-      ),
+        })
+      );
+    },
     run,
   };
 };
@@ -577,14 +688,27 @@ export const handlers = <
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope = never,
+  AR extends
+    | S
+    | State
+    | Alarm
+    | Tasks
+    | Event.Events
+    | Action.Idempotency
+    | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State | Alarm | Tasks | Event.Events | Action.Idempotency =
-    never,
+  CR extends
+    | RpcServer.Protocol
+    | S
+    | State
+    | Alarm
+    | Tasks
+    | Event.Events
+    | Action.Idempotency = never,
 >(
   ctx: DurableObjectState,
-  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>,
+  options: Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>
 ): Handlers<S> => handlersOf(ctx, options);
 
 /**
@@ -595,7 +719,8 @@ export const handlers = <
  */
 // Why: `Handlers` comes first, so `super.alarm(info)` and the other handlers resolve to the
 // delegated signatures, which always exist, rather than Cloudflare's optional ones.
-export type Instance<S = never, Env = Cloudflare.Env> = Handlers<S> & DurableObject<Env>;
+export type Instance<S = never, Env = Cloudflare.Env> = Handlers<S> &
+  DurableObject<Env>;
 
 /**
  * `make` with `services`, a function of the instance's `env`, whose parameter's type is the
@@ -611,11 +736,24 @@ export function make<
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope = never,
+  AR extends
+    | S
+    | State
+    | Alarm
+    | Tasks
+    | Event.Events
+    | Action.Idempotency
+    | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State | Alarm | Tasks | Event.Events | Action.Idempotency =
-    never,
+  CR extends
+    | RpcServer.Protocol
+    | S
+    | State
+    | Alarm
+    | Tasks
+    | Event.Events
+    | Action.Idempotency = never,
   Env = Cloudflare.Env,
 >(
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
@@ -626,7 +764,7 @@ export function make<
      * is the class's `env`.
      */
     readonly services: (env: Env) => Layer.Layer<S, SE, SR>;
-  },
+  }
 ): new (ctx: DurableObjectState, env: Env) => Instance<S, Env>;
 // Why: a `services` function of `env` has its parameter inferred, which fixes the type
 // parameters a default gives before the function's return gives `S`, so its signature has none
@@ -658,15 +796,30 @@ export function make<
   E = never,
   R extends Allowed<A, S> = never,
   AE = never,
-  AR extends S | State | Alarm | Tasks | Event.Events | Action.Idempotency | Scope.Scope = never,
+  AR extends
+    | S
+    | State
+    | Alarm
+    | Tasks
+    | Event.Events
+    | Action.Idempotency
+    | Scope.Scope = never,
   CA = never,
   CE = never,
-  CR extends RpcServer.Protocol | S | State | Alarm | Tasks | Event.Events | Action.Idempotency =
-    never,
+  CR extends
+    | RpcServer.Protocol
+    | S
+    | State
+    | Alarm
+    | Tasks
+    | Event.Events
+    | Action.Idempotency = never,
 >(
   options: Omit<Options<S, SE, SR, A, E, R, AE, AR, CA, CE, CR>, "services"> & {
-    readonly services?: ((env: Cloudflare.Env) => Layer.Layer<S, SE, SR>) | undefined;
-  },
+    readonly services?:
+      | ((env: Cloudflare.Env) => Layer.Layer<S, SE, SR>)
+      | undefined;
+  }
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S>;
 export function make<S>(
   options: Omit<ErasedOptions<S>, "services" | "routes"> & {
@@ -674,9 +827,9 @@ export function make<S>(
     readonly services?:
       | ((env: Cloudflare.Env) => Layer.Layer<S, unknown, ServicesRequire>)
       | undefined;
-  },
+  }
 ): new (ctx: DurableObjectState, env: Cloudflare.Env) => Instance<S> {
-  return class ActionDurableObject extends DurableObject<Cloudflare.Env> {
+  return class ActionDurableObject extends DurableObject {
     readonly #handlers: Handlers<S>;
 
     constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
@@ -688,34 +841,40 @@ export function make<S>(
       });
     }
 
-    override fetch(...args: Parameters<HandlerOf<"fetch">>) {
-      return this.#handlers.fetch(...args);
+    override async fetch(...args: Parameters<HandlerOf<"fetch">>) {
+      return await this.#handlers.fetch(...args);
     }
 
-    override webSocketMessage(...args: Parameters<HandlerOf<"webSocketMessage">>) {
-      return this.#handlers.webSocketMessage(...args);
+    override async webSocketMessage(
+      ...args: Parameters<HandlerOf<"webSocketMessage">>
+    ) {
+      await this.#handlers.webSocketMessage(...args);
     }
 
-    override webSocketClose(...args: Parameters<HandlerOf<"webSocketClose">>) {
-      return this.#handlers.webSocketClose(...args);
+    override async webSocketClose(
+      ...args: Parameters<HandlerOf<"webSocketClose">>
+    ) {
+      await this.#handlers.webSocketClose(...args);
     }
 
-    override webSocketError(...args: Parameters<HandlerOf<"webSocketError">>) {
-      return this.#handlers.webSocketError(...args);
+    override async webSocketError(
+      ...args: Parameters<HandlerOf<"webSocketError">>
+    ) {
+      await this.#handlers.webSocketError(...args);
     }
 
-    effectActionsRpc(request: StubRequest) {
-      return this.#handlers.effectActionsRpc(request);
+    async effectActionsRpc(request: StubRequest) {
+      return await this.#handlers.effectActionsRpc(request);
     }
 
     // Why: always defined, as the object's one alarm is the package's: workerd refuses
     // `storage.setAlarm`, which `Alarm.set` calls, on a class without an `alarm` handler.
-    override alarm(info?: AlarmInvocationInfo) {
-      return this.#handlers.alarm(info);
+    override async alarm(info?: AlarmInvocationInfo) {
+      await this.#handlers.alarm(info);
     }
 
-    run<A, E>(effect: Effect.Effect<A, E, RunRequires<S>>) {
-      return this.#handlers.run(effect);
+    async run<A, E>(effect: Effect.Effect<A, E, RunRequires<S>>) {
+      return await this.#handlers.run(effect);
     }
   };
 }

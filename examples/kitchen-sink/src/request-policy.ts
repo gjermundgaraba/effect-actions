@@ -1,5 +1,6 @@
 import { Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+
 import { allowedOrigins, publicUrl } from "./config.js";
 
 const loopback = ["localhost", "127.0.0.1"];
@@ -13,32 +14,39 @@ const loopback = ["localhost", "127.0.0.1"];
 // authentication, too late.
 export const requestPolicy = HttpRouter.middleware(
   Effect.gen(function* () {
-    const hosts = [...loopback, new URL(yield* publicUrl).hostname];
+    const hosts = new Set([...loopback, new URL(yield* publicUrl).hostname]);
     const origins = yield* allowedOrigins;
 
     return (httpEffect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        const url = HttpServerRequest.toURL(request.modify({ url: request.originalUrl }));
 
-        if (Option.isNone(url) || !hosts.includes(url.value.hostname)) {
+        const url = HttpServerRequest.toURL(
+          request.modify({ url: request.originalUrl })
+        );
+
+        if (Option.isNone(url) || !hosts.has(url.value.hostname)) {
           return HttpServerResponse.text("Host not allowed", { status: 403 });
         }
 
-        const origin = request.headers["origin"];
+        const { origin } = request.headers;
 
         // The request's own origin is that of a page served from this port directly. Behind a
         // proxy ending TLS it is an `http:` one from Effect 4.0.6, whose `originalUrl` takes the
         // scheme of the connection, whatever `X-Forwarded-Proto` says, so the public URL's
         // origin is among `origins`.
-        if (origin !== undefined && origin !== url.value.origin && !origins.includes(origin)) {
+        if (
+          origin !== undefined &&
+          origin !== url.value.origin &&
+          !origins.includes(origin)
+        ) {
           return HttpServerResponse.text("Origin not allowed", { status: 403 });
         }
 
         return yield* httpEffect;
       });
   }),
-  { global: true },
+  { global: true }
 );
 
 // CORS for the one cross-origin caller, a browser MCP client. `HttpRouter.cors` is global to
@@ -61,7 +69,11 @@ export const cors = Layer.unwrap(
         "MCP-Name",
         "Mcp-Session-Id",
       ],
-      exposedHeaders: ["WWW-Authenticate", "MCP-Protocol-Version", "Mcp-Session-Id"],
-    }),
-  ),
+      exposedHeaders: [
+        "WWW-Authenticate",
+        "MCP-Protocol-Version",
+        "Mcp-Session-Id",
+      ],
+    })
+  )
 );

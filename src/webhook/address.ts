@@ -1,4 +1,4 @@
-import { Effect, Result } from "effect";
+import { Effect, Function, Result } from "effect";
 import type { Dns } from "effect/net";
 import { Host, IpNetwork, NetAddress } from "effect/net";
 
@@ -49,25 +49,28 @@ const isGlobal = (address: NetAddress.IpAddress): boolean =>
  */
 export const checkedHost = (
   url: URL,
-  dns: Dns.Dns["Service"] | undefined,
+  dns: Dns.Dns["Service"] | undefined
 ): Effect.Effect<void, void> => {
   const host = Result.getOrUndefined(
-    Host.hostFromString(url.hostname.replace(/^\[(.*)\]$/u, "$1")),
+    Host.hostFromString(
+      url.hostname.replace(/^\[(?<address>.*)\]$/u, "$<address>")
+    )
   );
 
+  if (!NetAddress.isIpAddress(host) && !Host.isDomainName(host)) {
+    return Effect.fail(undefined);
+  }
+
   const addresses: Effect.Effect<
-    ReadonlyArray<NetAddress.IpAddress>,
-    unknown
+    readonly NetAddress.IpAddress[],
+    Dns.DnsError
   > = NetAddress.isIpAddress(host)
     ? Effect.succeed([host])
-    : Host.isDomainName(host)
-      ? dns === undefined
-        ? Effect.succeed([])
-        : dns.lookup(host)
-      : Effect.fail(undefined);
+    : (dns?.lookup(host) ?? Effect.succeed([]));
 
   return Effect.flatMap(
-    Effect.mapError(addresses, () => undefined),
-    (resolved) => (resolved.every(isGlobal) ? Effect.void : Effect.fail(undefined)),
+    Effect.mapError(addresses, Function.constUndefined),
+    (resolved) =>
+      resolved.every(isGlobal) ? Effect.void : Effect.fail(undefined)
   );
 };

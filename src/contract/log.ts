@@ -1,6 +1,16 @@
-import { Cause, Clock, Duration, Effect, Option, Queue, Semaphore, Stream } from "effect";
-import { reported } from "./reported.js";
+import {
+  Cause,
+  Clock,
+  Duration,
+  Effect,
+  Option,
+  Queue,
+  Semaphore,
+  Stream,
+} from "effect";
+
 import { uniqueKey } from "./implementation.js";
+import { reported } from "./reported.js";
 
 /** What a log holds: each entry with its sequence number, its cursor and when it arrived. */
 export interface Entry<A> {
@@ -28,7 +38,10 @@ export interface Bounds {
   readonly maxEvents?: number | undefined;
 }
 
-const defaultBounds = { maxAge: Duration.minutes(10), maxEvents: 10_000 } as const;
+const defaultBounds = {
+  maxAge: Duration.minutes(10),
+  maxEvents: 10_000,
+} as const;
 
 /** One entry of a log: what was published, and the key it was published to, if any. */
 export interface Logged<A> {
@@ -68,14 +81,14 @@ export interface LogStorage<A> {
   /** Keeps `position`, and `entry` with it where given, at once. */
   readonly put: (
     position: Position,
-    entry?: { readonly seq: number; readonly stored: Stored<A> },
+    entry?: { readonly seq: number; readonly stored: Stored<A> }
   ) => Effect.Effect<void>;
   /** The entries kept from sequence number `from` on, at most `limit`, in order. */
   readonly list: (
     from: number,
-    limit: number,
+    limit: number
   ) => Effect.Effect<ReadonlyArray<readonly [seq: number, listed: Listed<A>]>>;
-  readonly delete: (seqs: ReadonlyArray<number>) => Effect.Effect<void>;
+  readonly delete: (seqs: readonly number[]) => Effect.Effect<void>;
 }
 
 /** A log storage in memory, for the process that makes it. */
@@ -90,7 +103,9 @@ export const memoryStorage = <A>(): LogStorage<A> => {
       Effect.sync(() => {
         position = next;
 
-        if (entry === undefined) return;
+        if (entry === undefined) {
+          return;
+        }
 
         entries.set(entry.seq, entry.stored);
         newest = Math.max(newest, entry.seq);
@@ -102,19 +117,29 @@ export const memoryStorage = <A>(): LogStorage<A> => {
         const listed: Array<readonly [number, Stored<A>]> = [];
         const oldest = entries.keys().next().value;
 
-        if (oldest === undefined) return listed;
+        if (oldest === undefined) {
+          return listed;
+        }
 
-        for (let seq = Math.max(from, oldest); seq <= newest && listed.length < limit; seq++) {
+        for (
+          let seq = Math.max(from, oldest);
+          seq <= newest && listed.length < limit;
+          seq += 1
+        ) {
           const stored = entries.get(seq);
 
-          if (stored !== undefined) listed.push([seq, stored]);
+          if (stored !== undefined) {
+            listed.push([seq, stored]);
+          }
         }
 
         return listed;
       }),
     delete: (seqs) =>
       Effect.sync(() => {
-        for (const seq of seqs) entries.delete(seq);
+        for (const seq of seqs) {
+          entries.delete(seq);
+        }
       }),
   };
 };
@@ -129,11 +154,25 @@ export interface LogStore<A> {
    */
   readonly read: (
     cursor: string | null,
-    limit: number,
+    limit: number
   ) => Effect.Effect<Read<Logged<A> | undefined>>;
 }
 
 const separator = ":";
+
+const cursorAt = (epoch: string, seq: number) => `${epoch}${separator}${seq}`;
+
+const seqIn = (epoch: string, cursor: string): number | undefined => {
+  const [named, seq, ...rest] = cursor.split(separator);
+  const parsed = Number(seq);
+
+  return named === epoch &&
+    rest.length === 0 &&
+    Number.isSafeInteger(parsed) &&
+    parsed >= 0
+    ? parsed
+    : undefined;
+};
 
 /**
  * A log's entries over `storage`, read by cursor: a cursor is the storage's epoch and the
@@ -143,10 +182,15 @@ const separator = ":";
  */
 export const makeLogStore = <A>(
   storage: LogStorage<A>,
-  { maxAge = defaultBounds.maxAge, maxEvents = defaultBounds.maxEvents }: Bounds = {},
+  {
+    maxAge = defaultBounds.maxAge,
+    maxEvents = defaultBounds.maxEvents,
+  }: Bounds = {}
 ): LogStore<A> => {
   if (!Number.isSafeInteger(maxEvents) || maxEvents < 1) {
-    throw new Error(`Invalid log maxEvents: ${maxEvents} (give a positive integer)`);
+    throw new Error(
+      `Invalid log maxEvents: ${maxEvents} (give a positive integer)`
+    );
   }
 
   const age = Duration.toMillis(Duration.fromInputUnsafe(maxAge));
@@ -155,23 +199,14 @@ export const makeLogStore = <A>(
   const turn = Semaphore.makeUnsafe(1);
 
   const positioned = Effect.flatMap(storage.position, (found) => {
-    if (found !== undefined) return Effect.succeed(found);
+    if (found !== undefined) {
+      return Effect.succeed(found);
+    }
 
     const minted = { epoch: uniqueKey(), last: 0 };
 
     return Effect.as(storage.put(minted), minted);
   });
-
-  const cursorAt = (epoch: string, seq: number) => `${epoch}${separator}${seq}`;
-
-  const seqIn = (epoch: string, cursor: string): number | undefined => {
-    const [named, seq, ...rest] = cursor.split(separator);
-    const parsed = Number(seq);
-
-    return named === epoch && rest.length === 0 && Number.isSafeInteger(parsed) && parsed >= 0
-      ? parsed
-      : undefined;
-  };
 
   // Why: entries past their age are deleted as a read meets them, oldest first, so the oldest
   // entry kept is the first listed: a read where none expired lists one entry.
@@ -182,13 +217,19 @@ export const makeLogStore = <A>(
         const young = listed.findIndex(([, { at }]) => at >= now - age);
         const dropped = young === -1 ? listed : listed.slice(0, young);
 
-        if (dropped.length > 0) yield* storage.delete(dropped.map(([seq]) => seq));
+        if (dropped.length > 0) {
+          yield* storage.delete(dropped.map(([seq]) => seq));
+        }
 
         const first = listed[dropped.length];
 
-        if (first !== undefined) return Math.max(first[0], last - maxEvents + 1);
+        if (first !== undefined) {
+          return Math.max(first[0], last - maxEvents + 1);
+        }
 
-        if (listed.length < batch) return last + 1;
+        if (listed.length < batch) {
+          return last + 1;
+        }
       }
     });
 
@@ -200,16 +241,26 @@ export const makeLogStore = <A>(
           const seq = last + 1;
           const at = yield* Clock.currentTimeMillis;
 
-          yield* storage.put({ epoch, last: seq }, { seq, stored: { at, logged } });
+          yield* storage.put(
+            { epoch, last: seq },
+            { seq, stored: { at, logged } }
+          );
 
-          if (seq > maxEvents) yield* storage.delete([seq - maxEvents]);
-        }),
+          if (seq > maxEvents) {
+            yield* storage.delete([seq - maxEvents]);
+          }
+        })
       ),
     read: (cursor, limit) =>
       turn.withPermit(
         Effect.gen(function* () {
           const { epoch, last } = yield* positioned;
-          const oldest = yield* oldestKept(last, yield* Clock.currentTimeMillis);
+
+          const oldest = yield* oldestKept(
+            last,
+            yield* Clock.currentTimeMillis
+          );
+
           const seq = cursor === null ? last : seqIn(epoch, cursor);
 
           const { after, truncated } =
@@ -232,7 +283,7 @@ export const makeLogStore = <A>(
             truncated,
             hasMore: pending.length > limit,
           };
-        }),
+        })
       ),
   };
 };
@@ -244,7 +295,7 @@ export interface Log<A> {
   readonly feed: (emit: Stream.Stream<Logged<A>>) => Effect.Effect<void>;
   readonly read: (
     cursor: string | null,
-    limit: number,
+    limit: number
   ) => Effect.Effect<Read<Logged<A> | undefined>>;
   /**
    * Every read after `cursor`, then one each time entries arrive: the first from where `cursor`
@@ -252,7 +303,7 @@ export interface Log<A> {
    */
   readonly follow: (
     cursor: string | null,
-    limit: number,
+    limit: number
   ) => Stream.Stream<Read<Logged<A> | undefined>>;
 }
 
@@ -260,19 +311,23 @@ export interface Log<A> {
 export const makeLog = <A>(store: LogStore<A>): Log<A> => {
   // Why: The store is the only keeper of entries, so a follower that falls behind reads a gap and
   // holds nothing; each follower's queue only wakes it, keeping one pending wake.
-  const followers = new Set<Queue.Queue<void>>();
+  const followers = new Set<Queue.Queue<undefined>>();
 
   const append = (value: A, key: string | undefined) =>
     Effect.andThen(
       store.append({ value, key }),
       Effect.sync(() => {
-        for (const woken of followers) Queue.offerUnsafe(woken, undefined);
-      }),
+        for (const woken of followers) {
+          Queue.offerUnsafe(woken, undefined);
+        }
+      })
     );
 
   const following = Effect.acquireRelease(
-    Effect.tap(Queue.sliding<void>(1), (woken) => Effect.sync(() => followers.add(woken))),
-    (woken) => Effect.sync(() => followers.delete(woken)),
+    Effect.tap(Queue.sliding<undefined>(1), (woken) =>
+      Effect.sync(() => followers.add(woken))
+    ),
+    (woken) => Effect.sync(() => followers.delete(woken))
   );
 
   return {
@@ -281,10 +336,13 @@ export const makeLog = <A>(store: LogStore<A>): Log<A> => {
       emit.pipe(
         Stream.runForEach(({ value, key }) => append(value, key)),
         Effect.matchCauseEffect({
-          onFailure: (cause) => (Cause.hasInterruptsOnly(cause) ? Effect.void : reported(cause)),
+          onFailure: (cause) =>
+            Cause.hasInterruptsOnly(cause) ? Effect.void : reported(cause),
           onSuccess: () =>
-            Effect.logWarning("A log source's emit stream ended: it appends nothing more"),
-        }),
+            Effect.logWarning(
+              "A log source's emit stream ended: it appends nothing more"
+            ),
+        })
       ),
     read: store.read,
     follow: (cursor, limit) =>
@@ -294,16 +352,19 @@ export const makeLog = <A>(store: LogStore<A>): Log<A> => {
             Effect.map(
               Effect.andThen(
                 state.wait ? Queue.take(woken) : Effect.void,
-                store.read(state.cursor, limit),
+                store.read(state.cursor, limit)
               ),
               (answered) =>
                 [
                   [answered],
-                  Option.some({ cursor: answered.cursor, wait: !answered.hasMore }),
-                ] as const,
-            ),
-          ),
-        ),
+                  Option.some({
+                    cursor: answered.cursor,
+                    wait: !answered.hasMore,
+                  }),
+                ] as const
+            )
+          )
+        )
       ),
   };
 };

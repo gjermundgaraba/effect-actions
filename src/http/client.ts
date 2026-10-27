@@ -1,32 +1,43 @@
-import { Effect, type Schema, Stream } from "effect";
-import { HttpClient, type HttpClientError, HttpClientRequest } from "effect/http";
-import { type HttpApi, HttpApiClient } from "effect/http-api";
+import { Effect, Stream } from "effect";
+import type { Schema } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import type { HttpClientError } from "effect/http";
+import { HttpApiClient } from "effect/http-api";
+import type { HttpApi } from "effect/http-api";
+
+import type {
+  Any as Authentication,
+  VerifierError,
+} from "../authentication/provider.js";
 import type * as Action from "../contract/Action.js";
-import type * as Event from "../contract/Event.js";
-import type { Any as Authentication, VerifierError } from "../authentication/provider.js";
 import {
-  type Call,
   checked,
   checkedStream,
-  type ErasedMethod,
-  type ErasedStreamMethod,
   sendingValue,
   watchInput,
 } from "../contract/call.js";
+import type {
+  Call,
+  ErasedMethod,
+  ErasedStreamMethod,
+} from "../contract/call.js";
+import type { Codec } from "../contract/codec.js";
 import type { BuiltIns } from "../contract/errors.js";
+import type * as Event from "../contract/Event.js";
 import type { ErasedValue } from "../contract/implementation.js";
 import type { Receiving } from "../contract/receiving.js";
-import {
-  type Transport,
-  type WatchArgs,
-  type WatchRequirement,
-  watching,
+import { elementOf } from "../contract/stream.js";
+import type { Answer, StreamOf } from "../contract/stream.js";
+import { watching } from "../contract/watch.js";
+import type {
+  Transport,
+  WatchArgs,
+  WatchRequirement,
 } from "../contract/watch.js";
 import type { sentOf } from "./events.js";
 import { readElements, readWithProgress } from "./streamed.js";
-import { type Answer, elementOf, type StreamOf } from "../contract/stream.js";
-import type { Codec } from "../contract/codec.js";
-import { type PollMethod, type StreamMethod, transportOf, type WebhookMethods } from "./watch.js";
+import { transportOf } from "./watch.js";
+import type { PollMethod, StreamMethod, WebhookMethods } from "./watch.js";
 
 /**
  * The native `HttpApiClient.make` options except `transformResponse`, which may change a call's
@@ -43,7 +54,9 @@ export interface Options<E = HttpClientError.HttpClientError, R = never> {
    *
    * - Outside a browser, set it: a relative route has no page to resolve against, and the call fails with an `HttpClientError` whose `reason._tag` is `InvalidUrlError`.
    */
-  readonly baseUrl?: NonNullable<Parameters<typeof HttpApiClient.make>[1]>["baseUrl"];
+  readonly baseUrl?: NonNullable<
+    Parameters<typeof HttpApiClient.make>[1]
+  >["baseUrl"];
   /**
    * Wraps the native `HttpClient` the calls send with: a bearer token is
    * `HttpClient.mapRequest(HttpClientRequest.bearerToken(token))`, and a credential read or
@@ -97,9 +110,9 @@ type Method<A extends Action.Any, E extends BindingError, CE, CR> = Call<
  */
 export interface AnyHttp {
   readonly authentication?: Authentication | undefined;
-  readonly actions: ReadonlyArray<Action.Any>;
-  readonly events: ReadonlyArray<Event.Any>;
-  readonly error: ReadonlyArray<BindingError>;
+  readonly actions: readonly Action.Any[];
+  readonly events: readonly Event.Any[];
+  readonly error: readonly BindingError[];
   readonly prefix: `/${string}`;
   readonly api: HttpApi.Constraint;
 }
@@ -128,7 +141,11 @@ type Watching<H extends AnyHttp, E, R> = [H["events"][number]] extends [never]
       >(
         event: W,
         ...args: WatchArgs<W, SE, O>
-      ) => Stream.Stream<Event.Received<W>, WatchError<W, H> | E | SE, R | WatchRequirement<O>>;
+      ) => Stream.Stream<
+        Event.Received<W>,
+        WatchError<W, H> | E | SE,
+        R | WatchRequirement<O>
+      >;
     };
 
 /**
@@ -150,26 +167,36 @@ type NativeMethod<R> = (request: {
   readonly payload: ErasedValue;
 }) => Effect.Effect<ErasedValue, unknown, R>;
 
-type NativeClient<M> = { readonly [name: string]: M | undefined };
+interface NativeClient<M> {
+  readonly [name: string]: M | undefined;
+}
 
 type ErasedWatch<R> = (
   event: Event.Any,
   input?: ErasedValue,
-  options?: Event.WatchOptions<unknown>,
+  options?: Event.WatchOptions<unknown>
 ) => Stream.Stream<Event.Received<Event.Any>, unknown, R | Receiving>;
 
 /** A client's methods by name, and `watch` where its binding lists event types. */
-export type Methods<R> = {
-  readonly [name: string]: ErasedMethod<R> | ErasedStreamMethod<R> | ErasedWatch<R>;
-};
+export interface Methods<R> {
+  readonly [name: string]:
+    | ErasedMethod<R>
+    | ErasedStreamMethod<R>
+    | ErasedWatch<R>;
+}
 
-const methodOf = <M>(native: NativeClient<M>, name: string, what: "action" | "event"): M => {
+const methodOf = <M>(
+  native: NativeClient<M>,
+  name: string,
+  what: "action" | "event"
+): M => {
   const method = native[name];
 
-  if (method === undefined)
+  if (method === undefined) {
     throw new Error(
-      `No client method for ${name} (use the binding \`ActionHttp.make\` returned, whose group holds this ${what})`,
+      `No client method for ${name} (use the binding \`ActionHttp.make\` returned, whose group holds this ${what})`
     );
+  }
 
   return method;
 };
@@ -178,47 +205,63 @@ const methodOf = <M>(native: NativeClient<M>, name: string, what: "action" | "ev
 // always answers its stream to this client, and a call reads its answer one way, from the
 // `final` event; every other route answers as it would.
 const acceptingStreams = HttpClient.mapRequest(
-  HttpClientRequest.setHeader("accept", "application/json, text/event-stream"),
+  HttpClientRequest.setHeader("accept", "application/json, text/event-stream")
 );
 
 const nativeOf = <E, R>(
   http: AnyHttp,
   httpClient: HttpClient.HttpClient.With<E, R>,
-  baseUrl: Options["baseUrl"],
+  baseUrl: Options["baseUrl"]
 ) =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
-  HttpApiClient.makeWith(http.api as HttpApi.HttpApi<string>, { baseUrl, httpClient });
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
+  HttpApiClient.makeWith(http.api as HttpApi.HttpApi<string>, {
+    baseUrl,
+    httpClient,
+  });
 
 const actionMethodOf = <R>(
   action: Action.Any,
-  native: NativeClient<NativeMethod<R>>,
+  native: NativeClient<NativeMethod<R>>
 ): ErasedMethod<R> | ErasedStreamMethod<R> => {
   const method = methodOf(native, action.name, "action");
 
-  if (elementOf(action.success) !== undefined)
+  if (elementOf(action.success) !== undefined) {
     return checkedStream(action, sendingValue, (payload, onProgress) =>
-      Stream.unwrap(Effect.map(method({ payload }), (answer) => readElements(answer, onProgress))),
+      Stream.unwrap(
+        Effect.map(method({ payload }), (answer) =>
+          readElements(answer, onProgress)
+        )
+      )
     );
+  }
 
-  if (action.progress === undefined)
+  if (action.progress === undefined) {
     return checked(action, sendingValue, (payload) => method({ payload }));
+  }
 
   return checked(action, sendingValue, (payload, onProgress) =>
-    Effect.flatMap(method({ payload }), (answer) => readWithProgress(answer, onProgress)),
+    Effect.flatMap(method({ payload }), (answer) =>
+      readWithProgress(answer, onProgress)
+    )
   );
 };
 
 /** What sends `http`'s calls and subscriptions over `httpClient`: `client`'s methods and `placed`'s alike. */
 export interface Senders<R> {
-  readonly method: (action: Action.Any) => ErasedMethod<R> | ErasedStreamMethod<R>;
-  readonly transport: (event: Event.Any, input: ErasedValue) => Transport<unknown, R | Receiving>;
+  readonly method: (
+    action: Action.Any
+  ) => ErasedMethod<R> | ErasedStreamMethod<R>;
+  readonly transport: (
+    event: Event.Any,
+    input: ErasedValue
+  ) => Transport<unknown, R | Receiving>;
 }
 
 /** The `Senders` of `http` over `httpClient`: its native clients, built once. */
 export const sendersWith = <E, R>(
   http: AnyHttp,
   httpClient: HttpClient.HttpClient.With<E, R>,
-  baseUrl: Options["baseUrl"],
+  baseUrl: Options["baseUrl"]
 ): Effect.Effect<Senders<R>> =>
   Effect.gen(function* () {
     const native = yield* nativeOf(http, acceptingStreams(httpClient), baseUrl);
@@ -248,7 +291,7 @@ export const sendersWith = <E, R>(
           methodOf(polls, event.name, "event"),
           methodOf(streams, event.name, "event"),
           webhookOf(event.name),
-          input,
+          input
         ),
     };
   });
@@ -256,31 +299,36 @@ export const sendersWith = <E, R>(
 const methodsWith = <E, R>(
   http: AnyHttp,
   httpClient: HttpClient.HttpClient.With<E, R>,
-  baseUrl: Options["baseUrl"],
+  baseUrl: Options["baseUrl"]
 ): Effect.Effect<Methods<R>> =>
-  Effect.map(sendersWith(http, httpClient, baseUrl), ({ method, transport }) => {
-    const actions: Methods<R> = Object.fromEntries(
-      http.actions.map((action) => [action.name, method(action)]),
-    );
-
-    if (http.events.length === 0) return actions;
-
-    const watch: ErasedWatch<R> = (event, input, options) =>
-      Stream.unwrap(
-        Effect.map(watchInput(event, input), ({ value }) =>
-          watching(transport(event, value), options),
-        ),
+  Effect.map(
+    sendersWith(http, httpClient, baseUrl),
+    ({ method, transport }) => {
+      const actions: Methods<R> = Object.fromEntries(
+        http.actions.map((action) => [action.name, method(action)])
       );
 
-    return { ...actions, watch };
-  });
+      if (http.events.length === 0) {
+        return actions;
+      }
+
+      const watch: ErasedWatch<R> = (event, input, options) =>
+        Stream.unwrap(
+          Effect.map(watchInput(event, input), ({ value }) =>
+            watching(transport(event, value), options)
+          )
+        );
+
+      return { ...actions, watch };
+    }
+  );
 
 export const methods = <E, R>(
   http: AnyHttp,
-  { baseUrl, transformClient }: Options<E, R> = {},
+  { baseUrl, transformClient }: Options<E, R> = {}
 ): Effect.Effect<Methods<R>, never, HttpClient.HttpClient> =>
   Effect.flatMap(HttpClient.HttpClient, (native) =>
     transformClient === undefined
       ? methodsWith(http, native, baseUrl)
-      : methodsWith(http, transformClient(native), baseUrl),
+      : methodsWith(http, transformClient(native), baseUrl)
   );

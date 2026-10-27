@@ -1,4 +1,15 @@
-import { Clock, Context, DateTime, Effect, Exit, Layer, Option, Schema, Semaphore } from "effect";
+import {
+  Clock,
+  Context,
+  DateTime,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Schema,
+  Semaphore,
+} from "effect";
+
 import { State } from "./state.js";
 
 /** Where the object's alarm times are kept, one key per owner. */
@@ -31,8 +42,8 @@ const retryDelay = (failures: number) =>
  * What runs at the object's one alarm, by owner, given its retry count: the application's
  * `alarm` option, and the package's own work, each when its time has come.
  */
-type Owners<R> = Readonly<
-  Record<string, (info: AlarmInvocationInfo) => Effect.Effect<void, unknown, R>>
+type Owners<E, R> = Readonly<
+  Record<string, (info: AlarmInvocationInfo) => Effect.Effect<void, E, R>>
 >;
 
 /**
@@ -41,20 +52,22 @@ type Owners<R> = Readonly<
  * one per instance, which its `Alarm` and its `alarm` handler share.
  */
 export const makeSchedule = (state: DurableObjectState) => {
-  const storage = state.storage;
+  const { storage } = state;
   // Why: a set and a run's end each read an owner's time and then write it, so they take turns:
   // the end of a run never deletes a time set as it ended.
   const lock = Semaphore.makeUnsafe(1);
 
-  const times = Effect.promise(() => storage.list({ prefix: alarmPrefix })).pipe(
+  const times = Effect.promise(
+    async () => await storage.list({ prefix: alarmPrefix })
+  ).pipe(
     Effect.map((listed) =>
       [...listed].flatMap(([key, value]) =>
         Option.match(keptOf(value), {
           onNone: () => [],
           onSome: (kept) => [{ owner: key.slice(alarmPrefix.length), ...kept }],
-        }),
-      ),
-    ),
+        })
+      )
+    )
   );
 
   // Why: the runtime keeps one alarm per object, so it is set for the earliest owner's time,
@@ -62,13 +75,17 @@ export const makeSchedule = (state: DurableObjectState) => {
   const rearm = Effect.flatMap(times, (kept) => {
     const earliest = Math.min(...kept.map(({ at }) => at));
 
-    return Effect.promise(() =>
-      Number.isFinite(earliest) ? storage.setAlarm(earliest) : storage.deleteAlarm(),
-    );
+    return Effect.promise(async () => {
+      await (Number.isFinite(earliest)
+        ? storage.setAlarm(earliest)
+        : storage.deleteAlarm());
+    });
   });
 
   const keep = (owner: string, kept: typeof Kept.Type) =>
-    Effect.promise(() => storage.put(`${alarmPrefix}${owner}`, kept));
+    Effect.promise(async () => {
+      await storage.put(`${alarmPrefix}${owner}`, kept);
+    });
 
   return {
     rearm,
@@ -76,41 +93,48 @@ export const makeSchedule = (state: DurableObjectState) => {
     // leaves the times kept with no alarm to run them: an instance's build sets it again.
     restore: lock.withPermits(1)(
       Effect.flatMap(
-        Effect.promise(() => storage.getAlarm()),
+        Effect.promise(async () => await storage.getAlarm()),
         (alarm) =>
           alarm === null
-            ? Effect.flatMap(times, (kept) => (kept.length === 0 ? Effect.void : rearm))
-            : Effect.void,
-      ),
+            ? Effect.flatMap(times, (kept) =>
+                kept.length === 0 ? Effect.void : rearm
+              )
+            : Effect.void
+      )
     ),
     // Why: a store setting the same time on every write, as chat-rooms' does on each post,
     // costs one read, not a write, a list and the alarm's.
     set: (owner: string, at: number) =>
       lock.withPermits(1)(
         Effect.flatMap(
-          Effect.promise(() => storage.get(`${alarmPrefix}${owner}`)),
+          Effect.promise(
+            async () => await storage.get(`${alarmPrefix}${owner}`)
+          ),
           (stored) =>
             Option.exists(
               keptOf(stored),
-              (kept) => kept.at === at && kept.failures === 0 && kept.running !== true,
+              (kept) =>
+                kept.at === at && kept.failures === 0 && kept.running !== true
             )
               ? Effect.void
-              : Effect.andThen(keep(owner, { at, failures: 0 }), rearm),
-        ),
+              : Effect.andThen(keep(owner, { at, failures: 0 }), rearm)
+        )
       ),
     clear: (owner: string) =>
       lock.withPermits(1)(
         Effect.andThen(
-          Effect.promise(() => storage.delete(`${alarmPrefix}${owner}`)),
-          rearm,
-        ),
+          Effect.promise(
+            async () => await storage.delete(`${alarmPrefix}${owner}`)
+          ),
+          rearm
+        )
       ),
     /**
      * Runs each owner whose time has come as its turn comes, removing its time once its run ends
      * unless one was set or cleared as it ran: one that fails is logged and retried, 2 seconds
      * later, doubling, six times, then hourly.
      */
-    runDue: <R>(owners: Owners<R>) =>
+    runDue: <E, R>(owners: Owners<E, R>) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
         const kept = yield* times;
@@ -123,11 +147,13 @@ export const makeSchedule = (state: DurableObjectState) => {
               const run = owners[owner];
 
               const stored = Effect.map(
-                Effect.promise(() => storage.get(key)),
-                (value) => Option.getOrUndefined(keptOf(value)),
+                Effect.promise(async () => await storage.get(key)),
+                (value) => Option.getOrUndefined(keptOf(value))
               );
 
-              const drop = Effect.promise(() => storage.delete(key));
+              const drop = Effect.promise(
+                async () => await storage.delete(key)
+              );
 
               // Why: an earlier owner's run lets a request in, which may clear or postpone this
               // owner's time, so its turn reads the time storage holds now, not the one listed.
@@ -140,9 +166,13 @@ export const makeSchedule = (state: DurableObjectState) => {
                 Effect.gen(function* () {
                   const current = yield* stored;
 
-                  if (current === undefined || current.at > now) return undefined;
+                  if (current === undefined || current.at > now) {
+                    return;
+                  }
 
-                  if (run === undefined) return yield* Effect.as(drop, undefined);
+                  if (run === undefined) {
+                    return yield* Effect.as(drop, undefined);
+                  }
 
                   const startedAt = yield* Clock.currentTimeMillis;
 
@@ -152,26 +182,36 @@ export const makeSchedule = (state: DurableObjectState) => {
                     running: true,
                   }).pipe(
                     Effect.andThen(rearm),
-                    Effect.andThen(Effect.promise(() => storage.sync())),
+                    Effect.andThen(
+                      Effect.promise(async () => {
+                        await storage.sync();
+                      })
+                    )
                   );
 
                   return { ...current, run };
-                }),
+                })
               );
 
-              if (due === undefined) return;
+              if (due === undefined) {
+                return;
+              }
 
               const { at, failures } = due;
               const attempt = failures + 1;
 
               const exit = yield* Effect.exit(
-                due.run({ retryCount: failures, isRetry: failures > 0, scheduledTime: at }),
+                due.run({
+                  retryCount: failures,
+                  isRetry: failures > 0,
+                  scheduledTime: at,
+                })
               );
 
               if (Exit.isFailure(exit)) {
                 yield* Effect.logError(
                   `The alarm of ${owner} failed: retried in ${retryDelay(attempt)} ms`,
-                  exit.cause,
+                  exit.cause
                 );
               }
 
@@ -182,16 +222,21 @@ export const makeSchedule = (state: DurableObjectState) => {
               // Why: a run's end changes its owner's time only while it is still the run's mark,
               // so a time set or cleared as it ran wins, whether the run succeeded or failed.
               yield* lock.withPermits(1)(
-                Effect.flatMap(stored, (current) =>
-                  current?.running !== true
-                    ? Effect.void
-                    : Exit.isSuccess(exit)
-                      ? drop
-                      : keep(owner, { at: endedAt + retryDelay(attempt), failures: attempt }),
-                ),
+                Effect.flatMap(stored, (current) => {
+                  if (current?.running !== true) {
+                    return Effect.void;
+                  }
+
+                  return Exit.isSuccess(exit)
+                    ? drop
+                    : keep(owner, {
+                        at: endedAt + retryDelay(attempt),
+                        failures: attempt,
+                      });
+                })
               );
             }),
-          { discard: true },
+          { discard: true }
         );
 
         // Why: a rearm lists the times, then sets the alarm for the earliest, so a set between
@@ -205,6 +250,13 @@ export type Schedule = ReturnType<typeof makeSchedule>;
 
 /** The owner the application's `alarm` option runs as. */
 export const applicationOwner = "application";
+
+/** The application's alarm over `schedule`, the instance's. */
+export const alarmOf = (schedule: Schedule) =>
+  Alarm.of({
+    set: (at) => schedule.set(applicationOwner, DateTime.toEpochMillis(at)),
+    clear: schedule.clear(applicationOwner),
+  });
 
 /**
  * When the object's `alarm` option runs: `set(at)` schedules it, replacing an earlier time, and
@@ -237,13 +289,6 @@ export class Alarm extends Context.Service<
    * - Each build makes a schedule of its own, which takes no turns with the object's: a `set` through it while the object's alarm runs may be lost, so an object's own code uses the `Alarm` `handlers` and `make` provide.
    */
   static readonly layer: Layer.Layer<Alarm, never, State> = Layer.effect(Alarm)(
-    Effect.map(State, (state) => alarmOf(makeSchedule(state))),
+    Effect.map(State, (state) => alarmOf(makeSchedule(state)))
   );
 }
-
-/** The application's alarm over `schedule`, the instance's. */
-export const alarmOf = (schedule: Schedule) =>
-  Alarm.of({
-    set: (at) => schedule.set(applicationOwner, DateTime.toEpochMillis(at)),
-    clear: schedule.clear(applicationOwner),
-  });

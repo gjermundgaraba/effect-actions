@@ -5,7 +5,7 @@ import { Config } from "effect";
 
 /** Where callers reach the public port: the OAuth resource, and a Host the server answers to. */
 export const publicUrl = Config.String("PUBLIC_URL").pipe(
-  Config.withDefault("http://localhost:3000"),
+  Config.withDefault("http://localhost:3000")
 );
 
 /**

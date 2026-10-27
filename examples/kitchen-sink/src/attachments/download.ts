@@ -1,6 +1,7 @@
+import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { Effect, Layer } from "effect";
 import { HttpRouter, HttpServerResponse } from "effect/http";
-import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+
 import { authorize } from "../identity/authorize.js";
 import { CurrentMember, Session } from "../identity/Identity.js";
 import { GetAttachment } from "./Attachments.js";
@@ -38,9 +39,9 @@ export const download = Layer.unwrap(
         });
       }).pipe(
         Effect.catchTag("AttachmentNotFound", () =>
-          Effect.succeed(HttpServerResponse.empty({ status: 404 })),
-        ),
-      ),
-    ).pipe(Layer.provide(Authentication.protect(Session).layer)),
-  ),
+          Effect.succeed(HttpServerResponse.empty({ status: 404 }))
+        )
+      )
+    ).pipe(Layer.provide(Authentication.protect(Session).layer))
+  )
 );

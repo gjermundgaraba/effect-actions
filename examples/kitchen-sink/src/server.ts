@@ -1,8 +1,10 @@
 import { createServer } from "node:http";
+
 import { NodeDns, NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { ByteSize, Config, Effect, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerRequest } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
+
 import { memory } from "./memory.js";
 import { adminRoutes, builders, publicRoutes, rpc } from "./routes.js";
 
@@ -14,15 +16,23 @@ import { adminRoutes, builders, publicRoutes, rpc } from "./routes.js";
 // serves the same layer over Effect's HTTP protocol.
 const socket = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
-  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(RpcSerialization.layerJson)
 );
 
 const server = Layer.unwrap(
   Effect.gen(function* () {
     // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
-    const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));
-    const publicPort = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
-    const adminPort = yield* Config.Port("ADMIN_PORT").pipe(Config.withDefault(3001));
+    const host = yield* Config.String("HOST").pipe(
+      Config.withDefault("127.0.0.1")
+    );
+
+    const publicPort = yield* Config.Port("PORT").pipe(
+      Config.withDefault(3000)
+    );
+
+    const adminPort = yield* Config.Port("ADMIN_PORT").pipe(
+      Config.withDefault(3001)
+    );
 
     const limit = ByteSize.mebibytes(1);
 
@@ -42,8 +52,10 @@ const server = Layer.unwrap(
       // it is a route of that router: the request policy, global to the router, refuses a
       // foreign Origin's upgrade as it does a request, and the rpcs spend the quota the routes
       // spend, built once.
-      HttpRouter.serve(Layer.merge(publicRoutes, socket)).pipe(Layer.provide(listen(publicPort))),
-      HttpRouter.serve(adminRoutes).pipe(Layer.provide(listen(adminPort))),
+      HttpRouter.serve(Layer.merge(publicRoutes, socket)).pipe(
+        Layer.provide(listen(publicPort))
+      ),
+      HttpRouter.serve(adminRoutes).pipe(Layer.provide(listen(adminPort)))
     ).pipe(
       // Request bodies have no size limit unless the host sets one. This covers every route
       // that reads its body whole, on both ports, the MCP endpoint included.
@@ -54,10 +66,10 @@ const server = Layer.unwrap(
       Layer.provide(builders),
       Layer.provide(memory),
       // Webhook delivery POSTs with fetch, and resolves each callback with the system's resolver.
-      Layer.provide([FetchHttpClient.layer, NodeDns.layer]),
+      Layer.provide([FetchHttpClient.layer, NodeDns.layer])
     );
-  }),
+  })
 );
 
 // NodeRuntime handles signals: the scoped layers stop both listeners and release the services.
-Layer.launch(server).pipe(NodeRuntime.runMain);
+Layer.launch(server).pipe(NodeRuntime.runMain());

@@ -1,4 +1,5 @@
-import { type Cause, Effect, ErrorReporter } from "effect";
+import { Effect, ErrorReporter } from "effect";
+import type { Cause } from "effect";
 
 /** Logs `cause` and gives it to the request's `ErrorReporter`s, as a failed call's is. */
 export const reported = (cause: Cause.Cause<unknown>): Effect.Effect<void> =>

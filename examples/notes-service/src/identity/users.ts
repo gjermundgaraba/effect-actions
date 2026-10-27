@@ -1,4 +1,5 @@
-import { scopes, type User } from "./Identity.js";
+import { scopes } from "./Identity.js";
+import type { User } from "./Identity.js";
 
 // DEMO ONLY: the people who may sign in, each under a token that is their name. A real service
 // has no such table: its verifier reads the user from a signed token.

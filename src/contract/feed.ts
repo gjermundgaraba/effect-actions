@@ -1,6 +1,5 @@
 import {
   Array as Arr,
-  type Context,
   DateTime,
   Duration,
   Effect,
@@ -9,29 +8,36 @@ import {
   Predicate,
   Stream,
 } from "effect";
-import type * as Event from "./Event.js";
-import { attachmentsOf, type Checking, Events, reaches } from "./hub.js";
-import type { Entry, Log, Logged, Read } from "./log.js";
-import { Anyone } from "./caller.js";
+import type { Context } from "effect";
+
 import { jsonRoundTrip } from "./call.js";
+import { Anyone } from "./caller.js";
 import { canonicalInput } from "./canonical.js";
-import { checkInput } from "./input-check.js";
 import { Unauthenticated } from "./errors.js";
+import type * as Event from "./Event.js";
+import { attachmentsOf, Events, reaches } from "./hub.js";
+import type { Checking } from "./hub.js";
 import {
   builderLayer,
-  type ErasedAuthorize,
-  type ErasedValue,
-  type Memoized,
   memoized,
   notMadeHere,
-  type Protected,
-  type Served,
   selectHeld,
 } from "./implementation.js";
-import { type Leases, makeLeases } from "./lease.js";
-import { AnyOccurrence, Gap } from "./occurrence.js";
-import { type Fed, fedOf, type Page, pagedFrom } from "./pages.js";
+import type {
+  ErasedAuthorize,
+  ErasedValue,
+  Memoized,
+  Protected,
+  Served,
+} from "./implementation.js";
+import { checkInput } from "./input-check.js";
+import { makeLeases } from "./lease.js";
+import type { Leases } from "./lease.js";
+import type { Entry, Log, Logged, Read } from "./log.js";
 import { assertKnown } from "./names.js";
+import { AnyOccurrence, Gap } from "./occurrence.js";
+import { fedOf, pagedFrom } from "./pages.js";
+import type { Fed, Page } from "./pages.js";
 import { reported } from "./reported.js";
 
 type ErasedOccurrence = Event.Occurrence<Event.Any>;
@@ -47,7 +53,9 @@ export interface Feed {
    * Releases the `subscription` hook `subscriber`'s polls of `input` hold: present exactly where
    * its source has a hook, held per subscriber.
    */
-  readonly release?: ((input: ErasedValue, subscriber: string) => Effect.Effect<void>) | undefined;
+  readonly release?:
+    | ((input: ErasedValue, subscriber: string) => Effect.Effect<void>)
+    | undefined;
   /**
    * Authenticates the subscriber, checks `input` by `Action.InputCheck` and authorizes it, as
    * `poll` and `stream` do first.
@@ -56,14 +64,14 @@ export interface Feed {
   readonly poll: (
     input: ErasedValue,
     cursor: string | null,
-    options: PollOptions,
+    options: PollOptions
   ) => Effect.Effect<Page, unknown, unknown>;
   /**
    * Admits the subscriber, then reads the feed from a cursor, as often as a subscription
    * reopens it.
    */
   readonly stream: (
-    input: ErasedValue,
+    input: ErasedValue
   ) => Effect.Effect<
     (cursor: string | null) => Stream.Stream<Fed, unknown, unknown>,
     unknown,
@@ -82,7 +90,7 @@ export interface PollOptions {
 export interface Run extends Omit<Feed, "event" | "stream" | "admit"> {
   readonly stream: (
     input: ErasedValue,
-    cursor: string | null,
+    cursor: string | null
   ) => Stream.Stream<Fed, unknown, unknown>;
 }
 
@@ -106,7 +114,8 @@ const logPageSize = 100;
 
 // Why: A check's page is the source's, whose cursor is the page's alone, so only a log source,
 // read by sequence, can stop a page early and resume from where it stopped.
-const pageLimit = (maxEvents: number) => Math.min(Math.max(Math.floor(maxEvents), 1), logPageSize);
+const pageLimit = (maxEvents: number) =>
+  Math.min(Math.max(Math.floor(maxEvents), 1), logPageSize);
 
 // Why: An id generated only when the source gives none: one the source gives, such as an
 // upstream's own, is what lets a subscriber deduplicate a replay. Its data is checked once, here,
@@ -120,11 +129,14 @@ const occurrencesOf = (event: Event.Any) => {
 
   return (
     emitted: Event.Emitted<Event.Any>,
-    cursor: string | null,
+    cursor: string | null
   ): Effect.Effect<ErasedOccurrence | Gap> =>
     Effect.matchCauseEffect(sent(emitted.data), {
       onFailure: (cause) =>
-        Effect.as(Effect.annotateLogs(reported(cause), "event", event.name), Gap.make({ cursor })),
+        Effect.as(
+          Effect.annotateLogs(reported(cause), "event", event.name),
+          Gap.make({ cursor })
+        ),
       onSuccess: ({ value }) =>
         Effect.map(DateTime.now, (now) =>
           AnyOccurrence.make({
@@ -133,43 +145,69 @@ const occurrencesOf = (event: Event.Any) => {
             timestamp: emitted.timestamp ?? now,
             data: value,
             cursor,
-          }),
+          })
         ),
     });
 };
 
-const isOccurrence = (fed: Fed): fed is ErasedOccurrence => Predicate.isTagged(fed, "Occurrence");
+const isOccurrence = (fed: Fed): fed is ErasedOccurrence =>
+  Predicate.isTagged(fed, "Occurrence");
 
 /** A poll's page of `items`: their occurrences, `truncated` too where a gap stands for one. */
 const pageOf = (
   items: ReadonlyArray<ErasedOccurrence | Gap>,
-  { truncated, ...page }: Omit<Page, "events">,
+  { truncated, ...page }: Omit<Page, "events">
 ): Page => {
   const events = items.filter(isOccurrence);
 
-  return { ...page, events, truncated: truncated || events.length < items.length };
+  return {
+    ...page,
+    events,
+    truncated: truncated || events.length < items.length,
+  };
 };
 
-const lifted = <A, R>(value: A | Effect.Effect<A, never, R>): Effect.Effect<A, never, R> =>
+const lifted = <A, R>(
+  value: A | Effect.Effect<A, never, R>
+): Effect.Effect<A, never, R> =>
   Effect.isEffect(value) ? value : Effect.succeed(value);
 
 /** The key a subscriber of `input` is reached by, as the source's `key` answers it. */
 const keyOf = (source: ErasedSource, input: ErasedValue) =>
-  source.key === undefined
-    ? Effect.succeed<string | undefined>(undefined)
-    : lifted(source.key(input));
+  source.key === undefined ? Effect.undefined : lifted(source.key(input));
 
 // Why: Each source holds leases of its own, so a subscriber and an input are a lease's key.
-const leaseKey = (event: Event.Any, subscriber: string | undefined, input: ErasedValue) =>
+const leaseKey = (
+  event: Event.Any,
+  subscriber: string | undefined,
+  input: ErasedValue
+) =>
   Effect.map(
     canonicalInput(event.input, input),
-    (encoded) => `${subscriber ?? ""}\u0000${encoded}`,
+    (encoded) => `${subscriber ?? ""}\u0000${encoded}`
   );
+
+const answeredPage = ({
+  answered,
+  items,
+}: {
+  readonly answered: Event.Page<Event.Any>;
+  readonly items: ReadonlyArray<ErasedOccurrence | Gap>;
+}): Page =>
+  pageOf(items, {
+    cursor: answered.cursor,
+    truncated: answered.truncated === true,
+    hasMore: answered.hasMore === true,
+    nextPoll: Duration.min(
+      Duration.fromInputUnsafe(answered.nextPoll ?? defaultNextPoll),
+      longestNextPoll
+    ),
+  });
 
 const checkRun = (
   event: Event.Any,
   source: Event.Check<Event.Any, unknown>,
-  { wakes, polls }: Checking,
+  { wakes, polls }: Checking
 ): Run => {
   const occurrenceOf = occurrencesOf(event);
 
@@ -184,28 +222,14 @@ const checkRun = (
           // cursor the page was asked for, which replays rather than skips what follows it. On a
           // truncated page that cursor is no longer served, so resuming there reads a gap again:
           // the honest answer, as the rest of the page has no position of its own to skip to.
-          occurrenceOf(emitted, index === answered.events.length - 1 ? answered.cursor : cursor),
+          occurrenceOf(
+            emitted,
+            index === answered.events.length - 1 ? answered.cursor : cursor
+          )
         ),
-        (items) => ({ answered, items }),
-      ),
+        (items) => ({ answered, items })
+      )
     );
-
-  const answeredPage = ({
-    answered,
-    items,
-  }: {
-    readonly answered: Event.Page<Event.Any>;
-    readonly items: ReadonlyArray<ErasedOccurrence | Gap>;
-  }): Page =>
-    pageOf(items, {
-      cursor: answered.cursor,
-      truncated: answered.truncated === true,
-      hasMore: answered.hasMore === true,
-      nextPoll: Duration.min(
-        Duration.fromInputUnsafe(answered.nextPoll ?? defaultNextPoll),
-        longestNextPoll,
-      ),
-    });
 
   return {
     poll: (input, cursor) => Effect.map(read(input, cursor), answeredPage),
@@ -227,9 +251,9 @@ const checkRun = (
               })),
             cursor,
             woken,
-            polls,
-          ),
-        ),
+            polls
+          )
+        )
       ),
   };
 };
@@ -240,7 +264,7 @@ const checkRun = (
 const currentRun = (
   event: Event.Any,
   source: Event.Current<Event.Any, unknown>,
-  checking: Checking,
+  checking: Checking
 ): Run =>
   checkRun(
     event,
@@ -250,25 +274,34 @@ const currentRun = (
         Effect.gen(function* () {
           const at = yield* checking.revision(yield* keyOf(source, input));
 
-          if (cursor === at) return { cursor: at, events: [] };
+          if (cursor === at) {
+            return { cursor: at, events: [] };
+          }
 
-          return { cursor: at, events: [{ eventId: at, data: yield* source.current(input) }] };
+          return {
+            cursor: at,
+            events: [{ eventId: at, data: yield* source.current(input) }],
+          };
         }),
     },
-    checking,
+    checking
   );
 
 const logRun = (
   event: Event.Any,
   source: Event.Log<Event.Any, unknown>,
-  log: Log<Event.Emitted<Event.Any>>,
+  log: Log<Event.Emitted<Event.Any>>
 ): Run => {
   const occurrenceOf = occurrencesOf(event);
 
   const delivered = (
     input: ErasedValue,
     key: string | undefined,
-    { cursor, at, value: logged }: Entry<Logged<Event.Emitted<Event.Any>> | undefined>,
+    {
+      cursor,
+      at,
+      value: logged,
+    }: Entry<Logged<Event.Emitted<Event.Any>> | undefined>
   ): Effect.Effect<ErasedOccurrence | Gap | undefined, never, unknown> =>
     Effect.gen(function* () {
       // Why: An entry its storage could not read is a gap at its cursor, before any of the
@@ -276,10 +309,10 @@ const logRun = (
       if (logged === undefined) {
         yield* Effect.annotateLogs(
           Effect.logWarning(
-            `An entry of the log of ${event.name} could not be read: sent as a gap`,
+            `An entry of the log of ${event.name} could not be read: sent as a gap`
           ),
           "event",
-          event.name,
+          event.name
         );
 
         return Gap.make({ cursor });
@@ -287,10 +320,15 @@ const logRun = (
 
       const emitted = logged.value;
 
-      if (!reaches(logged.key, key)) return undefined;
+      if (!reaches(logged.key, key)) {
+        return;
+      }
 
-      if (source.match !== undefined && !(yield* lifted(source.match(input, emitted.data)))) {
-        return undefined;
+      if (
+        source.match !== undefined &&
+        !(yield* lifted(source.match(input, emitted.data)))
+      ) {
+        return;
       }
 
       const data =
@@ -307,7 +345,7 @@ const logRun = (
           eventId: emitted.eventId ?? cursor,
           timestamp: emitted.timestamp ?? DateTime.makeUnsafe(at),
         },
-        cursor,
+        cursor
       );
     });
 
@@ -317,17 +355,20 @@ const logRun = (
   const received = (
     input: ErasedValue,
     key: string | undefined,
-    read: Read<Logged<Event.Emitted<Event.Any>> | undefined>,
+    read: Read<Logged<Event.Emitted<Event.Any>> | undefined>
   ) =>
     Effect.map(
       Effect.forEach(read.entries, (entry) => delivered(input, key, entry)),
-      (items) => items.filter(Predicate.isNotUndefined),
+      (items) => items.filter(Predicate.isNotUndefined)
     );
 
   return {
     poll: (input, cursor, { maxEvents = logPageSize }) =>
       Effect.flatMap(
-        Effect.all([keyOf(source, input), log.read(cursor, pageLimit(maxEvents))]),
+        Effect.all([
+          keyOf(source, input),
+          log.read(cursor, pageLimit(maxEvents)),
+        ]),
         ([key, read]) =>
           Effect.map(received(input, key, read), (items) =>
             pageOf(items, {
@@ -335,8 +376,8 @@ const logRun = (
               truncated: read.truncated,
               hasMore: read.hasMore,
               nextPoll: defaultNextPoll,
-            }),
-          ),
+            })
+          )
       ),
     stream: (input, cursor) =>
       Stream.unwrap(
@@ -344,12 +385,17 @@ const logRun = (
           log.follow(cursor, logPageSize).pipe(
             Stream.mapEffect((read) =>
               Effect.map(received(input, key, read), (items) =>
-                fedOf({ items, truncated: read.truncated, from: read.after, to: read.cursor }),
-              ),
+                fedOf({
+                  items,
+                  truncated: read.truncated,
+                  from: read.after,
+                  to: read.cursor,
+                })
+              )
             ),
-            Stream.flattenIterable,
-          ),
-        ),
+            Stream.flattenIterable
+          )
+        )
       ),
   };
 };
@@ -359,55 +405,84 @@ const hooked = (
   event: Event.Any,
   run: Run,
   subscription: NonNullable<ErasedSource["subscription"]>,
-  leases: Leases,
+  leases: Leases
 ): Run => ({
   ...run,
   poll: (input, cursor, options) =>
     Effect.flatMap(leaseKey(event, options.subscriber, input), (key) =>
-      Effect.andThen(leases.hold(key, input), () => run.poll(input, cursor, options)),
+      Effect.andThen(leases.hold(key, input), () =>
+        run.poll(input, cursor, options)
+      )
     ),
   release: (input, subscriber) =>
     Effect.flatMap(leaseKey(event, subscriber, input), leases.release),
   stream: (input, cursor) =>
-    Stream.unwrap(Effect.map(subscription(input), () => run.stream(input, cursor))),
+    Stream.unwrap(
+      Effect.map(subscription(input), () => run.stream(input, cursor))
+    ),
 });
 
-const isCheck = (source: ErasedSource): source is Event.Check<Event.Any, unknown> =>
+const isCheck = (
+  source: ErasedSource
+): source is Event.Check<Event.Any, unknown> =>
   Predicate.isFunction(source.check);
 
-const isCurrent = (source: ErasedSource): source is Event.Current<Event.Any, unknown> =>
+const isCurrent = (
+  source: ErasedSource
+): source is Event.Current<Event.Any, unknown> =>
   Predicate.isFunction(source.current);
 
-const runOf = (event: Event.Any, source: ErasedSource): Effect.Effect<Run, never, unknown> =>
+const runOf = (
+  event: Event.Any,
+  source: ErasedSource
+): Effect.Effect<Run, never, unknown> =>
   Effect.gen(function* () {
     const attach = yield* Effect.flatMap(Events, attachmentsOf);
 
-    const run = isCheck(source)
-      ? checkRun(event, source, yield* attach.check(event, false))
-      : isCurrent(source)
-        ? currentRun(event, source, yield* attach.check(event, true))
-        : logRun(event, source, yield* attach.log(event, source.log, source.log.emit));
+    let run: Run;
 
-    if (source.subscription === undefined) return run;
+    if (isCheck(source)) {
+      run = checkRun(event, source, yield* attach.check(event, false));
+    } else if (isCurrent(source)) {
+      run = currentRun(event, source, yield* attach.check(event, true));
+    } else {
+      run = logRun(
+        event,
+        source,
+        yield* attach.log(event, source.log, source.log.emit)
+      );
+    }
+
+    if (source.subscription === undefined) {
+      return run;
+    }
 
     return hooked(
       event,
       run,
       source.subscription,
-      yield* makeLeases(source.subscription, source.lease),
+      yield* makeLeases(source.subscription, source.lease)
     );
   });
 
 const isSource = (source: ErasedValue): source is ErasedSource => {
-  const log: ErasedValue = Predicate.hasProperty(source, "log") ? source.log : undefined;
+  const log: ErasedValue = Predicate.hasProperty(source, "log")
+    ? source.log
+    : undefined;
 
   const logged =
     Predicate.isObject(log) &&
-    (!Predicate.hasProperty(log, "emit") || log.emit === undefined || Stream.isStream(log.emit));
+    (!Predicate.hasProperty(log, "emit") ||
+      log.emit === undefined ||
+      Stream.isStream(log.emit));
 
   const given = [
-    Predicate.isFunction(Predicate.hasProperty(source, "check") ? source.check : undefined),
-    Predicate.isFunction(Predicate.hasProperty(source, "current") ? source.current : undefined),
+    Predicate.isFunction(
+      Predicate.hasProperty(source, "check") ? source.check : undefined
+    ),
+    Predicate.isFunction(
+      Predicate.hasProperty(source, "current") ? source.current : undefined
+    ),
     logged,
   ];
 
@@ -417,7 +492,7 @@ const isSource = (source: ErasedValue): source is ErasedSource => {
 const assertSource = (event: Event.Any, source: ErasedValue): ErasedSource => {
   if (!isSource(source)) {
     throw new Error(
-      `Event "${event.name}": its source needs exactly one of check, current or log (give check or current a function, or log its options, {} or { emit: stream })`,
+      `Event "${event.name}": its source needs exactly one of check, current or log (give check or current a function, or log its options, {} or { emit: stream })`
     );
   }
 
@@ -429,26 +504,33 @@ const assertSource = (event: Event.Any, source: ErasedValue): ErasedSource => {
  * from a record keyed by event name, the builder run once for all of them.
  */
 export const sourcesOf = (
-  events: ReadonlyArray<Event.Any>,
+  events: readonly Event.Any[],
   single: boolean,
-  sources: ErasedValue,
+  sources: ErasedValue
 ): Running => {
   const names = events.map((event) => event.name);
 
-  const checked = (built: ErasedValue): Readonly<Record<string, ErasedValue>> => {
+  const checked = (
+    built: ErasedValue
+  ): Readonly<Record<string, ErasedValue>> => {
     const keyed: Readonly<Record<string, ErasedValue>> = single
       ? Object.fromEntries(names.map((name) => [name, built]))
-      : Predicate.isObject(built)
-        ? Object.fromEntries(Object.entries(built))
-        : {};
+      : Object.fromEntries(
+          Predicate.isObject(built) ? Object.entries(built) : []
+        );
 
-    assertKnown("sources", Object.keys(keyed), names, "remove it, or list its event");
+    assertKnown(
+      "sources",
+      Object.keys(keyed),
+      names,
+      "remove it, or list its event"
+    );
 
     const missing = names.filter((name) => !Object.hasOwn(keyed, name));
 
     if (missing.length > 0) {
       throw new Error(
-        `Missing sources: ${missing.join(", ")} (give the source of one event, or a record with an own source per listed event)`,
+        `Missing sources: ${missing.join(", ")} (give the source of one event, or a record with an own source per listed event)`
       );
     }
 
@@ -456,7 +538,9 @@ export const sourcesOf = (
   };
 
   const built = memoized(
-    Effect.isEffect(sources) ? Effect.map(sources, checked) : Effect.sync(() => checked(sources)),
+    Effect.isEffect(sources)
+      ? Effect.map(sources, checked)
+      : Effect.sync(() => checked(sources))
   );
 
   // Why: each event's source attaches as a layer of its own over the one build, so a surface
@@ -465,12 +549,59 @@ export const sourcesOf = (
   return events.map((event) => {
     const run = memoized(
       Effect.flatMap(Effect.service(built.key), (keyed) =>
-        runOf(event, assertSource(event, keyed[event.name])),
-      ),
+        runOf(event, assertSource(event, keyed[event.name]))
+      )
     );
 
-    return [event, { key: run.key, layer: Layer.provide(run.layer, built.layer) }] as const;
+    return [
+      event,
+      { key: run.key, layer: Layer.provide(run.layer, built.layer) },
+    ] as const;
   });
+};
+
+const guarded = (
+  event: Event.Any,
+  run: Run,
+  before: ErasedAuthorize<Event.Any>
+): Feed => {
+  const attributes = { "event.name": event.name };
+
+  const admit = (input: ErasedValue) =>
+    event.caller === Anyone
+      ? checkInput(event, input)
+      : Effect.flatMap(Effect.serviceOption(event.caller), (subscriber) =>
+          Option.isSome(subscriber)
+            ? Effect.andThen(
+                checkInput(event, input),
+                Effect.suspend(() => before(event))
+              )
+            : Effect.fail(new Unauthenticated())
+        );
+
+  return {
+    event,
+    release: run.release,
+    admit,
+    poll: (input, cursor, options) =>
+      Effect.andThen(admit(input), () => run.poll(input, cursor, options)).pipe(
+        Effect.annotateLogs(attributes),
+        Effect.withSpan(
+          event.name,
+          { attributes },
+          { captureStackTrace: false }
+        )
+      ),
+    // Why: Admitted once, as the subscription starts: a surface reopening it after a source's
+    // failure reads on under that admission, as a held stream does between reads, and a client's
+    // reconnect is a new subscription, admitted again.
+    stream: (input) =>
+      Effect.as(admit(input), (cursor: string | null) =>
+        run
+          .stream(input, cursor)
+          .pipe(Stream.withSpan(event.name, { attributes }))
+      ),
+  };
 };
 
 /**
@@ -505,14 +636,14 @@ export class EventImplementation<
   declare readonly "~eventAuthorizeBuildServices": RAX;
 
   /** The event types this implementation answers. */
-  readonly events: ReadonlyArray<E>;
+  readonly events: readonly E[];
   readonly #running: Running<EX, RX>;
   readonly #authorizer: Memoized<ErasedAuthorize<Event.Any>, EAX, RAX>;
 
   constructor(
-    events: ReadonlyArray<E>,
+    events: readonly E[],
     running: Running<EX, RX>,
-    authorizer: Memoized<ErasedAuthorize<Event.Any>, EAX, RAX>,
+    authorizer: Memoized<ErasedAuthorize<Event.Any>, EAX, RAX>
   ) {
     this.events = events;
     this.#running = running;
@@ -521,8 +652,8 @@ export class EventImplementation<
 
   /** Select event types while retaining their sources, authorization and shared builder. */
   static share(
-    events: ReadonlyArray<Event.Any>,
-    app: AnyEventImplementation,
+    events: readonly Event.Any[],
+    app: AnyEventImplementation
   ): AnyEventImplementation {
     const source = EventImplementation.own(app);
 
@@ -530,19 +661,23 @@ export class EventImplementation<
   }
 
   /** The builders of `app`, its sources' and its authorizer's, as one layer. */
-  static layerOf(app: AnyEventImplementation): Layer.Layer<never, unknown, unknown> {
+  static layerOf(
+    app: AnyEventImplementation
+  ): Layer.Layer<never, unknown, unknown> {
     const source = EventImplementation.own(app);
 
-    const runs = EventImplementation.held(app).reduce<Layer.Layer<never, unknown, unknown>>(
-      (layer, [, run]) => Layer.merge(layer, run.layer),
+    const runs: Layer.Layer<never, unknown, unknown> = Layer.mergeAll(
       Layer.empty,
+      ...EventImplementation.held(app).map(([, run]) => run.layer)
     );
 
     return builderLayer(app.events, { layer: runs }, source.#authorizer);
   }
 
   /** The event types of `app` with what runs them, behind its authorizer. */
-  static feedsOf(app: AnyEventImplementation): Effect.Effect<ReadonlyArray<Feed>, never, unknown> {
+  static feedsOf(
+    app: AnyEventImplementation
+  ): Effect.Effect<readonly Feed[], never, unknown> {
     const source = EventImplementation.own(app);
 
     return Effect.gen(function* () {
@@ -550,68 +685,35 @@ export class EventImplementation<
         ? yield* source.#authorizer.key
         : () => Effect.void;
 
-      return yield* Effect.forEach(EventImplementation.held(app), ([event, run]) =>
-        Effect.map(Effect.service(run.key), (ran) => guarded(event, ran, before)),
+      return yield* Effect.forEach(
+        EventImplementation.held(app),
+        ([event, run]) =>
+          Effect.map(Effect.service(run.key), (ran) =>
+            guarded(event, ran, before)
+          )
       );
     });
   }
 
   /** What runs each event type `app` holds. */
   private static held(app: AnyEventImplementation): Running {
-    return EventImplementation.own(app).#running.filter(([event]) => app.events.includes(event));
+    return EventImplementation.own(app).#running.filter(([event]) =>
+      app.events.includes(event)
+    );
   }
 
   private static own<App extends AnyEventImplementation>(app: App): App {
-    if (!(#running in app)) throw notMadeHere("Event");
+    if (!(#running in app)) {
+      throw notMadeHere("Event");
+    }
 
     return app;
   }
 }
 
 /** Any event implementation, with its events and channels erased. */
-export type AnyEventImplementation<E extends Event.Any = Event.Any> = EventImplementation<
-  E,
-  unknown,
-  unknown,
-  unknown,
-  unknown,
-  unknown,
-  unknown
->;
-
-const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>): Feed => {
-  const attributes = { "event.name": event.name };
-
-  const admit = (input: ErasedValue) =>
-    event.caller === Anyone
-      ? checkInput(event, input)
-      : Effect.flatMap(Effect.serviceOption(event.caller), (subscriber) =>
-          Option.isSome(subscriber)
-            ? Effect.andThen(
-                checkInput(event, input),
-                Effect.suspend(() => before(event)),
-              )
-            : Effect.fail(new Unauthenticated()),
-        );
-
-  return {
-    event,
-    release: run.release,
-    admit,
-    poll: (input, cursor, options) =>
-      Effect.andThen(admit(input), () => run.poll(input, cursor, options)).pipe(
-        Effect.annotateLogs(attributes),
-        Effect.withSpan(event.name, { attributes }, { captureStackTrace: false }),
-      ),
-    // Why: Admitted once, as the subscription starts: a surface reopening it after a source's
-    // failure reads on under that admission, as a held stream does between reads, and a client's
-    // reconnect is a new subscription, admitted again.
-    stream: (input) =>
-      Effect.as(admit(input), (cursor: string | null) =>
-        run.stream(input, cursor).pipe(Stream.withSpan(event.name, { attributes })),
-      ),
-  };
-};
+export type AnyEventImplementation<E extends Event.Any = Event.Any> =
+  EventImplementation<E, unknown, unknown, unknown, unknown, unknown, unknown>;
 
 /**
  * Why `surface` cannot serve `feeds` unless its authentication is `keyed` by a principal: a
@@ -620,22 +722,26 @@ const guarded = (event: Event.Any, run: Run, before: ErasedAuthorize<Event.Any>)
  */
 export const unkeyedHook = (
   surface: string,
-  feeds: ReadonlyArray<Feed>,
-  keyed: boolean,
+  feeds: readonly Feed[],
+  keyed: boolean
 ): string | undefined =>
-  !keyed
-    ? feeds
-        .filter(({ event, release }) => release !== undefined && event.caller !== Anyone)
-        .map(
+  keyed
+    ? undefined
+    : Arr.findFirst(
+        feeds,
+        ({ event, release }) => release !== undefined && event.caller !== Anyone
+      ).pipe(
+        Option.map(
           ({ event }) =>
-            `${surface} event "${event.name}" is protected and has a subscription hook, so its authentication needs principal to tell poll subscribers apart (give Authentication.make a principal, such as (user) => user.id)`,
-        )[0]
-    : undefined;
+            `${surface} event "${event.name}" is protected and has a subscription hook, so its authentication needs principal to tell poll subscribers apart (give Authentication.make a principal, such as (user) => user.id)`
+        ),
+        Option.getOrUndefined
+      );
 
 /** The event implementations among what a surface is given. */
-export const eventsOf = (served: Served): ReadonlyArray<AnyEventImplementation> =>
+export const eventsOf = (served: Served): readonly AnyEventImplementation[] =>
   Arr.ensure(served).filter((app): app is AnyEventImplementation =>
-    Predicate.isTagged(app, "EventImplementation"),
+    Predicate.isTagged(app, "EventImplementation")
   );
 
 /**
@@ -643,33 +749,35 @@ export const eventsOf = (served: Served): ReadonlyArray<AnyEventImplementation> 
  * alone, refusing one listed that none holds; every one where `listed` is absent.
  */
 export const selectEvents = (
-  apps: ReadonlyArray<AnyEventImplementation>,
-  listed: ReadonlyArray<Event.Any> | undefined,
-): ReadonlyArray<AnyEventImplementation> =>
+  apps: readonly AnyEventImplementation[],
+  listed: readonly Event.Any[] | undefined
+): readonly AnyEventImplementation[] =>
   selectHeld(
     apps,
     listed,
     (app) => app.events,
-    (own, app) => EventImplementation.share(own, app),
+    (own, app) => EventImplementation.share(own, app)
   );
 
 /** The builder layers of event implementations, as a surface provides them. */
 export const feedBuilders = (
-  events: ReadonlyArray<AnyEventImplementation>,
+  events: readonly AnyEventImplementation[]
 ): ReadonlyArray<Layer.Layer<never, unknown, unknown>> =>
   events.map((app) => EventImplementation.layerOf(app));
 
 /** Every feed of event implementations, from the context their builders provide. */
 export const acquireFeeds = (
-  events: ReadonlyArray<AnyEventImplementation>,
-): Effect.Effect<ReadonlyArray<Feed>, never, unknown> =>
+  events: readonly AnyEventImplementation[]
+): Effect.Effect<readonly Feed[], never, unknown> =>
   Effect.map(
     Effect.forEach(events, (app) => EventImplementation.feedsOf(app)),
-    (feeds) => feeds.flat(),
+    (feeds) => feeds.flat()
   );
 
 /** The event types of the implementations `App`. */
-export type EventOf<App> = App extends { readonly events: ReadonlyArray<infer E extends Event.Any> }
+export type EventOf<App> = App extends {
+  readonly events: ReadonlyArray<infer E extends Event.Any>;
+}
   ? E
   : never;
 
@@ -689,7 +797,9 @@ export type EventRequestOf<App, E extends Event.Any> = App extends {
   ? E extends Held
     ?
         | RequestOf<R, E["name"]>
-        | (E["caller"] extends typeof Anyone ? never : RA | IdentityOf<E["caller"]>)
+        | (E["caller"] extends typeof Anyone
+            ? never
+            : RA | IdentityOf<E["caller"]>)
     : never
   : never;
 
@@ -727,7 +837,10 @@ type ServesProtected<App, Listed extends Event.Any> = [
  * serves their event types of `Listed`: their sources' services, and their authorizer's where a
  * served one is protected; the identity is the endpoint's own to provide.
  */
-export type EventServedRequest<App, Listed extends Event.Any = EventOf<App>> = App extends {
+export type EventServedRequest<
+  App,
+  Listed extends Event.Any = EventOf<App>,
+> = App extends {
   readonly "~eventRequest": infer R;
   readonly "~eventAuthorizeRequest": infer RA;
 }
@@ -736,7 +849,10 @@ export type EventServedRequest<App, Listed extends Event.Any = EventOf<App>> = A
     :
         | EndpointRequest<R, ServingEvents<App, Listed>>
         | (ServesProtected<App, Listed> extends true
-            ? Exclude<RA, IdentityOf<Protected<ServingEvents<App, Listed>>["caller"]>>
+            ? Exclude<
+                RA,
+                IdentityOf<Protected<ServingEvents<App, Listed>>["caller"]>
+              >
             : never)
   : never;
 
@@ -749,7 +865,10 @@ type EndpointRequest<R, E extends Event.Any> = E extends unknown
   : never;
 
 /** What building the event implementations `App` fails with, where their event types of `Listed` are served. */
-export type EventBuildError<App, Listed extends Event.Any = EventOf<App>> = App extends {
+export type EventBuildError<
+  App,
+  Listed extends Event.Any = EventOf<App>,
+> = App extends {
   readonly "~eventBuildError": infer EX;
   readonly "~eventAuthorizeBuildError": infer EAX;
 }
@@ -759,7 +878,10 @@ export type EventBuildError<App, Listed extends Event.Any = EventOf<App>> = App 
   : never;
 
 /** What building the event implementations `App` reads at startup, where their event types of `Listed` are served. */
-export type EventBuildServices<App, Listed extends Event.Any = EventOf<App>> = App extends {
+export type EventBuildServices<
+  App,
+  Listed extends Event.Any = EventOf<App>,
+> = App extends {
   readonly "~eventBuildServices": infer RX;
   readonly "~eventAuthorizeBuildServices": infer RAX;
 }

@@ -1,15 +1,20 @@
-import { Context, Effect, Layer } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
-import { actors, CurrentActor, type Permission } from "./authorization.js";
+import { Context, Effect, Layer } from "effect";
+
+import { actors, CurrentActor } from "./authorization.js";
+import type { Permission } from "./authorization.js";
 import { WhoAmI } from "./contracts.js";
 
 export class Permissions extends Context.Service<
   Permissions,
-  { readonly of: (actorId: string) => Effect.Effect<ReadonlyArray<Permission>> }
+  { readonly of: (actorId: string) => Effect.Effect<readonly Permission[]> }
 >()("example/Permissions") {
   static readonly layerMemory = Layer.succeed(Permissions, {
     of: (actorId) =>
-      Effect.succeed(Object.values(actors).find(({ id }) => id === actorId)?.permissions ?? []),
+      Effect.succeed(
+        Object.values(actors).find(({ id }) => id === actorId)?.permissions ??
+          []
+      ),
   });
 }
 
@@ -18,7 +23,10 @@ export const authorizeStored = Effect.gen(function* () {
 
   return (action: Action.Any) =>
     Effect.gen(function* () {
-      const permission: Permission = action.readOnly ? "users:read" : "users:write";
+      const permission: Permission = action.readOnly
+        ? "users:read"
+        : "users:write";
+
       const actor = yield* CurrentActor;
 
       if (!(yield* permissions.of(actor.id)).includes(permission)) {
@@ -33,5 +41,5 @@ export const authorizeStored = Effect.gen(function* () {
 export const whoAmI = Action.implement(
   WhoAmI,
   () => Effect.map(CurrentActor, ({ id, tenantId }) => ({ id, tenantId })),
-  { authorize: authorizeStored },
+  { authorize: authorizeStored }
 );

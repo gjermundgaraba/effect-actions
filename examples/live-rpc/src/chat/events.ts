@@ -1,19 +1,25 @@
-import { Effect, Option, Schema } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect, Option, Schema } from "effect";
+
 import { authorize } from "./authorize.js";
 import { MessagePosted } from "./Chat.js";
 import { CurrentRoom } from "./room.js";
 import { MessageStore } from "./store.js";
 
-const idOf = Schema.decodeUnknownOption(Schema.NumberFromString.pipe(Schema.check(Schema.isInt())));
+const idOf = Schema.decodeUnknownOption(
+  Schema.NumberFromString.pipe(Schema.check(Schema.isInt()))
+);
 
 // A cursor this source gives is `<epoch>:<id>`, the store's epoch and the id of the last message
 // a page holds, so one from before a restart of the memory store is told apart. A page starting
 // a watch gives the id alone, as `readMessages`' `after` is, which is the store's now.
 const positionOf = (epoch: string, cursor: string | null) => {
-  const parts = cursor?.includes(":") === true ? cursor.split(":") : [epoch, cursor];
+  const parts =
+    cursor?.includes(":") === true ? cursor.split(":") : [epoch, cursor];
 
-  return parts.length === 2 && parts[0] === epoch ? idOf(parts[1]) : Option.none();
+  return parts.length === 2 && parts[0] === epoch
+    ? idOf(parts[1])
+    : Option.none();
 };
 
 // The room's messages as an event, read from the store that keeps them: a check source.
@@ -32,14 +38,18 @@ export const messageEvents = Event.implement(
 
           const after = Option.filter(
             positionOf(store.epoch, cursor),
-            (id) => id >= 0 && id <= last,
+            (id) => id >= 0 && id <= last
           );
 
           // No cursor starts after the room's last message. One this room never gave, such as
           // one from before a restart, is answered `truncated` from there: the page learns its
           // messages may be another run's, and reads the room again with `readMessages`.
           if (Option.isNone(after)) {
-            return { cursor: `${store.epoch}:${last}`, events: [], truncated: cursor !== null };
+            return {
+              cursor: `${store.epoch}:${last}`,
+              events: [],
+              truncated: cursor !== null,
+            };
           }
 
           const messages = yield* store.read(room, after.value);
@@ -60,5 +70,5 @@ export const messageEvents = Event.implement(
       key: () => CurrentRoom,
     };
   }),
-  { authorize },
+  { authorize }
 );

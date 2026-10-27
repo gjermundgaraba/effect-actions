@@ -1,4 +1,5 @@
 import { Duration, Effect, Option, Stream } from "effect";
+
 import type * as Event from "./Event.js";
 import { Checked, Gap } from "./occurrence.js";
 
@@ -34,7 +35,12 @@ export interface Delivered {
 // it holds some, which reads them again rather than skips them, and at `to` where it holds none,
 // the fresh position SEP-3415 has a gap carry, there being nothing to skip.
 /** What a feed's stream yields of one read: its gap, its items, and where it ends. */
-export const fedOf = ({ items, truncated, from, to }: Delivered): ReadonlyArray<Fed> => [
+export const fedOf = ({
+  items,
+  truncated,
+  from,
+  to,
+}: Delivered): readonly Fed[] => [
   ...(truncated ? [Gap.make({ cursor: items.length === 0 ? to : from })] : []),
   ...items,
   Checked.make({ cursor: to }),
@@ -42,7 +48,7 @@ export const fedOf = ({ items, truncated, from, to }: Delivered): ReadonlyArray<
 
 /** One page as a feed's stream reads it: what the stream yields of it, and when to read on. */
 export interface Paged extends Pick<Page, "cursor" | "hasMore" | "nextPoll"> {
-  readonly fed: ReadonlyArray<Fed>;
+  readonly fed: readonly Fed[];
 }
 
 /**
@@ -54,33 +60,36 @@ export const pagedFrom = <E, R>(
   read: (cursor: string | null) => Effect.Effect<Paged, E, R>,
   cursor: string | null,
   woken?: Effect.Effect<void>,
-  polls = true,
+  polls = true
 ): Stream.Stream<Fed, E, R> =>
-  Stream.paginate({ cursor, delay: Duration.zero }, (state) =>
-    Effect.map(
-      Effect.andThen(
-        woken === undefined || Duration.isZero(state.delay)
-          ? Effect.sleep(state.delay)
-          : polls
-            ? Effect.race(Effect.sleep(state.delay), woken)
-            : woken,
-        Effect.suspend(() => read(state.cursor)),
-      ),
+  Stream.paginate({ cursor, delay: Duration.zero }, (state) => {
+    const next = Effect.map(
+      Effect.suspend(() => read(state.cursor)),
       (page) =>
         [
           page.fed,
           Option.some({
             cursor: page.cursor ?? state.cursor,
-            delay: page.hasMore ? Duration.zero : Duration.max(page.nextPoll, pollFloor),
+            delay: page.hasMore
+              ? Duration.zero
+              : Duration.max(page.nextPoll, pollFloor),
           }),
-        ] as const,
-    ),
-  );
+        ] as const
+    );
+
+    const sleep = Effect.sleep(state.delay);
+
+    if (woken === undefined || Duration.isZero(state.delay)) {
+      return Effect.andThen(sleep, next);
+    }
+
+    return Effect.andThen(polls ? Effect.race(sleep, woken) : woken, next);
+  });
 
 /** Polls from `cursor` as `pagedFrom` reads: each page as its gap, its occurrences, its end. */
 export const paged = <E, R>(
   poll: (cursor: string | null) => Effect.Effect<Page, E, R>,
-  cursor: string | null,
+  cursor: string | null
 ): Stream.Stream<Fed, E, R> =>
   pagedFrom(
     (at) =>
@@ -93,5 +102,5 @@ export const paged = <E, R>(
           to: page.cursor ?? at,
         }),
       })),
-    cursor,
+    cursor
   );

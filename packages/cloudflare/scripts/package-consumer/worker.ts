@@ -1,11 +1,14 @@
-import { DurableObject } from "cloudflare:workers";
-import { Context, Effect, Layer, Schema, type Scope } from "effect";
-import { HttpRouter, type HttpClient } from "effect/http";
-import { Rpc as NativeRpc, RpcClient, type RpcClientError, RpcGroup, RpcServer } from "effect/rpc";
+import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import { DurableObject } from "cloudflare:workers";
+import { Context, Effect, Layer, Schema } from "effect";
+import type { Scope } from "effect";
+import { HttpRouter } from "effect/http";
+import type { HttpClient } from "effect/http";
+import { Rpc as NativeRpc, RpcClient, RpcGroup, RpcServer } from "effect/rpc";
+import type { RpcClientError } from "effect/rpc";
 
 export const Ping = Action.make("ping", {
   description: "Answer pong",
@@ -16,7 +19,9 @@ export const Ping = Action.make("ping", {
 
 export const Http = ActionHttp.make([Ping]);
 
-export const toObject = (stub: DurableObjectStub): Layer.Layer<HttpClient.HttpClient> =>
+export const toObject = (
+  stub: DurableObjectStub
+): Layer.Layer<HttpClient.HttpClient> =>
   ActionDurableObject.layerHttpClient(stub);
 
 export const checkLayerTypes = (stub: DurableObjectStub) => {
@@ -32,22 +37,22 @@ export const checkLayerTypes = (stub: DurableObjectStub) => {
 export const ping = (stub: DurableObjectStub): Effect.Effect<"pong", unknown> =>
   ActionHttp.client(Http, { baseUrl: "https://object" }).pipe(
     Effect.flatMap((client) => client.ping()),
-    Effect.provide(toObject(stub)),
+    Effect.provide(toObject(stub))
   );
 
 export const Rpc = ActionRpc.make([Ping]);
 
 const pong = Action.implement(Ping, () => Effect.succeed("pong" as const));
 
-const socket = ActionRpc.layer(Rpc, pong).pipe(
-  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+const socketRoutes = ActionRpc.layer(Rpc, pong).pipe(
+  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" }))
 );
 
 export class Room extends ActionDurableObject.make({
-  routes: socket,
+  routes: socketRoutes,
   alarm: (info) =>
     Effect.asVoid(Effect.service(ActionDurableObject.State)).pipe(
-      Effect.when(Effect.succeed((info?.retryCount ?? 0) < 3)),
+      Effect.when(Effect.succeed((info?.retryCount ?? 0) < 3))
     ),
 }) {}
 
@@ -58,60 +63,74 @@ export const checkMakeTypes = () =>
   });
 
 export class Deployment extends Context.Service<Deployment, Cloudflare.Env>()(
-  "consumer/Deployment",
+  "consumer/Deployment"
 ) {}
 
 export class Deployed extends ActionDurableObject.make({
   services: (env) => Layer.succeed(Deployment, env),
   alarm: () => Effect.asVoid(Effect.service(Deployment)),
 }) {
-  deployment(): Promise<Cloudflare.Env> {
-    return this.run(Effect.service(Deployment));
+  async deployment(): Promise<Cloudflare.Env> {
+    return await this.run(Effect.service(Deployment));
   }
 }
 
 export class Hosted extends DurableObject {
-  readonly #object = ActionDurableObject.handlers(this.ctx, { routes: socket });
+  readonly #object = ActionDurableObject.handlers(this.ctx, {
+    routes: socketRoutes,
+  });
 
-  override fetch(request: Request) {
-    return this.#object.fetch(request);
+  override async fetch(request: Request) {
+    return await this.#object.fetch(request);
   }
 
-  override webSocketMessage(socket: WebSocket, message: string | ArrayBuffer) {
-    return this.#object.webSocketMessage(socket, message);
+  override async webSocketMessage(
+    socket: WebSocket,
+    message: string | ArrayBuffer
+  ) {
+    await this.#object.webSocketMessage(socket, message);
   }
 
-  ping(): Promise<"pong"> {
-    return this.#object.run(Effect.succeed("pong" as const));
+  async ping(): Promise<"pong"> {
+    return await this.#object.run(Effect.succeed("pong" as const));
   }
 }
 
-export const checkSocketsTypes = (ctx: DurableObjectState) =>
-  Effect.runPromise(
+export const checkSocketsTypes = async (ctx: DurableObjectState) =>
+  await Effect.runPromise(
     // @ts-expect-error -- Published declarations must require the Sockets a protocol registers with.
     Layer.build(
       ActionDurableObject.layerWebSocket({ path: "/rpc" }).pipe(
-        Layer.provide([Layer.succeed(ActionDurableObject.State, ctx), HttpRouter.layer]),
-      ),
-    ).pipe(Effect.scoped),
+        Layer.provide([
+          Layer.succeed(ActionDurableObject.State, ctx),
+          HttpRouter.layer,
+        ])
+      )
+    ).pipe(Effect.scoped)
   );
 
-export class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { id: Schema.String }) {}
+export class NotFound extends Schema.TaggedError<
+  NotFound,
+  { readonly brand: unique symbol }
+>()("NotFound", {
+  id: Schema.String,
+}) {}
 
 export const Hosts = RpcGroup.make(
   NativeRpc.make("start", {
     payload: { id: Schema.String },
     success: Schema.String,
     error: NotFound,
-  }),
+  })
 );
 
 const hostCalls = RpcServer.layer(Hosts).pipe(
   Layer.provide(
     Hosts.toLayer({
-      start: ({ id }) => (id === "" ? Effect.fail(new NotFound({ id })) : Effect.succeed(id)),
-    }),
-  ),
+      start: ({ id }) =>
+        id === "" ? Effect.fail(new NotFound({ id })) : Effect.succeed(id),
+    })
+  )
 );
 
 export class Host extends ActionDurableObject.make({ calls: hostCalls }) {}
@@ -122,8 +141,9 @@ export const checkCallsTypes = () =>
     calls: RpcServer.layer(Hosts),
   });
 
-export const toHost = (stub: DurableObjectStub<Host>): Layer.Layer<RpcClient.Protocol> =>
-  ActionDurableObject.layerStubClient(stub);
+export const toHost = (
+  stub: DurableObjectStub<Host>
+): Layer.Layer<RpcClient.Protocol> => ActionDurableObject.layerStubClient(stub);
 
 export const checkStubTypes = (stub: DurableObjectStub<Hosted>) =>
   // @ts-expect-error -- Published declarations must refuse a stub of a class without the method.
@@ -131,14 +151,20 @@ export const checkStubTypes = (stub: DurableObjectStub<Hosted>) =>
 
 export const start = (
   stub: DurableObjectStub<Host>,
-  id: string,
-): Effect.Effect<string, NotFound | RpcClientError.RpcClientError, Scope.Scope> =>
-  Effect.flatMap(ActionDurableObject.client(Hosts), (host) => host(() => stub).start({ id }));
+  id: string
+): Effect.Effect<
+  string,
+  NotFound | RpcClientError.RpcClientError,
+  Scope.Scope
+> =>
+  Effect.flatMap(ActionDurableObject.client(Hosts), (host) =>
+    host(() => stub).start({ id })
+  );
 
 export const startRaw = (stub: DurableObjectStub<Host>) =>
   RpcClient.make(Hosts).pipe(
     Effect.flatMap((client) => client.start({ id: "a" })),
-    Effect.provide(toHost(stub)),
+    Effect.provide(toHost(stub))
   );
 
 export const checkRawTypes = (stub: DurableObjectStub<Host>) => {

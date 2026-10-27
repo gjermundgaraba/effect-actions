@@ -1,5 +1,6 @@
-import { Effect, Layer, Option, Schema, Semaphore } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect, Function, Layer, Option, Schema, Semaphore } from "effect";
+
 import { deleted } from "./batches.js";
 import { State } from "./state.js";
 
@@ -27,11 +28,17 @@ type Emitted = Event.Emitted<Event.Any>;
  * A log's storage in the object's, under `effect-actions/log/<event>/`: its position, and each
  * entry by its sequence number, its data encoded as the event's payload JSON.
  */
-const storageLog = (storage: DurableObjectStorage, event: Event.Any): Event.LogStorage<Emitted> => {
+const storageLog = (
+  storage: DurableObjectStorage,
+  event: Event.Any
+): Event.LogStorage<Emitted> => {
   const prefix = `effect-actions/log/${event.name}/`;
   const positionKey = `${prefix}meta`;
   const entries = `${prefix}entry/`;
-  const entryKey = (seq: number) => `${entries}${String(seq).padStart(seqWidth, "0")}`;
+
+  const entryKey = (seq: number) =>
+    `${entries}${String(seq).padStart(seqWidth, "0")}`;
+
   const seqOfKey = (key: string) => Number(key.slice(entries.length));
   const codec = Schema.toCodecJson(event.payload);
   const encode = Schema.encodeUnknownEffect(codec);
@@ -41,32 +48,37 @@ const storageLog = (storage: DurableObjectStorage, event: Event.Any): Event.LogS
   // payload, such as one an earlier deployment wrote, is listed unread, which the core sends as a
   // gap at its cursor; one with no data was logged without it, as it did not encode.
   const listedOf = (
-    found: Option.Option<typeof Stored.Type>,
+    found: Option.Option<typeof Stored.Type>
   ): Effect.Effect<Event.Listed<Emitted>> =>
     Option.match(found, {
       onNone: () => Effect.succeed({ at: 0, logged: undefined }),
       onSome: ({ at, key, eventId, timestamp, data }) =>
         Effect.map(
-          data === undefined ? Effect.succeed(Option.none()) : Effect.option(decode(data)),
+          data === undefined ? Effect.succeedNone : Effect.option(decode(data)),
           (decoded) => ({
             at,
             logged: Option.match(decoded, {
-              onNone: () => undefined,
-              onSome: (payload) => ({ key, value: { data: payload, eventId, timestamp } }),
+              onNone: Function.constUndefined,
+              onSome: (payload) => ({
+                key,
+                value: { data: payload, eventId, timestamp },
+              }),
             }),
-          }),
+          })
         ),
     });
 
   return {
     position: Effect.map(
-      Effect.promise(() => storage.get<unknown>(positionKey)),
-      (found) => Option.getOrUndefined(positionOf(found)),
+      Effect.promise(async () => await storage.get(positionKey)),
+      (found) => Option.getOrUndefined(positionOf(found))
     ),
     put: (position, entry) =>
       Effect.gen(function* () {
         if (entry === undefined) {
-          return yield* Effect.promise(() => storage.put(positionKey, position));
+          return yield* Effect.promise(async () => {
+            await storage.put(positionKey, position);
+          });
         }
 
         const { at, logged } = entry.stored;
@@ -78,15 +90,15 @@ const storageLog = (storage: DurableObjectStorage, event: Event.Any): Event.LogS
             Effect.as(
               Effect.logError(
                 `An occurrence published to the log of event "${event.name}" does not encode as its payload, and is kept as a gap`,
-                error,
+                error
               ),
-              undefined,
-            ),
-          ),
+              undefined
+            )
+          )
         );
 
-        yield* Effect.promise(() =>
-          storage.put({
+        yield* Effect.promise(async () => {
+          await storage.put({
             [positionKey]: position,
             [entryKey(entry.seq)]: encodeStored({
               at,
@@ -95,18 +107,26 @@ const storageLog = (storage: DurableObjectStorage, event: Event.Any): Event.LogS
               timestamp: logged.value.timestamp,
               data,
             }),
-          }),
-        );
+          });
+        });
       }),
     list: (from, limit) =>
       Effect.flatMap(
-        Effect.promise(() =>
-          storage.list<unknown>({ prefix: entries, start: entryKey(from), limit }),
+        Effect.promise(
+          async () =>
+            await storage.list({
+              prefix: entries,
+              start: entryKey(from),
+              limit,
+            })
         ),
         (listed) =>
           Effect.forEach(listed, ([key, value]) =>
-            Effect.map(listedOf(storedOf(value)), (kept) => [seqOfKey(key), kept] as const),
-          ),
+            Effect.map(
+              listedOf(storedOf(value)),
+              (kept) => [seqOfKey(key), kept] as const
+            )
+          )
       ),
     delete: (seqs) => deleted(storage, seqs.map(entryKey)),
   };
@@ -126,21 +146,27 @@ const countOf = Schema.decodeUnknownOption(Schema.Int);
  * Current sources' revisions in the object's storage, under `effect-actions/revisions/`: an
  * epoch made as the object first builds, and a counter by name.
  */
-const storageRevisions = (storage: DurableObjectStorage): Effect.Effect<Event.RevisionStorage> =>
-  Effect.gen(function* () {
+const storageRevisions = (
+  storage: DurableObjectStorage
+): Effect.Effect<Event.RevisionStorage> => {
+  const get = (name: string) =>
+    Effect.map(
+      Effect.promise(async () => await storage.get(`${countPrefix}${name}`)),
+      (found) => Option.getOrElse(countOf(found), () => 0)
+    );
+
+  return Effect.gen(function* () {
     const kept = Option.getOrUndefined(
-      epochOf(yield* Effect.promise(() => storage.get<unknown>(epochKey))),
+      epochOf(yield* Effect.promise(async () => await storage.get(epochKey)))
     );
 
     const epoch = kept ?? crypto.randomUUID();
 
-    if (kept === undefined) yield* Effect.promise(() => storage.put(epochKey, epoch));
-
-    const get = (name: string) =>
-      Effect.map(
-        Effect.promise(() => storage.get<unknown>(`${countPrefix}${name}`)),
-        (found) => Option.getOrElse(countOf(found), () => 0),
-      );
+    if (kept === undefined) {
+      yield* Effect.promise(async () => {
+        await storage.put(epochKey, epoch);
+      });
+    }
 
     // Why: a bump reads each counter, then writes it one higher; two notifies bumping at once,
     // interleaved at the read, would each write the same count, and a change would keep its
@@ -152,18 +178,24 @@ const storageRevisions = (storage: DurableObjectStorage): Effect.Effect<Event.Re
       get,
       bump: (names) =>
         Effect.flatMap(
-          Effect.forEach(names, (name) => Effect.map(get(name), (count) => [name, count] as const)),
+          Effect.forEach(names, (name) =>
+            Effect.map(get(name), (count) => [name, count] as const)
+          ),
           (counts) =>
-            Effect.promise(() =>
-              storage.put(
+            Effect.promise(async () => {
+              await storage.put(
                 Object.fromEntries(
-                  counts.map(([name, count]) => [`${countPrefix}${name}`, count + 1]),
-                ),
-              ),
-            ),
+                  counts.map(([name, count]) => [
+                    `${countPrefix}${name}`,
+                    count + 1,
+                  ])
+                )
+              );
+            })
         ).pipe(inTurn),
     };
   });
+};
 
 /**
  * The object's `Event.Events`, which `handlers` and `make` provide to the services, calls and
@@ -172,30 +204,32 @@ const storageRevisions = (storage: DurableObjectStorage): Effect.Effect<Event.Re
  * source's subscribers read again when notified, not on its `nextPoll`, a timer that would keep the
  * object from hibernating. Its rules are on `handlers`.
  */
-export const layerEvents: Layer.Layer<Event.Events, never, State> = Layer.effect(Event.Events)(
-  Effect.flatMap(State, ({ storage }) =>
-    Effect.flatMap(storageRevisions(storage), (revisions) => {
-      // Why: a log is kept under its event's name, the one identity storage keeps across
-      // instances, so two event types of one name would read and append each other's entries.
-      const named = new Map<string, Event.Any>();
+export const layerEvents: Layer.Layer<Event.Events, never, State> =
+  Layer.effect(Event.Events)(
+    Effect.flatMap(State, ({ storage }) =>
+      Effect.flatMap(storageRevisions(storage), (revisions) => {
+        // Why: a log is kept under its event's name, the one identity storage keeps across
+        // instances, so two event types of one name would read and append each other's entries.
+        const named = new Map<string, Event.Any>();
 
-      return Event.makeEvents({
-        log: (event) => {
-          const prior = named.get(event.name);
+        return Event.makeEvents({
+          log: (event) => {
+            const prior = named.get(event.name);
 
-          if (prior !== undefined && prior !== event)
-            throw new Error(
-              `An object's Event.Events keeps each log source's log in the object's storage by its event's name, and two event types are named "${event.name}" (give each event type a name of its own)`,
-            );
+            if (prior !== undefined && prior !== event) {
+              throw new Error(
+                `An object's Event.Events keeps each log source's log in the object's storage by its event's name, and two event types are named "${event.name}" (give each event type a name of its own)`
+              );
+            }
 
-          named.set(event.name, event);
+            named.set(event.name, event);
 
-          return storageLog(storage, event);
-        },
-        polls: false,
-        emits: false,
-        revisions,
-      });
-    }),
-  ),
-);
+            return storageLog(storage, event);
+          },
+          polls: false,
+          emits: false,
+          revisions,
+        });
+      })
+    )
+  );

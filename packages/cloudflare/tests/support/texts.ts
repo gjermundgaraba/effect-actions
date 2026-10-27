@@ -1,5 +1,6 @@
-import { Effect, Option, Schema } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect, Option, Schema } from "effect";
+
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 
 const Texts = Schema.Array(Schema.String);
@@ -9,8 +10,8 @@ const textsOf = Schema.decodeUnknownOption(Texts);
 /** The texts kept under `key`, none where nothing is. */
 export const textsIn = (storage: DurableObjectStorage, key: string) =>
   Effect.map(
-    Effect.promise(() => storage.get(key)),
-    (stored) => Option.getOrElse(textsOf(stored), (): ReadonlyArray<string> => []),
+    Effect.promise(async () => await storage.get(key)),
+    (stored) => Option.getOrElse(textsOf(stored), (): readonly string[] => [])
   );
 
 /**
@@ -21,7 +22,7 @@ export const textsSince = (
   storage: DurableObjectStorage,
   key: string,
   prefix: string,
-  cursor: string | null,
+  cursor: string | null
 ) =>
   Effect.map(textsIn(storage, key), (texts) => {
     const seen = cursor === null ? texts.length : Number(cursor);
@@ -41,6 +42,8 @@ export const appended = (key: string, event: Event.Any, text: string) =>
     const { storage } = yield* ActionDurableObject.State;
     const texts = yield* textsIn(storage, key);
 
-    yield* Effect.promise(() => storage.put(key, [...texts, text]));
+    yield* Effect.promise(async () => {
+      await storage.put(key, [...texts, text]);
+    });
     yield* Event.Events.use((events) => events.notify(event));
   });

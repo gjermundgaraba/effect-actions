@@ -1,8 +1,10 @@
+import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import { Effect, Option } from "effect";
 import { Tool, Toolkit } from "effect/ai";
-import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
+
 import { identity } from "./identity/handlers.js";
-import { CurrentCaller, type Member } from "./identity/Identity.js";
+import { CurrentCaller } from "./identity/Identity.js";
+import type { Member } from "./identity/Identity.js";
 import { tasks } from "./tasks/handlers.js";
 
 // `actions.layer` holds the handlers, and requires the startup services their builders read;
@@ -17,8 +19,9 @@ const actions = ActionToolkit.make([tasks, identity], {
       Effect.serviceOption(CurrentCaller),
       Option.match({
         onNone: () => true,
-        onSome: (caller) => call.name !== "addTask" || call.input.assignee !== caller.id,
-      }),
+        onSome: (caller) =>
+          call.name !== "addTask" || call.input.assignee !== caller.id,
+      })
     ),
 });
 
@@ -26,13 +29,14 @@ const actions = ActionToolkit.make([tasks, identity], {
 // The later definition wins; annotating the generated tool keeps its handler and approval rule.
 export const toolkit = Toolkit.merge(
   actions.toolkit,
-  Toolkit.make(actions.toolkit.tools.addTask.annotate(Tool.Title, "Add a task")),
+  Toolkit.make(actions.toolkit.tools.addTask.annotate(Tool.Title, "Add a task"))
 );
 
-export const layer = actions.layer;
+export const { layer } = actions;
 
 // One toolkit serves every member, so who a turn runs as is provided around that turn. This is
 // how this example names a model's caller, and it takes a `Member`. The tools themselves accept
 // any `CurrentCaller`, so keeping the operator away from a model is this function's doing, and
 // that of every host using it.
-export const actingFor = (member: Member) => Effect.provideService(CurrentCaller, member);
+export const actingFor = (member: Member) =>
+  Effect.provideService(CurrentCaller, member);

@@ -2,7 +2,9 @@ import { Console, Effect } from "effect";
 
 const formatSpecifierLabel = "timer %s";
 
-export const everyConsoleMethod = (pause: (millis: number) => Effect.Effect<void>) =>
+export const everyConsoleMethod = (
+  pause: (millis: number) => Effect.Effect<void>
+) =>
   Console.consoleWith((console) =>
     Effect.gen(function* () {
       console.log("log");
@@ -47,5 +49,5 @@ export const everyConsoleMethod = (pause: (millis: number) => Effect.Effect<void
       yield* Console.withGroup(Console.log("unlabeled"));
       yield* Console.withTime(pause(250), "scoped");
       console.log("after");
-    }),
+    })
   );

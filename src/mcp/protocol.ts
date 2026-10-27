@@ -1,10 +1,13 @@
-import { JsonPointer, type JsonSchema, Predicate, Schema, SchemaAST } from "effect";
+import { JsonPointer, Predicate, Schema, SchemaAST } from "effect";
+import type { JsonSchema } from "effect";
 import { McpProtocol, McpSchema } from "effect/ai";
 import { Base64 } from "effect/encoding";
+
 import type * as Action from "../contract/Action.js";
-import type { ErasedValue } from "../contract/implementation.js";
-import { isMarked, type Kind, kindOf, Media } from "../contract/media.js";
 import { unsuspended } from "../contract/ast.js";
+import type { ErasedValue } from "../contract/implementation.js";
+import { isMarked, kindOf, Media } from "../contract/media.js";
+import type { Kind } from "../contract/media.js";
 
 // Why: The stateless revision is the one a request written without a handshake speaks, as
 // `request` writes it, and the one whose routing headers the runtime checks against the
@@ -31,19 +34,24 @@ export const isObjectSchema = Schema.is(McpSchema.ToolJson);
 
 const isJson = Schema.is(Schema.Json);
 
-const definitionsReferenced = (value: Schema.Json): ReadonlyArray<string> => {
+const definitionsReferenced = (value: Schema.Json): readonly string[] => {
   if (
     value === null ||
     Predicate.isString(value) ||
     Predicate.isNumber(value) ||
     Predicate.isBoolean(value)
-  )
+  ) {
     return [];
+  }
 
-  if (Array.isArray(value)) return value.flatMap(definitionsReferenced);
+  if (Array.isArray(value)) {
+    return value.flatMap(definitionsReferenced);
+  }
 
   return Object.entries(value).flatMap(([field, nested]) => {
-    if (field !== "$ref") return definitionsReferenced(nested);
+    if (field !== "$ref") {
+      return definitionsReferenced(nested);
+    }
 
     const [scope, key] = Predicate.isString(nested)
       ? (JsonPointer.parseUriFragment(nested) ?? [])
@@ -59,7 +67,7 @@ const definitionsReferenced = (value: Schema.Json): ReadonlyArray<string> => {
 // tests/mcp/media.test.ts compares the listings.
 export const toolJsonSchema = (
   schema: Schema.Top,
-  strict: boolean,
+  strict: boolean
 ): JsonSchema.JsonSchema | undefined => {
   const document = Schema.toJsonSchemaDocument(schema, {
     onExcessProperty: strict ? "error" : "ignore",
@@ -71,25 +79,34 @@ export const toolJsonSchema = (
 
   const inlined = scope === "$defs" && key !== undefined ? key : undefined;
 
-  const root = inlined === undefined ? document.schema : document.definitions[inlined];
+  const root =
+    inlined === undefined ? document.schema : document.definitions[inlined];
 
-  if (root === undefined) return undefined;
+  if (root === undefined) {
+    return undefined;
+  }
 
   const definitions =
     inlined !== undefined &&
     ![root, ...Object.values(document.definitions)]
-      .flatMap((schema) => (isJson(schema) ? definitionsReferenced(schema) : []))
+      .flatMap((definition) =>
+        isJson(definition) ? definitionsReferenced(definition) : []
+      )
       .includes(inlined)
       ? Object.fromEntries(
-          Object.entries(document.definitions).filter(([name]) => name !== inlined),
+          Object.entries(document.definitions).filter(
+            ([name]) => name !== inlined
+          )
         )
       : document.definitions;
 
-  return Object.keys(definitions).length === 0 ? root : { ...root, $defs: definitions };
+  return Object.keys(definitions).length === 0
+    ? root
+    : { ...root, $defs: definitions };
 };
 
 /** The forms an MCP routing header may carry `name` in: as sent, or base64-encoded in its sentinel. */
-export const routingFormsOf = (name: string): ReadonlyArray<string> => [
+export const routingFormsOf = (name: string): readonly string[] => [
   name,
   `=?base64?${Base64.encode(name)}?=`,
 ];
@@ -109,7 +126,7 @@ interface Field {
 }
 
 export interface Lift {
-  readonly fields: ReadonlyArray<Field>;
+  readonly fields: readonly Field[];
   readonly rest: Codec | undefined;
 }
 
@@ -119,13 +136,21 @@ const wholeSuccessMediaOf = (suspended: SchemaAST.AST) => {
   const ast = unsuspended(suspended);
   const one = kindOf(ast);
 
-  if (one !== undefined) return { kind: one, many: false };
+  if (one !== undefined) {
+    return { kind: one, many: false };
+  }
 
-  if (!SchemaAST.isArrays(ast) || ast.encoding !== undefined) return undefined;
+  if (!SchemaAST.isArrays(ast) || ast.encoding !== undefined) {
+    return;
+  }
 
-  const [kind, ...others] = new Set([...ast.elements, ...ast.rest].map(kindOfUnsuspended));
+  const [kind, ...others] = new Set(
+    [...ast.elements, ...ast.rest].map(kindOfUnsuspended)
+  );
 
-  return kind === undefined || others.length > 0 ? undefined : { kind, many: true };
+  return kind === undefined || others.length > 0
+    ? undefined
+    : { kind, many: true };
 };
 
 const mediaFieldOf = (field: SchemaAST.AST) => {
@@ -134,7 +159,7 @@ const mediaFieldOf = (field: SchemaAST.AST) => {
 
   if (optional && SchemaAST.isUnion(ast) && ast.types.length === 2) {
     const [definedMember, ...otherDefinedMembers] = ast.types.filter(
-      (member) => !SchemaAST.isUndefined(member),
+      (member) => !SchemaAST.isUndefined(member)
     );
 
     const kind =
@@ -154,9 +179,13 @@ export const liftOf = (success: Codec): Lift => {
   const ast = unsuspended(success.ast);
   const whole = wholeSuccessMediaOf(ast);
 
-  if (whole !== undefined) return { fields: [{ name: undefined, ...whole }], rest: undefined };
+  if (whole !== undefined) {
+    return { fields: [{ name: undefined, ...whole }], rest: undefined };
+  }
 
-  if (!SchemaAST.isObjects(ast) || ast.encoding !== undefined) return { fields: [], rest: success };
+  if (!SchemaAST.isObjects(ast) || ast.encoding !== undefined) {
+    return { fields: [], rest: success };
+  }
 
   const fields = ast.propertySignatures.flatMap(({ name, type }) => {
     const field = mediaFieldOf(type);
@@ -164,27 +193,36 @@ export const liftOf = (success: Codec): Lift => {
     return field === undefined ? [] : [{ name: String(name), ...field }];
   });
 
-  if (fields.length === 0) return { fields, rest: success };
+  if (fields.length === 0) {
+    return { fields, rest: success };
+  }
 
   const names = new Set<PropertyKey>(fields.map(({ name }) => name));
   const rest = ast.propertySignatures.filter(({ name }) => !names.has(name));
 
-  const { identifier: _identifierOfWholeSuccess, ...annotationsOfRest } = ast.annotations ?? {};
+  const { identifier: _identifierOfWholeSuccess, ...annotationsOfRest } =
+    ast.annotations ?? {};
 
   return {
     fields,
     rest:
       rest.length === 0 && ast.indexSignatures.length === 0
         ? undefined
-        : Schema.make<Codec>(new SchemaAST.Objects(rest, ast.indexSignatures, annotationsOfRest)),
+        : Schema.make<Codec>(
+            new SchemaAST.Objects(rest, ast.indexSignatures, annotationsOfRest)
+          ),
   };
 };
 
-const partsAndEncodedSideOf = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.AST> => [
+const partsAndEncodedSideOf = (
+  ast: SchemaAST.AST
+): readonly SchemaAST.AST[] => [
   ...(SchemaAST.isDeclaration(ast) ? ast.typeParameters : []),
   ...(SchemaAST.isArrays(ast) ? [...ast.elements, ...ast.rest] : []),
   ...(SchemaAST.isObjects(ast)
-    ? [...ast.propertySignatures, ...ast.indexSignatures].map(({ type }) => type)
+    ? [...ast.propertySignatures, ...ast.indexSignatures].map(
+        ({ type }) => type
+      )
     : []),
   ...(SchemaAST.isUnion(ast) ? ast.types : []),
   ...(SchemaAST.isSuspend(ast) ? [ast.thunk()] : []),
@@ -196,11 +234,15 @@ const holdsMediaAnywhere = (ast: SchemaAST.AST): boolean => {
   const pending = [ast];
 
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    if (seen.has(next)) continue;
+    if (seen.has(next)) {
+      continue;
+    }
 
     seen.add(next);
 
-    if (isMarked(next)) return true;
+    if (isMarked(next)) {
+      return true;
+    }
 
     pending.push(...partsAndEncodedSideOf(next));
   }
@@ -208,11 +250,10 @@ const holdsMediaAnywhere = (ast: SchemaAST.AST): boolean => {
   return false;
 };
 
-export const isMisplaced = (action: Action.Any, { rest }: Lift): boolean => {
-  return [action.input, ...action.error, ...(rest === undefined ? [] : [rest])].some(({ ast }) =>
-    holdsMediaAnywhere(ast),
+export const isMisplaced = (action: Action.Any, { rest }: Lift): boolean =>
+  [action.input, ...action.error, ...(rest === undefined ? [] : [rest])].some(
+    ({ ast }) => holdsMediaAnywhere(ast)
   );
-};
 
 export interface Lifted {
   readonly kind: Kind;
@@ -220,25 +261,35 @@ export interface Lifted {
   readonly value: typeof Media.Type;
 }
 
-export const liftedFrom = (lift: Lift, success: ErasedValue): ReadonlyArray<Lifted> =>
+export const liftedFrom = (
+  lift: Lift,
+  success: ErasedValue
+): readonly Lifted[] =>
   lift.fields.flatMap(({ name, kind, many }) => {
-    const value =
-      name === undefined
-        ? success
-        : Predicate.hasProperty(success, name)
-          ? success[name]
-          : undefined;
+    const field =
+      name !== undefined && Predicate.hasProperty(success, name)
+        ? success[name]
+        : undefined;
 
-    const values = many ? (isMediaArray(value) ? value : []) : isMedia(value) ? [value] : [];
+    const value = name === undefined ? success : field;
+    const listed = isMediaArray(value) ? value : [];
+    const single = isMedia(value) ? [value] : [];
 
-    return values.map((media) => ({ kind, field: name, value: media }));
+    return (many ? listed : single).map((media) => ({
+      kind,
+      field: name,
+      value: media,
+    }));
   });
 
-const mediaOf = ({ name, kind, many }: Field, result: McpSchema.CallToolResult) => {
+const mediaOf = (
+  { name, kind, many }: Field,
+  result: McpSchema.CallToolResult
+) => {
   const values = result.content.flatMap((block) =>
     block.type === kind && block._meta?.[fieldKey] === name
       ? [{ data: Base64.encode(block.data), mimeType: block.mimeType }]
-      : [],
+      : []
   );
 
   return many || values.length > 1 ? values : values[0];
@@ -252,11 +303,15 @@ const mediaOf = ({ name, kind, many }: Field, result: McpSchema.CallToolResult) 
 export const unliftedFrom = (lift: Lift, result: McpSchema.CallToolResult) => {
   const [whole] = lift.fields;
 
-  if (whole !== undefined && whole.name === undefined) return mediaOf(whole, result);
+  if (whole !== undefined && whole.name === undefined) {
+    return mediaOf(whole, result);
+  }
 
   const { structuredContent = {} } = result;
 
-  if (!Predicate.isObject(structuredContent)) return structuredContent;
+  if (!Predicate.isObject(structuredContent)) {
+    return structuredContent;
+  }
 
   const lifted = new Set(lift.fields.map(({ name }) => name));
 
@@ -265,7 +320,9 @@ export const unliftedFrom = (lift: Lift, result: McpSchema.CallToolResult) => {
     ...lift.fields.flatMap((field) => {
       const value = mediaOf(field, result);
 
-      return field.name === undefined || value === undefined ? [] : [[field.name, value] as const];
+      return field.name === undefined || value === undefined
+        ? []
+        : [[field.name, value] as const];
     }),
   ]);
 };

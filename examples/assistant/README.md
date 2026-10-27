@@ -1,13 +1,10 @@
 # assistant
 
-An application with no server: its actions run in the process that calls them. A team's task
-list is worked on by a model, through tools, and by whoever runs the machine, through commands.
-Both are the same implementations behind the same authorization. It opens no port.
+An application with no server: its actions run in the process that calls them. A team's task list is worked on by a model, through tools, and by whoever runs the machine, through commands. Both are the same implementations behind the same authorization. It opens no port.
 
 ## Run it
 
-From the repository root, after `vp install` (from an installed package, see
-[Run one](../README.md#run-one)):
+From the repository root, after `vp install` (from an installed package, see [Run one](../README.md#run-one)):
 
 ```sh
 node --import tsx examples/assistant/src/agent.ts               # a scripted model: no API key
@@ -22,9 +19,7 @@ node --import tsx examples/assistant/src/cli.ts list-tasks -a grace --json 2>/de
 vp test examples/assistant
 ```
 
-The agent and each command are separate processes. They share one JSON file, named by
-`ASSISTANT_TASKS` and kept in the system's temporary directory by default. Running the agent
-again adds the same tasks again: delete the file to start over.
+The agent and each command are separate processes. They share one JSON file, named by `ASSISTANT_TASKS` and kept in the system's temporary directory by default. Running the agent again adds the same tasks again: delete the file to start over.
 
 ## Layout
 
@@ -57,22 +52,22 @@ test/
 
 ## Where to look
 
-| To see                                                                | Read                                               |
-| --------------------------------------------------------------------- | -------------------------------------------------- |
-| Implementations as a native Effect AI `Toolkit`                       | `src/toolkit.ts`                                   |
-| Native tool titles in the approval display                            | `src/toolkit.ts`, `src/agent.ts`                   |
-| One approval rule reading the call and its caller                     | `src/toolkit.ts`                                   |
-| A turn run as a member, and an approval answered through a `Chat`     | `src/agent.ts`                                     |
-| Where a real `LanguageModel` plugs in                                 | `src/agent.ts`, `src/scripted.ts`                  |
-| Local commands with `positional`, `aliases`, `render`, `stdin`        | `src/commands.ts`                                  |
-| Services provided on the command, and the host naming the caller      | `src/cli.ts`                                       |
-| A command's result alone on stdout, its handler's logs on stderr      | `src/cli.ts`, `src/platform/tasks-file.ts`         |
-| `logToStderr` moving a defect's report from stdout to stderr          | `src/cli.ts`                                       |
-| An identity only the host builds: the trusted operator                | `src/identity/Identity.ts`                         |
-| An authorizer built once from a service, reading the caller per call  | `src/identity/authorize.ts`                        |
+| To see | Read |
+| --- | --- |
+| Implementations as a native Effect AI `Toolkit` | `src/toolkit.ts` |
+| Native tool titles in the approval display | `src/toolkit.ts`, `src/agent.ts` |
+| One approval rule reading the call and its caller | `src/toolkit.ts` |
+| A turn run as a member, and an approval answered through a `Chat` | `src/agent.ts` |
+| Where a real `LanguageModel` plugs in | `src/agent.ts`, `src/scripted.ts` |
+| Local commands with `positional`, `aliases`, `render`, `stdin` | `src/commands.ts` |
+| Services provided on the command, and the host naming the caller | `src/cli.ts` |
+| A command's result alone on stdout, its handler's logs on stderr | `src/cli.ts`, `src/platform/tasks-file.ts` |
+| `logToStderr` moving a defect's report from stdout to stderr | `src/cli.ts` |
+| An identity only the host builds: the trusted operator | `src/identity/Identity.ts` |
+| An authorizer built once from a service, reading the caller per call | `src/identity/authorize.ts` |
 | One service with two Layers: a file for entrypoints, memory for tests | `src/tasks/store.ts`, `src/platform/tasks-file.ts` |
-| Changes serialized, since a turn's tool calls run concurrently        | `src/tasks/store.ts`                               |
-| Testing handlers and authorization, each caller around its calls      | `test/tasks/tasks.test.ts`                         |
-| Testing a Layer over a temporary file, its path set through config    | `test/platform/tasks-file.test.ts`                 |
-| Testing a tool call, an approval required, an approval answered       | `test/toolkit.test.ts`                             |
-| Testing a command's syntax and output without a process               | `test/commands.test.ts`                            |
+| Changes serialized, since a turn's tool calls run concurrently | `src/tasks/store.ts` |
+| Testing handlers and authorization, each caller around its calls | `test/tasks/tasks.test.ts` |
+| Testing a Layer over a temporary file, its path set through config | `test/platform/tasks-file.test.ts` |
+| Testing a tool call, an approval required, an approval answered | `test/toolkit.test.ts` |
+| Testing a command's syntax and output without a process | `test/commands.test.ts` |

@@ -1,10 +1,11 @@
-import { env } from "cloudflare:workers";
-import { Layer } from "effect";
-import { RpcServer } from "effect/rpc";
+import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import { env } from "cloudflare:workers";
+import { Layer } from "effect";
+import { RpcServer } from "effect/rpc";
+
 import { LobbyHttp, RoomHttp } from "./Api.js";
 import { messageEvents } from "./chat/events.js";
 import { messages } from "./chat/handlers.js";
@@ -13,11 +14,16 @@ import { authenticate } from "./identity/verifier.js";
 import { LobbyCalls } from "./lobby/Calls.js";
 import { previewEvents } from "./lobby/events.js";
 import { calls as lobbyHandlers, lobby } from "./lobby/handlers.js";
-import { LobbyRpc, protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
+import {
+  LobbyRpc,
+  protocolVersion,
+  RoomRpc,
+  unsupportedProtocol,
+} from "./Rpc.js";
 
 const room = [messages, messageEvents];
 
-const byRoom = ({ room }: { readonly room: string }) => room;
+const byRoom = (input: { readonly room: string }) => input.room;
 
 // Where each room's calls and watches are served: in the room's object, the one each contract's
 // key names. worker.ts gives it to the room's class, which then refuses an input naming another
@@ -45,19 +51,21 @@ const pageSocket = ActionDurableObject.layerWebSocket({
 // It requires `MessageStore`, `Room` and `Activity` at startup: worker.ts chooses them.
 export const roomRoutes = Layer.mergeAll(
   ActionRpc.layer(RoomRpc, room).pipe(Layer.provide(pageSocket)),
-  ActionHttp.layer(RoomHttp, room),
+  ActionHttp.layer(RoomHttp, room)
 ).pipe(Layer.provide(authenticate));
 
 // What the lobby's object serves: `PreviewsChanged` on its pages' sockets, a socket a page
 // signed out opens too, as nothing on it is protected. It requires `PreviewStore` at startup.
 export const lobbyRoutes = ActionRpc.layer(LobbyRpc, [previewEvents]).pipe(
-  Layer.provide(pageSocket),
+  Layer.provide(pageSocket)
 );
 
 // What the lobby's object serves over its stub: its own calls, on Effect's own RpcServer, for
 // the rooms and the Worker, which call them with Cloudflare's own RPC. It requires `PreviewStore`
 // at startup.
-export const lobbyCalls = RpcServer.layer(LobbyCalls).pipe(Layer.provide(lobbyHandlers));
+export const lobbyCalls = RpcServer.layer(LobbyCalls).pipe(
+  Layer.provide(lobbyHandlers)
+);
 
 // The rooms as the Worker serves them, each call sent on to its room's object. The room is read
 // from `env` as each call is sent.
@@ -77,5 +85,5 @@ export const workerRoutes = Layer.mergeAll(
     version: "1.0.0",
     authentication: Login,
     requestScoped: true,
-  }),
+  })
 ).pipe(Layer.provide(authenticate));

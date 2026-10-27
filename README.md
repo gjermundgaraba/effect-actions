@@ -1,14 +1,8 @@
 # effect-actions
 
-Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to a model as a
-native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients
-underneath. Events go the same way: watched over HTTP, MCP, Effect RPC and the CLI, or delivered
-by webhook. A companion package,
-[effect-actions-cloudflare](packages/cloudflare/), serves the HTTP, MCP and RPC routes, events and webhooks included, from Cloudflare Durable Objects.
+Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to a model as a native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients underneath. Events go the same way: watched over HTTP, MCP, Effect RPC and the CLI, or delivered by webhook. A companion package, [effect-actions-cloudflare](packages/cloudflare/), serves the HTTP, MCP and RPC routes, events and webhooks included, from Cloudflare Durable Objects.
 
-**If you are a coding agent**, start at [docs/README.md](docs/README.md), not here. It routes
-every task, protecting an action and limiting request bodies included, to its page and its
-example.
+**If you are a coding agent**, start at [docs/README.md](docs/README.md), not here. It routes every task, protecting an action and limiting request bodies included, to its page and its example.
 
 ## Looks like this
 
@@ -27,7 +21,9 @@ const Greet = Action.make("greet", {
 An implementation binds it to its handler:
 
 ```ts
-const greeting = Action.implement(Greet, ({ name }) => Effect.succeed(`Hello, ${name}!`));
+const greeting = Action.implement(Greet, ({ name }) =>
+  Effect.succeed(`Hello, ${name}!`)
+);
 ```
 
 A binding gives it a route, for the server to serve and a client to call:
@@ -41,14 +37,11 @@ And the same implementation is served on every surface the host wants:
 ```ts
 const routes = Layer.mergeAll(
   ActionHttp.layer(Http, greeting),
-  ActionMcp.layerHttp(greeting, { name: "greetings", version: "1.0.0" }),
+  ActionMcp.layerHttp(greeting, { name: "greetings", version: "1.0.0" })
 );
 ```
 
-Serve `routes` with Effect's `HttpRouter.serve` and a platform server, as
-[examples/quickstart](examples/quickstart) does, file by file, and you have
-`POST /api/greet` and an MCP tool named `greet` at `/mcp`. The same `greeting`
-implementation is also:
+Serve `routes` with Effect's `HttpRouter.serve` and a platform server, as [examples/quickstart](examples/quickstart) does, file by file, and you have `POST /api/greet` and an MCP tool named `greet` at `/mcp`. The same `greeting` implementation is also:
 
 ```ts
 const { toolkit, layer } = ActionToolkit.make(greeting); // native Effect AI Toolkit and its handler layer
@@ -86,40 +79,27 @@ Effect.gen(function* () {
 pnpm add @gjermundgaraba/effect-actions effect@~4.0.5
 ```
 
-It needs TypeScript 7 or newer and is ESM only
-([docs/setup.md](docs/setup.md#install)). Add `@effect/platform-node@~4.0.5` to serve or run a CLI from Node, and `@types/node` for its `node:` imports. Every module is a
-subpath import (`.../Action`, `.../ActionHttp`, ...); there is no package root, so a
-contracts-only bundle never loads a server.
+It needs TypeScript 7 or newer and is ESM only ([docs/setup.md](docs/setup.md#install)). Add `@effect/platform-node@~4.0.5` to serve or run a CLI from Node, and `@types/node` for its `node:` imports. Every module is a subpath import (`.../Action`, `.../ActionHttp`, ...); there is no package root, so a contracts-only bundle never loads a server.
 
 ## Examples
 
-[examples/](examples/README.md) holds complete applications, each a directory you can run, with
-its own tests, laid out the way we recommend for an application: a folder per domain, the
-contract in one file a browser can import, one entrypoint per way of running it. They are
-type-checked and tested with the library and ship in the package.
+[examples/](examples/README.md) holds complete applications, each a directory you can run, with its own tests, laid out the way we recommend for an application: a folder per domain, the contract in one file a browser can import, one entrypoint per way of running it. They are type-checked and tested with the library and ship in the package.
 
 - [quickstart](examples/quickstart/): the program above.
-- [notes-service](examples/notes-service/): a service with bearer authentication, a JSON API
-  and MCP tools from one implementation, a CLI and a browser client. Most applications are this.
+- [notes-service](examples/notes-service/): a service with bearer authentication, a JSON API and MCP tools from one implementation, a CLI and a browser client. Most applications are this.
 - [mcp-tools](examples/mcp-tools/): an MCP server whose tools wrap an upstream HTTP API.
-- [assistant](examples/assistant/): no server, the same implementations as a model's tools
-  and as local commands.
+- [assistant](examples/assistant/): no server, the same implementations as a model's tools and as local commands.
 - [live-rpc](examples/live-rpc/): Effect RPC over a WebSocket.
-- [build-events](examples/build-events/): events watched over MCP, HTTP, RPC, a command line and
-  webhooks, and actions reporting progress and answering a stream.
-- [kitchen-sink](examples/kitchen-sink/): every module and nearly every option in one
-  application, with an index from each to the file that shows it.
+- [build-events](examples/build-events/): events watched over MCP, HTTP, RPC, a command line and webhooks, and actions reporting progress and answering a stream.
+- [kitchen-sink](examples/kitchen-sink/): every module and nearly every option in one application, with an index from each to the file that shows it.
 
 ## Docs
 
-[docs/](docs/README.md) is written for coding agents: one short page per module, organized by
-task, each linking to the example files that show the task working. Start at
-[docs/README.md](docs/README.md).
+[docs/](docs/README.md) is written for coding agents: one short page per module, organized by task, each linking to the example files that show the task working. Start at [docs/README.md](docs/README.md).
 
 ## For agents
 
-The `effect-actions` skill puts the docs in front of a coding agent. With the
-[skills CLI](https://github.com/vercel-labs/skills), for any agent it supports:
+The `effect-actions` skill puts the docs in front of a coding agent. With the [skills CLI](https://github.com/vercel-labs/skills), for any agent it supports:
 
 ```sh
 npx skills add gjermundgaraba/effect-actions --skill effect-actions
@@ -139,16 +119,11 @@ codex plugin marketplace add gjermundgaraba/effect-actions
 codex plugin add effect-actions@effect-actions-marketplace
 ```
 
-The skill is generated from `docs/` on the main branch, which can be ahead of the latest
-release. Its links to the examples are paths into the installed package,
-`node_modules/@gjermundgaraba/effect-actions/examples`, which an agent reads without a network;
-the pages of the installed version are beside them, in
-`node_modules/@gjermundgaraba/effect-actions/docs`.
+The skill is generated from `docs/` on the main branch, which can be ahead of the latest release. Its links to the examples are paths into the installed package, `node_modules/@gjermundgaraba/effect-actions/examples`, which an agent reads without a network; the pages of the installed version are beside them, in `node_modules/@gjermundgaraba/effect-actions/docs`.
 
 ## Status
 
-The `effect` peer range is in [docs/setup.md](docs/setup.md#install). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no streaming or uploads.
-Token verification and the authorization rule belong to the application; the library supplies the authentication descriptor and provider, runs the rule, and answers the refusals. See [what the library leaves to you](docs/README.md#what-the-library-leaves-to-you).
+The `effect` peer range is in [docs/setup.md](docs/setup.md#install). Actions are unary JSON over HTTP, MCP and Effect RPC, whose protocols speak JSON alone: no streaming or uploads. Token verification and the authorization rule belong to the application; the library supplies the authentication descriptor and provider, runs the rule, and answers the refusals. See [what the library leaves to you](docs/README.md#what-the-library-leaves-to-you).
 
 ## Acknowledgements
 
@@ -156,5 +131,4 @@ A few ideas (like the native Toolkit and CLI projections) are inspired by the ex
 
 ## Contributing
 
-The rules for changing the library are in
-[AGENTS.md](https://github.com/gjermundgaraba/effect-actions/blob/main/AGENTS.md). MIT licensed.
+The rules for changing the library are in [AGENTS.md](https://github.com/gjermundgaraba/effect-actions/blob/main/AGENTS.md). MIT licensed.

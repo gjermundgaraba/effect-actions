@@ -1,9 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, ErrorReporter, Exit, Fiber, Layer, Schema, Scope } from "effect";
+import {
+  Cause,
+  Effect,
+  ErrorReporter,
+  Exit,
+  Fiber,
+  Layer,
+  Schema,
+  Scope,
+} from "effect";
 import { HttpClient } from "effect/http";
 import { Dns } from "effect/net";
 import { KeyValueStore } from "effect/persistence";
 import { TestClock } from "effect/testing";
+
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
@@ -11,7 +21,8 @@ import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
-import { type Actor, CurrentActor } from "../support/app/authorization.js";
+import { CurrentActor } from "../support/app/authorization.js";
+import type { Actor } from "../support/app/authorization.js";
 import { recorder } from "../support/reporter.js";
 import {
   acknowledging,
@@ -33,8 +44,15 @@ const keptIds = (store: KeyValueStore.KeyValueStore) =>
   Effect.map(store.get(index), (ids) =>
     ids === undefined
       ? []
-      : Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)))(ids),
+      : Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.String)))(
+          ids
+        )
   );
+
+const failing: typeof acknowledging = (body) =>
+  body["type"] === undefined
+    ? new Response(null, { status: 500 })
+    : acknowledging(body);
 
 describe("webhook subscriptions kept by persist", () => {
   it.effect(
@@ -46,48 +64,62 @@ describe("webhook subscriptions kept by persist", () => {
         const after = makeWorld({ kept: store });
 
         const grant = yield* Effect.gen(function* () {
-          const grant = yield* subscribed(secretOf(1));
+          const granted = yield* subscribed(secretOf(1));
 
           before.world.changes.push({ id: "c1", by: "bob" });
 
           yield* until(() => events(before.world.received).length === 1);
 
-          return grant;
+          return granted;
         }).pipe(Effect.provide(before.server));
 
-        after.world.changes.push({ id: "c1", by: "bob" }, { id: "c2", by: "bob" });
+        after.world.changes.push(
+          { id: "c1", by: "bob" },
+          { id: "c2", by: "bob" }
+        );
 
-        yield* Effect.gen(function* () {
-          yield* until(() => events(after.world.received).length === 1);
-        }).pipe(Effect.provide(after.server));
+        yield* until(() => events(after.world.received).length === 1).pipe(
+          Effect.provide(after.server)
+        );
 
         const [delivery] = after.world.received;
 
-        expect(events(after.world.received)).toMatchObject([{ eventId: "c2", cursor: "2" }]);
+        expect(events(after.world.received)).toMatchObject([
+          { eventId: "c2", cursor: "2" },
+        ]);
         expect(delivery?.subscription).toBe(grant.id);
-        expect(delivery && (yield* Effect.promise(() => signedBy(secretOf(1), delivery)))).toBe(
-          true,
-        );
-        expect(yield* keptIds(store)).toEqual([grant.id]);
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(
+          delivery &&
+            (yield* Effect.promise(
+              async () => await signedBy(secretOf(1), delivery)
+            ))
+        ).toBe(true);
+        expect(yield* keptIds(store)).toStrictEqual([grant.id]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
-  it.effect("restores over MCP a subscription made over HTTP, as the MCP endpoint builds", () =>
-    Effect.gen(function* () {
-      const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({ kept: store });
-      const after = makeWorld({ kept: store, over: "MCP" });
+  it.effect(
+    "restores over MCP a subscription made over HTTP, as the MCP endpoint builds",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+        const before = makeWorld({ kept: store });
+        const after = makeWorld({ kept: store, over: "MCP" });
 
-      const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
+        const grant = yield* subscribed(secretOf(1)).pipe(
+          Effect.provide(before.server)
+        );
 
-      after.world.changes.push({ id: "c1", by: "bob" });
+        after.world.changes.push({ id: "c1", by: "bob" });
 
-      yield* until(() => events(after.world.received).length === 1).pipe(
-        Effect.provide(after.server),
-      );
+        yield* until(() => events(after.world.received).length === 1).pipe(
+          Effect.provide(after.server)
+        );
 
-      expect(after.world.received.map((delivery) => delivery.subscription)).toEqual([grant.id]);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(
+          after.world.received.map((delivery) => delivery.subscription)
+        ).toStrictEqual([grant.id]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -113,9 +145,9 @@ describe("webhook subscriptions kept by persist", () => {
         yield* passed().pipe(Effect.provide(after.server));
 
         expect(keptBetween).toHaveLength(1);
-        expect(events(after.world.received)).toEqual([]);
-        expect(yield* keptIds(store)).toEqual([]);
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(events(after.world.received)).toStrictEqual([]);
+        expect(yield* keptIds(store)).toStrictEqual([]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -127,55 +159,70 @@ describe("webhook subscriptions kept by persist", () => {
 
         const failingFirstIndexWrite: KeyValueStore.KeyValueStore = {
           ...memory,
-          set: (key, value) =>
-            key === index && (indexWrites += 1) === 1
+          set: (key, value) => {
+            if (key !== index) {
+              return memory.set(key, value);
+            }
+
+            indexWrites += 1;
+
+            return indexWrites === 1
               ? Effect.die(new Error("The store is down."))
-              : memory.set(key, value),
+              : memory.set(key, value);
+          },
         };
 
         const before = makeWorld({ kept: failingFirstIndexWrite });
         const after = makeWorld({ kept: memory });
 
         const grant = yield* Effect.gen(function* () {
-          const grant = yield* subscribed(secretOf(1));
+          const granted = yield* subscribed(secretOf(1));
 
           before.world.changes.push({ id: "c1", by: "bob" });
 
           yield* until(() => events(before.world.received).length === 1);
 
-          return grant;
+          return granted;
         }).pipe(Effect.provide(before.server));
 
-        after.world.changes.push({ id: "c1", by: "bob" }, { id: "c2", by: "bob" });
+        after.world.changes.push(
+          { id: "c1", by: "bob" },
+          { id: "c2", by: "bob" }
+        );
 
-        yield* Effect.gen(function* () {
-          yield* until(() => events(after.world.received).length === 1);
-        }).pipe(Effect.provide(after.server));
+        yield* until(() => events(after.world.received).length === 1).pipe(
+          Effect.provide(after.server)
+        );
 
-        expect([indexWrites, yield* keptIds(memory)]).toEqual([2, [grant.id]]);
+        expect([indexWrites, yield* keptIds(memory)]).toStrictEqual([
+          2,
+          [grant.id],
+        ]);
         expect(events(after.world.received)).toMatchObject([{ eventId: "c2" }]);
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
-  it.effect("removes a subscription its own expiry ends while the layer runs", () =>
-    Effect.gen(function* () {
-      const store = yield* KeyValueStore.KeyValueStore;
-      const { server } = makeWorld({ kept: store });
+  it.effect(
+    "removes a subscription its own expiry ends while the layer runs",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+        const { server } = makeWorld({ kept: store });
 
-      const keptLive = yield* Effect.gen(function* () {
-        yield* subscribed(secretOf(1), 60_000);
-        yield* Effect.repeat(Effect.yieldNow, { times: 10 });
+        const keptLive = yield* Effect.gen(function* () {
+          yield* subscribed(secretOf(1), 60_000);
+          yield* Effect.repeat(Effect.yieldNow, { times: 10 });
 
-        const kept = yield* keptIds(store);
+          const kept = yield* keptIds(store);
 
-        yield* TestClock.adjust("2 minutes");
+          yield* TestClock.adjust("2 minutes");
 
-        return kept;
-      }).pipe(Effect.provide(server));
+          return kept;
+        }).pipe(Effect.provide(server));
 
-      expect(keptLive).toHaveLength(1);
-      expect(yield* keptIds(store)).toEqual([]);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(keptLive).toHaveLength(1);
+        expect(yield* keptIds(store)).toStrictEqual([]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -183,29 +230,41 @@ describe("webhook subscriptions kept by persist", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
-        const { world, server } = makeWorld({ retryFor: "10 seconds", kept: store });
+
+        const { world, server } = makeWorld({
+          retryFor: "10 seconds",
+          kept: store,
+        });
 
         const [grant, suspended] = yield* Effect.gen(function* () {
-          const grant = yield* subscribed(secretOf(1), null);
+          const granted = yield* subscribed(secretOf(1), null);
 
-          world.answer = (body) =>
-            body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
+          world.answer = failing;
           world.changes.push({ id: "c1", by: "bob" });
 
           yield* passed();
 
           const refresh = yield* subscribed(secretOf(1), null);
-          const suspended = [yield* keptIds(store), refresh.deliveryStatus?.active];
+
+          const whileSuspended = [
+            yield* keptIds(store),
+            refresh.deliveryStatus?.active,
+          ];
 
           yield* TestClock.adjust("1 hour");
           yield* passed();
 
-          return [grant, suspended] as const;
+          return [granted, whileSuspended] as const;
         }).pipe(Effect.provide(server));
 
-        expect(grant.refreshBefore).toBe(new Date(60 * 60 * 1000).toISOString());
-        expect([suspended, yield* keptIds(store)]).toEqual([[[grant.id], false], []]);
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(grant.refreshBefore).toBe(
+          new Date(60 * 60 * 1000).toISOString()
+        );
+        expect([suspended, yield* keptIds(store)]).toStrictEqual([
+          [[grant.id], false],
+          [],
+        ]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -213,7 +272,7 @@ describe("webhook subscriptions kept by persist", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
-        const reported: Array<string> = [];
+        const reported: string[] = [];
         const before = makeWorld({ kept: store });
         const after = makeWorld({ kept: store });
 
@@ -226,7 +285,10 @@ describe("webhook subscriptions kept by persist", () => {
 
         yield* store.set(
           key,
-          JSON.stringify({ ...JSON.parse((yield* store.get(key)) ?? "{}"), identity: { id: 7 } }),
+          JSON.stringify({
+            ...JSON.parse((yield* store.get(key)) ?? "{}"),
+            identity: { id: 7 },
+          })
         );
 
         after.world.changes.push({ id: "c1", by: "bob" });
@@ -234,39 +296,53 @@ describe("webhook subscriptions kept by persist", () => {
         const [keptMeanwhile, unsubscribed] = yield* Effect.gen(function* () {
           yield* until(() => events(after.world.received).length === 1);
 
-          const keptMeanwhile = yield* store.has(key);
-          const response = yield* sent("bob", "unsubscribe", { input: {}, delivery: { url } });
+          const kept = yield* store.has(key);
 
-          return [keptMeanwhile, response.status] as const;
+          const response = yield* sent("bob", "unsubscribe", {
+            input: {},
+            delivery: { url },
+          });
+
+          return [kept, response.status] as const;
         }).pipe(
-          Effect.provide(after.server),
-          Effect.provide(ErrorReporter.layer([recorder(reported)])),
+          Effect.provide(
+            Layer.provideMerge(
+              after.server,
+              ErrorReporter.layer([recorder(reported)])
+            )
+          )
         );
 
-        expect(after.world.received.map((delivery) => delivery.subscription)).toEqual([alice.id]);
+        expect(
+          after.world.received.map((delivery) => delivery.subscription)
+        ).toStrictEqual([alice.id]);
         expect(reported).toHaveLength(1);
-        expect([keptMeanwhile, unsubscribed]).toEqual([true, 204]);
+        expect([keptMeanwhile, unsubscribed]).toStrictEqual([true, 204]);
         expect(yield* store.has(key)).toBe(false);
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
-  it.effect("posts terminated to a subscriber refused as its subscription is restored", () =>
-    Effect.gen(function* () {
-      const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({ kept: store });
-      const after = makeWorld({ kept: store });
+  it.effect(
+    "posts terminated to a subscriber refused as its subscription is restored",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+        const before = makeWorld({ kept: store });
+        const after = makeWorld({ kept: store });
 
-      yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
+        yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
 
-      after.world.revoked.add("alice");
+        after.world.revoked.add("alice");
 
-      yield* until(() => after.world.received.length === 1).pipe(Effect.provide(after.server));
+        yield* until(() => after.world.received.length === 1).pipe(
+          Effect.provide(after.server)
+        );
 
-      expect(after.world.received.map(bodyOf)).toMatchObject([
-        { type: "terminated", error: { message: "Revoked." } },
-      ]);
-      expect(yield* keptIds(store)).toEqual([]);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(after.world.received.map(bodyOf)).toMatchObject([
+          { type: "terminated", error: { message: "Revoked." } },
+        ]);
+        expect(yield* keptIds(store)).toStrictEqual([]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -274,25 +350,31 @@ describe("webhook subscriptions kept by persist", () => {
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
-        const reported: Array<string> = [];
+        const reported: string[] = [];
         const before = makeWorld({ kept: store });
         const after = makeWorld({ kept: store });
 
-        const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
+        const grant = yield* subscribed(secretOf(1)).pipe(
+          Effect.provide(before.server)
+        );
 
         after.world.authorizerDown = 1;
         after.world.failures = 1;
         after.world.changes.push({ id: "c1", by: "bob" });
 
         yield* until(() => events(after.world.received).length === 1).pipe(
-          Effect.provide(after.server),
-          Effect.provide(ErrorReporter.layer([recorder(reported)])),
+          Effect.provide(
+            Layer.provideMerge(
+              after.server,
+              ErrorReporter.layer([recorder(reported)])
+            )
+          )
         );
 
         expect(events(after.world.received)).toMatchObject([{ eventId: "c1" }]);
         expect(reported).toHaveLength(2);
-        expect(yield* keptIds(store)).toEqual([grant.id]);
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(yield* keptIds(store)).toStrictEqual([grant.id]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -304,24 +386,26 @@ describe("webhook subscriptions kept by persist", () => {
         const before = makeWorld({ kept: store });
         const after = makeWorld({ kept: store });
 
-        const grant = yield* subscribed(secretOf(1), undefined, { callback }).pipe(
-          Effect.provide(before.server),
-        );
+        const grant = yield* subscribed(secretOf(1), undefined, {
+          callback,
+        }).pipe(Effect.provide(before.server));
 
         const [refreshed, unsubscribed] = yield* Effect.gen(function* () {
-          const refreshed = yield* subscribed(secretOf(1), undefined, { callback });
+          const refresh = yield* subscribed(secretOf(1), undefined, {
+            callback,
+          });
 
           const response = yield* sent("alice", "unsubscribe", {
             input: {},
             delivery: { url: callback },
           });
 
-          return [refreshed.id, response.status] as const;
+          return [refresh.id, response.status] as const;
         }).pipe(Effect.provide(after.server));
 
-        expect([refreshed, unsubscribed]).toEqual([grant.id, 204]);
-        expect(yield* keptIds(store)).toEqual([]);
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect([refreshed, unsubscribed]).toStrictEqual([grant.id, 204]);
+        expect(yield* keptIds(store)).toStrictEqual([]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -329,10 +413,12 @@ describe("webhook subscriptions kept by persist", () => {
     () =>
       Effect.gen(function* () {
         const memory = yield* KeyValueStore.KeyValueStore;
-        const reported: Array<string> = [];
+        const reported: string[] = [];
         const before = makeWorld({ kept: memory });
 
-        const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
+        const grant = yield* subscribed(secretOf(1)).pipe(
+          Effect.provide(before.server)
+        );
 
         yield* memory.set(index, JSON.stringify([grant.id, "ghost"]));
 
@@ -347,13 +433,17 @@ describe("webhook subscriptions kept by persist", () => {
         const after = makeWorld({ kept: failingReads });
 
         yield* passed().pipe(
-          Effect.provide(after.server),
-          Effect.provide(ErrorReporter.layer([recorder(reported)])),
+          Effect.provide(
+            Layer.provideMerge(
+              after.server,
+              ErrorReporter.layer([recorder(reported)])
+            )
+          )
         );
 
-        expect(yield* keptIds(memory)).toEqual([grant.id]);
+        expect(yield* keptIds(memory)).toStrictEqual([grant.id]);
         expect(reported).toHaveLength(1);
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -363,9 +453,6 @@ describe("webhook subscriptions kept by persist", () => {
         const store = yield* KeyValueStore.KeyValueStore;
         const before = makeWorld({ retryFor: "90 seconds", kept: store });
         const after = makeWorld({ retryFor: "90 seconds", kept: store });
-
-        const failing: typeof before.world.answer = (body) =>
-          body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
 
         yield* Effect.gen(function* () {
           yield* subscribed(secretOf(1));
@@ -386,42 +473,46 @@ describe("webhook subscriptions kept by persist", () => {
         }).pipe(Effect.provide(after.server));
 
         expect(events(after.world.received).length).toBeLessThanOrEqual(3);
-        expect(refreshed.deliveryStatus).toMatchObject({ active: false, lastError: "http_5xx" });
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(refreshed.deliveryStatus).toMatchObject({
+          active: false,
+          lastError: "http_5xx",
+        });
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
-  it.effect("restores a suspended subscription suspended, delivering again at its refresh", () =>
-    Effect.gen(function* () {
-      const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({ retryFor: "10 seconds", kept: store });
-      const after = makeWorld({ retryFor: "10 seconds", kept: store });
+  it.effect(
+    "restores a suspended subscription suspended, delivering again at its refresh",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+        const before = makeWorld({ retryFor: "10 seconds", kept: store });
+        const after = makeWorld({ retryFor: "10 seconds", kept: store });
 
-      yield* Effect.gen(function* () {
-        yield* subscribed(secretOf(1));
+        yield* Effect.gen(function* () {
+          yield* subscribed(secretOf(1));
 
-        before.world.answer = (body) =>
-          body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
-        before.world.changes.push({ id: "c1", by: "bob" });
+          before.world.answer = failing;
+          before.world.changes.push({ id: "c1", by: "bob" });
 
-        yield* passed();
-      }).pipe(Effect.provide(before.server));
+          yield* passed();
+        }).pipe(Effect.provide(before.server));
 
-      after.world.changes.push({ id: "c1", by: "bob" });
+        after.world.changes.push({ id: "c1", by: "bob" });
 
-      const [restored, refreshed] = yield* Effect.gen(function* () {
-        yield* passed();
+        const [restored, refreshed] = yield* Effect.gen(function* () {
+          yield* passed();
 
-        const restored = events(after.world.received).length;
-        const refresh = yield* subscribed(secretOf(1));
+          const delivered = events(after.world.received).length;
+          const refresh = yield* subscribed(secretOf(1));
 
-        yield* until(() => events(after.world.received).length >= 1);
+          yield* until(() => events(after.world.received).length >= 1);
 
-        return [restored, refresh.deliveryStatus?.active] as const;
-      }).pipe(Effect.provide(after.server));
+          return [delivered, refresh.deliveryStatus?.active] as const;
+        }).pipe(Effect.provide(after.server));
 
-      expect([restored, refreshed]).toEqual([0, false]);
-      expect(events(after.world.received)).toMatchObject([{ eventId: "c1" }]);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect([restored, refreshed]).toStrictEqual([0, false]);
+        expect(events(after.world.received)).toMatchObject([{ eventId: "c1" }]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -435,98 +526,133 @@ describe("webhook subscriptions kept by persist", () => {
         yield* Effect.gen(function* () {
           yield* subscribed(secretOf(1));
 
-          before.world.answer = (body) =>
-            body["type"] === undefined ? new Response(null, { status: 500 }) : acknowledging(body);
+          before.world.answer = failing;
           before.world.changes.push({ id: "c1", by: "bob" });
 
           yield* passed();
         }).pipe(Effect.provide(before.server));
 
-        after.world.changes.push({ id: "c1", by: "bob" }, { id: "c2", by: "bob" });
+        after.world.changes.push(
+          { id: "c1", by: "bob" },
+          { id: "c2", by: "bob" }
+        );
 
         const outcome = yield* Effect.gen(function* () {
-          const first = yield* sent("alice", "unsubscribe", { input: {}, delivery: { url } });
-          const second = yield* sent("alice", "unsubscribe", { input: {}, delivery: { url } });
+          const first = yield* sent("alice", "unsubscribe", {
+            input: {},
+            delivery: { url },
+          });
+
+          const second = yield* sent("alice", "unsubscribe", {
+            input: {},
+            delivery: { url },
+          });
+
           const fresh = yield* subscribed(secretOf(2));
 
           return { statuses: [first.status, second.status], fresh };
         }).pipe(Effect.provide(after.server));
 
-        expect(outcome).toMatchObject({ statuses: [204, 409], fresh: { cursor: "2" } });
+        expect(outcome).toMatchObject({
+          statuses: [204, 409],
+          fresh: { cursor: "2" },
+        });
         expect(outcome.fresh).not.toHaveProperty("deliveryStatus");
-      }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
-  it.effect("restores a subscription as the identity its latest refresh was made with", () =>
-    Effect.gen(function* () {
-      const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({ kept: store });
-      const after = makeWorld({ kept: store });
-      const moved: Actor = { id: "alice", tenantId: "other", permissions: ["users:read"] };
+  it.effect(
+    "restores a subscription as the identity its latest refresh was made with",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+        const before = makeWorld({ kept: store });
+        const after = makeWorld({ kept: store });
 
-      yield* Effect.gen(function* () {
-        yield* subscribed(secretOf(1));
+        const moved: Actor = {
+          id: "alice",
+          tenantId: "other",
+          permissions: ["users:read"],
+        };
 
-        before.world.known.set("alice", moved);
+        yield* Effect.gen(function* () {
+          yield* subscribed(secretOf(1));
 
-        yield* subscribed(secretOf(1));
-      }).pipe(Effect.provide(before.server));
+          before.world.known.set("alice", moved);
 
-      after.world.changes.push(
-        { id: "for-acme", by: "bob", onlyTenant: "acme" },
-        { id: "for-other", by: "bob", onlyTenant: "other" },
-      );
+          yield* subscribed(secretOf(1));
+        }).pipe(Effect.provide(before.server));
 
-      yield* Effect.gen(function* () {
-        yield* until(() => events(after.world.received).length >= 1);
-        yield* passed(10);
-      }).pipe(Effect.provide(after.server));
+        after.world.changes.push(
+          { id: "for-acme", by: "bob", onlyTenant: "acme" },
+          { id: "for-other", by: "bob", onlyTenant: "other" }
+        );
 
-      expect(events(after.world.received).map(({ eventId }) => eventId)).toEqual(["for-other"]);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        yield* Effect.gen(function* () {
+          yield* until(() => events(after.world.received).length >= 1);
+          yield* passed(10);
+        }).pipe(Effect.provide(after.server));
+
+        expect(
+          events(after.world.received).map(({ eventId }) => eventId)
+        ).toStrictEqual(["for-other"]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
-  it.effect("holds up neither a subscribe nor a delivery behind a store that never answers", () =>
-    Effect.gen(function* () {
-      const memory = yield* KeyValueStore.KeyValueStore;
-      const hanging = KeyValueStore.KeyValueStore.of({ ...memory, set: () => Effect.never });
-      const { world, server } = makeWorld({ kept: hanging });
-      const scope = yield* Scope.make();
-      const context = yield* Layer.buildWithScope(server, scope);
+  it.effect(
+    "holds up neither a subscribe nor a delivery behind a store that never answers",
+    () =>
+      Effect.gen(function* () {
+        const memory = yield* KeyValueStore.KeyValueStore;
 
-      const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(context));
+        const hanging = KeyValueStore.KeyValueStore.of({
+          ...memory,
+          set: () => Effect.never,
+        });
 
-      world.changes.push({ id: "c1", by: "bob" });
+        const { world, server } = makeWorld({ kept: hanging });
+        const scope = yield* Scope.make();
+        const context = yield* Layer.buildWithScope(server, scope);
 
-      yield* until(() => events(world.received).length === 1).pipe(Effect.provide(context));
+        const grant = yield* subscribed(secretOf(1)).pipe(
+          Effect.provide(context)
+        );
 
-      const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void));
+        world.changes.push({ id: "c1", by: "bob" });
 
-      yield* TestClock.adjust("5 seconds");
-      yield* Fiber.join(closing);
+        yield* until(() => events(world.received).length === 1).pipe(
+          Effect.provide(context)
+        );
 
-      expect(grant.cursor).toBe("0");
-      expect(events(world.received)).toMatchObject([{ eventId: "c1" }]);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void));
+
+        yield* TestClock.adjust("5 seconds");
+        yield* Fiber.join(closing);
+
+        expect(grant.cursor).toBe("0");
+        expect(events(world.received)).toMatchObject([{ eventId: "c1" }]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
-  it.effect("restores a subscription once where two surfaces serve one layer", () =>
-    Effect.gen(function* () {
-      const store = yield* KeyValueStore.KeyValueStore;
-      const before = makeWorld({ kept: store });
-      const after = makeWorld({ kept: store, over: "both" });
+  it.effect(
+    "restores a subscription once where two surfaces serve one layer",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+        const before = makeWorld({ kept: store });
+        const after = makeWorld({ kept: store, over: "both" });
 
-      yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
+        yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
 
-      after.world.changes.push({ id: "c1", by: "bob" });
+        after.world.changes.push({ id: "c1", by: "bob" });
 
-      yield* Effect.gen(function* () {
-        yield* until(() => events(after.world.received).length > 0);
-        yield* passed();
-      }).pipe(Effect.provide(after.server));
+        yield* Effect.gen(function* () {
+          yield* until(() => events(after.world.received).length > 0);
+          yield* passed();
+        }).pipe(Effect.provide(after.server));
 
-      expect(events(after.world.received)).toMatchObject([{ eventId: "c1" }]);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+        expect(events(after.world.received)).toMatchObject([{ eventId: "c1" }]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect("carries a subscription's delivery status through a restore", () =>
@@ -545,11 +671,13 @@ describe("webhook subscriptions kept by persist", () => {
         return (yield* subscribed(secretOf(1))).deliveryStatus;
       }).pipe(Effect.provide(before.server));
 
-      const restored = yield* subscribed(secretOf(1)).pipe(Effect.provide(after.server));
+      const restored = yield* subscribed(secretOf(1)).pipe(
+        Effect.provide(after.server)
+      );
 
       expect(status?.lastDeliveryAt).not.toBeNull();
-      expect(restored.deliveryStatus).toEqual(status);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+      expect(restored.deliveryStatus).toStrictEqual(status);
+    }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect("moves a kept subscription to the id its subscriber now has", () =>
@@ -558,21 +686,28 @@ describe("webhook subscriptions kept by persist", () => {
       const before = makeWorld({ kept: store });
       const after = makeWorld({ kept: store });
 
-      const grant = yield* subscribed(secretOf(1)).pipe(Effect.provide(before.server));
+      const grant = yield* subscribed(secretOf(1)).pipe(
+        Effect.provide(before.server)
+      );
 
-      yield* store.set(`${index}/stale`, (yield* store.get(`${index}/${grant.id}`)) ?? "");
+      yield* store.set(
+        `${index}/stale`,
+        (yield* store.get(`${index}/${grant.id}`)) ?? ""
+      );
       yield* store.remove(`${index}/${grant.id}`);
       yield* store.set(index, JSON.stringify(["stale"]));
 
       after.world.changes.push({ id: "c1", by: "bob" });
 
       yield* until(() => events(after.world.received).length === 1).pipe(
-        Effect.provide(after.server),
+        Effect.provide(after.server)
       );
 
-      expect(after.world.received.map((delivery) => delivery.subscription)).toEqual([grant.id]);
-      expect(yield* keptIds(store)).toEqual([grant.id]);
-    }).pipe(Effect.provide(KeyValueStore.layerMemory)),
+      expect(
+        after.world.received.map((delivery) => delivery.subscription)
+      ).toStrictEqual([grant.id]);
+      expect(yield* keptIds(store)).toStrictEqual([grant.id]);
+    }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 });
 
@@ -589,7 +724,7 @@ const Unkept = Authentication.make("webhook-persist.Unkept", CurrentActor, {
 const implementation = Event.implement(
   Changed,
   { check: () => Effect.succeed({ cursor: "0", events: [] }) },
-  { authorize: Event.allowAll },
+  { authorize: Event.allowAll }
 );
 
 const Member = Schema.Struct({
@@ -613,7 +748,7 @@ const persisted = Webhook.layer({ persist: true }).pipe(
     KeyValueStore.layerMemory,
     Testing.layer(async () => new Response(null)),
     Dns.layerStatic({ hosts: {} }),
-  ]),
+  ])
 );
 
 describe("Webhook.layer with persist", () => {
@@ -622,7 +757,10 @@ describe("Webhook.layer with persist", () => {
     () =>
       Effect.gen(function* () {
         const surfaces = [
-          ActionHttp.layer(ActionHttp.make([Changed], { authentication: Unkept }), implementation),
+          ActionHttp.layer(
+            ActionHttp.make([Changed], { authentication: Unkept }),
+            implementation
+          ),
           ActionMcp.layerHttp(implementation, {
             name: "persist",
             version: "1.0.0",
@@ -633,54 +771,66 @@ describe("Webhook.layer with persist", () => {
         const refusals = yield* Effect.forEach(surfaces, (surface) =>
           Effect.gen(function* () {
             const exit = yield* Effect.exit(
-              Effect.flatMap(HttpClient.HttpClient, (client) => client.get("/")).pipe(
+              Effect.flatMap(HttpClient.HttpClient, (client) =>
+                client.get("/")
+              ).pipe(
                 Effect.provide(
                   Testing.layer(
                     surface.pipe(
                       Layer.provide(Authentication.layer(Unkept, verify)),
-                      Layer.provide(persisted),
-                    ),
-                  ),
-                ),
-              ),
+                      Layer.provide(persisted)
+                    )
+                  )
+                )
+              )
             );
 
             return Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "";
-          }),
+          })
         );
 
-        expect(refusals).toEqual([
+        expect(refusals).toStrictEqual([
           expect.stringContaining(
-            'Webhook.layer persists webhook subscriptions, but the authentication of "user.changed" has no schema to keep a subscriber\'s identity by (give its Authentication.make a schema)',
+            'Webhook.layer persists webhook subscriptions, but the authentication of "user.changed" has no schema to keep a subscriber\'s identity by (give its Authentication.make a schema)'
           ),
-          expect.stringContaining("has no schema to keep a subscriber's identity by"),
+          expect.stringContaining(
+            "has no schema to keep a subscriber's identity by"
+          ),
         ]);
-      }).pipe(Effect.provide(Event.layerMemory)),
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("refuses an event two authentications with different schemas serve", () =>
-    Effect.gen(function* () {
-      const surfaces = Layer.mergeAll(
-        ActionHttp.layer(ActionHttp.make([Changed], { authentication: Bearer }), implementation),
-        ActionMcp.layerHttp(implementation, {
-          name: "persist",
-          version: "1.0.0",
-          authentication: OAuth,
-        }),
-      ).pipe(
-        Layer.provide([Authentication.layer(Bearer, verify), Authentication.layer(OAuth, verify)]),
-        Layer.provide(persisted),
-      );
+  it.effect(
+    "refuses an event two authentications with different schemas serve",
+    () =>
+      Effect.gen(function* () {
+        const surfaces = Layer.mergeAll(
+          ActionHttp.layer(
+            ActionHttp.make([Changed], { authentication: Bearer }),
+            implementation
+          ),
+          ActionMcp.layerHttp(implementation, {
+            name: "persist",
+            version: "1.0.0",
+            authentication: OAuth,
+          })
+        ).pipe(
+          Layer.provide([
+            Authentication.layer(Bearer, verify),
+            Authentication.layer(OAuth, verify),
+          ]),
+          Layer.provide(persisted)
+        );
 
-      const exit = yield* Effect.exit(
-        Effect.flatMap(HttpClient.HttpClient, (client) => client.get("/")).pipe(
-          Effect.provide(Testing.layer(surfaces)),
-        ),
-      );
+        const exit = yield* Effect.exit(
+          Effect.flatMap(HttpClient.HttpClient, (client) =>
+            client.get("/")
+          ).pipe(Effect.provide(Testing.layer(surfaces)))
+        );
 
-      expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
-        'Webhook.layer persists webhook subscriptions, but "user.changed" is served by two authentications with different schemas (serve each event with one authentication, or give them one schema)',
-      );
-    }).pipe(Effect.provide(Event.layerMemory)),
+        expect(Exit.isFailure(exit) && Cause.pretty(exit.cause)).toContain(
+          'Webhook.layer persists webhook subscriptions, but "user.changed" is served by two authentications with different schemas (serve each event with one authentication, or give them one schema)'
+        );
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 });

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
+import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Context,
@@ -12,26 +12,40 @@ import {
   Stream,
   Tracer,
 } from "effect";
-import { HttpClient, HttpRouter, HttpServerRequest } from "effect/http";
+import type { HttpClient } from "effect/http";
+import { HttpRouter, HttpServerRequest } from "effect/http";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
-import { layer as host } from "../support/app/app.js";
-import { actors, CurrentActor } from "../support/app/authorization.js";
-import { Http } from "../support/app/binding.js";
-import { GetUser, RenameUser, Status, WhoAmI } from "../support/app/contracts.js";
-import { status, userActions } from "../support/app/handlers.js";
-import { layer as http } from "../support/app/http.js";
-import { layer as mcp } from "../support/app/mcp.js";
-import { Users } from "../support/app/users.js";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
+import { httpProtocol } from "../../src/mcp/protocol.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import type { Served } from "../../src/testing/memory.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { httpProtocol } from "../../src/mcp/protocol.js";
-import { as, mcpRequest, post, rawToolCall, send, valueOf } from "../support/requests.js";
+import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
+import { layer as host } from "../support/app/app.js";
+import { actors, CurrentActor } from "../support/app/authorization.js";
+import { Http } from "../support/app/binding.js";
+import {
+  GetUser,
+  RenameUser,
+  Status,
+  WhoAmI,
+} from "../support/app/contracts.js";
+import { status, userActions } from "../support/app/handlers.js";
+import { layer as httpLayer } from "../support/app/http.js";
+import { layer as mcpLayer } from "../support/app/mcp.js";
+import { Users } from "../support/app/users.js";
 import { recorder } from "../support/reporter.js";
+import {
+  as,
+  mcpRequest,
+  post,
+  rawToolCall,
+  send,
+  valueOf,
+} from "../support/requests.js";
 import { serve, serveWithContext } from "../support/serve.js";
 import { converse } from "../support/stdio-host.js";
 
@@ -43,13 +57,19 @@ describe("the identity authentication provides", () => {
     success: Schema.String,
   });
 
-  const caller = Action.implement(Caller, () => Effect.map(CurrentActor, ({ id }) => id));
+  const caller = Action.implement(Caller, () =>
+    Effect.map(CurrentActor, ({ id }) => id)
+  );
 
   const Public = ActionHttp.make([Caller], { prefix: "/public" });
 
   const uncovered = Layer.mergeAll(
     ActionHttp.layer(Public, caller),
-    ActionMcp.layerHttp(caller, { name: "public", version: "0", path: "/mcp/caller" }),
+    ActionMcp.layerHttp(caller, {
+      name: "public",
+      version: "0",
+      path: "/mcp/caller",
+    })
   );
 
   it.effect(
@@ -57,12 +77,16 @@ describe("the identity authentication provides", () => {
     () =>
       Effect.gen(function* () {
         const harness = Testing.layer(Layer.mergeAll(host, uncovered)).pipe(
-          Layer.provide(Layer.succeed(CurrentActor, actors.reader)),
+          Layer.provide(Layer.succeed(CurrentActor, actors.reader))
         );
 
         const answered = yield* Effect.gen(function* () {
           const http = yield* ActionHttp.client(Http, as("alice"));
-          const mcp = yield* ActionMcp.client([WhoAmI, RenameUser], as("alice"));
+
+          const mcp = yield* ActionMcp.client(
+            [WhoAmI, RenameUser],
+            as("alice")
+          );
 
           const identities = {
             http: (yield* http.whoAmI()).id,
@@ -75,16 +99,19 @@ describe("the identity authentication provides", () => {
           ];
 
           const anonymous = {
-            http: yield* Effect.flatMap(ActionHttp.client(Public), (client) => client.caller()),
-            mcp: yield* Effect.flatMap(ActionMcp.client([Caller], { url: "/mcp/caller" }), (mcp) =>
-              mcp.caller(),
+            http: yield* Effect.flatMap(ActionHttp.client(Public), (client) =>
+              client.caller()
+            ),
+            mcp: yield* Effect.flatMap(
+              ActionMcp.client([Caller], { url: "/mcp/caller" }),
+              (client) => client.caller()
             ),
           };
 
           return { identities, renamed, anonymous };
         }).pipe(Effect.provide(harness));
 
-        expect(answered).toEqual({
+        expect(answered).toStrictEqual({
           identities: { http: "alice", mcp: "alice" },
           renamed: [
             { id: "1", name: "Bea" },
@@ -92,96 +119,134 @@ describe("the identity authentication provides", () => {
           ],
           anonymous: { http: "reader", mcp: "reader" },
         });
-      }),
+      })
   );
 
   it.effect(
     "wins over an identity provided at a server's startup, so a caller reads its own tenant",
     () =>
       Effect.gen(function* () {
-        const server = HttpRouter.serve(host, { disableLogger: true, disableListenLog: true }).pipe(
+        const server = HttpRouter.serve(host, {
+          disableLogger: true,
+          disableListenLog: true,
+        }).pipe(
           Layer.provide(Layer.succeed(CurrentActor, actors.bob)),
-          Layer.provideMerge(NodeHttpServer.layerTest),
+          Layer.provideMerge(NodeHttpServer.layerTest)
         );
 
         const users = yield* Effect.gen(function* () {
           const http = yield* ActionHttp.client(Http, as("alice"));
           const mcp = yield* ActionMcp.client([GetUser], as("alice"));
 
-          return [yield* http.getUser({ id: "1" }), yield* mcp.getUser({ id: "1" })];
+          return [
+            yield* http.getUser({ id: "1" }),
+            yield* mcp.getUser({ id: "1" }),
+          ];
         }).pipe(Effect.provide(server));
 
-        expect(users).toEqual([
+        expect(users).toStrictEqual([
           { id: "1", name: "Ada" },
           { id: "1", name: "Ada" },
         ]);
-      }),
+      })
   );
 
   it("never stands in for authentication: a caller presenting no token is refused", async () => {
     const web = serve(
-      Layer.mergeAll(http, mcp).pipe(
+      Layer.mergeAll(httpLayer, mcpLayer).pipe(
         Layer.provide(Layer.succeed(CurrentActor, actors.alice)),
-        Layer.provide(Users.layerMemory),
-      ),
+        Layer.provide(Users.layerMemory)
+      )
     );
 
-    expect((await web.handler(post("/api/whoAmI"))).status).toBe(401);
-    expect((await web.handler(rawToolCall("whoAmI"))).status).toBe(401);
+    const overHttp = await web.handler(post("/api/whoAmI"));
+
+    expect(overHttp.status).toBe(401);
+
+    const overMcp = await web.handler(rawToolCall("whoAmI"));
+
+    expect(overMcp.status).toBe(401);
   });
 });
 
 describe("the caller of a local surface", () => {
-  it.effect("is read per call by Action.client, and a public selection needs none", () =>
-    Effect.gen(function* () {
-      const client = yield* Action.client(userActions, { actions: [GetUser, WhoAmI] });
-      const whoAmI = client.whoAmI();
+  it.effect(
+    "is read per call by Action.client, and a public selection needs none",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* Action.client(userActions, {
+          actions: [GetUser, WhoAmI],
+        });
 
-      expect(yield* whoAmI.pipe(Effect.provideService(CurrentActor, actors.alice))).toEqual({
-        id: "alice",
-        tenantId: "acme",
-      });
-      expect(yield* whoAmI.pipe(Effect.provideService(CurrentActor, actors.bob))).toEqual({
-        id: "bob",
-        tenantId: "other",
-      });
+        const whoAmI = client.whoAmI();
 
-      expect(
-        yield* client.getUser({ id: "1" }).pipe(Effect.provideService(CurrentActor, actors.bob)),
-      ).toEqual({ id: "1", name: "Grace" });
+        expect(
+          yield* whoAmI.pipe(Effect.provideService(CurrentActor, actors.alice))
+        ).toStrictEqual({
+          id: "alice",
+          tenantId: "acme",
+        });
+        expect(
+          yield* whoAmI.pipe(Effect.provideService(CurrentActor, actors.bob))
+        ).toStrictEqual({
+          id: "bob",
+          tenantId: "other",
+        });
 
-      const open = yield* Action.client([status, userActions], { actions: [Status] });
+        expect(
+          yield* client
+            .getUser({ id: "1" })
+            .pipe(Effect.provideService(CurrentActor, actors.bob))
+        ).toStrictEqual({ id: "1", name: "Grace" });
 
-      expect(yield* open.status()).toEqual({ service: "effect-actions", users: 2 });
-    }).pipe(Effect.provide(Users.layerMemory)),
+        const open = yield* Action.client([status, userActions], {
+          actions: [Status],
+        });
+
+        expect(yield* open.status()).toStrictEqual({
+          service: "effect-actions",
+          users: 2,
+        });
+      }).pipe(Effect.provide(Users.layerMemory))
   );
 
-  it.effect("is read per call by one Toolkit, the innermost caller winning", () => {
-    const binding = ActionToolkit.make(userActions, { actions: [WhoAmI] });
+  it.effect(
+    "is read per call by one Toolkit, the innermost caller winning",
+    () => {
+      const binding = ActionToolkit.make(userActions, { actions: [WhoAmI] });
 
-    return Effect.gen(function* () {
-      const tools = yield* binding.toolkit;
-      const call = Effect.flatMap(tools.handle("whoAmI", {}), Stream.runCollect);
+      return Effect.gen(function* () {
+        const tools = yield* binding.toolkit;
 
-      expect(yield* call.pipe(Effect.provideService(CurrentActor, actors.alice))).toMatchObject([
-        { result: { id: "alice" } },
-      ]);
-      expect(yield* call.pipe(Effect.provideService(CurrentActor, actors.bob))).toMatchObject([
-        { result: { id: "bob" } },
-      ]);
+        const call = Effect.flatMap(
+          tools.handle("whoAmI", {}),
+          Stream.runCollect
+        );
 
-      expect(
-        yield* call.pipe(
-          Effect.provideService(CurrentActor, actors.reader),
-          Effect.provideService(CurrentActor, actors.alice),
-        ),
-      ).toMatchObject([{ result: { id: "reader" } }]);
-    }).pipe(Effect.provide(binding.layer), Effect.provide(Users.layerMemory));
-  });
+        expect(
+          yield* call.pipe(Effect.provideService(CurrentActor, actors.alice))
+        ).toMatchObject([{ result: { id: "alice" } }]);
+        expect(
+          yield* call.pipe(Effect.provideService(CurrentActor, actors.bob))
+        ).toMatchObject([{ result: { id: "bob" } }]);
+
+        expect(
+          yield* call.pipe(
+            Effect.provideService(CurrentActor, actors.reader),
+            Effect.provideService(CurrentActor, actors.alice)
+          )
+        ).toMatchObject([{ result: { id: "reader" } }]);
+      }).pipe(
+        Effect.provide(Layer.provideMerge(binding.layer, Users.layerMemory))
+      );
+    }
+  );
 });
 
 describe("a value provided per request", () => {
-  class Tenant extends Context.Service<Tenant, string>()("request-context/Tenant") {}
+  class Tenant extends Context.Service<Tenant, string>()(
+    "request-context/Tenant"
+  ) {}
 
   const Where = Action.make("where", {
     description: "Name the request's tenant.",
@@ -194,13 +259,18 @@ describe("a value provided per request", () => {
 
   const routes = Layer.mergeAll(
     ActionHttp.layer(ActionHttp.make([Where]), where),
-    ActionMcp.layerHttp(where, { name: "test", version: "0" }),
+    ActionMcp.layerHttp(where, { name: "test", version: "0" })
   );
 
-  const tenantFromHeader = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
-    Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-      Effect.provideService(route, Tenant, request.headers["x-tenant"] ?? "none"),
-    ),
+  const tenantFromHeader = HttpRouter.middleware<{ provides: Tenant }>()(
+    (route) =>
+      Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+        Effect.provideService(
+          route,
+          Tenant,
+          request.headers["x-tenant"] ?? "none"
+        )
+      )
   );
 
   it.each([
@@ -209,28 +279,37 @@ describe("a value provided per request", () => {
       routes.pipe(HttpRouter.provideRequest(Layer.succeed(Tenant, "request"))),
     ],
     ["router middleware", routes.pipe(Layer.provide(tenantFromHeader.layer))],
-  ])("by %s wins over the value the routes were built with", async (_, provided) => {
-    const web = serve(provided.pipe(Layer.provide(Layer.succeed(Tenant, "startup"))));
+  ])(
+    "by %s wins over the value the routes were built with",
+    async (_, provided) => {
+      const web = serve(
+        provided.pipe(Layer.provide(Layer.succeed(Tenant, "startup")))
+      );
 
-    const http = post("/api/where");
-    http.headers.set("x-tenant", "request");
+      const http = post("/api/where");
+      http.headers.set("x-tenant", "request");
 
-    const mcp = mcpRequest({
-      method: "tools/call",
-      params: { name: "where", arguments: {} },
-      headers: { "x-tenant": "request" },
-    });
+      const mcp = mcpRequest({
+        method: "tools/call",
+        params: { name: "where", arguments: {} },
+        headers: { "x-tenant": "request" },
+      });
 
-    expect(await (await web.handler(http)).json()).toBe("request");
-    expect(await valueOf(await web.handler(mcp))).toBe("request");
-  });
+      const httpResponse = await web.handler(http);
+
+      await expect(httpResponse.json()).resolves.toBe("request");
+      await expect(valueOf(await web.handler(mcp))).resolves.toBe("request");
+    }
+  );
 
   it.each(["HTTP", "MCP"] as const)(
     "is still the one a handler gives a Toolkit call it makes, over %s",
     async (transport) => {
-      class Actor extends Context.Service<Actor, string>()("request-context/Actor") {}
+      class Actor extends Context.Service<Actor, string>()(
+        "request-context/Actor"
+      ) {}
 
-      const seen: Array<string> = [];
+      const seen: string[] = [];
 
       const Who = Action.make("who", {
         description: "Record the caller.",
@@ -240,13 +319,18 @@ describe("a value provided per request", () => {
 
       const who = Action.implement(
         Who,
-        () => Effect.flatMap(Actor, (actor) => Effect.sync(() => seen.push(`handler: ${actor}`))),
+        () =>
+          Effect.flatMap(Actor, (actor) =>
+            Effect.sync(() => seen.push(`handler: ${actor}`))
+          ),
         {
           authorize: () =>
             Effect.flatMap(Actor, (actor) =>
-              Effect.sync(() => void seen.push(`authorizer: ${actor}`)),
+              Effect.sync(() => {
+                seen.push(`authorizer: ${actor}`);
+              })
             ),
-        },
+        }
       );
 
       const tools = ActionToolkit.make(who);
@@ -268,30 +352,38 @@ describe("a value provided per request", () => {
                 .pipe(
                   Effect.flatMap(Stream.runDrain),
                   Effect.orDie,
-                  Effect.provideService(Actor, `delegate of ${actor}`),
-                ),
-            ),
-        ),
+                  Effect.provideService(Actor, `delegate of ${actor}`)
+                )
+            )
+        )
       );
 
       const identify = HttpRouter.middleware<{ provides: Actor }>()((route) =>
-        Effect.provideService(route, Actor, "alice"),
+        Effect.provideService(route, Actor, "alice")
       );
 
-      const routes =
+      const chatRoutes =
         transport === "HTTP"
           ? ActionHttp.layer(ActionHttp.make([Chat]), chat)
           : ActionMcp.layerHttp(chat, { name: "test", version: "0" });
 
-      const web = serve(routes.pipe(Layer.provide(tools.layer), Layer.provide(identify.layer)));
+      const web = serve(
+        chatRoutes.pipe(
+          Layer.provide(tools.layer),
+          Layer.provide(identify.layer)
+        )
+      );
 
       const response = await web.handler(
-        transport === "HTTP" ? post("/api/chat") : rawToolCall("chat"),
+        transport === "HTTP" ? post("/api/chat") : rawToolCall("chat")
       );
 
       expect(response.status).toBe(200);
-      expect(seen).toEqual(["authorizer: delegate of alice", "handler: delegate of alice"]);
-    },
+      expect(seen).toStrictEqual([
+        "authorizer: delegate of alice",
+        "handler: delegate of alice",
+      ]);
+    }
   );
 });
 
@@ -303,28 +395,39 @@ describe("what the routes were built with", () => {
     success: Schema.String,
   });
 
-  const Boom = Action.make("boom", { description: "Die.", readOnly: false, caller: Action.Anyone });
+  const Boom = Action.make("boom", {
+    description: "Die.",
+    readOnly: false,
+    caller: Action.Anyone,
+  });
 
   it("fills in a reference a request lacks, but never the log level an MCP client asks for", async () => {
-    const level = Action.implement(Level, () => Effect.service(References.CurrentLogLevel));
+    const level = Action.implement(Level, () =>
+      Effect.service(References.CurrentLogLevel)
+    );
 
     const web = serve(
       Layer.mergeAll(
         ActionHttp.layer(ActionHttp.make([Level]), level),
-        ActionMcp.layerHttp(level, { name: "test", version: "0" }),
-      ).pipe(Layer.provide(Layer.succeed(References.CurrentLogLevel, "Warn"))),
+        ActionMcp.layerHttp(level, { name: "test", version: "0" })
+      ).pipe(Layer.provide(Layer.succeed(References.CurrentLogLevel, "Warn")))
     );
 
-    const call = (meta: { readonly [key: string]: Schema.Json }) =>
-      web.handler(
-        mcpRequest({ method: "tools/call", params: { name: "level", arguments: {}, _meta: meta } }),
+    const call = async (meta: { readonly [key: string]: Schema.Json }) =>
+      await web.handler(
+        mcpRequest({
+          method: "tools/call",
+          params: { name: "level", arguments: {}, _meta: meta },
+        })
       );
 
-    expect(await (await web.handler(post("/api/level"))).json()).toBe("Warn");
-    expect(await valueOf(await call({}))).toBe("Warn");
-    expect(await valueOf(await call({ "io.modelcontextprotocol/logLevel": "debug" }))).toBe(
-      "Debug",
-    );
+    const levelResponse = await web.handler(post("/api/level"));
+
+    await expect(levelResponse.json()).resolves.toBe("Warn");
+    await expect(valueOf(await call({}))).resolves.toBe("Warn");
+    await expect(
+      valueOf(await call({ "io.modelcontextprotocol/logLevel": "debug" }))
+    ).resolves.toBe("Debug");
   });
 
   it.effect.each(["HTTP", "MCP"] as const)(
@@ -346,7 +449,7 @@ describe("what the routes were built with", () => {
           Effect.all({
             stage: Effect.service(Stage),
             level: Effect.service(References.CurrentLogLevel),
-          }),
+          })
         );
 
         const bindings = {
@@ -365,31 +468,41 @@ describe("what the routes were built with", () => {
             HttpRouter.provideRequest(
               Layer.mergeAll(
                 Layer.succeed(Stage, "scoped"),
-                Layer.succeed(References.CurrentLogLevel, "Debug"),
-              ),
-            ),
-          ),
+                Layer.succeed(References.CurrentLogLevel, "Debug")
+              )
+            )
+          )
         );
 
         const probeAt = (path: keyof typeof bindings) =>
           transport === "HTTP"
-            ? Effect.flatMap(ActionHttp.client(bindings[path]), (client) => client.probe())
-            : Effect.flatMap(ActionMcp.client([Probe], { url: path }), (mcp) => mcp.probe());
+            ? Effect.flatMap(ActionHttp.client(bindings[path]), (client) =>
+                client.probe()
+              )
+            : Effect.flatMap(ActionMcp.client([Probe], { url: path }), (mcp) =>
+                mcp.probe()
+              );
 
-        const answers = yield* Effect.all([probeAt("/built"), probeAt("/scoped")]).pipe(
+        const answers = yield* Effect.all([
+          probeAt("/built"),
+          probeAt("/scoped"),
+        ]).pipe(
           Effect.provide(Testing.layer(routes)),
           Effect.provideService(Stage, "server"),
-          Effect.provideService(References.CurrentLogLevel, "Warn"),
+          Effect.provideService(References.CurrentLogLevel, "Warn")
         );
 
-        expect(answers).toEqual([
+        expect(answers).toStrictEqual([
           { stage: "server", level: "Warn" },
           { stage: "scoped", level: "Debug" },
         ]);
-      }),
+      })
   );
 
-  class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
+  class Gone extends Schema.TaggedError<
+    Gone,
+    { readonly brand: unique symbol }
+  >()("Gone", {}) {}
 
   const Find = Action.make("find", {
     description: "Fail as declared.",
@@ -406,10 +519,10 @@ describe("what the routes were built with", () => {
   const failingOver: Record<
     "HTTP" | "MCP" | "RPC",
     {
-      readonly routes: Layer.Layer<never, unknown, Served>;
+      readonly routes: Layer.Layer<never, Error, Served>;
       readonly call: (
-        name: "boom" | "find",
-      ) => Effect.Effect<unknown, unknown, HttpClient.HttpClient>;
+        name: "boom" | "find"
+      ) => Effect.Effect<unknown, Error, HttpClient.HttpClient>;
     }
   > = {
     HTTP: {
@@ -423,18 +536,19 @@ describe("what the routes were built with", () => {
     RPC: {
       routes: ActionRpc.layer(ActionRpc.make([Boom, Find]), failing).pipe(
         Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-        Layer.provide(RpcSerialization.layerJson),
+        Layer.provide(RpcSerialization.layerJson)
       ),
       call: (name) =>
-        Effect.flatMap(ActionRpc.client(ActionRpc.make([Boom, Find])), (client) =>
-          Effect.exit(client[name]()),
+        Effect.flatMap(
+          ActionRpc.client(ActionRpc.make([Boom, Find])),
+          (client) => Effect.exit(client[name]())
         ).pipe(
           Effect.scoped,
           Effect.provide(
             RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-              Layer.provide(RpcSerialization.layerJson),
-            ),
-          ),
+              Layer.provide(RpcSerialization.layerJson)
+            )
+          )
         ),
     },
   };
@@ -443,42 +557,52 @@ describe("what the routes were built with", () => {
     "reports a handler's defect to their error reporters, once, over %s",
     (transport) =>
       Effect.gen(function* () {
-        const reported: Array<string> = [];
+        const reported: string[] = [];
         const { routes, call } = failingOver[transport];
 
         yield* call("boom").pipe(
           Effect.provide(
-            Testing.layer(routes.pipe(Layer.provide(ErrorReporter.layer([recorder(reported)])))),
-          ),
+            Testing.layer(
+              routes.pipe(
+                Layer.provide(ErrorReporter.layer([recorder(reported)]))
+              )
+            )
+          )
         );
 
-        expect(reported).toEqual([expect.stringContaining("Error: boom")]);
-      }),
+        expect(reported).toStrictEqual([
+          expect.stringContaining("Error: boom"),
+        ]);
+      })
   );
 
   it.effect.each(["HTTP", "MCP", "RPC"] as const)(
     "reports a defect to the server's error reporters over the layer's, over %s",
     (transport) =>
       Effect.gen(function* () {
-        const layer: Array<string> = [];
-        const server: Array<string> = [];
+        const layer: string[] = [];
+        const server: string[] = [];
         const { routes, call } = failingOver[transport];
 
         yield* call("boom").pipe(
           Effect.provide(
-            Testing.layer(routes.pipe(Layer.provide(ErrorReporter.layer([recorder(layer)])))).pipe(
+            Testing.layer(
+              routes.pipe(Layer.provide(ErrorReporter.layer([recorder(layer)])))
+            ).pipe(
               Layer.provide(
                 ErrorReporter.layer([
-                  ErrorReporter.make(({ error }) => void server.push(String(error))),
-                ]),
-              ),
-            ),
-          ),
+                  ErrorReporter.make(({ error }) => {
+                    server.push(String(error));
+                  }),
+                ])
+              )
+            )
+          )
         );
 
-        expect(layer).toEqual([]);
-        expect(server).toEqual(["Error: boom"]);
-      }),
+        expect(layer).toStrictEqual([]);
+        expect(server).toStrictEqual(["Error: boom"]);
+      })
   );
 
   it.effect.each([
@@ -489,23 +613,30 @@ describe("what the routes were built with", () => {
     "reports a declared failure over HTTP, as Effect's HttpApi does, and not over MCP or RPC (%s)",
     ([transport, expected]) =>
       Effect.gen(function* () {
-        const reported: Array<string> = [];
+        const reported: string[] = [];
         const { routes, call } = failingOver[transport];
 
         yield* call("find").pipe(
           Effect.provide(
-            Testing.layer(routes.pipe(Layer.provide(ErrorReporter.layer([recorder(reported)])))),
-          ),
+            Testing.layer(
+              routes.pipe(
+                Layer.provide(ErrorReporter.layer([recorder(reported)]))
+              )
+            )
+          )
         );
 
-        expect(reported).toEqual(expected);
-      }),
+        expect(reported).toStrictEqual(expected);
+      })
   );
 
   it.effect(
     "gives a reporter a declared failure and an undecodable input as Info over HTTP, and no failure of a class marked ignored",
     () => {
-      class Hidden extends Schema.TaggedError<Hidden>()("Hidden", {}) {
+      class Hidden extends Schema.TaggedError<
+        Hidden,
+        { readonly brand: unique symbol }
+      >()("Hidden", {}) {
         override readonly [ErrorReporter.ignore] = true;
       }
 
@@ -531,36 +662,41 @@ describe("what the routes were built with", () => {
         take: () => Effect.void,
       });
 
-      const given: Array<string> = [];
+      const given: string[] = [];
 
       const reporter = ErrorReporter.make(({ cause, severity }) => {
         given.push(`${severity}: ${Cause.pretty(cause)}`);
       });
 
       return Effect.gen(function* () {
-        const statuses = yield* Effect.forEach(["find", "hide", "take"], (name) =>
-          Effect.map(send(post(`/api/${name}`)), ({ status }) => status),
+        const statuses = yield* Effect.forEach(
+          ["find", "hide", "take"],
+          (name) =>
+            Effect.map(
+              send(post(`/api/${name}`)),
+              (response) => response.status
+            )
         );
 
-        expect(statuses).toEqual([422, 422, 400]);
-        expect(given).toEqual([
-          expect.stringMatching(/^Info: [^]*Gone/),
-          expect.stringMatching(/^Info: [^]*InvalidInput/),
+        expect(statuses).toStrictEqual([422, 422, 400]);
+        expect(given).toStrictEqual([
+          expect.stringMatching(/^Info: [^]*Gone/u),
+          expect.stringMatching(/^Info: [^]*InvalidInput/u),
         ]);
       }).pipe(
         Effect.provide(
           Testing.layer(
             ActionHttp.layer(ActionHttp.make(actions), implemented).pipe(
-              Layer.provide(ErrorReporter.layer([reporter])),
-            ),
-          ),
-        ),
+              Layer.provide(ErrorReporter.layer([reporter]))
+            )
+          )
+        )
       );
-    },
+    }
   );
 
   it("answers a success that does not encode with an empty 500, reported once, over HTTP", async () => {
-    const reported: Array<string> = [];
+    const reported: string[] = [];
 
     const Count = Action.make("count", {
       description: "Count.",
@@ -573,15 +709,17 @@ describe("what the routes were built with", () => {
 
     const web = serve(
       ActionHttp.layer(ActionHttp.make([Count]), count).pipe(
-        Layer.provide(ErrorReporter.layer([recorder(reported)])),
-      ),
+        Layer.provide(ErrorReporter.layer([recorder(reported)]))
+      )
     );
 
     const response = await web.handler(post("/api/count"));
 
     expect(response.status).toBe(500);
-    expect(await response.text()).toBe("");
-    expect(reported).toEqual([expect.stringContaining("Expected a finite number")]);
+    await expect(response.text()).resolves.toBe("");
+    expect(reported).toStrictEqual([
+      expect.stringContaining("Expected a finite number"),
+    ]);
   });
 
   it.each(["HTTP", "MCP"] as const)(
@@ -593,7 +731,10 @@ describe("what the routes were built with", () => {
         span(options) {
           const parent = Option.getOrUndefined(options.parent);
 
-          parents.set(options.name, parent?._tag === "Span" ? parent.name : undefined);
+          parents.set(
+            options.name,
+            parent?._tag === "Span" ? parent.name : undefined
+          );
 
           return Tracer.nativeTracer.span(options);
         },
@@ -609,44 +750,57 @@ describe("what the routes were built with", () => {
       const web = serveWithContext(routes.pipe(Layer.withSpan("startup")));
       const context = Context.make(Tracer.Tracer, tracer);
 
-      await web.handler(transport === "HTTP" ? post("/api/level") : rawToolCall("level"), context);
+      await web.handler(
+        transport === "HTTP" ? post("/api/level") : rawToolCall("level"),
+        context
+      );
 
       expect(parents.get("level")).toMatch(
-        transport === "HTTP" ? /^POST$/ : /^McpServer\..*tools\/call$/,
+        transport === "HTTP" ? /^POST$/u : /^McpServer\..*tools\/call$/u
       );
-    },
+    }
   );
 });
 
 describe("over stdio", () => {
-  it.effect("gives a tool call the identity the host provides around runStdio", () =>
-    Effect.gen(function* () {
-      class Actor extends Context.Service<Actor, string>()("request-context/StdioActor") {}
+  it.effect(
+    "gives a tool call the identity the host provides around runStdio",
+    () =>
+      Effect.gen(function* () {
+        class Actor extends Context.Service<Actor, string>()(
+          "request-context/StdioActor"
+        ) {}
 
-      const Who = Action.make("who", {
-        description: "Name the caller.",
-        readOnly: true,
-        caller: Actor,
-        success: Schema.String,
-      });
+        const Who = Action.make("who", {
+          description: "Name the caller.",
+          readOnly: true,
+          caller: Actor,
+          success: Schema.String,
+        });
 
-      const authorized: Array<string> = [];
+        const authorized: string[] = [];
 
-      const who = Action.implement(Who, () => Actor, {
-        authorize: () =>
-          Effect.flatMap(Actor, (actor) => Effect.sync(() => void authorized.push(actor))),
-      });
+        const who = Action.implement(Who, () => Actor, {
+          authorize: () =>
+            Effect.flatMap(Actor, (actor) =>
+              Effect.sync(() => {
+                authorized.push(actor);
+              })
+            ),
+        });
 
-      const [answer] = yield* converse(
-        ActionMcp.runStdio(who, { name: "test", version: "0" }).pipe(
-          Effect.provideService(Actor, "host"),
-        ),
-        httpProtocol.protocolVersion,
-        [{ method: "tools/call", params: { name: "who", arguments: {} } }],
-      );
+        const [answer] = yield* converse(
+          ActionMcp.runStdio(who, { name: "test", version: "0" }).pipe(
+            Effect.provideService(Actor, "host")
+          ),
+          httpProtocol.protocolVersion,
+          [{ method: "tools/call", params: { name: "who", arguments: {} } }]
+        );
 
-      expect(JSON.parse(answer ?? "")).toMatchObject({ result: { structuredContent: "host" } });
-      expect(authorized).toEqual(["host"]);
-    }),
+        expect(JSON.parse(answer ?? "")).toMatchObject({
+          result: { structuredContent: "host" },
+        });
+        expect(authorized).toStrictEqual(["host"]);
+      })
   );
 });

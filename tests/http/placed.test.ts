@@ -1,6 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, ErrorReporter, Exit, Fiber, Layer, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  ErrorReporter,
+  Exit,
+  Fiber,
+  Layer,
+  Stream,
+} from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
@@ -12,12 +21,17 @@ import { recorder } from "../support/reporter.js";
 import { call } from "../support/sse.js";
 
 const worker = (placed: ReturnType<typeof target>["placed"]) =>
-  Testing.layer(ActionHttp.layer(Placed, placed).pipe(Layer.provide(authenticate)));
+  Testing.layer(
+    ActionHttp.layer(Placed, placed).pipe(Layer.provide(authenticate))
+  );
 
 const signedInAs = (token: string, headers: Record<string, string> = {}) =>
   ActionHttp.client(Placed, {
     transformClient: HttpClient.mapRequest((request) =>
-      HttpClientRequest.setHeaders(HttpClientRequest.bearerToken(request, token), headers),
+      HttpClientRequest.setHeaders(
+        HttpClientRequest.bearerToken(request, token),
+        headers
+      )
     ),
   });
 
@@ -42,19 +56,23 @@ describe("ActionHttp.placed", () => {
 
         const [first] = reached.requests;
 
-        expect(answered).toEqual({
+        expect(answered).toStrictEqual({
           found: { id: "1", name: "Ada" },
           missing: new UserNotFound({ id: "9" }),
         });
-        expect(reached.requests.map(({ url }) => url)).toEqual([
+        expect(reached.requests.map(({ url }) => url)).toStrictEqual([
           "http://localhost/api/getUser",
           "http://localhost/api/getUser",
         ]);
         expect(first?.headers.get("authorization")).toBe("Bearer alice");
         expect(first?.headers.get("x-trace")).toBe("t1");
         expect(first?.headers.has("mcp-method")).toBe(false);
-        expect(yield* Effect.promise(async () => first?.json())).toEqual({ id: "1" });
-      }),
+        expect(
+          yield* Effect.promise(async () => await first?.json())
+        ).toStrictEqual({
+          id: "1",
+        });
+      })
   );
 
   it.effect(
@@ -65,7 +83,9 @@ describe("ActionHttp.placed", () => {
         const other = target();
 
         const placed = ActionHttp.placed(Placed, (input, contract) =>
-          contract === Counted || ("id" in input && input.id === "9") ? other.client : first.client,
+          contract === Counted || ("id" in input && input.id === "9")
+            ? other.client
+            : first.client
         );
 
         const answered = yield* Effect.gen(function* () {
@@ -82,18 +102,27 @@ describe("ActionHttp.placed", () => {
 
         expect({
           ...answered,
-          counts: answered.counts.map((item) => (item._tag === "Gap" ? "gap" : item.data)),
-        }).toEqual({
+          counts: answered.counts.map((item) =>
+            item._tag === "Gap" ? "gap" : item.data
+          ),
+        }).toStrictEqual({
           found: { id: "1", name: "Ada" },
           missing: new UserNotFound({ id: "9" }),
           counts: [{ count: 0 }],
         });
-        expect([first, other].map(({ requests }) => requests.map(({ url }) => url))).toEqual([
+        expect(
+          [first, other].map(({ requests }) => requests.map(({ url }) => url))
+        ).toStrictEqual([
           ["http://localhost/api/getUser"],
-          ["http://localhost/api/getUser", "http://localhost/api/events/count.changed"],
+          [
+            "http://localhost/api/getUser",
+            "http://localhost/api/events/count.changed",
+          ],
         ]);
-        expect(yield* Effect.promise(async () => other.requests[0]?.json())).toEqual({ id: "9" });
-      }),
+        expect(
+          yield* Effect.promise(async () => await other.requests[0]?.json())
+        ).toStrictEqual({ id: "9" });
+      })
   );
 
   it.effect(
@@ -104,7 +133,7 @@ describe("ActionHttp.placed", () => {
 
         yield* Effect.flatMap(
           signedInAs("alice", { "x-tenant": "caller's", "x-trace": "t1" }),
-          (client) => client.getUser({ id: "1" }),
+          (client) => client.getUser({ id: "1" })
         ).pipe(
           Effect.provide(
             worker(
@@ -112,18 +141,21 @@ describe("ActionHttp.placed", () => {
                 HttpClient.mapRequest(reached.client, (request) =>
                   HttpClientRequest.removeHeader(
                     HttpClientRequest.setHeader(request, "x-tenant", "own"),
-                    "x-trace",
-                  ),
-                ),
-              ),
-            ),
-          ),
+                    "x-trace"
+                  )
+                )
+              )
+            )
+          )
         );
 
         expect(
-          reached.requests.map(({ headers }) => [headers.get("x-tenant"), headers.has("x-trace")]),
-        ).toEqual([["own", false]]);
-      }),
+          reached.requests.map(({ headers }) => [
+            headers.get("x-tenant"),
+            headers.has("x-trace"),
+          ])
+        ).toStrictEqual([["own", false]]);
+      })
   );
 
   it.effect(
@@ -131,7 +163,7 @@ describe("ActionHttp.placed", () => {
     () =>
       Effect.gen(function* () {
         const reached = target();
-        const reported: Array<number> = [];
+        const reported: number[] = [];
 
         const answered = yield* Effect.gen(function* () {
           const client = yield* signedInAs("alice");
@@ -140,19 +172,22 @@ describe("ActionHttp.placed", () => {
             counted: yield* Stream.runCollect(client.countdown({ from: 3 })),
             filled: yield* client.fill(
               { slots: 2 },
-              { onProgress: ({ slot }) => Effect.sync(() => reported.push(slot)) },
+              {
+                onProgress: ({ slot }) =>
+                  Effect.sync(() => reported.push(slot)),
+              }
             ),
             unread: yield* client.fill({ slots: 1 }),
           };
         }).pipe(Effect.provide(worker(reached.placed)));
 
-        expect({ ...answered, reported }).toEqual({
+        expect({ ...answered, reported }).toStrictEqual({
           counted: [3, 2, 1],
           filled: { filled: 2 },
           unread: { filled: 1 },
           reported: [1, 2],
         });
-      }),
+      })
   );
 
   it.effect(
@@ -167,16 +202,23 @@ describe("ActionHttp.placed", () => {
 
           return {
             anonymous: yield* Effect.flip(anonymous.getUser({ id: "1" })),
-            reader: yield* Effect.flip(reader.renameUser({ id: "1", name: "Grace" })),
+            reader: yield* Effect.flip(
+              reader.renameUser({ id: "1", name: "Grace" })
+            ),
           };
         }).pipe(Effect.provide(worker(reached.placed)));
 
         expect(refused.anonymous).toBeInstanceOf(Action.Unauthenticated);
-        expect(refused.reader).toEqual(
-          new Action.Forbidden({ message: "Requires users:write.", scopes: ["users:write"] }),
+        expect(refused.reader).toStrictEqual(
+          new Action.Forbidden({
+            message: "Requires users:write.",
+            scopes: ["users:write"],
+          })
         );
-        expect(reached.requests.map(({ url }) => url)).toEqual(["http://localhost/api/renameUser"]);
-      }),
+        expect(reached.requests.map(({ url }) => url)).toStrictEqual([
+          "http://localhost/api/renameUser",
+        ]);
+      })
   );
 
   it.live(
@@ -184,16 +226,18 @@ describe("ActionHttp.placed", () => {
     () =>
       Effect.gen(function* () {
         const reached = target();
-        const streamed: Array<unknown> = [];
+        const streamed: unknown[] = [];
 
         const polled = yield* Effect.gen(function* () {
           const client = yield* signedInAs("alice");
 
           const watching = yield* client.watch(Counted).pipe(
             Stream.runForEach((item) =>
-              Effect.sync(() => streamed.push(item._tag === "Gap" ? "gap" : item.data)),
+              Effect.sync(() =>
+                streamed.push(item._tag === "Gap" ? "gap" : item.data)
+              )
             ),
-            Effect.forkChild,
+            Effect.forkChild
           );
 
           const page = yield* client
@@ -201,53 +245,62 @@ describe("ActionHttp.placed", () => {
             .pipe(Stream.take(1), Stream.runCollect);
 
           yield* Effect.sleep("10 millis").pipe(
-            Effect.repeat({ while: () => streamed.length === 0 }),
+            Effect.repeat({ while: () => streamed.length === 0 })
           );
           yield* client.bump();
           yield* Effect.sleep("10 millis").pipe(
-            Effect.repeat({ while: () => streamed.length < 2 }),
+            Effect.repeat({ while: () => streamed.length < 2 })
           );
           yield* Fiber.interrupt(watching);
 
           return page.map((item) => (item._tag === "Gap" ? "gap" : item.data));
-        }).pipe(Effect.provide(worker(reached.placed)), Effect.timeout("5 seconds"));
+        }).pipe(
+          Effect.provide(worker(reached.placed)),
+          Effect.timeout("5 seconds")
+        );
 
-        expect(polled).toEqual([{ count: 0 }]);
-        expect(streamed).toEqual([{ count: 0 }, { count: 1 }]);
-      }),
+        expect(polled).toStrictEqual([{ count: 0 }]);
+        expect(streamed).toStrictEqual([{ count: 0 }, { count: 1 }]);
+      })
   );
 
-  it.effect("dies naming the action where the server reached does not serve it", () =>
-    Effect.gen(function* () {
-      const reached = target({ withoutDouble: true });
-      const client = yield* Action.client(reached.placed);
-      const exit = yield* Effect.exit(client.double({ value: 2 }));
+  it.effect(
+    "dies naming the action where the server reached does not serve it",
+    () =>
+      Effect.gen(function* () {
+        const reached = target({ withoutDouble: true });
+        const client = yield* Action.client(reached.placed);
+        const exit = yield* Effect.exit(client.double({ value: 2 }));
 
-      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toEqual(
-        new Error(
-          "ActionHttp.placed: the server its client reaches does not serve double (serve its implementation in that server's ActionHttp.layer of this binding)",
-        ),
-      );
-    }).pipe(Effect.provideService(CurrentActor, actors.alice)),
+        expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toStrictEqual(
+          new Error(
+            "ActionHttp.placed: the server its client reaches does not serve double (serve its implementation in that server's ActionHttp.layer of this binding)"
+          )
+        );
+      }).pipe(Effect.provideService(CurrentActor, actors.alice))
   );
 
   it.effect(
     "answers a poll of an event type the server reached does not serve 500, reporting the defect naming it",
     () =>
       Effect.gen(function* () {
-        const reported: Array<string> = [];
+        const reported: string[] = [];
 
         const response = yield* call(
           "events/count.changed",
           { input: {}, cursor: null },
-          { authorization: "Bearer alice" },
+          { authorization: "Bearer alice" }
         ).pipe(
-          Effect.provide(worker(target({ withoutCounted: true }).placed)),
-          Effect.provide(ErrorReporter.layer([recorder(reported)])),
+          Effect.provide(
+            Layer.provideMerge(
+              worker(target({ withoutCounted: true }).placed),
+              ErrorReporter.layer([recorder(reported)])
+            )
+          )
         );
 
         expect(response.status).toBe(500);
         expect(reported.join("\n")).toContain("does not serve count.changed");
-      }),
+      })
   );
 });

@@ -1,5 +1,6 @@
 import { Layer } from "effect";
-import { FetchHttpClient, type HttpClient } from "effect/http";
+import { FetchHttpClient } from "effect/http";
+import type { HttpClient } from "effect/http";
 
 /**
  * An `HttpClient` whose requests go to `fetcher`, a Durable Object stub or a service binding,
@@ -16,10 +17,12 @@ import { FetchHttpClient, type HttpClient } from "effect/http";
  * Guide: `docs/ActionDurableObject.md` in this package.
  */
 export const layerHttpClient = (
-  fetcher: Pick<Fetcher, "fetch">,
+  fetcher: Pick<Fetcher, "fetch">
 ): Layer.Layer<HttpClient.HttpClient> =>
   FetchHttpClient.layer.pipe(
     Layer.provide(
-      Layer.succeed(FetchHttpClient.Fetch)((input, init) => fetcher.fetch(input, init)),
-    ),
+      Layer.succeed(FetchHttpClient.Fetch)(
+        async (input, init) => await fetcher.fetch(input, init)
+      )
+    )
   );

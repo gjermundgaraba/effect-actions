@@ -1,21 +1,23 @@
 import { Effect, Predicate, Stream } from "effect";
 import { HttpClientError } from "effect/http";
+
 import * as Event from "../contract/Event.js";
 import type { ErasedValue } from "../contract/implementation.js";
-import { type Fed, fedOf, type Page } from "../contract/pages.js";
+import { fedOf } from "../contract/pages.js";
+import type { Fed, Page } from "../contract/pages.js";
 import type { AnySubscription, Pushed } from "../contract/push.js";
-import {
-  answeredStatus,
-  failingWhenUnanswered,
-  isTransient,
-  receivedFrom,
-} from "../contract/transient.js";
 import { Receiving, webhookFed } from "../contract/receiving.js";
 import type {
   AnyWebhookCancellation,
   AnyWebhookSubscription,
   Subscribed,
 } from "../contract/subscribe.js";
+import {
+  answeredStatus,
+  failingWhenUnanswered,
+  isTransient,
+  receivedFrom,
+} from "../contract/transient.js";
 import type { Transport, WebhookTransport } from "../contract/watch.js";
 
 interface Subscription {
@@ -23,17 +25,19 @@ interface Subscription {
 }
 
 /** The native client's method of one event's route, asked for a page. */
-export type PollMethod<R> = (request: Subscription) => Effect.Effect<Page, unknown, R>;
+export type PollMethod<R> = (
+  request: Subscription
+) => Effect.Effect<Page, unknown, R>;
 
 /** The same method through a client asking for `text/event-stream`, which a server streams. */
 export type StreamMethod<R> = (
-  request: Subscription,
+  request: Subscription
 ) => Effect.Effect<Page | Stream.Stream<Pushed, unknown>, unknown, R>;
 
 /** Whether `error` is an HTTP client's failure on a 404 answer. */
 export const isNotFound = Predicate.compose(
   HttpClientError.isHttpClientError,
-  (error) => answeredStatus(error) === 404,
+  (error) => answeredStatus(error) === 404
 );
 
 /** The native client's methods of one event's webhook routes, where its binding has them. */
@@ -56,14 +60,16 @@ export const transportOf = <R>(
   poll: PollMethod<R>,
   stream: StreamMethod<R>,
   webhook: WebhookMethods<R> | undefined,
-  input: ErasedValue,
+  input: ErasedValue
 ): Transport<unknown, R | Receiving> => {
-  const notServed = Effect.fail(Event.SubscriptionError.of(event.name, new Event.NotServed()));
+  const notServed = Effect.fail(
+    Event.SubscriptionError.of(event.name, new Event.NotServed())
+  );
 
   const answered = <A, R2>(request: Effect.Effect<A, unknown, R2>) =>
     request.pipe(
       failingWhenUnanswered,
-      Effect.catchIf(isNotFound, () => notServed),
+      Effect.catchIf(isNotFound, () => notServed)
     );
 
   const webhooks: WebhookTransport<unknown, R | Receiving> | undefined =
@@ -71,19 +77,22 @@ export const transportOf = <R>(
       ? undefined
       : {
           receiver: Effect.service(Receiving),
-          subscribe: (request) => answered(webhook.subscribe({ payload: { input, ...request } })),
+          subscribe: (request) =>
+            answered(webhook.subscribe({ payload: { input, ...request } })),
           unsubscribe: (request) =>
             answered(webhook.unsubscribe({ payload: { input, ...request } })),
           read: webhookFed(event),
         };
 
-  const read = (sent: Stream.Stream<Pushed, unknown>): Stream.Stream<Fed, unknown> =>
+  const read = (
+    sent: Stream.Stream<Pushed, unknown>
+  ): Stream.Stream<Fed, unknown> =>
     sent.pipe(
       // Why: The native client's decoder ends the stream at a `retry:` field, with no way to skip
       // it, so the stream ends there and the watch connects again a second later, as at any end;
       // `ActionHttp.layer` sends none.
       Stream.catchIf(Predicate.isTagged("Retry"), () => Stream.empty),
-      receivedFrom("HTTP", event.name),
+      receivedFrom("HTTP", event.name)
     );
 
   return {
@@ -103,10 +112,10 @@ export const transportOf = <R>(
                     truncated: answer.truncated,
                     from: cursor,
                     to: answer.cursor ?? cursor,
-                  }),
-                ),
-          ),
-        ),
+                  })
+                )
+          )
+        )
       ),
     webhook: webhooks,
     transient: isTransient,

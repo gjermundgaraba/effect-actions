@@ -1,6 +1,8 @@
 import { Effect, Predicate } from "effect";
+
 import type { Refusal } from "./errors.js";
-import { type ErasedAuthorize, memoized } from "./implementation.js";
+import { memoized } from "./implementation.js";
+import type { ErasedAuthorize } from "./implementation.js";
 
 // Why: An index TypeScript cannot read until `T` is known, so an implementation written inside a
 // surface's arguments infers nothing from what that surface accepts. Rejected: `NoInfer<T>`, which
@@ -37,24 +39,26 @@ export interface Holding {
 export const authorizerOf = <C>(
   holding: Holding,
   holdsProtected: boolean,
-  authorize: ErasedAuthorizer<C> | undefined,
+  authorize: ErasedAuthorizer<C> | undefined
 ) => {
   const { singular, module } = holding;
 
   if (holdsProtected && authorize === undefined) {
-    throw new Error(`Protected ${singular}s require authorize, or ${module}.allowAll`);
+    throw new Error(
+      `Protected ${singular}s require authorize, or ${module}.allowAll`
+    );
   }
 
   if (!holdsProtected && authorize !== undefined) {
     throw new Error(
-      `A public-only target takes no authorize (remove it, or list a protected ${singular})`,
+      `A public-only target takes no authorize (remove it, or list a protected ${singular})`
     );
   }
 
   const checked = (rule: ErasedAuthorize<C>): ErasedAuthorize<C> => {
     if (!Predicate.isFunction(rule)) {
       throw new Error(
-        `Missing authorize: not a function (pass your rule, ${module}.allowAll, or an Effect returning one)`,
+        `Missing authorize: not a function (pass your rule, ${module}.allowAll, or an Effect returning one)`
       );
     }
 
@@ -64,6 +68,8 @@ export const authorizerOf = <C>(
   const given: ErasedAuthorizer<C> = authorize ?? (() => Effect.void);
 
   return memoized(
-    Effect.isEffect(given) ? Effect.map(given, checked) : Effect.succeed(checked(given)),
+    Effect.isEffect(given)
+      ? Effect.map(given, checked)
+      : Effect.succeed(checked(given))
   );
 };

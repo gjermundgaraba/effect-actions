@@ -1,11 +1,18 @@
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { Effect, Layer, Predicate, Stream } from "effect";
 import { Headers } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { MessagePosted, type RoomName } from "./chat/Chat.js";
+
+import { MessagePosted } from "./chat/Chat.js";
+import type { RoomName } from "./chat/Chat.js";
 import { PreviewsChanged } from "./lobby/Lobby.js";
-import { LobbyRpc, protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
+import {
+  LobbyRpc,
+  protocolVersion,
+  RoomRpc,
+  unsupportedProtocol,
+} from "./Rpc.js";
 
 // Client module: what a web page imports. It holds the binding and nothing of the server.
 
@@ -23,7 +30,7 @@ export const connection = (url: string) =>
     retryPolicy: ActionRpc.reconnectUntil(unsupportedProtocol),
   }).pipe(
     Layer.provide(Socket.layerWebSocket(`${url}?protocol=${protocolVersion}`)),
-    Layer.provide(RpcSerialization.layerJson),
+    Layer.provide(RpcSerialization.layerJson)
   );
 
 // A room as a page uses it, over the socket to that room's object: each call names the room, as
@@ -42,7 +49,7 @@ export const openRoom = (room: RoomName, token: string) =>
       read: (after: number) =>
         client.readMessages({ room, after }).pipe(
           signedIn,
-          Effect.map(({ messages }) => messages),
+          Effect.map(({ messages }) => messages)
         ),
       // A post the socket lost, as the room's object restarted, fails with an `RpcClientError`,
       // whether or not it reached the room: sent again with its `request`, made once for the
@@ -56,8 +63,8 @@ export const openRoom = (room: RoomName, token: string) =>
               Effect.retry({
                 while: (error) => Predicate.isTagged(error, "RpcClientError"),
                 times: 2,
-              }),
-            ),
+              })
+            )
         ),
       // Each message posted to the room after `after`, the id of the last one the page holds: a
       // page opening the room reads it, then watches from the last id it read, so a post between
@@ -73,8 +80,8 @@ export const openRoom = (room: RoomName, token: string) =>
           .pipe(
             Stream.updateService(
               RpcClient.CurrentHeaders,
-              Headers.merge(Headers.fromInput(headers)),
-            ),
+              Headers.merge(Headers.fromInput(headers))
+            )
           ),
       remove: (id: number) =>
         client.deleteMessage({ room, id }).pipe(
@@ -83,7 +90,7 @@ export const openRoom = (room: RoomName, token: string) =>
           Effect.catchTags({
             MessageNotFound: () => Effect.succeed("removed" as const),
             NotAuthor: () => Effect.succeed("not-yours" as const),
-          }),
+          })
         ),
     };
   });
@@ -95,6 +102,6 @@ export const openRoom = (room: RoomName, token: string) =>
 export const followLobby = Effect.map(ActionRpc.client(LobbyRpc), (client) =>
   client.watch(PreviewsChanged, {}).pipe(
     Stream.filter((received) => Predicate.isTagged(received, "Occurrence")),
-    Stream.map(({ data }) => data.previews),
-  ),
+    Stream.map(({ data }) => data.previews)
+  )
 );

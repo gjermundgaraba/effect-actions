@@ -12,15 +12,19 @@ import {
   Stream,
 } from "effect";
 import type { Scope } from "effect";
+
 import type * as Action from "./Action.js";
-import type * as Event from "./Event.js";
-import { checkInput } from "./input-check.js";
-import { Anyone, CallerKeyed, type Keyed } from "./caller.js";
+import { Anyone, CallerKeyed } from "./caller.js";
+import type { Keyed } from "./caller.js";
 import { projectedErrors } from "./declared.js";
-import { assertOnce, heldOnce } from "./names.js";
-import { type Refusal, Unauthenticated } from "./errors.js";
+import { Unauthenticated } from "./errors.js";
+import type { Refusal } from "./errors.js";
+import type * as Event from "./Event.js";
 import type { AnyEventImplementation, EventOf } from "./feed.js";
-import { type Reporting, reportedTo, streamReportedTo } from "./progress.js";
+import { checkInput } from "./input-check.js";
+import { assertOnce, heldOnce } from "./names.js";
+import { reportedTo, streamReportedTo } from "./progress.js";
+import type { Reporting } from "./progress.js";
 import { elementOf } from "./stream.js";
 
 // Why: Random, not a counter: two installed copies of this module would each count from zero and
@@ -39,8 +43,10 @@ export type ErasedValue = Action.Any["input"]["Type"];
 export type WrittenHandler<R> = {
   handle(
     input: ErasedValue,
-    reporting?: Reporting,
-  ): Effect.Effect<ErasedValue, ErasedValue, R> | Stream.Stream<ErasedValue, ErasedValue, R>;
+    reporting?: Reporting
+  ):
+    | Effect.Effect<ErasedValue, ErasedValue, R>
+    | Stream.Stream<ErasedValue, ErasedValue, R>;
 }["handle"];
 
 export type Handlers<R> = Readonly<Record<string, WrittenHandler<R>>>;
@@ -53,25 +59,25 @@ export type Handlers<R> = Readonly<Record<string, WrittenHandler<R>>>;
  */
 export type ErasedHandler<R> = (
   input: ErasedValue,
-  reporting?: Reporting,
+  reporting?: Reporting
 ) => Effect.Effect<ErasedValue, ErasedValue, R>;
+
+// Why: Only a handler the types were bypassed for answers otherwise than its contract says.
+const notAStream = new Error(
+  "A handler answered otherwise than its action's success declares"
+);
 
 /** The stream of a call of an action answering one, from its `ErasedHandler`'s answer. */
 export const elementsOf = (
-  answer: Effect.Effect<ErasedValue, ErasedValue, unknown>,
+  answer: Effect.Effect<ErasedValue, ErasedValue, unknown>
 ): Stream.Stream<ErasedValue, ErasedValue, unknown> =>
   Stream.unwrap(
-    Effect.flatMap(answer, (stream) =>
-      Stream.isStream(stream) ? Effect.succeed(stream) : Effect.die(notAStream),
-    ),
+    Effect.filterOrElse(answer, Stream.isStream, () => Effect.die(notAStream))
   );
-
-// Why: Only a handler the types were bypassed for answers otherwise than its contract says.
-const notAStream = new Error("A handler answered otherwise than its action's success declares");
 
 /** The answer of a handler of an action answering one value, a stream refused as a defect. */
 export const answered = (
-  answer: ReturnType<WrittenHandler<unknown>>,
+  answer: ReturnType<WrittenHandler<unknown>>
 ): Effect.Effect<ErasedValue, ErasedValue, unknown> =>
   Stream.isStream(answer) ? Effect.die(notAStream) : answer;
 
@@ -81,30 +87,35 @@ export const answered = (
  */
 export const answeringWhole = (
   action: Action.Any,
-  run: ErasedHandler<unknown>,
+  run: ErasedHandler<unknown>
 ): ErasedHandler<unknown> =>
   elementOf(action.success) === undefined
     ? run
-    : (input, reporting) => Stream.runCollect(elementsOf(run(input, reporting)));
+    : (input, reporting) =>
+        Stream.runCollect(elementsOf(run(input, reporting)));
 
 /**
  * Authorization for protected contracts: it refuses, and fails with nothing else. It runs only for
  * protected actions, after authentication and before the handler.
  */
 export type Authorize<A extends Action.Any, R = never> = (
-  action: A,
+  action: A
 ) => Effect.Effect<void, Refusal, R>;
 
 /** An authorization rule over contracts `C`, erased: it refuses, or lets the call run. */
 export type ErasedAuthorize<C = Action.Any> = (
-  contract: C,
+  contract: C
 ) => Effect.Effect<void, unknown, unknown>;
 
 /** Each action of an implementation with its handler, as `dispatch` makes it. */
-export type Bound = ReadonlyArray<readonly [Action.Any, ErasedHandler<unknown>]>;
+export type Bound = ReadonlyArray<
+  readonly [Action.Any, ErasedHandler<unknown>]
+>;
 
 /** Each action of an implementation with its handler as written, as its builder made them. */
-export type Written = ReadonlyArray<readonly [Action.Any, WrittenHandler<unknown>]>;
+export type Written = ReadonlyArray<
+  readonly [Action.Any, WrittenHandler<unknown>]
+>;
 
 /** A build shared by every layer an implementation reaches, through the one key it is provided under. */
 export interface Memoized<S, E, R> {
@@ -113,9 +124,11 @@ export interface Memoized<S, E, R> {
 }
 
 export const memoized = <S, E, R>(
-  build: Effect.Effect<S, E, R>,
+  build: Effect.Effect<S, E, R>
 ): Memoized<S, E, Exclude<R, Scope.Scope>> => {
-  const key = Context.Service<S>(`effect-actions/Implementation/${uniqueKey()}`);
+  const key = Context.Service<S>(
+    `effect-actions/Implementation/${uniqueKey()}`
+  );
 
   return { key, layer: Layer.effect(key, build) };
 };
@@ -127,7 +140,7 @@ export const memoized = <S, E, R>(
 export const builderLayer = <S, E, R, SA, EA, RA>(
   contracts: ReadonlyArray<Pick<Action.Any, "caller">>,
   built: Pick<Memoized<S, E, R>, "layer">,
-  authorizer: Memoized<SA, EA, RA>,
+  authorizer: Memoized<SA, EA, RA>
 ): Layer.Layer<never, E | EA, R | RA> =>
   contracts.some((contract) => contract.caller !== Anyone)
     ? Layer.merge(built.layer, authorizer.layer)
@@ -136,8 +149,132 @@ export const builderLayer = <S, E, R, SA, EA, RA>(
 /** What a surface throws for an implementation some other copy of this module made. */
 export const notMadeHere = (module: "Action" | "Event"): Error =>
   new Error(
-    `Not an implementation made by this ${module}.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice`,
+    `Not an implementation made by this ${module}.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice`
   );
+
+// Why: A failure the action's errors reject, undeclared or breaking one of their checks, is the
+// call's defect on every surface, beside why they reject it and with its trace: logs and reports
+// then name it, where a surface encoding it named only the encoding's error.
+const asDefects = (
+  reason: Cause.Fail<ErasedValue>,
+  rejected: Cause.Cause<Schema.SchemaError>
+) => {
+  const trace = Context.makeUnsafe(reason.annotations);
+
+  return [
+    Cause.makeDieReason(reason.error).annotate(trace),
+    Cause.makeDieReason(Cause.squash(rejected)).annotate(trace),
+  ];
+};
+
+const dispatch = (
+  action: Action.Any,
+  handle: WrittenHandler<unknown>,
+  before: ErasedAuthorize,
+  keyed: Keyed | undefined
+): ErasedHandler<unknown> => {
+  const actionAttributes = {
+    "action.name": action.name,
+    "action.read_only": action.readOnly,
+  };
+
+  const authentication =
+    action.caller === Anyone
+      ? Effect.void
+      : Effect.flatMap(Effect.serviceOption(action.caller), (actor) =>
+          Option.isSome(actor)
+            ? Effect.void
+            : Effect.fail(new Unauthenticated())
+        );
+
+  const authorization =
+    action.caller === Anyone
+      ? Effect.void
+      : Effect.suspend(() => before(action));
+
+  const validate = Schema.decodeUnknownEffect(
+    Schema.toType(Schema.Union(projectedErrors(action)))
+  );
+
+  const declaredOrDefect = Effect.fnUntraced(function* (
+    cause: Cause.Cause<ErasedValue>
+  ) {
+    const reasons: Array<Cause.Reason<ErasedValue>> = [];
+
+    for (const reason of cause.reasons) {
+      if (Cause.isFailReason(reason)) {
+        const validated = yield* Effect.exit(validate(reason.error));
+
+        reasons.push(
+          ...(Exit.isSuccess(validated)
+            ? [reason]
+            : asDefects(reason, validated.cause))
+        );
+      } else {
+        reasons.push(reason);
+      }
+    }
+
+    return yield* Effect.failCause(Cause.fromReasons(reasons));
+  });
+
+  const admitted = (input: ErasedValue) =>
+    Effect.andThen(
+      authentication,
+      Effect.andThen(checkInput(action, input), authorization)
+    );
+
+  const span = { attributes: actionAttributes };
+  const trace = { captureStackTrace: false };
+
+  if (elementOf(action.success) !== undefined) {
+    const streamed = (answer: ReturnType<WrittenHandler<unknown>>) =>
+      Stream.isStream(answer) ? Stream.scoped(answer) : Stream.die(notAStream);
+
+    return (input, sink) =>
+      Effect.succeed(
+        Stream.unwrap(
+          Effect.map(admitted(input), () =>
+            streamReportedTo(action.progress, sink, (reporting) =>
+              streamed(handle(input, reporting))
+            )
+          )
+        ).pipe(
+          Stream.catchCause((cause) =>
+            Stream.fromEffect(declaredOrDefect(cause))
+          ),
+          Stream.updateService(
+            References.CurrentLogAnnotations,
+            (annotations) => ({
+              ...annotations,
+              ...actionAttributes,
+            })
+          ),
+          Stream.withSpan(action.name, { ...span, ...trace })
+        )
+      );
+  }
+
+  // Why: Provided whatever it is, an in-process call's `undefined` included, so a call made in a
+  // handler is named by its own surface, not by the one its caller came through.
+  return (input, sink) =>
+    Effect.scoped(
+      admitted(input).pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            reportedTo(action.progress, sink, (reporting) =>
+              answered(handle(input, reporting))
+            )
+          )
+        ),
+        Effect.provideService(CallerKeyed, keyed),
+        Effect.catchCause(declaredOrDefect)
+      )
+    ).pipe(
+      Effect.annotateLogs(actionAttributes),
+      Effect.withSpan(action.name, span, trace)
+    );
+};
 
 /**
  * Actions bound to their handlers and their authorizer: everything one `Action.implement` call
@@ -171,16 +308,16 @@ export class Implementation<
   declare readonly "~authorizeBuildServices": RAX;
 
   /** The contracts this implementation answers. */
-  readonly actions: ReadonlyArray<A>;
+  readonly actions: readonly A[];
   readonly #handlers: Memoized<Written, EX, RX>;
   readonly #authorizer: Memoized<ErasedAuthorize, EAX, RAX>;
 
   constructor(
-    actions: ReadonlyArray<A>,
+    actions: readonly A[],
     /** Builds each action paired with its handler: its own builder, or the one it shares. */
     handlers: Memoized<Written, EX, RX>,
     /** Builds its authorizer. */
-    authorizer: Memoized<ErasedAuthorize, EAX, RAX>,
+    authorizer: Memoized<ErasedAuthorize, EAX, RAX>
   ) {
     this.actions = actions;
     this.#handlers = handlers;
@@ -188,7 +325,10 @@ export class Implementation<
   }
 
   /** Select contracts while retaining their handlers, authorization and shared builder. */
-  static share(actions: ReadonlyArray<Action.Any>, app: AnyImplementation): AnyImplementation {
+  static share(
+    actions: readonly Action.Any[],
+    app: AnyImplementation
+  ): AnyImplementation {
     const source = Implementation.own(app);
 
     return new Implementation(actions, source.#handlers, source.#authorizer);
@@ -219,7 +359,7 @@ export class Implementation<
    */
   static boundOf(
     app: AnyImplementation,
-    keyed: Keyed | undefined,
+    keyed: Keyed | undefined
   ): Effect.Effect<Bound, never, unknown> {
     const { actions } = app;
     const source = Implementation.own(app);
@@ -233,15 +373,19 @@ export class Implementation<
 
       return actions.flatMap((action) =>
         bound.flatMap(([held, handle]) =>
-          held === action ? [[action, dispatch(action, handle, before, keyed)] as const] : [],
-        ),
+          held === action
+            ? [[action, dispatch(action, handle, before, keyed)] as const]
+            : []
+        )
       );
     });
   }
 
   /** `app`, if this copy of the module made it; another installed copy's cannot be read. */
   private static own<App extends AnyImplementation>(app: App): App {
-    if (!(#handlers in app)) throw notMadeHere("Action");
+    if (!(#handlers in app)) {
+      throw notMadeHere("Action");
+    }
 
     return app;
   }
@@ -254,16 +398,17 @@ export class Implementation<
  * admits every implementation, while a value of this type owes `unknown`, which no surface can be
  * given.
  */
-export type AnyImplementation<A extends Action.Any = Action.Any> = Implementation<
-  A,
-  // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Type-only requirements by action name, erased to the top type.
-  { readonly [name: string]: unknown },
-  unknown,
-  unknown,
-  unknown,
-  unknown,
-  unknown
->;
+export type AnyImplementation<A extends Action.Any = Action.Any> =
+  Implementation<
+    A,
+    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Type-only requirements by action name, erased to the top type.
+    { readonly [name: string]: unknown },
+    unknown,
+    unknown,
+    unknown,
+    unknown,
+    unknown
+  >;
 
 /** What a surface serves: one implementation, of actions or of events, or a list of them. */
 export type Served =
@@ -272,7 +417,7 @@ export type Served =
   | ReadonlyArray<AnyImplementation | AnyEventImplementation>;
 
 /** What a surface serving no events takes: one action implementation, or a list of them. */
-export type ServedActions = AnyImplementation | ReadonlyArray<AnyImplementation>;
+export type ServedActions = AnyImplementation | readonly AnyImplementation[];
 
 /** The implementations `S` stands for. */
 export type Member<S> = S extends ReadonlyArray<infer App> ? App : S;
@@ -282,7 +427,7 @@ export type Member<S> = S extends ReadonlyArray<infer App> ? App : S;
  * options share.
  */
 export interface Selection<C extends Action.Any | Event.Any> {
-  readonly actions?: ReadonlyArray<C> | undefined;
+  readonly actions?: readonly C[] | undefined;
 }
 
 /**
@@ -309,7 +454,7 @@ export type SelectedEvents<O, All extends Event.Any> = O extends {
  * an array of unknown length when it may be absent, which installs none or all of them, and
  * none otherwise.
  */
-export type MiddlewareOf<O, L extends ReadonlyArray<unknown>> = O extends {
+export type MiddlewareOf<O, L extends readonly unknown[]> = O extends {
   readonly middleware: infer M extends L;
 }
   ? M
@@ -320,21 +465,31 @@ export type MiddlewareOf<O, L extends ReadonlyArray<unknown>> = O extends {
     : [];
 
 /** The actions options `O` select of the implementations `Apps` stand for. */
-export type SelectedOf<O, Apps extends Served> = Selected<O, ActionOf<Member<Apps>>>;
+export type SelectedOf<O, Apps extends Served> = Selected<
+  O,
+  ActionOf<Member<Apps>>
+>;
 
 /** The event types options `O` select of the implementations `Apps` stand for. */
-export type SelectedEventsOf<O, Apps extends Served> = SelectedEvents<O, EventOf<Member<Apps>>>;
+export type SelectedEventsOf<O, Apps extends Served> = SelectedEvents<
+  O,
+  EventOf<Member<Apps>>
+>;
 
 /**
  * The actions or event types a client of options `O` offers, of `All`: those `actions` may
  * list, wherever some member of `O` may list them, as each is present whether the list is
  * given or not; every one where no member lists any.
  */
-export type Offered<O, All extends Action.Any | Event.Any> = [Listing<O>] extends [never]
+export type Offered<O, All extends Action.Any | Event.Any> = [
+  Listing<O>,
+] extends [never]
   ? All
   : Extract<All, Listing<O> extends ReadonlyArray<infer C> ? C : never>;
 
-type Listing<O> = O extends unknown ? NonNullable<O["actions" & keyof O]> : never;
+type Listing<O> = O extends unknown
+  ? NonNullable<O["actions" & keyof O]>
+  : never;
 
 /**
  * No key of any member of `O` beyond those of `Keys`, so a misspelled option is refused
@@ -342,7 +497,9 @@ type Listing<O> = O extends unknown ? NonNullable<O["actions" & keyof O]> : neve
  * check, and `keyof` a union holds only the keys every member has.
  */
 export type Known<O, Keys> = {
-  readonly [K in Exclude<O extends unknown ? keyof O : never, keyof Keys>]?: never;
+  readonly [
+    K in Exclude<O extends unknown ? keyof O : never, keyof Keys>
+  ]?: never;
 };
 
 /**
@@ -350,21 +507,31 @@ export type Known<O, Keys> = {
  * only a given argument holds, such as listed actions, so explicit type arguments cannot
  * narrow what an omitted argument leaves whole.
  */
-export type OptionalUnless<O, Given> = {} extends O ? [options?: Given] : [options: Given];
+export type OptionalUnless<O, Given> = {} extends O
+  ? [options?: Given]
+  : [options: Given];
 
 /**
  * The action implementations among what a surface is given; `eventsOf` reads the event
  * implementations, by their tag.
  */
-export const toList = (served: Served): ReadonlyArray<AnyImplementation> =>
+export const toList = (served: Served): readonly AnyImplementation[] =>
   Arr.ensure(served).filter(
-    (app): app is AnyImplementation => !Predicate.isTagged(app, "EventImplementation"),
+    (app): app is AnyImplementation =>
+      !Predicate.isTagged(app, "EventImplementation")
   );
 
 /** The actions of the implementations a surface serves. */
-export type ActionOf<App> = App extends { readonly actions: ReadonlyArray<infer A> } ? A : never;
+export type ActionOf<App> = App extends {
+  readonly actions: ReadonlyArray<infer A>;
+}
+  ? A
+  : never;
 
-type Matches<A extends Action.Any, Listed extends Action.Any> = Listed extends Action.Any
+type Matches<
+  A extends Action.Any,
+  Listed extends Action.Any,
+> = Listed extends Action.Any
   ? [A] extends [Listed]
     ? true
     : [Listed] extends [A]
@@ -428,13 +595,16 @@ export const notHeld = {
 /** The actions' names, joined; one whose name another listed contract shares is marked `(another contract)`. */
 export const markingOthers = (
   actions: ReadonlyArray<Pick<Action.Any, "name">>,
-  names: ReadonlySet<string>,
-) => actions.map(({ name }) => (names.has(name) ? `${name} (another contract)` : name)).join(", ");
+  names: ReadonlySet<string>
+) =>
+  actions
+    .map(({ name }) => (names.has(name) ? `${name} (another contract)` : name))
+    .join(", ");
 
 export const assertHeld = <C extends Pick<Action.Any, "name">>(
   { why, fix, holder }: (typeof notHeld)[keyof typeof notHeld],
-  listed: ReadonlyArray<C>,
-  held: ReadonlyArray<C>,
+  listed: readonly C[],
+  held: readonly C[]
 ): void => {
   const missing = listed.filter((action) => !held.includes(action));
 
@@ -443,7 +613,7 @@ export const assertHeld = <C extends Pick<Action.Any, "name">>(
     const sameName = missing.some(({ name }) => names.has(name));
 
     throw new Error(
-      `Listed in actions, but ${why}: ${markingOthers(missing, names)} (${fix}${sameName ? `; one marked (another contract) is a contract of that name ${holder}` : ""})`,
+      `Listed in actions, but ${why}: ${markingOthers(missing, names)} (${fix}${sameName ? `; one marked (another contract) is a contract of that name ${holder}` : ""})`
     );
   }
 };
@@ -454,12 +624,14 @@ export const assertHeld = <C extends Pick<Action.Any, "name">>(
  * contracts each `holds` and how it `share`s them.
  */
 export const selectHeld = <App, C extends Pick<Action.Any, "name">>(
-  apps: ReadonlyArray<App>,
-  listed: ReadonlyArray<C> | undefined,
-  holds: (app: App) => ReadonlyArray<C>,
-  share: (own: ReadonlyArray<C>, app: App) => App,
-): ReadonlyArray<App> => {
-  if (listed === undefined) return apps;
+  apps: readonly App[],
+  listed: readonly C[] | undefined,
+  holds: (app: App) => readonly C[],
+  share: (own: readonly C[], app: App) => App
+): readonly App[] => {
+  if (listed === undefined) {
+    return apps;
+  }
 
   assertHeld(notHeld.byImplementation, listed, apps.flatMap(holds));
 
@@ -467,33 +639,42 @@ export const selectHeld = <App, C extends Pick<Action.Any, "name">>(
     const held = holds(app);
     const own = held.filter((contract) => listed.includes(contract));
 
-    if (own.length === 0) return [];
+    if (own.length === 0) {
+      return [];
+    }
 
     return own.length === held.length ? [app] : [share(own, app)];
   });
 };
 
 export const select = (
-  apps: ReadonlyArray<AnyImplementation>,
-  listed: ReadonlyArray<Action.Any> | undefined,
-): ReadonlyArray<AnyImplementation> =>
+  apps: readonly AnyImplementation[],
+  listed: readonly Action.Any[] | undefined
+): readonly AnyImplementation[] =>
   selectHeld(
     apps,
     listed,
     (app) => app.actions,
-    (own, app) => Implementation.share(own, app),
+    (own, app) => Implementation.share(own, app)
   );
 
 export const servedBy = (
   what: string,
-  bound: ReadonlyArray<Action.Any>,
-  apps: ReadonlyArray<AnyImplementation>,
-  listed: ReadonlyArray<Action.Any> | undefined,
-): ReadonlyArray<AnyImplementation> => {
-  if (listed !== undefined) assertHeld(notHeld.byBinding, listed, bound);
+  bound: readonly Action.Any[],
+  apps: readonly AnyImplementation[],
+  listed: readonly Action.Any[] | undefined
+): readonly AnyImplementation[] => {
+  if (listed !== undefined) {
+    assertHeld(notHeld.byBinding, listed, bound);
+  }
 
   const held = apps.flatMap((app) => app.actions);
-  const served = select(apps, listed ?? bound.filter((action) => held.includes(action)));
+
+  const served = select(
+    apps,
+    listed ?? bound.filter((action) => held.includes(action))
+  );
+
   const actions = served.flatMap((app) => app.actions);
 
   // Why: Refused here, when the surface is called, not by the types: a type check leaves its key
@@ -503,7 +684,7 @@ export const servedBy = (
     const names = new Set(bound.map(({ name }) => name));
 
     throw new Error(
-      `No action of these implementations is in this ${what}: ${markingOthers(held, names) || "none"} (pass an implementation of a bound action, or bind one of these)`,
+      `No action of these implementations is in this ${what}: ${markingOthers(held, names) || "none"} (pass an implementation of a bound action, or bind one of these)`
     );
   }
 
@@ -553,7 +734,10 @@ type OwnActions<App> = Extract<ActionOf<App>, Action.Any>;
  * their builders' and built authorizers' failures, an authorizer's only if a selected protected
  * action needs it.
  */
-export type BuildError<App, Listed extends Action.Any = OwnActions<App>> = App extends {
+export type BuildError<
+  App,
+  Listed extends Action.Any = OwnActions<App>,
+> = App extends {
   readonly "~buildError": infer EX;
   readonly "~authorizeBuildError": infer EAX;
 }
@@ -564,7 +748,10 @@ export type BuildError<App, Listed extends Action.Any = OwnActions<App>> = App e
  * What a surface serving the actions `Listed` of the implementations `App` reads at startup: their
  * builders' and built authorizers' services.
  */
-export type BuildServices<App, Listed extends Action.Any = OwnActions<App>> = App extends {
+export type BuildServices<
+  App,
+  Listed extends Action.Any = OwnActions<App>,
+> = App extends {
   readonly "~buildServices": infer RX;
   readonly "~authorizeBuildServices": infer RAX;
 }
@@ -577,19 +764,21 @@ export const provideBuilders =
   <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, unknown, unknown> => {
     const [first, ...rest] = builders;
 
-    return first === undefined ? layer : Layer.provide(layer, Layer.mergeAll(first, ...rest));
+    return first === undefined
+      ? layer
+      : Layer.provide(layer, Layer.mergeAll(first, ...rest));
   };
 
-export const provideHandlers = (apps: ReadonlyArray<AnyImplementation>) =>
+export const provideHandlers = (apps: readonly AnyImplementation[]) =>
   provideBuilders(apps.map((app) => Implementation.layerOf(app)));
 
 export const acquire = (
-  apps: ReadonlyArray<AnyImplementation>,
-  keyed: Keyed | undefined,
+  apps: readonly AnyImplementation[],
+  keyed: Keyed | undefined
 ): Effect.Effect<Bound, never, unknown> =>
   Effect.map(
     Effect.forEach(apps, (app) => Implementation.boundOf(app, keyed)),
-    (bound) => bound.flat(),
+    (bound) => bound.flat()
   );
 
 /**
@@ -598,12 +787,14 @@ export const acquire = (
  */
 export const builtWith = <A>(
   builders: ReadonlyArray<Layer.Layer<never, unknown, unknown>>,
-  acquisition: Effect.Effect<A, never, unknown>,
+  acquisition: Effect.Effect<A, never, unknown>
 ): Effect.Effect<A, unknown, unknown> => {
   const [first, ...rest] = builders;
 
   return Effect.gen(function* () {
-    if (first === undefined) return yield* acquisition;
+    if (first === undefined) {
+      return yield* acquisition;
+    }
 
     // Why: `Layer.build` forks the memo map of the layer graph around the caller, and what a fork
     // builds first the surfaces of that graph build again. Built into the map itself, as
@@ -611,109 +802,13 @@ export const builtWith = <A>(
     const current = yield* Effect.serviceOption(Layer.CurrentMemoMap);
     const memoMap = Option.getOrElse(current, Layer.makeMemoMapUnsafe);
     const scope = yield* Effect.scope;
-    const context = yield* Layer.buildWithMemoMap(Layer.mergeAll(first, ...rest), memoMap, scope);
+
+    const context = yield* Layer.buildWithMemoMap(
+      Layer.mergeAll(first, ...rest),
+      memoMap,
+      scope
+    );
 
     return yield* Effect.provideContext(acquisition, context);
   });
-};
-
-const dispatch = (
-  action: Action.Any,
-  handle: WrittenHandler<unknown>,
-  before: ErasedAuthorize,
-  keyed: Keyed | undefined,
-): ErasedHandler<unknown> => {
-  const actionAttributes = {
-    "action.name": action.name,
-    "action.read_only": action.readOnly,
-  };
-
-  const authentication =
-    action.caller === Anyone
-      ? Effect.void
-      : Effect.flatMap(Effect.serviceOption(action.caller), (actor) =>
-          Option.isSome(actor) ? Effect.void : Effect.fail(new Unauthenticated()),
-        );
-
-  const authorization =
-    action.caller === Anyone ? Effect.void : Effect.suspend(() => before(action));
-
-  const validate = Schema.decodeUnknownEffect(Schema.toType(Schema.Union(projectedErrors(action))));
-
-  // Why: A failure the action's errors reject, undeclared or breaking one of their checks, is the
-  // call's defect on every surface, beside why they reject it and with its trace: logs and reports
-  // then name it, where a surface encoding it named only the encoding's error.
-  const asDefects = (
-    reason: Cause.Fail<ErasedValue>,
-    rejected: Cause.Cause<Schema.SchemaError>,
-  ) => {
-    const trace = Context.makeUnsafe<never>(reason.annotations);
-
-    return [
-      Cause.makeDieReason(reason.error).annotate(trace),
-      Cause.makeDieReason(Cause.squash(rejected)).annotate(trace),
-    ];
-  };
-
-  const declaredOrDefect = Effect.fnUntraced(function* (cause: Cause.Cause<ErasedValue>) {
-    const reasons: Array<Cause.Reason<ErasedValue>> = [];
-
-    for (const reason of cause.reasons) {
-      if (Cause.isFailReason(reason)) {
-        const validated = yield* Effect.exit(validate(reason.error));
-
-        reasons.push(
-          ...(Exit.isSuccess(validated) ? [reason] : asDefects(reason, validated.cause)),
-        );
-      } else {
-        reasons.push(reason);
-      }
-    }
-
-    return yield* Effect.failCause(Cause.fromReasons(reasons));
-  });
-
-  const admitted = (input: ErasedValue) =>
-    Effect.andThen(authentication, Effect.andThen(checkInput(action, input), authorization));
-
-  const span = { attributes: actionAttributes };
-  const trace = { captureStackTrace: false };
-
-  if (elementOf(action.success) !== undefined) {
-    const streamed = (answer: ReturnType<WrittenHandler<unknown>>) =>
-      Stream.isStream(answer) ? Stream.scoped(answer) : Stream.die(notAStream);
-
-    return (input, sink) =>
-      Effect.succeed(
-        Stream.unwrap(
-          Effect.map(admitted(input), () =>
-            streamReportedTo(action.progress, sink, (reporting) =>
-              streamed(handle(input, reporting)),
-            ),
-          ),
-        ).pipe(
-          Stream.catchCause((cause) => Stream.fromEffect(declaredOrDefect(cause))),
-          Stream.updateService(References.CurrentLogAnnotations, (annotations) => ({
-            ...annotations,
-            ...actionAttributes,
-          })),
-          Stream.withSpan(action.name, { ...span, ...trace }),
-        ),
-      );
-  }
-
-  // Why: Provided whatever it is, an in-process call's `undefined` included, so a call made in a
-  // handler is named by its own surface, not by the one its caller came through.
-  return (input, sink) =>
-    Effect.scoped(
-      admitted(input).pipe(
-        Effect.andThen(
-          Effect.suspend(() =>
-            reportedTo(action.progress, sink, (reporting) => answered(handle(input, reporting))),
-          ),
-        ),
-        Effect.provideService(CallerKeyed, keyed),
-        Effect.catchCause(declaredOrDefect),
-      ),
-    ).pipe(Effect.annotateLogs(actionAttributes), Effect.withSpan(action.name, span, trace));
 };

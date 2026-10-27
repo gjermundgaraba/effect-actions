@@ -1,23 +1,28 @@
+import { setImmediate as nextTurn } from "node:timers/promises";
+
 import { afterAll, vi } from "@effect/vitest";
-import { Effect, Layer, Option, type Queue, Redacted, Schema, Stream } from "effect";
+import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
+import type { Queue } from "effect";
 import {
   FetchHttpClient,
   HttpClient,
   HttpClientRequest,
-  type HttpRouter,
   HttpServerRequest,
 } from "effect/http";
+import type { HttpRouter } from "effect/http";
 import { Dns } from "effect/net";
 import { KeyValueStore } from "effect/persistence";
 import { TestClock } from "effect/testing";
-import * as Action from "../../src/contract/Action.js";
+
 import * as Authentication from "../../src/authentication/Authentication.js";
+import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
-import { type Actor as Identity, actors, CurrentActor } from "./app/authorization.js";
+import { actors, CurrentActor } from "./app/authorization.js";
+import type { Actor as Identity } from "./app/authorization.js";
 
 export const Changed = Event.make("user.changed", {
   description: "A user changed.",
@@ -31,10 +36,14 @@ const Actor = Schema.Struct({
   permissions: Schema.Array(Schema.Literals(["users:read", "users:write"])),
 });
 
-export const Login = Authentication.make("webhook-delivery.Login", CurrentActor, {
-  principal: (actor) => actor.id,
-  schema: Actor,
-});
+export const Login = Authentication.make(
+  "webhook-delivery.Login",
+  CurrentActor,
+  {
+    principal: (actor) => actor.id,
+    schema: Actor,
+  }
+);
 
 export const Http = ActionHttp.make([Changed], { authentication: Login });
 
@@ -51,7 +60,8 @@ export interface Delivery {
 
 const Body = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json));
 
-export const bodyOf = (delivery: Delivery) => Schema.decodeUnknownSync(Body)(delivery.body);
+export const bodyOf = (delivery: Delivery) =>
+  Schema.decodeSync(Body)(delivery.body);
 
 export const secretOf = (seed: number) =>
   `whsec_${Buffer.from(Array.from({ length: 32 }, (_, index) => (seed + index) % 256)).toString("base64")}`;
@@ -61,20 +71,20 @@ export const signatureOf = async (
   secret: string,
   id: string | null,
   timestamp: string | number | null,
-  body: string,
+  body: string
 ) => {
   const key = await crypto.subtle.importKey(
     "raw",
     Buffer.from(secret.slice("whsec_".length), "base64"),
     { name: "HMAC", hash: "SHA-256" },
     false,
-    ["sign"],
+    ["sign"]
   );
 
   const mac = await crypto.subtle.sign(
     "HMAC",
     key,
-    new TextEncoder().encode(`${id}.${timestamp}.${body}`),
+    new TextEncoder().encode(`${id}.${timestamp}.${body}`)
   );
 
   return `v1,${Buffer.from(mac).toString("base64")}`;
@@ -83,12 +93,16 @@ export const signatureOf = async (
 export const signedBy = async (secret: string, delivery: Delivery) =>
   (delivery.signature ?? "")
     .split(" ")
-    .includes(await signatureOf(secret, delivery.id, delivery.timestamp, delivery.body));
+    .includes(
+      await signatureOf(secret, delivery.id, delivery.timestamp, delivery.body)
+    );
 
 type Answer = (body: Record<string, Schema.Json>) => Response;
 
 export const acknowledging: Answer = ({ type, challenge }) =>
-  type === "verification" ? Response.json({ challenge }) : new Response(null, { status: 200 });
+  type === "verification"
+    ? Response.json({ challenge })
+    : new Response(null, { status: 200 });
 
 interface Change {
   readonly id: string;
@@ -105,10 +119,35 @@ export interface WorldOptions extends Webhook.Options {
   readonly kept?: KeyValueStore.KeyValueStore | undefined;
   readonly over?: "HTTP" | "MCP" | "both" | undefined;
   /** What answers each POST to a callback, in place of the world's recording receiver. */
-  readonly callbacks?: Layer.Layer<never, never, HttpRouter.HttpRouter> | undefined;
+  readonly callbacks?:
+    | Layer.Layer<never, never, HttpRouter.HttpRouter>
+    | undefined;
   /** Whether the surfaces are given `Webhook.layer`; `true` by default. */
   readonly delivering?: boolean | undefined;
 }
+
+let inFlight = 0;
+
+export const counting = <E, R>(
+  client: Layer.Layer<HttpClient.HttpClient, E, R>
+) =>
+  Layer.effect(HttpClient.HttpClient)(
+    Effect.map(
+      HttpClient.HttpClient,
+      HttpClient.transform((response) =>
+        Effect.suspend(() => {
+          inFlight += 1;
+
+          return Effect.ensuring(
+            response,
+            Effect.sync(() => {
+              inFlight -= 1;
+            })
+          );
+        })
+      )
+    )
+  ).pipe(Layer.provide(client));
 
 export const makeWorld = ({
   emitted,
@@ -118,10 +157,10 @@ export const makeWorld = ({
   delivering = true,
   ...options
 }: WorldOptions = {}) => {
-  const changes: Array<Change> = [];
-  const received: Array<Delivery> = [];
+  const changes: Change[] = [];
+  const received: Delivery[] = [];
   const revoked = new Set<string>();
-  const requested: Array<boolean> = [];
+  const requested: boolean[] = [];
   const known = new Map<string, Identity>(Object.entries(actors));
 
   const world = {
@@ -136,15 +175,19 @@ export const makeWorld = ({
     answer: acknowledging,
   };
 
-  const verify = (token: Redacted.Redacted<string>) =>
-    Effect.fromOption(Option.fromUndefinedOr(known.get(Redacted.value(token)))).pipe(
-      Effect.mapError(() => new Action.Unauthenticated({ message: "Unknown demo token." })),
+  const verify = (token: Redacted.Redacted) =>
+    Effect.fromOption(
+      Option.fromUndefinedOr(known.get(Redacted.value(token)))
+    ).pipe(
+      Effect.mapError(
+        () => new Action.Unauthenticated({ message: "Unknown demo token." })
+      )
     );
 
   const authorize = () =>
     Effect.gen(function* () {
       const inRequest = Option.isSome(
-        yield* Effect.serviceOption(HttpServerRequest.HttpServerRequest),
+        yield* Effect.serviceOption(HttpServerRequest.HttpServerRequest)
       );
 
       requested.push(inRequest);
@@ -157,8 +200,9 @@ export const makeWorld = ({
 
       const actor = yield* CurrentActor;
 
-      if (revoked.has(actor.id) || !actor.permissions.includes("users:read"))
+      if (revoked.has(actor.id) || !actor.permissions.includes("users:read")) {
         return yield* new Action.Forbidden({ message: "Revoked." });
+      }
     });
 
   const changed =
@@ -180,25 +224,27 @@ export const makeWorld = ({
                   cursor: String(changes.length),
                   events: changes
                     .slice(cursor === null ? changes.length : Number(cursor))
-                    .filter(
-                      ({ onlyTenant }) => onlyTenant === undefined || onlyTenant === actor.tenantId,
-                    )
-                    .map((data) => ({ eventId: data.id, data })),
+                    .flatMap((data) =>
+                      data.onlyTenant === undefined ||
+                      data.onlyTenant === actor.tenantId
+                        ? [{ eventId: data.id, data }]
+                        : []
+                    ),
                 }));
               }),
           },
-          { authorize },
+          { authorize }
         )
       : Event.implement(
           Changed,
           {
             log: {
               emit: Stream.fromQueue(emitted).pipe(
-                Stream.map((data) => ({ eventId: data.id, data })),
+                Stream.map((data) => ({ eventId: data.id, data }))
               ),
             },
           },
-          { authorize },
+          { authorize }
         );
 
   const receiver = async (request: Request) => {
@@ -215,14 +261,14 @@ export const makeWorld = ({
       body,
     });
 
-    return world.answer(Schema.decodeUnknownSync(Body)(body));
+    return world.answer(Schema.decodeSync(Body)(body));
   };
 
   const webhooks =
     kept === undefined
       ? Webhook.layer(options)
       : Webhook.layer({ ...options, persist: true }).pipe(
-          Layer.provide(Layer.succeed(KeyValueStore.KeyValueStore, kept)),
+          Layer.provide(Layer.succeed(KeyValueStore.KeyValueStore, kept))
         );
 
   const overHttp = ActionHttp.layer(Http, changed);
@@ -233,14 +279,26 @@ export const makeWorld = ({
     authentication: Login,
   });
 
-  const surface = { HTTP: overHttp, MCP: overMcp, both: Layer.mergeAll(overHttp, overMcp) }[over];
+  const surface = {
+    HTTP: overHttp,
+    MCP: overMcp,
+    both: Layer.mergeAll(overHttp, overMcp),
+  }[over];
 
-  const authenticated = surface.pipe(Layer.provide(Authentication.layer(Login, verify)));
+  const authenticated = surface.pipe(
+    Layer.provide(Authentication.layer(Login, verify))
+  );
 
-  const routes = (delivering ? authenticated.pipe(Layer.provide(webhooks)) : authenticated).pipe(
+  const routes = (
+    delivering ? authenticated.pipe(Layer.provide(webhooks)) : authenticated
+  ).pipe(
     Layer.provide([
       Event.layerMemory,
-      counting(callbacks === undefined ? Testing.layer(receiver) : Testing.layer(callbacks)),
+      counting(
+        callbacks === undefined
+          ? Testing.layer(receiver)
+          : Testing.layer(callbacks)
+      ),
       Dns.layerStatic({
         hosts: {
           "hooks.example.com": ["93.184.216.34"],
@@ -248,7 +306,7 @@ export const makeWorld = ({
         },
       }),
       Layer.succeed(FetchHttpClient.RequestInit, { keepalive: true }),
-    ]),
+    ])
   );
 
   return { world, server: Testing.layer(routes) };
@@ -257,11 +315,13 @@ export const makeWorld = ({
 export const sent = (token: string, route: string, body: Schema.Json) =>
   Effect.flatMap(HttpClient.HttpClient, (client) =>
     client.execute(
-      HttpClientRequest.post(`http://localhost/api/events/user.changed/${route}`).pipe(
+      HttpClientRequest.post(
+        `http://localhost/api/events/user.changed/${route}`
+      ).pipe(
         HttpClientRequest.bearerToken(token),
-        HttpClientRequest.bodyJsonUnsafe(body),
-      ),
-    ),
+        HttpClientRequest.bodyJsonUnsafe(body)
+      )
+    )
   );
 
 const Granted = Schema.Struct({
@@ -275,7 +335,7 @@ const Granted = Schema.Struct({
       lastDeliveryAt: Schema.NullOr(Schema.String),
       lastError: Schema.NullOr(Schema.String),
       failedSince: Schema.optional(Schema.String),
-    }),
+    })
   ),
 });
 
@@ -284,7 +344,10 @@ export const url = "https://hooks.example.com/alice";
 export const subscribed = (
   secret = secretOf(1),
   ttlMs?: number | null,
-  { token = "alice", callback = url }: { readonly token?: string; readonly callback?: string } = {},
+  {
+    token = "alice",
+    callback = url,
+  }: { readonly token?: string; readonly callback?: string } = {}
 ) =>
   Effect.flatMap(
     sent(token, "subscribe", {
@@ -292,15 +355,14 @@ export const subscribed = (
       delivery: { url: callback, secret },
       ...(ttlMs === undefined ? {} : { ttlMs }),
     }),
-    (response) => Effect.flatMap(response.json, Schema.decodeUnknownEffect(Granted)),
+    (response) =>
+      Effect.flatMap(response.json, Schema.decodeUnknownEffect(Granted))
   );
 
-let inFlight = 0;
-
-const counted = <A>(work: Promise<A>): Promise<A> => {
+const counted = async <A>(work: Promise<A>): Promise<A> => {
   inFlight += 1;
 
-  return work.finally(() => {
+  return await work.finally(() => {
     inFlight -= 1;
   });
 };
@@ -312,35 +374,26 @@ const sign = crypto.subtle.sign.bind(crypto.subtle);
 const digest = crypto.subtle.digest.bind(crypto.subtle);
 
 const spies = [
-  vi.spyOn(crypto.subtle, "importKey").mockImplementation((...args) => counted(importKey(...args))),
-  vi.spyOn(crypto.subtle, "sign").mockImplementation((...args) => counted(sign(...args))),
-  vi.spyOn(crypto.subtle, "digest").mockImplementation((...args) => counted(digest(...args))),
+  vi
+    .spyOn(crypto.subtle, "importKey")
+    .mockImplementation(async (...args) => await counted(importKey(...args))),
+  vi
+    .spyOn(crypto.subtle, "sign")
+    .mockImplementation(async (...args) => await counted(sign(...args))),
+  vi
+    .spyOn(crypto.subtle, "digest")
+    .mockImplementation(async (...args) => await counted(digest(...args))),
 ];
 
 afterAll(() => {
-  for (const spy of spies) spy.mockRestore();
+  for (const spy of spies) {
+    spy.mockRestore();
+  }
 });
 
-export const counting = <E, R>(client: Layer.Layer<HttpClient.HttpClient, E, R>) =>
-  Layer.effect(HttpClient.HttpClient)(
-    Effect.map(
-      HttpClient.HttpClient,
-      HttpClient.transform((response) =>
-        Effect.suspend(() => {
-          inFlight += 1;
-
-          return Effect.ensuring(
-            response,
-            Effect.sync(() => {
-              inFlight -= 1;
-            }),
-          );
-        }),
-      ),
-    ),
-  ).pipe(Layer.provide(client));
-
-const turn = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+const turn = Effect.promise(async () => {
+  await nextTurn();
+});
 
 const quietTurns = 3;
 
@@ -352,13 +405,20 @@ const maxTurns = 10_000;
  * the test clock cannot see that work, and moved during it would let an attempt's 5-second
  * timeout or a retry's wait elapse in time the work never took.
  */
-export const settled = (done: () => boolean = () => true): Effect.Effect<void> => {
-  const waited = (quiet: number, turns: number): Effect.Effect<void> =>
-    quiet >= quietTurns && done()
-      ? Effect.void
-      : turns === maxTurns
-        ? Effect.die(new Error(`Never settled with ${String(done)}`))
-        : Effect.flatMap(turn, () => waited(inFlight === 0 ? quiet + 1 : 0, turns + 1));
+export const settled = (
+  done: () => boolean = () => true
+): Effect.Effect<void> => {
+  const waited = (quiet: number, turns: number): Effect.Effect<void> => {
+    if (quiet >= quietTurns && done()) {
+      return Effect.void;
+    }
+
+    return turns === maxTurns
+      ? Effect.die(new Error(`Never settled with ${String(done)}`))
+      : Effect.flatMap(turn, () =>
+          waited(inFlight === 0 ? quiet + 1 : 0, turns + 1)
+        );
+  };
 
   return waited(0, 0);
 };
@@ -367,22 +427,33 @@ export const settled = (done: () => boolean = () => true): Effect.Effect<void> =
  * Steps the clock a second at a time, each step once `settled`, until `done`, dying with `done`
  * named where it does not within `seconds`, by default 3 hours.
  */
-export const until = (done: () => boolean, seconds = 3 * 60 * 60): Effect.Effect<void> =>
-  Effect.flatMap(settled(), () =>
-    done()
-      ? Effect.void
-      : seconds <= 0
-        ? Effect.die(new Error(`Never held with the clock moved on: ${String(done)}`))
-        : Effect.andThen(TestClock.adjust("1 second"), until(done, seconds - 1)),
-  );
+export const until = (
+  done: () => boolean,
+  seconds = 3 * 60 * 60
+): Effect.Effect<void> =>
+  Effect.flatMap(settled(), () => {
+    if (done()) {
+      return Effect.void;
+    }
+
+    return seconds <= 0
+      ? Effect.die(
+          new Error(`Never held with the clock moved on: ${String(done)}`)
+        )
+      : Effect.andThen(TestClock.adjust("1 second"), until(done, seconds - 1));
+  });
 
 /** Lets `seconds` pass, a second at a time, each step once `settled`, and settles once more. */
 export const passed = (seconds = 60): Effect.Effect<void> =>
   seconds <= 0
     ? settled()
     : Effect.flatMap(settled(), () =>
-        Effect.andThen(TestClock.adjust("1 second"), passed(seconds - 1)),
+        Effect.andThen(TestClock.adjust("1 second"), passed(seconds - 1))
       );
 
-export const events = (received: ReadonlyArray<Delivery>) =>
-  received.map(bodyOf).filter(({ type }) => type === undefined);
+export const events = (received: readonly Delivery[]) =>
+  received.flatMap((delivery) => {
+    const body = bodyOf(delivery);
+
+    return body["type"] === undefined ? [body] : [];
+  });

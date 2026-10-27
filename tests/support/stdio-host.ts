@@ -1,6 +1,17 @@
-import { Deferred, Effect, Option, Predicate, Schema, Sink, Stdio, Stream } from "effect";
-import { type Params, statelessRequest } from "../../src/mcp/request.js";
+import {
+  Deferred,
+  Effect,
+  Option,
+  Predicate,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
+
 import { httpProtocol } from "../../src/mcp/protocol.js";
+import { statelessRequest } from "../../src/mcp/request.js";
+import type { Params } from "../../src/mcp/request.js";
 import { sessionMessage } from "./requests.js";
 
 export interface HostRequest {
@@ -9,10 +20,14 @@ export interface HostRequest {
 }
 
 const idOf = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ id: Schema.Finite })),
+  Schema.fromJsonString(Schema.Struct({ id: Schema.Finite }))
 );
 
-const message = (revision: string, id: number, { method, params = {} }: HostRequest) =>
+const message = (
+  revision: string,
+  id: number,
+  { method, params = {} }: HostRequest
+) =>
   revision === httpProtocol.protocolVersion
     ? { ...statelessRequest(method, params).body, id }
     : sessionMessage(method, params, id);
@@ -26,19 +41,23 @@ const sessionInitialize = (revision: string): HostRequest => ({
   },
 });
 
-const isStateless = (revision: string) => revision === httpProtocol.protocolVersion;
+const isStateless = (revision: string) =>
+  revision === httpProtocol.protocolVersion;
 
 export const exchange = <E>(
   server: Effect.Effect<void, E, Stdio.Stdio>,
   revision: string,
-  requests: ReadonlyArray<HostRequest>,
+  requests: readonly HostRequest[]
 ): Effect.Effect<
-  { readonly replies: ReadonlyArray<string>; readonly lines: ReadonlyArray<string> },
+  {
+    readonly replies: readonly string[];
+    readonly lines: readonly string[];
+  },
   E
 > =>
   Effect.gen(function* () {
     const stateless = isStateless(revision);
-    const lines: Array<string> = [];
+    const lines: string[] = [];
 
     const sent = [
       ...(stateless ? [] : [{ id: 0, request: sessionInitialize(revision) }]),
@@ -46,7 +65,7 @@ export const exchange = <E>(
     ];
 
     const pending = yield* Effect.forEach(sent, ({ id, request }) =>
-      Effect.map(Deferred.make<string>(), (reply) => ({ id, request, reply })),
+      Effect.map(Deferred.make<string>(), (reply) => ({ id, request, reply }))
     );
 
     const stdin = Stream.fromIterable(pending).pipe(
@@ -55,13 +74,15 @@ export const exchange = <E>(
           Stream.make(
             `${JSON.stringify(message(revision, id, request))}\n`,
             ...(id === 0
-              ? [`${JSON.stringify(sessionMessage("notifications/initialized"))}\n`]
-              : []),
+              ? [
+                  `${JSON.stringify(sessionMessage("notifications/initialized"))}\n`,
+                ]
+              : [])
           ),
-          Stream.fromEffectDrain(Deferred.await(reply)),
-        ),
+          Stream.fromEffectDrain(Deferred.await(reply))
+        )
       ),
-      Stream.encodeText,
+      Stream.encodeText
     );
 
     const decoder = new TextDecoder();
@@ -70,7 +91,9 @@ export const exchange = <E>(
     const stdout = () =>
       Sink.forEach((chunk: string | Uint8Array) =>
         Effect.suspend(() => {
-          written += Predicate.isString(chunk) ? chunk : decoder.decode(chunk, { stream: true });
+          written += Predicate.isString(chunk)
+            ? chunk
+            : decoder.decode(chunk, { stream: true });
 
           const complete = written.split("\n");
 
@@ -82,19 +105,23 @@ export const exchange = <E>(
               lines.push(line);
 
               const reply = Option.flatMap(idOf(line), ({ id }) =>
-                Option.fromNullishOr(pending.find((entry) => entry.id === id)),
+                Option.fromNullishOr(pending.find((entry) => entry.id === id))
               );
 
-              return Option.isSome(reply) ? Deferred.succeed(reply.value.reply, line) : Effect.void;
+              return Option.isSome(reply)
+                ? Deferred.succeed(reply.value.reply, line)
+                : Effect.void;
             },
-            { discard: true },
+            { discard: true }
           );
-        }),
+        })
       );
 
     yield* server.pipe(Effect.provide(Stdio.layerTest({ stdin, stdout })));
 
-    const replies = yield* Effect.forEach(pending, ({ reply }) => Deferred.await(reply));
+    const replies = yield* Effect.forEach(pending, ({ reply }) =>
+      Deferred.await(reply)
+    );
 
     return { replies, lines };
   });
@@ -102,20 +129,26 @@ export const exchange = <E>(
 export const converse = <E>(
   server: Effect.Effect<void, E, Stdio.Stdio>,
   revision: string,
-  requests: ReadonlyArray<HostRequest>,
-): Effect.Effect<ReadonlyArray<string>, E> =>
+  requests: readonly HostRequest[]
+): Effect.Effect<readonly string[], E> =>
   Effect.map(exchange(server, revision, requests), ({ replies }) =>
-    isStateless(revision) ? replies : replies.slice(1),
+    isStateless(revision) ? replies : replies.slice(1)
   );
 
 export const transcript = <E>(
   server: Effect.Effect<void, E, Stdio.Stdio>,
-  requests: ReadonlyArray<HostRequest>,
-): Effect.Effect<ReadonlyArray<string>, E> =>
-  Effect.map(exchange(server, httpProtocol.protocolVersion, requests), ({ lines }) => lines);
+  requests: readonly HostRequest[]
+): Effect.Effect<readonly string[], E> =>
+  Effect.map(
+    exchange(server, httpProtocol.protocolVersion, requests),
+    ({ lines }) => lines
+  );
 
 export const negotiate = <E>(
   server: Effect.Effect<void, E, Stdio.Stdio>,
-  revision: string,
+  revision: string
 ): Effect.Effect<string, E> =>
-  Effect.map(exchange(server, revision, []), ({ replies: [line = ""] }) => line);
+  Effect.map(
+    exchange(server, revision, []),
+    ({ replies: [line = ""] }) => line
+  );

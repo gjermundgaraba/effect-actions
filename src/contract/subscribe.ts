@@ -1,10 +1,14 @@
 import { Schema, Struct } from "effect";
+
 import { CallbackUrl, WebhookSecret } from "./callback.js";
 import * as Event from "./Event.js";
 import { SubscriptionOf } from "./push.js";
 
 /** Where a webhook subscription delivers: its callback, and the secret signing each POST. */
-export const WebhookCallback = Schema.Struct({ url: CallbackUrl, secret: WebhookSecret });
+export const WebhookCallback = Schema.Struct({
+  url: CallbackUrl,
+  secret: WebhookSecret,
+});
 
 /** The callback a webhook unsubscribe names: its URL alone. */
 export const WebhookTarget = WebhookCallback.mapFields(Struct.pick(["url"]));
@@ -26,14 +30,18 @@ export const WebhookSubscriptionOf = <E extends Event.Any>(event: E) =>
   SubscriptionOf(event).pipe(Schema.fieldsAssign(webhookFields));
 
 /** A webhook subscribe's request, its input decoded, as a surface reads it whatever its event. */
-export type AnyWebhookSubscription = ReturnType<typeof WebhookSubscriptionOf<Event.Any>>["Type"];
+export type AnyWebhookSubscription = ReturnType<
+  typeof WebhookSubscriptionOf<Event.Any>
+>["Type"];
 
 /** What a webhook unsubscribe from `event` takes: the input and callback it subscribed with. */
 export const WebhookCancellationOf = <E extends Event.Any>(event: E) =>
   Schema.Struct({ input: event.input, delivery: WebhookTarget });
 
 /** A webhook unsubscribe's request, its input decoded, whatever its event. */
-export type AnyWebhookCancellation = ReturnType<typeof WebhookCancellationOf<Event.Any>>["Type"];
+export type AnyWebhookCancellation = ReturnType<
+  typeof WebhookCancellationOf<Event.Any>
+>["Type"];
 
 /**
  * How a webhook subscription's deliveries are going, as a refresh answers it: whether it is

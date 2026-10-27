@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, Layer, Schema } from "effect";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+import { ConfigProvider, Effect, Layer, Schema } from "effect";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+
 import { fakeFarm, picture } from "../src/platform/fake-farm.js";
 import { printFarm } from "../src/platform/print-farm.js";
 import { PrintFarmError, Printers } from "../src/printers/Printers.js";
@@ -12,13 +13,19 @@ import { routes } from "../src/routes.js";
 // The real routes answer in memory, and no port is opened.
 
 // What the entrypoint reads from the environment, given to the test as a Layer.
-const farm = { FARM_URL: "https://farm.example.test", FARM_USER: "agent", FARM_PASSWORD: "secret" };
+const farm = {
+  FARM_URL: "https://farm.example.test",
+  FARM_USER: "agent",
+  FARM_PASSWORD: "secret",
+};
 
 // The fake farm goes to `printFarm` alone, so the test's own requests still reach the routes.
 const servedWith = (environment: Record<string, string>) =>
   Testing.layer(routes).pipe(
     Layer.provide(printFarm.pipe(Layer.provide(fakeFarm))),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment))),
+    Layer.provide(
+      ConfigProvider.layer(ConfigProvider.fromEnvRecord(environment))
+    )
   );
 
 const served = servedWith({
@@ -35,7 +42,7 @@ const preflight = (origin: string) =>
         "access-control-request-method": "POST",
         "access-control-request-headers": "content-type, mcp-protocol-version",
       },
-    }),
+    })
   );
 
 // One tool of a `tools/list` answer, as far as this test reads it.
@@ -50,32 +57,48 @@ const Listed = Schema.Struct({
           destructiveHint: Schema.Boolean,
           idempotentHint: Schema.Boolean,
         }),
-      }),
+      })
     ),
   }),
 });
+
+const hints = (
+  readOnlyHint: boolean,
+  destructiveHint: boolean,
+  idempotentHint: boolean
+) => ({
+  readOnlyHint,
+  destructiveHint,
+  idempotentHint,
+});
+
+const from = (origin: string) =>
+  HttpClient.execute(
+    ActionMcp.request("tools/list", {}, { headers: { origin } })
+  );
 
 describe("the tools, over MCP", () => {
   it.effect("lists every tool with its title and hints as sent", () =>
     Effect.gen(function* () {
       // A raw request, for what no typed client shows: here, the listing itself.
-      const response = yield* HttpClient.execute(ActionMcp.request("tools/list"));
-      const { result } = yield* HttpClientResponse.schemaBodyJson(Listed)(response);
+      const response = yield* HttpClient.execute(
+        ActionMcp.request("tools/list")
+      );
 
-      const hints = (readOnlyHint: boolean, destructiveHint: boolean, idempotentHint: boolean) => ({
-        readOnlyHint,
-        destructiveHint,
-        idempotentHint,
-      });
+      const { result } =
+        yield* HttpClientResponse.schemaBodyJson(Listed)(response);
 
-      expect(result.tools).toEqual([
+      expect(result.tools).toStrictEqual([
         {
           name: "list_printers",
           annotations: { title: "List printers", ...hints(true, false, false) },
         },
         {
           name: "get_camera_snapshot",
-          annotations: { title: "Camera snapshot", ...hints(true, false, false) },
+          annotations: {
+            title: "Camera snapshot",
+            ...hints(true, false, false),
+          },
         },
         {
           name: "start_print",
@@ -83,14 +106,17 @@ describe("the tools, over MCP", () => {
         },
         {
           name: "set_paused",
-          annotations: { title: "Pause or resume a print", ...hints(false, true, true) },
+          annotations: {
+            title: "Pause or resume a print",
+            ...hints(false, true, true),
+          },
         },
         {
           name: "cancel_print",
           annotations: { title: "Cancel a print", ...hints(false, true, true) },
         },
       ]);
-    }).pipe(Effect.provide(served)),
+    }).pipe(Effect.provide(served))
   );
 
   it.effect("answers a camera's picture as an image beside the printer", () =>
@@ -99,7 +125,9 @@ describe("the tools, over MCP", () => {
       // from its image block, as the handler returned it.
       const mcp = yield* ActionMcp.client(Printers);
 
-      expect(yield* mcp.get_camera_snapshot({ printer_id: "mk4-1" })).toEqual({
+      expect(
+        yield* mcp.get_camera_snapshot({ printer_id: "mk4-1" })
+      ).toStrictEqual({
         printer: {
           id: "mk4-1",
           name: "MK4 by the door",
@@ -108,80 +136,111 @@ describe("the tools, over MCP", () => {
         },
         image: { data: picture, mimeType: "image/png" },
       });
-    }).pipe(Effect.provide(served)),
+    }).pipe(Effect.provide(served))
   );
 
-  it.effect("answers the farm's refusal as the tool's declared error, message and all", () =>
-    Effect.gen(function* () {
-      const mcp = yield* ActionMcp.client(Printers);
-      const error = yield* Effect.flip(mcp.get_camera_snapshot({ printer_id: "mini-1" }));
+  it.effect(
+    "answers the farm's refusal as the tool's declared error, message and all",
+    () =>
+      Effect.gen(function* () {
+        const mcp = yield* ActionMcp.client(Printers);
 
-      expect(error).toBeInstanceOf(PrintFarmError);
-      expect(error.message).toBe("The print farm refused: Mini on the shelf is offline.");
-    }).pipe(Effect.provide(served)),
+        const error = yield* Effect.flip(
+          mcp.get_camera_snapshot({ printer_id: "mini-1" })
+        );
+
+        expect(error).toBeInstanceOf(PrintFarmError);
+        expect(error.message).toBe(
+          "The print farm refused: Mini on the shelf is offline."
+        );
+      }).pipe(Effect.provide(served))
   );
 
-  it.effect("accepts the browser origins the configuration lists, and no other", () =>
-    Effect.gen(function* () {
-      const from = (origin: string) =>
-        HttpClient.execute(ActionMcp.request("tools/list", {}, { headers: { origin } }));
-
-      expect((yield* from("https://console.example.test")).status).toBe(200);
-      expect((yield* from("https://wall.example.test")).status).toBe(200);
-      expect((yield* from("https://elsewhere.example.test")).status).toBe(403);
-    }).pipe(Effect.provide(served)),
+  it.effect(
+    "accepts the browser origins the configuration lists, and no other",
+    () =>
+      Effect.gen(function* () {
+        expect((yield* from("https://console.example.test")).status).toBe(200);
+        expect((yield* from("https://wall.example.test")).status).toBe(200);
+        expect((yield* from("https://elsewhere.example.test")).status).toBe(
+          403
+        );
+      }).pipe(Effect.provide(served))
   );
 
-  it.effect("answers a listed origin's CORS preflight, and its headers on a tool's answer", () =>
-    Effect.gen(function* () {
-      const asked = yield* preflight("https://console.example.test");
+  it.effect(
+    "answers a listed origin's CORS preflight, and its headers on a tool's answer",
+    () =>
+      Effect.gen(function* () {
+        const asked = yield* preflight("https://console.example.test");
 
-      expect(asked.status).toBe(204);
-      expect(asked.headers["access-control-allow-origin"]).toBe("https://console.example.test");
-      expect(asked.headers["access-control-allow-methods"]).toBe("POST, DELETE");
-      expect(asked.headers["access-control-allow-headers"]).toContain("MCP-Protocol-Version");
+        expect(asked.status).toBe(204);
+        expect(asked.headers["access-control-allow-origin"]).toBe(
+          "https://console.example.test"
+        );
+        expect(asked.headers["access-control-allow-methods"]).toBe(
+          "POST, DELETE"
+        );
+        expect(asked.headers["access-control-allow-headers"]).toContain(
+          "MCP-Protocol-Version"
+        );
 
-      const listed = yield* HttpClient.execute(
-        ActionMcp.request(
-          "tools/list",
-          {},
-          { headers: { origin: "https://console.example.test" } },
-        ),
-      );
+        const listed = yield* HttpClient.execute(
+          ActionMcp.request(
+            "tools/list",
+            {},
+            { headers: { origin: "https://console.example.test" } }
+          )
+        );
 
-      expect(listed.headers["access-control-allow-origin"]).toBe("https://console.example.test");
-      expect(listed.headers["access-control-expose-headers"]).toContain("Mcp-Session-Id");
+        expect(listed.headers["access-control-allow-origin"]).toBe(
+          "https://console.example.test"
+        );
+        expect(listed.headers["access-control-expose-headers"]).toContain(
+          "Mcp-Session-Id"
+        );
 
-      // Two origins are configured, so each request's own is compared with the list.
-      expect((yield* preflight("https://elsewhere.example.test")).headers).not.toHaveProperty(
-        "access-control-allow-origin",
-      );
-    }).pipe(Effect.provide(served)),
+        // Two origins are configured, so each request's own is compared with the list.
+        expect(
+          (yield* preflight("https://elsewhere.example.test")).headers
+        ).not.toHaveProperty("access-control-allow-origin");
+      }).pipe(Effect.provide(served))
   );
 
-  it.effect("names its one configured origin to every preflight, and still refuses any other", () =>
-    Effect.gen(function* () {
-      // With exactly one origin, Effect's CORS compares nothing: the header is that origin
-      // whoever asks. A page elsewhere is still refused, twice: its browser reads an origin
-      // that is not its own, and the endpoint answers its request 403.
-      const asked = yield* preflight("https://elsewhere.example.test");
+  it.effect(
+    "names its one configured origin to every preflight, and still refuses any other",
+    () =>
+      Effect.gen(function* () {
+        // With exactly one origin, Effect's CORS compares nothing: the header is that origin
+        // whoever asks. A page elsewhere is still refused, twice: its browser reads an origin
+        // that is not its own, and the endpoint answers its request 403.
+        const asked = yield* preflight("https://elsewhere.example.test");
 
-      expect(asked.status).toBe(204);
-      expect(asked.headers["access-control-allow-origin"]).toBe("https://console.example.test");
+        expect(asked.status).toBe(204);
+        expect(asked.headers["access-control-allow-origin"]).toBe(
+          "https://console.example.test"
+        );
 
-      const called = yield* HttpClient.execute(
-        ActionMcp.request(
-          "tools/list",
-          {},
-          { headers: { origin: "https://elsewhere.example.test" } },
-        ),
-      );
+        const called = yield* HttpClient.execute(
+          ActionMcp.request(
+            "tools/list",
+            {},
+            { headers: { origin: "https://elsewhere.example.test" } }
+          )
+        );
 
-      expect(called.status).toBe(403);
-      expect(called.headers["access-control-allow-origin"]).toBe("https://console.example.test");
-    }).pipe(
-      Effect.provide(servedWith({ ...farm, ALLOWED_ORIGINS: "https://console.example.test" })),
-    ),
+        expect(called.status).toBe(403);
+        expect(called.headers["access-control-allow-origin"]).toBe(
+          "https://console.example.test"
+        );
+      }).pipe(
+        Effect.provide(
+          servedWith({
+            ...farm,
+            ALLOWED_ORIGINS: "https://console.example.test",
+          })
+        )
+      )
   );
 
   it.effect("allows no origin where none is configured", () =>
@@ -189,7 +248,7 @@ describe("the tools, over MCP", () => {
       const asked = yield* preflight("https://console.example.test");
 
       expect(asked.headers).not.toHaveProperty("access-control-allow-origin");
-    }).pipe(Effect.provide(servedWith(farm))),
+    }).pipe(Effect.provide(servedWith(farm)))
   );
 
   it.effect("serves the host's own route beside the tools", () =>
@@ -197,6 +256,6 @@ describe("the tools, over MCP", () => {
       const health = yield* HttpClient.get("/healthz");
 
       expect(yield* health.text).toBe("ok");
-    }).pipe(Effect.provide(served)),
+    }).pipe(Effect.provide(served))
   );
 });

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Schema } from "effect";
-import { Base64 } from "effect/encoding";
 import { McpServer } from "effect/ai";
+import { Base64 } from "effect/encoding";
 import { HttpRouter } from "effect/http";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import { authenticate } from "../support/app/authentication.js";
@@ -21,7 +22,7 @@ import {
 import { serve } from "../support/serve.js";
 
 const makeExampleAppRecordingCalls = () => {
-  const calls: Array<string> = [];
+  const calls: string[] = [];
 
   const app = Action.implement(
     [Status, RenameUser, Double],
@@ -33,9 +34,14 @@ const makeExampleAppRecordingCalls = () => {
 
           return { id, name };
         }),
-      double: ({ value }) => Effect.sync(() => (calls.push("double"), value * 2)),
+      double: ({ value }) =>
+        Effect.sync(() => {
+          calls.push("double");
+
+          return value * 2;
+        }),
     },
-    { authorize },
+    { authorize }
   );
 
   return { app, calls };
@@ -44,7 +50,10 @@ const makeExampleAppRecordingCalls = () => {
 const mixedEndpoint = ({
   features,
   requestScoped = false,
-}: { readonly features?: Layer.Layer<never>; readonly requestScoped?: boolean } = {}) => {
+}: {
+  readonly features?: Layer.Layer<never>;
+  readonly requestScoped?: boolean;
+} = {}) => {
   const { app, calls } = makeExampleAppRecordingCalls();
 
   const web = serve(
@@ -54,10 +63,43 @@ const mixedEndpoint = ({
       authentication: Login,
       requestScoped,
       ...(features === undefined ? {} : { features }),
-    }).pipe(Layer.provide(authenticate)),
+    }).pipe(Layer.provide(authenticate))
   );
 
   return { web, calls };
+};
+
+const named = (request: Request, name: string) => {
+  request.headers.set("mcp-name", `=?base64?${Base64.encode(name)}?=`);
+
+  return request;
+};
+
+const open = async (
+  web: ReturnType<typeof mixedEndpoint>["web"],
+  token: string
+) => {
+  const initialized = await web.handler(
+    withBearer(
+      sessionRequest({ method: "initialize", params: initializeParams }),
+      token
+    )
+  );
+
+  expect(initialized.status).toBe(200);
+
+  const session = initialized.headers.get("mcp-session-id") ?? "";
+
+  const ready = await web.handler(
+    withBearer(
+      sessionRequest({ method: "notifications/initialized", session }),
+      token
+    )
+  );
+
+  expect(ready.status).toBe(202);
+
+  return session;
 };
 
 describe.each([
@@ -67,76 +109,96 @@ describe.each([
   it("admits a signed-out caller's public call, and answers a protected tool's call with the 401 a client signs in on, then runs it signed in", async () => {
     const { web, calls } = mixedEndpoint({ requestScoped });
 
-    expect(await valueOf(await web.handler(rawToolCall("status")))).toEqual({
+    await expect(
+      valueOf(await web.handler(rawToolCall("status")))
+    ).resolves.toStrictEqual({
       service: "gate",
       users: 1,
     });
 
-    const identityFreeRefused = await web.handler(rawToolCall("double", { value: "21" }));
-    expect(identityFreeRefused.status).toBe(401);
-    expect(identityFreeRefused.headers.get("www-authenticate")).toContain("resource_metadata");
-    expect(
-      Schema.decodeUnknownSync(Action.Unauthenticated)(await identityFreeRefused.json()),
-    ).toBeInstanceOf(Action.Unauthenticated);
-    expect(calls).toEqual([]);
+    const identityFreeRefused = await web.handler(
+      rawToolCall("double", { value: "21" })
+    );
 
+    expect(identityFreeRefused.status).toBe(401);
+    expect(identityFreeRefused.headers.get("www-authenticate")).toContain(
+      "resource_metadata"
+    );
     expect(
-      await valueOf(
-        await web.handler(withBearer(rawToolCall("double", { value: "21" }), "reader")),
-      ),
-    ).toBe(42);
-    expect(calls).toEqual(["double"]);
+      Schema.decodeUnknownSync(Action.Unauthenticated)(
+        await identityFreeRefused.json()
+      )
+    ).toBeInstanceOf(Action.Unauthenticated);
+    expect(calls).toStrictEqual([]);
+
+    await expect(
+      valueOf(
+        await web.handler(
+          withBearer(rawToolCall("double", { value: "21" }), "reader")
+        )
+      )
+    ).resolves.toBe(42);
+    expect(calls).toStrictEqual(["double"]);
   });
 
   it("verifies a credential a public call presents: a forged one gets 401 invalid_token, an empty Bearer counts as none", async () => {
     const { web } = mixedEndpoint({ requestScoped });
 
     const publicCallWithUnverifiedCredential = await web.handler(
-      withBearer(rawToolCall("status"), "forged"),
+      withBearer(rawToolCall("status"), "forged")
     );
 
     expect(publicCallWithUnverifiedCredential.status).toBe(401);
-    expect(publicCallWithUnverifiedCredential.headers.get("www-authenticate")).toContain(
-      'error="invalid_token"',
-    );
+    expect(
+      publicCallWithUnverifiedCredential.headers.get("www-authenticate")
+    ).toContain('error="invalid_token"');
 
     const publicCallWithEmptyCredential = rawToolCall("status");
     publicCallWithEmptyCredential.headers.set("authorization", "Bearer");
-    expect((await web.handler(publicCallWithEmptyCredential)).status).toBe(200);
+    const emptyCredential = await web.handler(publicCallWithEmptyCredential);
+    expect(emptyCredential.status).toBe(200);
   });
 
   it("answers a signed-in caller lacking a protected tool's scope with the 403 step-up naming it", async () => {
     const { web, calls } = mixedEndpoint({ requestScoped });
 
     const stepUpForScope = await web.handler(
-      withBearer(rawToolCall("renameUser", { id: "1", name: "X" }), "reader"),
+      withBearer(rawToolCall("renameUser", { id: "1", name: "X" }), "reader")
     );
 
     expect(stepUpForScope.status).toBe(403);
-    expect(stepUpForScope.headers.get("www-authenticate")).toContain('scope="users:write"');
-    expect(calls).toEqual([]);
+    expect(stepUpForScope.headers.get("www-authenticate")).toContain(
+      'scope="users:write"'
+    );
+    expect(calls).toStrictEqual([]);
   });
 
   it("reads a base64-encoded Mcp-Name as the runtime routes it: a public call is admitted signed out, a protected one refused, also under a public name", async () => {
     const { web, calls } = mixedEndpoint({ requestScoped });
 
-    const named = (request: Request, name: string) => {
-      request.headers.set("mcp-name", `=?base64?${Base64.encode(name)}?=`);
-
-      return request;
-    };
-
-    expect(await valueOf(await web.handler(named(rawToolCall("status"), "status")))).toEqual({
+    await expect(
+      valueOf(await web.handler(named(rawToolCall("status"), "status")))
+    ).resolves.toStrictEqual({
       service: "gate",
       users: 1,
     });
 
-    const protectedCall = named(rawToolCall("double", { value: "21" }), "double");
-    expect((await web.handler(protectedCall)).status).toBe(401);
+    const protectedCall = named(
+      rawToolCall("double", { value: "21" }),
+      "double"
+    );
 
-    const publicNameOverProtectedCall = named(rawToolCall("double", { value: "21" }), "status");
-    expect((await web.handler(publicNameOverProtectedCall)).status).toBe(400);
-    expect(calls).toEqual([]);
+    const protectedAnswer = await web.handler(protectedCall);
+    expect(protectedAnswer.status).toBe(401);
+
+    const publicNameOverProtectedCall = named(
+      rawToolCall("double", { value: "21" }),
+      "status"
+    );
+
+    const publicNameAnswer = await web.handler(publicNameOverProtectedCall);
+    expect(publicNameAnswer.status).toBe(400);
+    expect(calls).toStrictEqual([]);
   });
 
   it("never gives a public tool an identity, though its request presents a valid credential", async () => {
@@ -148,7 +210,7 @@ describe.each([
     });
 
     const whoever = Action.implement(Whoever, () =>
-      Effect.map(Effect.serviceOption(CurrentActor), Option.isSome),
+      Effect.map(Effect.serviceOption(CurrentActor), Option.isSome)
     );
 
     const { app } = makeExampleAppRecordingCalls();
@@ -159,13 +221,15 @@ describe.each([
         version: "0",
         authentication: Login,
         requestScoped,
-      }).pipe(Layer.provide(authenticate)),
+      }).pipe(Layer.provide(authenticate))
     );
 
-    expect(await valueOf(await web.handler(withBearer(rawToolCall("whoever"), "reader")))).toBe(
-      false,
-    );
-    expect(await valueOf(await web.handler(rawToolCall("whoever")))).toBe(false);
+    await expect(
+      valueOf(await web.handler(withBearer(rawToolCall("whoever"), "reader")))
+    ).resolves.toBe(false);
+    await expect(
+      valueOf(await web.handler(rawToolCall("whoever")))
+    ).resolves.toBe(false);
   });
 
   it("answers a public tool's step-up refusal as its result, signed in or not, as HTTP does", async () => {
@@ -176,7 +240,9 @@ describe.each([
     });
 
     const peeking = Action.implement(Peek, () =>
-      Effect.fail(new Action.Forbidden({ message: "Needs read.", scopes: ["users:read"] })),
+      Effect.fail(
+        new Action.Forbidden({ message: "Needs read.", scopes: ["users:read"] })
+      )
     );
 
     const web = serve(
@@ -185,14 +251,22 @@ describe.each([
         version: "0",
         authentication: Login,
         requestScoped,
-      }).pipe(Layer.provide(authenticate)),
+      }).pipe(Layer.provide(authenticate))
     );
 
-    for (const request of [rawToolCall("peek"), withBearer(rawToolCall("peek"), "reader")]) {
+    for (const request of [
+      rawToolCall("peek"),
+      withBearer(rawToolCall("peek"), "reader"),
+    ]) {
       const response = await web.handler(request);
 
-      expect([response.status, response.headers.get("www-authenticate")]).toEqual([200, null]);
-      expect(await response.json()).toMatchObject({ result: { isError: true } });
+      expect([
+        response.status,
+        response.headers.get("www-authenticate"),
+      ]).toStrictEqual([200, null]);
+      await expect(response.json()).resolves.toMatchObject({
+        result: { isError: true },
+      });
     }
   });
 
@@ -200,26 +274,35 @@ describe.each([
     const { web } = mixedEndpoint({ requestScoped });
 
     for (const method of ["server/discover", "tools/list"]) {
-      expect([method, (await web.handler(mcpRequest({ method }))).status]).toEqual([method, 200]);
+      const response = await web.handler(mcpRequest({ method }));
+      expect([method, response.status]).toStrictEqual([method, 200]);
     }
 
-    const listed = await (await web.handler(mcpRequest({ method: "tools/list" }))).json();
+    const listing = await web.handler(mcpRequest({ method: "tools/list" }));
+    const listed = await listing.json();
+
     expect(listed).toMatchObject({
-      result: { tools: [{ name: "status" }, { name: "renameUser" }, { name: "double" }] },
+      result: {
+        tools: [{ name: "status" }, { name: "renameUser" }, { name: "double" }],
+      },
     });
   });
 
   it("refuses a protected tool, prompt or resource before decoding its arguments", async () => {
     const { web, calls } = mixedEndpoint({ requestScoped });
 
-    const protectedMalformedArguments = await web.handler(rawToolCall("renameUser", { id: "1" }));
-
-    expect(protectedMalformedArguments.status).toBe(401);
-    expect(protectedMalformedArguments.headers.get("www-authenticate")).toContain(
-      "resource_metadata",
+    const protectedMalformedArguments = await web.handler(
+      rawToolCall("renameUser", { id: "1" })
     );
 
-    const publicMalformedArguments = await web.handler(rawToolCall("status", { unexpected: "x" }));
+    expect(protectedMalformedArguments.status).toBe(401);
+    expect(
+      protectedMalformedArguments.headers.get("www-authenticate")
+    ).toContain("resource_metadata");
+
+    const publicMalformedArguments = await web.handler(
+      rawToolCall("status", { unexpected: "x" })
+    );
 
     const answered = await publicMalformedArguments.text();
 
@@ -227,33 +310,41 @@ describe.each([
     expect(JSON.parse(answered)).toMatchObject({ result: { isError: true } });
     expect(answered).toContain("Invalid parameters for tool 'status'");
 
-    const publicHeaderOverProtectedBody = rawToolCall("double", { value: "21" });
+    const publicHeaderOverProtectedBody = rawToolCall("double", {
+      value: "21",
+    });
+
     publicHeaderOverProtectedBody.headers.set("mcp-name", "status");
-    expect((await web.handler(publicHeaderOverProtectedBody)).status).toBe(400);
+    const publicHeaderAnswer = await web.handler(publicHeaderOverProtectedBody);
+    expect(publicHeaderAnswer.status).toBe(400);
 
     const protectedHeaderOverPublicBody = rawToolCall("status");
     protectedHeaderOverPublicBody.headers.set("mcp-name", "double");
-    expect((await web.handler(protectedHeaderOverPublicBody)).status).toBe(401);
+
+    const protectedHeaderAnswer = await web.handler(
+      protectedHeaderOverPublicBody
+    );
+
+    expect(protectedHeaderAnswer.status).toBe(401);
 
     const withoutRoutingName = rawToolCall("status");
     withoutRoutingName.headers.delete("mcp-name");
-    expect((await web.handler(withoutRoutingName)).status).toBe(401);
+    const unnamedAnswer = await web.handler(withoutRoutingName);
+    expect(unnamedAnswer.status).toBe(401);
 
     for (const [method, params] of [
       ["resources/read", { uri: "docs://readme" }],
       ["prompts/get", { name: "intro" }],
     ] as const) {
-      expect([method, (await web.handler(mcpRequest({ method, params }))).status]).toEqual([
-        method,
-        401,
-      ]);
+      const response = await web.handler(mcpRequest({ method, params }));
+      expect([method, response.status]).toStrictEqual([method, 401]);
     }
 
-    expect(calls).toEqual([]);
+    expect(calls).toStrictEqual([]);
   });
 
   it("authenticates a native feature's listing, completion and subscription", async () => {
-    const completed: Array<string> = [];
+    const completed: string[] = [];
 
     const promptCompletingFromAppData = McpServer.prompt({
       name: "customer",
@@ -269,7 +360,10 @@ describe.each([
       content: ({ email }) => Effect.succeed(`Customer ${email}`),
     });
 
-    const { web } = mixedEndpoint({ features: promptCompletingFromAppData, requestScoped });
+    const { web } = mixedEndpoint({
+      features: promptCompletingFromAppData,
+      requestScoped,
+    });
 
     const complete = {
       ref: { type: "ref/prompt", name: "customer" },
@@ -281,24 +375,31 @@ describe.each([
       ["prompts/list", {}],
       ["resources/list", {}],
       ["resources/templates/list", {}],
-      ["subscriptions/listen", { notifications: { resourceSubscriptions: ["invoice://1"] } }],
+      [
+        "subscriptions/listen",
+        { notifications: { resourceSubscriptions: ["invoice://1"] } },
+      ],
     ] as const) {
       const response = await web.handler(mcpRequest({ method, params }));
-      expect([method, response.status]).toEqual([method, 401]);
+      expect([method, response.status]).toStrictEqual([method, 401]);
     }
 
-    expect(completed).toEqual([]);
+    expect(completed).toStrictEqual([]);
 
     for (const method of ["server/discover", "tools/list"]) {
-      expect([method, (await web.handler(mcpRequest({ method }))).status]).toEqual([method, 200]);
+      const response = await web.handler(mcpRequest({ method }));
+      expect([method, response.status]).toStrictEqual([method, 200]);
     }
 
     const signedIn = await web.handler(
-      withBearer(mcpRequest({ method: "completion/complete", params: complete }), "alice"),
+      withBearer(
+        mcpRequest({ method: "completion/complete", params: complete }),
+        "alice"
+      )
     );
 
     expect(signedIn.status).toBe(200);
-    expect(completed).toEqual(["a"]);
+    expect(completed).toStrictEqual(["a"]);
   });
 
   it("leaves no body the native runtime skips validating to slip past it", async () => {
@@ -306,7 +407,11 @@ describe.each([
     const rename = { name: "renameUser", arguments: { id: "1", name: "Eve" } };
 
     const bodiesNativeHeaderValidationSkips = [
-      [{ jsonrpc: "2.0", method: "tools/call", params: rename }, { "mcp-name": "status" }, 400],
+      [
+        { jsonrpc: "2.0", method: "tools/call", params: rename },
+        { "mcp-name": "status" },
+        400,
+      ],
       [
         { jsonrpc: "2.0", method: "tools/call", params: rename },
         { "mcp-method": "tools/list" },
@@ -319,37 +424,54 @@ describe.each([
       ],
     ] as const;
 
-    for (const [body, headers, statelessStatus] of bodiesNativeHeaderValidationSkips) {
+    for (const [
+      body,
+      headers,
+      statelessStatus,
+    ] of bodiesNativeHeaderValidationSkips) {
       for (const withProtocolVersion of [true, false]) {
         const base = rawToolCall("status");
         const sent = new Headers(base.headers);
 
-        for (const [key, value] of Object.entries(headers)) sent.set(key, value);
+        for (const [key, value] of Object.entries(headers)) {
+          sent.set(key, value);
+        }
 
-        if (!withProtocolVersion) sent.delete("mcp-protocol-version");
+        if (!withProtocolVersion) {
+          sent.delete("mcp-protocol-version");
+        }
 
         const response = await web.handler(
-          new Request(base.url, { method: "POST", headers: sent, body: JSON.stringify(body) }),
+          new Request(base.url, {
+            method: "POST",
+            headers: sent,
+            body: JSON.stringify(body),
+          })
         );
 
-        expect(response.status).toBe(withProtocolVersion ? statelessStatus : 401);
+        expect(response.status).toBe(
+          withProtocolVersion ? statelessStatus : 401
+        );
       }
     }
 
     for (const method of ["tools/list", "server/discover"]) {
       for (const validatedRequest of [
         rawToolCall("renameUser", rename.arguments),
-        mcpRequest({ method: "resources/read", params: { uri: "docs://readme" } }),
+        mcpRequest({
+          method: "resources/read",
+          params: { uri: "docs://readme" },
+        }),
       ]) {
         validatedRequest.headers.set("mcp-method", method);
 
         const response = await web.handler(validatedRequest);
 
-        expect([method, response.status]).toEqual([method, 401]);
+        expect([method, response.status]).toStrictEqual([method, 401]);
       }
     }
 
-    expect(calls).toEqual([]);
+    expect(calls).toStrictEqual([]);
   });
 });
 
@@ -357,26 +479,31 @@ describe("another HTTP method on a mixed MCP endpoint", () => {
   it("is authenticated first: a 401 signed out, a browser's preflight included, and the 405 signed in", async () => {
     const { web } = mixedEndpoint();
 
-    const sent = (method: string, headers: Record<string, string> = {}) =>
-      web.handler(new Request("http://localhost/mcp", { method, headers }));
+    const sent = async (method: string, headers: Record<string, string> = {}) =>
+      await web.handler(
+        new Request("http://localhost/mcp", { method, headers })
+      );
 
     const preflight = await sent("OPTIONS", {
       origin: "http://localhost:3000",
       "access-control-request-method": "POST",
     });
 
-    expect([(await sent("GET")).status, (await sent("PUT")).status, preflight.status]).toEqual([
+    const get = await sent("GET");
+    const put = await sent("PUT");
+
+    expect([get.status, put.status, preflight.status]).toStrictEqual([
       401, 401, 401,
     ]);
     expect(preflight.headers.get("www-authenticate")).toContain("Bearer");
 
     const signedIn = await sent("GET", { authorization: "Bearer alice" });
 
-    expect([signedIn.status, signedIn.headers.get("allow"), await signedIn.text()]).toEqual([
-      405,
-      "POST, DELETE",
-      "",
-    ]);
+    expect([
+      signedIn.status,
+      signedIn.headers.get("allow"),
+      await signedIn.text(),
+    ]).toStrictEqual([405, "POST, DELETE", ""]);
   });
 });
 
@@ -385,23 +512,32 @@ describe("a browser's preflight to a mixed MCP endpoint behind HttpRouter.cors",
     const { app } = makeExampleAppRecordingCalls();
 
     const web = serve(
-      ActionMcp.layerHttp(app, { name: "gate", version: "0", authentication: Login }).pipe(
+      ActionMcp.layerHttp(app, {
+        name: "gate",
+        version: "0",
+        authentication: Login,
+      }).pipe(
         Layer.provide(authenticate),
-        Layer.provide(HttpRouter.cors({ allowedOrigins: ["http://localhost:3000"] })),
-      ),
+        Layer.provide(
+          HttpRouter.cors({ allowedOrigins: ["http://localhost:3000"] })
+        )
+      )
     );
 
     const preflight = await web.handler(
       new Request("http://localhost/mcp", {
         method: "OPTIONS",
-        headers: { origin: "http://localhost:3000", "access-control-request-method": "POST" },
-      }),
+        headers: {
+          origin: "http://localhost:3000",
+          "access-control-request-method": "POST",
+        },
+      })
     );
 
-    expect([preflight.status, preflight.headers.get("access-control-allow-origin")]).toEqual([
-      204,
-      "http://localhost:3000",
-    ]);
+    expect([
+      preflight.status,
+      preflight.headers.get("access-control-allow-origin"),
+    ]).toStrictEqual([204, "http://localhost:3000"]);
   });
 });
 
@@ -412,33 +548,17 @@ describe("a session on a mixed MCP endpoint", () => {
     "mcp-name": "status",
   };
 
-  const open = async (web: ReturnType<typeof mixedEndpoint>["web"], token: string) => {
-    const initialized = await web.handler(
-      withBearer(sessionRequest({ method: "initialize", params: initializeParams }), token),
-    );
-
-    expect(initialized.status).toBe(200);
-
-    const session = initialized.headers.get("mcp-session-id") ?? "";
-
-    const ready = await web.handler(
-      withBearer(sessionRequest({ method: "notifications/initialized", session }), token),
-    );
-
-    expect(ready.status).toBe(202);
-
-    return session;
-  };
-
   it("is opened by a signed-in caller alone, whatever a request's headers name", async () => {
     const { web } = mixedEndpoint();
 
     const signedOut = await web.handler(
-      sessionRequest({ method: "initialize", params: initializeParams }),
+      sessionRequest({ method: "initialize", params: initializeParams })
     );
 
     expect(signedOut.status).toBe(401);
-    expect(signedOut.headers.get("www-authenticate")).toContain("resource_metadata");
+    expect(signedOut.headers.get("www-authenticate")).toContain(
+      "resource_metadata"
+    );
     expect(signedOut.headers.get("mcp-session-id")).toBeNull();
 
     for (const headers of [
@@ -448,12 +568,16 @@ describe("a session on a mixed MCP endpoint", () => {
       publicCallHeaders,
       { "mcp-method": "tools/list" },
     ]) {
-      const named = await web.handler(
-        sessionRequest({ method: "initialize", params: initializeParams, headers }),
+      const initialized = await web.handler(
+        sessionRequest({
+          method: "initialize",
+          params: initializeParams,
+          headers,
+        })
       );
 
-      expect([headers, named.status]).toEqual([headers, 401]);
-      expect(named.headers.get("mcp-session-id")).toBeNull();
+      expect([headers, initialized.status]).toStrictEqual([headers, 401]);
+      expect(initialized.headers.get("mcp-session-id")).toBeNull();
     }
   });
 
@@ -463,22 +587,38 @@ describe("a session on a mixed MCP endpoint", () => {
     const double = { name: "double", arguments: { value: "21" } };
 
     const signedIn = await web.handler(
-      withBearer(sessionRequest({ method: "tools/call", params: double, session }), "reader"),
+      withBearer(
+        sessionRequest({ method: "tools/call", params: double, session }),
+        "reader"
+      )
     );
 
-    expect(await signedIn.json()).toMatchObject({
+    await expect(signedIn.json()).resolves.toMatchObject({
       result: { content: [{ type: "text", text: "42" }], isError: false },
     });
 
-    for (const method of ["tools/list", "tools/call", "notifications/initialized"]) {
-      const params = method === "tools/call" ? { name: "status", arguments: {} } : {};
-      const signedOut = await web.handler(sessionRequest({ method, params, session }));
+    for (const method of [
+      "tools/list",
+      "tools/call",
+      "notifications/initialized",
+    ]) {
+      const params =
+        method === "tools/call" ? { name: "status", arguments: {} } : {};
 
-      expect([method, signedOut.status]).toEqual([method, 401]);
+      const signedOut = await web.handler(
+        sessionRequest({ method, params, session })
+      );
+
+      expect([method, signedOut.status]).toStrictEqual([method, 401]);
     }
 
     const namingAPublicCall = await web.handler(
-      sessionRequest({ method: "tools/call", params: double, session, headers: publicCallHeaders }),
+      sessionRequest({
+        method: "tools/call",
+        params: double,
+        session,
+        headers: publicCallHeaders,
+      })
     );
 
     expect(namingAPublicCall.status).toBe(400);
@@ -489,11 +629,11 @@ describe("a session on a mixed MCP endpoint", () => {
         params: double,
         session,
         headers: { ...publicCallHeaders, "mcp-protocol-version": "2025-11-25" },
-      }),
+      })
     );
 
     expect(namingItInTheSessionsRevision.status).toBe(401);
-    expect(calls).toEqual(["double"]);
+    expect(calls).toStrictEqual(["double"]);
   });
 
   it("holds no identity: each request runs as the caller it authenticates", async () => {
@@ -502,29 +642,41 @@ describe("a session on a mixed MCP endpoint", () => {
     const rename = { name: "renameUser", arguments: { id: "1", name: "Eve" } };
 
     const asItsOpener = await web.handler(
-      withBearer(sessionRequest({ method: "tools/call", params: rename, session }), "alice"),
+      withBearer(
+        sessionRequest({ method: "tools/call", params: rename, session }),
+        "alice"
+      )
     );
 
     const asAnother = await web.handler(
-      withBearer(sessionRequest({ method: "tools/call", params: rename, session }), "bob"),
+      withBearer(
+        sessionRequest({ method: "tools/call", params: rename, session }),
+        "bob"
+      )
     );
 
     const asAReader = await web.handler(
-      withBearer(sessionRequest({ method: "tools/call", params: rename, session }), "reader"),
+      withBearer(
+        sessionRequest({ method: "tools/call", params: rename, session }),
+        "reader"
+      )
     );
 
     expect(asItsOpener.status).toBe(200);
     expect(asAnother.status).toBe(200);
     expect(asAReader.status).toBe(403);
-    expect(asAReader.headers.get("www-authenticate")).toContain('scope="users:write"');
-    expect(calls).toEqual(["alice renamed 1", "bob renamed 1"]);
+    expect(asAReader.headers.get("www-authenticate")).toContain(
+      'scope="users:write"'
+    );
+    expect(calls).toStrictEqual(["alice renamed 1", "bob renamed 1"]);
   });
 
   it("is ended by a signed-in caller alone", async () => {
     const { web } = mixedEndpoint();
     const session = await open(web, "reader");
 
-    expect((await web.handler(endSession(session))).status).toBe(401);
+    const unsigned = await web.handler(endSession(session));
+    expect(unsigned.status).toBe(401);
 
     const namingAPublicCall = endSession(session);
 
@@ -532,17 +684,23 @@ describe("a session on a mixed MCP endpoint", () => {
       namingAPublicCall.headers.set(key, value);
     }
 
-    expect((await web.handler(namingAPublicCall)).status).toBe(401);
+    const namingAnswer = await web.handler(namingAPublicCall);
+    expect(namingAnswer.status).toBe(401);
 
     const stillOpen = await web.handler(
-      withBearer(sessionRequest({ method: "tools/list", session }), "reader"),
+      withBearer(sessionRequest({ method: "tools/list", session }), "reader")
     );
 
     expect(stillOpen.status).toBe(200);
-    expect((await web.handler(withBearer(endSession(session), "reader"))).status).toBe(204);
+
+    const signedEnd = await web.handler(
+      withBearer(endSession(session), "reader")
+    );
+
+    expect(signedEnd.status).toBe(204);
 
     const ended = await web.handler(
-      withBearer(sessionRequest({ method: "tools/list", session }), "reader"),
+      withBearer(sessionRequest({ method: "tools/list", session }), "reader")
     );
 
     expect(ended.status).toBe(404);
@@ -559,7 +717,7 @@ describe("an MCP endpoint of protected tools alone", () => {
         version: "0",
         actions: [Double],
         authentication: Login,
-      }).pipe(Layer.provide(authenticate)),
+      }).pipe(Layer.provide(authenticate))
     );
 
     const malformed = new Request("http://localhost/mcp", {
@@ -568,11 +726,20 @@ describe("an MCP endpoint of protected tools alone", () => {
       body: "{",
     });
 
-    expect((await web.handler(malformed)).status).toBe(401);
-    expect((await web.handler(mcpRequest({ method: "tools/list" }))).status).toBe(401);
-    expect(
-      (await web.handler(withBearer(mcpRequest({ method: "tools/list" }), "alice"))).status,
-    ).toBe(200);
-    expect(calls).toEqual([]);
+    const malformedAnswer = await web.handler(malformed);
+    expect(malformedAnswer.status).toBe(401);
+
+    const signedOutListing = await web.handler(
+      mcpRequest({ method: "tools/list" })
+    );
+
+    expect(signedOutListing.status).toBe(401);
+
+    const signedInListing = await web.handler(
+      withBearer(mcpRequest({ method: "tools/list" }), "alice")
+    );
+
+    expect(signedInListing.status).toBe(200);
+    expect(calls).toStrictEqual([]);
   });
 });

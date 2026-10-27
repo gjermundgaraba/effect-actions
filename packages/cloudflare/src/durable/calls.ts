@@ -1,13 +1,15 @@
-import { type Cause, Effect, Predicate, Queue, Schema } from "effect";
-import { RpcMessage, type RpcSerialization, RpcServer } from "effect/rpc";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { Effect, Predicate, Queue, Schema } from "effect";
+import type { Cause } from "effect";
+import { RpcMessage, RpcServer } from "effect/rpc";
+import type { RpcSerialization } from "effect/rpc";
 
 /**
  * What a call over the stub carries to the object's `effectActionsRpc`: its messages, as values.
  * A class of its own delegating the method takes it as its parameter,
  * `effectActionsRpc(request: ActionDurableObject.StubRequest)`.
  */
-export type StubRequest = ReadonlyArray<RpcMessage.FromClientEncoded>;
+export type StubRequest = readonly RpcMessage.FromClientEncoded[];
 
 /**
  * The codec of the stub's values: each schema's type to its plain form, `Schema.toCodecIso`, which
@@ -15,7 +17,7 @@ export type StubRequest = ReadonlyArray<RpcMessage.FromClientEncoded>;
  * them, where JSON would encode them again. An `Exit`, a `Cause` and an `Option` encode to their
  * tagged objects, a class instance to its fields.
  */
-// Why: `toCodecIso` types its codec without the services its schema's transformations still
+// SAFETY: `toCodecIso` types its codec without the services its schema's transformations still
 // require, and `CodecFor` names them, as Effect's own JSON serialization casts `toCodecJson`, so
 // a server and a client owe the services their values need to encode and decode.
 export const codecFor = Schema.toCodecIso as RpcSerialization.CodecFor;
@@ -28,7 +30,7 @@ const encodeDefect = Schema.encodeSync(codecFor(Schema.Defect()));
  * answers one call of `effectActionsRpc`, and `served` dies unless a server runs on `protocol`.
  */
 export const makeStubProtocol = Effect.gen(function* () {
-  const context = yield* Effect.context<never>();
+  const context = yield* Effect.context();
   let running = false;
   const disconnects = yield* Queue.make<number>();
 
@@ -46,7 +48,10 @@ export const makeStubProtocol = Effect.gen(function* () {
   // them as it resumes each caller: a caller resuming within that step and calling again is
   // failed by the same defect. One call over the stub is one client, so the defect is the exit
   // of each request it carries without one, sent as that request's.
-  const failPending = (client: Client, defect: RpcMessage.ResponseDefectEncoded) => {
+  const failPending = (
+    client: Client,
+    defect: RpcMessage.ResponseDefectEncoded
+  ) => {
     const requests = [...client.pending.keys()];
 
     client.pending.clear();
@@ -59,22 +64,29 @@ export const makeStubProtocol = Effect.gen(function* () {
             RpcMessage.ResponseExitDieEncoded({
               requestId: RpcMessage.RequestId(id),
               encodedDefect: defect.defect,
-            }),
-          ),
+            })
+          )
     );
   };
 
   // Why: `Protocol.make` calls its function as it makes the protocol, which defines `serve` over
   // the server's `write`.
-  let serve!: (request: StubRequest) => Effect.Effect<ReadonlyArray<RpcMessage.FromServerEncoded>>;
+  let serve!: (
+    request: StubRequest
+  ) => Effect.Effect<readonly RpcMessage.FromServerEncoded[]>;
 
   const protocol = yield* RpcServer.Protocol.make((write) => {
     serve = (request) =>
       Effect.gen(function* () {
-        const clientId = nextId++;
+        const clientId = nextId;
+
+        nextId += 1;
 
         const client: Client = {
-          responses: yield* Queue.make<RpcMessage.FromServerEncoded, Cause.Done>(),
+          responses: yield* Queue.make<
+            RpcMessage.FromServerEncoded,
+            Cause.Done
+          >(),
           pending: new Map(),
         };
 
@@ -86,7 +98,7 @@ export const makeStubProtocol = Effect.gen(function* () {
           Effect.sync(() => {
             clients.delete(clientId);
             Queue.offerUnsafe(disconnects, clientId);
-          }),
+          })
         );
 
         // Why: a request that is no array of messages, or a message the server cannot read, is
@@ -96,17 +108,21 @@ export const makeStubProtocol = Effect.gen(function* () {
           Effect.forEach(
             request,
             (message) => {
-              if (Predicate.isTagged(message, "Request"))
+              if (Predicate.isTagged(message, "Request")) {
                 client.pending.set(message.id, message.tag);
+              }
 
               return write(clientId, message);
             },
-            { discard: true },
-          ),
+            { discard: true }
+          )
         ).pipe(
           Effect.catchDefect((defect) =>
-            failPending(client, RpcMessage.ResponseDefectEncoded(encodeDefect(defect))),
-          ),
+            failPending(
+              client,
+              RpcMessage.ResponseDefectEncoded(encodeDefect(defect))
+            )
+          )
         );
 
         yield* write(clientId, RpcMessage.constEof);
@@ -120,12 +136,18 @@ export const makeStubProtocol = Effect.gen(function* () {
         Effect.suspend(() => {
           const client = clients.get(clientId);
 
-          if (client === undefined) return Effect.void;
+          if (client === undefined) {
+            return Effect.void;
+          }
 
-          if (Predicate.isTagged(response, "Defect")) return failPending(client, response);
+          if (Predicate.isTagged(response, "Defect")) {
+            return failPending(client, response);
+          }
 
           if (!Predicate.isTagged(response, "Chunk")) {
-            if (Predicate.isTagged(response, "Exit")) client.pending.delete(response.requestId);
+            if (Predicate.isTagged(response, "Exit")) {
+              client.pending.delete(response.requestId);
+            }
 
             return Queue.offer(client.responses, response);
           }
@@ -140,20 +162,22 @@ export const makeStubProtocol = Effect.gen(function* () {
             RpcMessage.ResponseDefectEncoded(
               encodeDefect(
                 new Error(
-                  `The rpc ${tag} streams, and the object's stub is unary: serve streams over layerWebSocket`,
-                ),
-              ),
-            ),
+                  `The rpc ${tag} streams, and the object's stub is unary: serve streams over layerWebSocket`
+                )
+              )
+            )
           ).pipe(
             Effect.andThen(Queue.end(client.responses)),
-            Effect.andThen(Queue.offer(disconnects, clientId)),
+            Effect.andThen(Queue.offer(disconnects, clientId))
           );
         }),
       end: (clientId) =>
         Effect.suspend(() => {
           const client = clients.get(clientId);
 
-          return client === undefined ? Effect.void : Queue.end(client.responses);
+          return client === undefined
+            ? Effect.void
+            : Queue.end(client.responses);
         }),
       clientIds: Effect.sync(() => new Set(clients.keys())),
       initialMessage: Effect.succeedNone,
@@ -175,7 +199,9 @@ export const makeStubProtocol = Effect.gen(function* () {
           return protocol.run(f);
         }),
       [ActionRpc.unaryProtocol]: true,
-    } satisfies RpcServer.Protocol["Service"] & { readonly [ActionRpc.unaryProtocol]: true },
+    } satisfies RpcServer.Protocol["Service"] & {
+      readonly [ActionRpc.unaryProtocol]: true;
+    },
     serve,
     // Why: Effect's protocol buffers what a call writes until a server runs, so calls served
     // by none, such as a group's handlers given without `RpcServer.layer(group)`, would wait
@@ -188,11 +214,11 @@ export const makeStubProtocol = Effect.gen(function* () {
             ? Effect.void
             : Effect.die(
                 new Error(
-                  "No rpc server runs on this object's stub protocol: serve a group over it in make's or handlers' calls, such as RpcServer.layer(group)",
-                ),
-              ),
-        ),
-      ),
+                  "No rpc server runs on this object's stub protocol: serve a group over it in make's or handlers' calls, such as RpcServer.layer(group)"
+                )
+              )
+        )
+      )
     ),
   };
 });

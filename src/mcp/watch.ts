@@ -1,33 +1,47 @@
-import { Duration, Effect, Match, Option, Predicate, Schema, Stream } from "effect";
+import {
+  Duration,
+  Effect,
+  Match,
+  Option,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect";
 import type { HttpClient, HttpClientResponse } from "effect/http";
 import type { RpcGroup } from "effect/rpc";
+
 import type * as Action from "../contract/Action.js";
-import { InvalidInput, type Refusal } from "../contract/errors.js";
+import { reasonOf } from "../contract/codes.js";
+import { InvalidInput } from "../contract/errors.js";
+import type { Refusal } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
+import { defaultNextPoll } from "../contract/feed.js";
 import { Checked, Gap, untaggedOccurrenceOf } from "../contract/occurrence.js";
 import type { Fed, Page } from "../contract/pages.js";
-import { Failed, type Pushed, readOn } from "../contract/push.js";
-import { defaultNextPoll } from "../contract/feed.js";
-import { failingWhenSilent, failingWhenUnanswered, isTransient } from "../contract/transient.js";
-import { isTransientStatus } from "../contract/status.js";
-import { reasonOf } from "../contract/codes.js";
+import { Failed, readOn } from "../contract/push.js";
+import type { Pushed } from "../contract/push.js";
 import { Receiving, webhookFed } from "../contract/receiving.js";
+import { isTransientStatus } from "../contract/status.js";
 import { WebhookCallback, WebhookTarget } from "../contract/subscribe.js";
+import {
+  failingWhenSilent,
+  failingWhenUnanswered,
+  isTransient,
+} from "../contract/transient.js";
 import type { Transport, WebhookTransport } from "../contract/watch.js";
 import {
   Active,
   codes,
   Failed as FailedNotification,
   Heartbeat,
-  type Notifications,
   Occurred,
   PollEvents,
   SubscribeEvents,
   Terminated,
   UnsubscribeEvents,
   WireError,
-  type WireOccurrence,
 } from "./events.js";
+import type { Notifications, WireOccurrence } from "./events.js";
 import {
   bodyOf,
   callError,
@@ -54,8 +68,11 @@ interface Watched<R = unknown> {
 const replyOf = <A, I>(success: Schema.Codec<A, I>) =>
   Schema.decodeUnknownOption(
     Schema.fromJsonString(
-      Schema.Union([Schema.Struct({ result: success }), Schema.Struct({ error: WireError })]),
-    ),
+      Schema.Union([
+        Schema.Struct({ result: success }),
+        Schema.Struct({ error: WireError }),
+      ])
+    )
   );
 
 const pollReplyOf = replyOf(PollEvents.successSchema);
@@ -64,7 +81,10 @@ const pollReplyOf = replyOf(PollEvents.successSchema);
 // the methods a push stream carries are the `Notifications` group's alone.
 const Frame = Schema.Union([
   Schema.Struct({ error: WireError }),
-  Schema.Struct({ method: Schema.String, params: Schema.optional(Schema.Json) }),
+  Schema.Struct({
+    method: Schema.String,
+    params: Schema.optional(Schema.Json),
+  }),
   Schema.Struct({ result: Schema.Unknown }),
 ]);
 
@@ -74,12 +94,14 @@ type Notified = RpcGroup.Rpcs<typeof Notifications>;
 
 /** Reads one notification's params as what a push stream sends, where they decode. */
 type Reader = (
-  params: Schema.Json | undefined,
-) => Option.Option<Effect.Effect<ReadonlyArray<Pushed>, unknown>>;
+  params: Schema.Json | undefined
+) => Option.Option<Effect.Effect<readonly Pushed[], unknown>>;
 
 const reading = <N extends Notified>(
   rpc: N,
-  read: (params: N["payloadSchema"]["Type"]) => Effect.Effect<ReadonlyArray<Pushed>, unknown>,
+  read: (
+    params: N["payloadSchema"]["Type"]
+  ) => Effect.Effect<readonly Pushed[], unknown>
 ): Reader => {
   const decode = Schema.decodeUnknownOption(rpc.payloadSchema);
 
@@ -102,14 +124,15 @@ const transientReason = (reason: McpCallError["reason"]): boolean =>
   Match.value(reason).pipe(
     Match.tag("StatusError", ({ status }) => isTransientStatus(status)),
     Match.tag("ProtocolError", ({ code }) => code === codes.internal),
-    Match.orElse(() => false),
+    Match.orElse(() => false)
   );
 
-const isMcpCallError: Predicate.Refinement<unknown, McpCallError> = Schema.is(McpCallError);
+const isMcpCallError: Predicate.Refinement<unknown, McpCallError> =
+  Schema.is(McpCallError);
 
 const transient = Predicate.or(
   isTransient,
-  Predicate.compose(isMcpCallError, ({ reason }) => transientReason(reason)),
+  Predicate.compose(isMcpCallError, ({ reason }) => transientReason(reason))
 );
 
 /**
@@ -118,38 +141,47 @@ const transient = Predicate.or(
  */
 export const transportOf = <R>(
   { http, url, event, refusedWith }: Watched<R>,
-  input: Schema.Json,
+  input: Schema.Json
 ): Transport<unknown, R | Receiving> => {
   const { name } = event;
   const untagged = untaggedOccurrenceOf(event);
 
-  const occurrenceOf = (wire: WireOccurrence) => untagged({ ...wire, cursor: wire.cursor ?? null });
+  const occurrenceOf = (wire: WireOccurrence) =>
+    untagged({ ...wire, cursor: wire.cursor ?? null });
 
   // Why: A refusal the endpoint's authentication answers is a 401 or a 403 with the refusal's
   // JSON, as for a tool's call; one the event's authorizer answers is SEP-3415's `Forbidden`,
   // its `data` the refusal's JSON.
   const failed = (
     method: string,
-    error: WireError,
+    error: WireError
   ): Event.SubscriptionError | Refusal | InvalidInput | McpCallError =>
     reasonOf(name, error) ??
     (error.code === codes.invalidParams
       ? new InvalidInput({ message: error.message })
       : callError(method, name, new ProtocolError(error)));
 
-  const sent = (method: string, params: { readonly [key: string]: Schema.Json }) =>
-    Effect.flatMap(
-      http.execute(request(method, { name, arguments: input, ...params }, { url })),
+  const sent = (
+    method: string,
+    params: { readonly [key: string]: Schema.Json }
+  ) =>
+    Effect.filterOrElse(
+      http.execute(
+        request(method, { name, arguments: input, ...params }, { url })
+      ),
+      (response) => response.status === 200,
       (response) =>
-        response.status === 200
-          ? Effect.succeed(response)
-          : Effect.flatMap(response.text, (body) =>
-              failWith(
-                refusedWith,
-                body,
-                callError(method, name, new StatusError({ status: response.status, body })),
-              ),
-            ),
+        Effect.flatMap(response.text, (body) =>
+          failWith(
+            refusedWith,
+            body,
+            callError(
+              method,
+              name,
+              new StatusError({ status: response.status, body })
+            )
+          )
+        )
     );
 
   /** The result of one `method` request, or what its error reply fails with. */
@@ -157,20 +189,27 @@ export const transportOf = <R>(
     method: string,
     params: { readonly [key: string]: Schema.Json },
     decodeReply: (
-      message: string,
-    ) => Option.Option<{ readonly result: A } | { readonly error: WireError }>,
+      message: string
+    ) => Option.Option<{ readonly result: A } | { readonly error: WireError }>
   ): Effect.Effect<A, unknown, R> =>
     Effect.gen(function* () {
       const messages = yield* bodyOf(method, name, yield* sent(method, params));
 
-      const reply = messages.flatMap((message) => Option.toArray(decodeReply(message))).at(-1);
+      const reply = messages
+        .flatMap((message) => Option.toArray(decodeReply(message)))
+        .at(-1);
 
-      if (reply === undefined)
-        return yield* Effect.fail(
-          callError(method, name, new NoReply({ body: messages.join("\n") })),
+      if (reply === undefined) {
+        return yield* callError(
+          method,
+          name,
+          new NoReply({ body: messages.join("\n") })
         );
+      }
 
-      if ("error" in reply) return yield* Effect.fail(failed(method, reply.error));
+      if ("error" in reply) {
+        return yield* failed(method, reply.error);
+      }
 
       return reply.result;
     }).pipe(failingWhenUnanswered);
@@ -185,49 +224,61 @@ export const transportOf = <R>(
         truncated: result.truncated === true,
         hasMore: result.hasMore === true,
         nextPoll:
-          result.nextPollMs === undefined ? defaultNextPoll : Duration.millis(result.nextPollMs),
+          result.nextPollMs === undefined
+            ? defaultNextPoll
+            : Duration.millis(result.nextPollMs),
       };
     });
 
   const readers = new Map<string, Reader>(
     Object.entries({
       [Active._tag]: reading(Active, ({ cursor = null, truncated }) =>
-        Effect.succeed([truncated === true ? Gap.make({ cursor }) : Checked.make({ cursor })]),
+        Effect.succeed([
+          truncated === true ? Gap.make({ cursor }) : Checked.make({ cursor }),
+        ])
       ),
       [Occurred._tag]: reading(Occurred, (params) =>
-        Effect.map(occurrenceOf(params), (occurrence) => [occurrence]),
+        Effect.map(occurrenceOf(params), (occurrence) => [occurrence])
       ),
       [Heartbeat._tag]: reading(Heartbeat, ({ cursor = null }) =>
-        Effect.succeed([Checked.make({ cursor })]),
+        Effect.succeed([Checked.make({ cursor })])
       ),
       [FailedNotification._tag]: reading(FailedNotification, () =>
-        Effect.succeed([Failed.make({})]),
+        Effect.succeed([Failed.make({})])
       ),
       [Terminated._tag]: reading(Terminated, ({ error }) =>
-        Effect.fail(failed("events/stream", error)),
+        Effect.fail(failed("events/stream", error))
       ),
-    } satisfies { readonly [K in Notified["_tag"]]: Reader }),
+    } satisfies { readonly [K in Notified["_tag"]]: Reader })
   );
 
-  const framed = (data: string): Effect.Effect<ReadonlyArray<Pushed>, unknown> =>
+  const framed = (data: string): Effect.Effect<readonly Pushed[], unknown> =>
     Option.match(decodeFrame(data), {
       onNone: () => Effect.succeed([]),
       onSome: (frame) => {
-        if ("error" in frame) return Effect.fail(failed("events/stream", frame.error));
+        if ("error" in frame) {
+          return Effect.fail(failed("events/stream", frame.error));
+        }
 
-        if (!("method" in frame)) return Effect.succeed([]);
+        if (!("method" in frame)) {
+          return Effect.succeed([]);
+        }
 
         const reader = readers.get(frame.method);
 
-        if (reader === undefined) return Effect.succeed([]);
+        if (reader === undefined) {
+          return Effect.succeed([]);
+        }
 
         // Why: Another notification on the stream is not the watch's to read, but one of its own
         // methods that does not decode leaves it unconfirmed, or blind, until its silence reconnects.
         return Option.getOrElse(reader(frame.params), () =>
           Effect.as(
-            Effect.logWarning(`MCP event "${name}" sent a frame that does not decode: ${data}`),
-            [],
-          ),
+            Effect.logWarning(
+              `MCP event "${name}" sent a frame that does not decode: ${data}`
+            ),
+            []
+          )
         );
       },
     });
@@ -236,18 +287,22 @@ export const transportOf = <R>(
     framesOf("events/stream", name, response).pipe(
       failingWhenSilent,
       Stream.mapEffect(framed),
-      Stream.flattenIterable,
+      Stream.flattenIterable
     );
 
   const stream = (cursor: string | null): Stream.Stream<Fed, unknown, R> =>
     Stream.unwrap(
       // Why: A server may hold the stream's status back until its first read is done, as
       // Effect's HTTP protocol does, so the wait for it is bounded as a silence is.
-      Effect.map(failingWhenUnanswered(sent("events/stream", { cursor })), (response) =>
-        isEventStream(response)
-          ? read(response)
-          : Stream.fromIterableEffect(failingWhenUnanswered(Effect.flatMap(response.text, framed))),
-      ),
+      Effect.map(
+        failingWhenUnanswered(sent("events/stream", { cursor })),
+        (response) =>
+          isEventStream(response)
+            ? read(response)
+            : Stream.fromIterableEffect(
+                failingWhenUnanswered(Effect.flatMap(response.text, framed))
+              )
+      )
     ).pipe(readOn("MCP", name));
 
   const webhook: WebhookTransport<unknown, R | Receiving> = {
@@ -260,11 +315,15 @@ export const transportOf = <R>(
           cursor,
           ...(ttlMs === undefined ? {} : { ttlMs }),
         },
-        subscribeReplyOf,
+        subscribeReplyOf
       ),
     unsubscribe: ({ delivery }) =>
       Effect.asVoid(
-        answered("events/unsubscribe", { delivery: encodeTarget(delivery) }, unsubscribeReplyOf),
+        answered(
+          "events/unsubscribe",
+          { delivery: encodeTarget(delivery) },
+          unsubscribeReplyOf
+        )
       ),
     read: webhookFed(event),
   };

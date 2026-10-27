@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Match, Schema } from "effect";
 import { TestClock } from "effect/testing";
+
 import { makeLogStore, memoryStorage } from "../../src/contract/log.js";
 
 const maxAge = 1000;
@@ -14,19 +15,32 @@ const Command = Schema.Union([
   Schema.TaggedStruct("Read", {
     after: Step,
     from: Schema.Union([
-      Schema.Literals(["start", "foreign", "future", "negative", "extra", "word"]),
+      Schema.Literals([
+        "start",
+        "foreign",
+        "future",
+        "negative",
+        "extra",
+        "word",
+      ]),
       Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 30 })),
     ]),
     limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 5 })),
   }),
 ]);
 
-const Commands = Schema.Array(Command).check(Schema.isMinLength(1), Schema.isMaxLength(40));
+const Commands = Schema.Array(Command).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(40)
+);
 
-const logOf = (bounds?: { readonly maxAge?: number; readonly maxEvents?: number }) =>
+const logOf = (bounds?: {
+  readonly maxAge?: number;
+  readonly maxEvents?: number;
+}) =>
   Effect.gen(function* () {
     const log = makeLogStore<number>(memoryStorage(), bounds);
-    const epoch = (yield* log.read(null, 1)).cursor.replace(/:0$/, "");
+    const epoch = (yield* log.read(null, 1)).cursor.replace(/:0$/u, "");
 
     return { log, epoch, cursorAt: (seq: number) => `${epoch}:${seq}` };
   });
@@ -38,7 +52,10 @@ it.effect.prop(
     Effect.gen(function* () {
       const { log, epoch, cursorAt } = yield* logOf({ maxAge, maxEvents });
       const pushed: Array<{ readonly seq: number; readonly at: number }> = [];
-      const minted: Array<{ readonly cursor: string; readonly seq: number }> = [];
+
+      const minted: Array<{ readonly cursor: string; readonly seq: number }> =
+        [];
+
       let now = 0;
 
       const isKept = (entry: { readonly seq: number; readonly at: number }) =>
@@ -58,15 +75,29 @@ it.effect.prop(
 
         const resumed = Match.value(from).pipe(
           Match.when("start", () => ({ cursor: null, seq: pushed.length })),
-          Match.when("foreign", () => ({ cursor: "another:1", seq: undefined })),
-          Match.when("future", () => ({ cursor: cursorAt(pushed.length + 1), seq: undefined })),
-          Match.when("negative", () => ({ cursor: `${epoch}:-1`, seq: undefined })),
-          Match.when("extra", () => ({ cursor: `${epoch}:1:2`, seq: undefined })),
+          Match.when("foreign", () => ({
+            cursor: "another:1",
+            seq: undefined,
+          })),
+          Match.when("future", () => ({
+            cursor: cursorAt(pushed.length + 1),
+            seq: undefined,
+          })),
+          Match.when("negative", () => ({
+            cursor: `${epoch}:-1`,
+            seq: undefined,
+          })),
+          Match.when("extra", () => ({
+            cursor: `${epoch}:1:2`,
+            seq: undefined,
+          })),
           Match.when("word", () => ({ cursor: `${epoch}:x`, seq: undefined })),
-          Match.orElse((index) => minted[index % Math.max(minted.length, 1)]),
+          Match.orElse((index) => minted[index % Math.max(minted.length, 1)])
         );
 
-        if (resumed === undefined) continue;
+        if (resumed === undefined) {
+          continue;
+        }
 
         const read = yield* log.read(resumed.cursor, limit);
         const kept = pushed.filter(isKept);
@@ -74,17 +105,22 @@ it.effect.prop(
 
         const truncated =
           resumed.cursor !== null &&
-          (seq === undefined || pushed.some((entry) => entry.seq > seq && !isKept(entry)));
+          (seq === undefined ||
+            pushed.some((entry) => entry.seq > seq && !isKept(entry)));
 
         const pending =
-          truncated || seq === undefined ? kept : kept.filter((entry) => entry.seq > seq);
+          truncated || seq === undefined
+            ? kept
+            : kept.filter((entry) => entry.seq > seq);
 
         const resumedAt =
-          truncated || seq === undefined ? (kept[0]?.seq ?? pushed.length + 1) - 1 : seq;
+          truncated || seq === undefined
+            ? (kept[0]?.seq ?? pushed.length + 1) - 1
+            : seq;
 
         expect(read.truncated).toBe(truncated);
-        expect(read.entries.map((entry) => entry.value?.value)).toEqual(
-          pending.slice(0, limit).map((entry) => entry.seq),
+        expect(read.entries.map((entry) => entry.value?.value)).toStrictEqual(
+          pending.slice(0, limit).map((entry) => entry.seq)
         );
         expect(read.hasMore).toBe(pending.length > limit);
 
@@ -95,36 +131,40 @@ it.effect.prop(
         minted.push({ cursor: read.cursor, seq: reached });
       }
     }),
-  { arbitrary: { runs: 500 } },
+  { arbitrary: { runs: 500 } }
 );
 
-it.effect("keeps 10,000 entries of at most 10 minutes where no bounds are given", () =>
-  Effect.gen(function* () {
-    const { log: counted, cursorAt } = yield* logOf();
-    const { log: aged, cursorAt: agedAt } = yield* logOf();
+it.effect(
+  "keeps 10,000 entries of at most 10 minutes where no bounds are given",
+  () =>
+    Effect.gen(function* () {
+      const { log: counted, cursorAt } = yield* logOf();
+      const { log: aged, cursorAt: agedAt } = yield* logOf();
 
-    for (let n = 1; n <= 10_000; n += 1) yield* counted.append({ value: n, key: undefined });
+      for (let n = 1; n <= 10_000; n += 1) {
+        yield* counted.append({ value: n, key: undefined });
+      }
 
-    const full = yield* counted.read(cursorAt(0), 1);
+      const full = yield* counted.read(cursorAt(0), 1);
 
-    yield* counted.append({ value: 10_001, key: undefined });
-    yield* aged.append({ value: 1, key: undefined });
+      yield* counted.append({ value: 10_001, key: undefined });
+      yield* aged.append({ value: 1, key: undefined });
 
-    const countedFrom0 = yield* counted.read(cursorAt(0), 1);
-    const countedFrom1 = yield* counted.read(cursorAt(1), 1);
+      const countedFrom0 = yield* counted.read(cursorAt(0), 1);
+      const countedFrom1 = yield* counted.read(cursorAt(1), 1);
 
-    yield* TestClock.adjust(10 * 60 * 1000);
+      yield* TestClock.adjust(10 * 60 * 1000);
 
-    const agedAtLimit = yield* aged.read(agedAt(0), 1);
+      const agedAtLimit = yield* aged.read(agedAt(0), 1);
 
-    yield* TestClock.adjust(1);
+      yield* TestClock.adjust(1);
 
-    expect([
-      full.truncated,
-      countedFrom0.truncated,
-      countedFrom1.truncated,
-      agedAtLimit.truncated,
-      (yield* aged.read(agedAt(0), 1)).truncated,
-    ]).toEqual([false, true, false, false, true]);
-  }),
+      expect([
+        full.truncated,
+        countedFrom0.truncated,
+        countedFrom1.truncated,
+        agedAtLimit.truncated,
+        (yield* aged.read(agedAt(0), 1)).truncated,
+      ]).toStrictEqual([false, true, false, false, true]);
+    })
 );

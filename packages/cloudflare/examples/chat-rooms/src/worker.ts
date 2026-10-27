@@ -1,14 +1,25 @@
+import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
-import { RoomName } from "./chat/Chat.js";
+
 import { Activity } from "./chat/activity.js";
+import { RoomName } from "./chat/Chat.js";
 import { Room } from "./chat/room.js";
 import { MessageStore } from "./chat/store.js";
 import { layerKvPreviews } from "./platform/kv-previews.js";
-import { layerActivity, layerLobbyHost, tellLobby } from "./platform/lobby-stubs.js";
+import {
+  layerActivity,
+  layerLobbyHost,
+  tellLobby,
+} from "./platform/lobby-stubs.js";
 import { layerSql } from "./platform/sql-store.js";
-import { lobbyCalls, lobbyRoutes, roomRoutes, rooms, workerRoutes } from "./routes.js";
+import {
+  lobbyCalls,
+  lobbyRoutes,
+  roomRoutes,
+  rooms,
+  workerRoutes,
+} from "./routes.js";
 
 // The rooms for another Worker, over a service binding: a named entrypoint of this one.
 export { RoomsEntrypoint } from "./rooms-entrypoint.js";
@@ -30,12 +41,16 @@ export class ChatRoom extends ActionDurableObject.make({
   placed: rooms,
   services: () =>
     Layer.mergeAll(layerSql, layerActivity).pipe(
-      Layer.provideMerge(Layer.effect(Room)(Effect.flatMap(ActionDurableObject.name, decodeRoom))),
+      Layer.provideMerge(
+        Layer.effect(Room)(Effect.flatMap(ActionDurableObject.name, decodeRoom))
+      )
     ),
   routes: roomRoutes,
   tasks: { lobby: tellLobby },
   alarm: () =>
-    Activity.use((activity) => activity.changing(MessageStore.use((store) => store.expire))),
+    Activity.use((activity) =>
+      activity.changing(MessageStore.use((store) => store.expire))
+    ),
 }) {}
 
 // The lobby's Durable Object, bound as CHAT_LOBBY: one for the Worker, named `lobby`, keeping
@@ -51,7 +66,10 @@ export class ChatLobby extends ActionDurableObject.make({
 // which a Worker refuses outside a request. `toWebHandler` reads no `MaxBodySize`, so the
 // platform limits request bodies.
 const served = HttpRouter.toWebHandler(
-  workerRoutes.pipe(Layer.provide(layerLobbyHost), Layer.provide(HttpServer.layerServices)),
+  workerRoutes.pipe(
+    Layer.provide(layerLobbyHost),
+    Layer.provide(HttpServer.layerServices)
+  )
 );
 
 const isRoomName = Schema.is(RoomName);
@@ -60,9 +78,11 @@ const isRoomName = Schema.is(RoomName);
 // request forwards its upgrade, and the object answers it. Everything else is the Worker's own,
 // the rooms' calls among them, which it sends on to each room's object itself.
 export default {
-  fetch(request: Request, env: Cloudflare.Env) {
+  async fetch(request: Request, env: Cloudflare.Env) {
     const url = new URL(request.url);
-    const [, room = ""] = /^\/rooms\/([^/]+)\/rpc$/u.exec(url.pathname) ?? [];
+
+    const room =
+      /^\/rooms\/(?<room>[^/]+)\/rpc$/u.exec(url.pathname)?.groups?.room ?? "";
 
     if (url.pathname === "/lobby/rpc" || isRoomName(room)) {
       url.pathname = "/rpc";
@@ -71,9 +91,9 @@ export default {
         ? env.CHAT_ROOM.getByName(room)
         : env.CHAT_LOBBY.getByName("lobby");
 
-      return object.fetch(new Request(url, request));
+      return await object.fetch(new Request(url, request));
     }
 
-    return served.handler(request);
+    return await served.handler(request);
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

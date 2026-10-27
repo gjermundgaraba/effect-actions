@@ -1,3 +1,4 @@
+import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import {
   Clock,
   Context,
@@ -12,7 +13,7 @@ import {
 } from "effect";
 import type { HttpClient } from "effect/http";
 import { KeyValueStore } from "effect/persistence";
-import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
+
 import type { Schedule } from "./alarm.js";
 import { batches } from "./batches.js";
 import { State } from "./state.js";
@@ -60,8 +61,8 @@ export const makeWaits = (schedule: Schedule) => {
     Effect.suspend(() =>
       held.size === 0
         ? schedule.clear(clockOwner)
-        : schedule.set(clockOwner, Math.min(...[...held].map(({ at }) => at))),
-    ),
+        : schedule.set(clockOwner, Math.min(...[...held].map(({ at }) => at)))
+    )
   );
 
   return {
@@ -73,7 +74,9 @@ export const makeWaits = (schedule: Schedule) => {
           held.add(wait);
 
           return Effect.andThen(armed, Deferred.await(wait.woken)).pipe(
-            Effect.ensuring(Effect.suspend(() => (held.delete(wait) ? armed : Effect.void))),
+            Effect.ensuring(
+              Effect.suspend(() => (held.delete(wait) ? armed : Effect.void))
+            )
           );
         }),
     }),
@@ -106,7 +109,10 @@ const timed = Duration.seconds(10);
  * and holds no timer, so the object may hibernate meanwhile; if the instance is evicted, the
  * alarm builds the next, which restores the subscriptions from storage.
  */
-const alarmClock = (base: Clock.Clock, { until }: Waits["Service"]): Clock.Clock => ({
+const alarmClock = (
+  base: Clock.Clock,
+  { until }: Waits["Service"]
+): Clock.Clock => ({
   currentTimeMillisUnsafe: () => base.currentTimeMillisUnsafe(),
   currentTimeMillis: base.currentTimeMillis,
   currentTimeNanosUnsafe: () => base.currentTimeNanosUnsafe(),
@@ -122,7 +128,11 @@ const alarmClock = (base: Clock.Clock, { until }: Waits["Service"]): Clock.Clock
 // Why: a value under these keys is one the webhook layer wrote, a string; any other reads as none.
 const stringOf = Schema.decodeUnknownOption(Schema.String);
 
-const attempted = <A>(method: string, key: string | undefined, run: () => Promise<A>) =>
+const attempted = <A>(
+  method: string,
+  key: string | undefined,
+  run: () => Promise<A>
+) =>
   Effect.tryPromise({
     try: run,
     catch: (cause) =>
@@ -134,32 +144,51 @@ const attempted = <A>(method: string, key: string | undefined, run: () => Promis
       }),
   });
 
+const keyOf = (key: string) => `${webhookPrefix}${key}`;
+
 /** A `KeyValueStore` over the object's storage under `webhookPrefix`, every key of it there. */
 const storageStore = (storage: DurableObjectStorage) => {
-  const keyOf = (key: string) => `${webhookPrefix}${key}`;
-  const listed = attempted("list", undefined, () => storage.list({ prefix: webhookPrefix }));
+  const listed = attempted(
+    "list",
+    undefined,
+    async () => await storage.list({ prefix: webhookPrefix })
+  );
 
   return KeyValueStore.makeStringOnly({
     get: (key) =>
       Effect.map(
-        attempted("get", key, () => storage.get(keyOf(key))),
-        (value) => Option.getOrUndefined(stringOf(value)),
+        attempted("get", key, async () => await storage.get(keyOf(key))),
+        (value) => Option.getOrUndefined(stringOf(value))
       ),
-    set: (key, value) => attempted("set", key, () => storage.put(keyOf(key), value)),
-    remove: (key) => Effect.asVoid(attempted("remove", key, () => storage.delete(keyOf(key)))),
+    set: (key, value) =>
+      attempted("set", key, async () => {
+        await storage.put(keyOf(key), value);
+      }),
+    remove: (key) =>
+      Effect.asVoid(
+        attempted("remove", key, async () => await storage.delete(keyOf(key)))
+      ),
     clear: Effect.flatMap(listed, (found) =>
       Effect.forEach(
         batches([...found.keys()]),
-        (keys) => attempted("clear", undefined, () => storage.delete([...keys])),
-        { discard: true },
-      ),
+        (keys) =>
+          attempted(
+            "clear",
+            undefined,
+            async () => await storage.delete([...keys])
+          ),
+        { discard: true }
+      )
     ),
     size: Effect.map(listed, (found) => found.size),
   });
 };
 
 /** How `layerWebhooks` grants, verifies and retries: `Webhook.Options` but what it fixes. */
-export type LayerWebhooksOptions = Omit<Webhook.Options, "persist" | "resolveCallbacks">;
+export type LayerWebhooksOptions = Omit<
+  Webhook.Options,
+  "persist" | "resolveCallbacks"
+>;
 
 /**
  * The core's `Webhook.layer` in an object: each subscription kept in the object's storage, under
@@ -179,15 +208,17 @@ export type LayerWebhooksOptions = Omit<Webhook.Options, "persist" | "resolveCal
  * - The source, authorizer and client a delivery runs share its Clock: a wait of 10 seconds or more in them, a timeout included, waits on the object's alarm, holding no timer.
  */
 export const layerWebhooks = (
-  options: LayerWebhooksOptions = {},
+  options: LayerWebhooksOptions = {}
 ): Layer.Layer<Webhooks, never, HttpClient.HttpClient | State | Waits> =>
   Webhook.layer({ ...options, persist: true, resolveCallbacks: false }).pipe(
     Layer.provide([
       Layer.effect(KeyValueStore.KeyValueStore)(
-        Effect.map(State, ({ storage }) => storageStore(storage)),
+        Effect.map(State, ({ storage }) => storageStore(storage))
       ),
       Layer.effect(Clock.Clock)(
-        Effect.map(Effect.all([Clock.Clock, Waits]), ([base, waits]) => alarmClock(base, waits)),
+        Effect.map(Effect.all([Clock.Clock, Waits]), ([base, waits]) =>
+          alarmClock(base, waits)
+        )
       ),
-    ]),
+    ])
   );

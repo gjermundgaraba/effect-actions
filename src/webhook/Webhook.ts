@@ -1,7 +1,9 @@
 import { Duration, Effect, Layer } from "effect";
-import { type HttpClient, HttpRouter } from "effect/http";
+import { HttpRouter } from "effect/http";
+import type { HttpClient } from "effect/http";
 import { Dns } from "effect/net";
 import { KeyValueStore } from "effect/persistence";
+
 import * as Event from "../contract/Event.js";
 import { Receiving } from "../contract/receiving.js";
 import { Webhooks } from "../contract/webhooks.js";
@@ -24,7 +26,7 @@ export interface Options {
    * `["https://hooks.example.com/"]`. A callback on a private network is delivered to only when
    * one of them trusts it.
    */
-  readonly allowedCallbacks?: ReadonlyArray<string> | undefined;
+  readonly allowedCallbacks?: readonly string[] | undefined;
   /**
    * How long a subscription's deliveries are retried from its first failure, each wait as long as
    * it has been failing, from 1 second to 5 minutes, before it suspends until its next refresh,
@@ -67,10 +69,11 @@ export interface Options {
 const trustedOf = (prefix: string): URL => {
   const url = URL.parse(prefix);
 
-  if (url?.protocol !== "https:")
+  if (url?.protocol !== "https:") {
     throw new Error(
-      `Invalid allowedCallbacks entry: ${prefix} (give an https URL, such as https://hooks.example.com/)`,
+      `Invalid allowedCallbacks entry: ${prefix} (give an https URL, such as https://hooks.example.com/)`
     );
+  }
 
   return url;
 };
@@ -80,10 +83,11 @@ const trustedOf = (prefix: string): URL => {
 const maxTtlOf = (input: Duration.Input): Duration.Duration => {
   const maxTtl = Duration.fromInputUnsafe(input);
 
-  if (!Duration.isFinite(maxTtl))
+  if (!Duration.isFinite(maxTtl)) {
     throw new Error(
-      `Invalid maxTtl: ${Duration.format(maxTtl)} (every grant expires: give a finite duration, such as "1 hour")`,
+      `Invalid maxTtl: ${Duration.format(maxTtl)} (every grant expires: give a finite duration, such as "1 hour")`
     );
+  }
 
   return maxTtl;
 };
@@ -121,27 +125,43 @@ const maxTtlOf = (input: Duration.Input): Duration.Duration => {
  * - `allowedCallbacks` throws when `layer` is called for an entry that is not an https URL.
  */
 export function layer(
-  options: Options & { readonly persist?: false | undefined; readonly resolveCallbacks: false },
+  options: Options & {
+    readonly persist?: false | undefined;
+    readonly resolveCallbacks: false;
+  }
 ): Layer.Layer<Webhooks, never, HttpClient.HttpClient>;
 export function layer(
-  options: Options & { readonly resolveCallbacks: false },
-): Layer.Layer<Webhooks, never, HttpClient.HttpClient | KeyValueStore.KeyValueStore>;
+  options: Options & { readonly resolveCallbacks: false }
+): Layer.Layer<
+  Webhooks,
+  never,
+  HttpClient.HttpClient | KeyValueStore.KeyValueStore
+>;
 export function layer(
-  options?: Options & { readonly persist?: false | undefined },
+  options?: Options & { readonly persist?: false | undefined }
 ): Layer.Layer<Webhooks, never, HttpClient.HttpClient | Dns.Dns>;
 export function layer(
-  options: Options,
-): Layer.Layer<Webhooks, never, HttpClient.HttpClient | Dns.Dns | KeyValueStore.KeyValueStore>;
+  options: Options
+): Layer.Layer<
+  Webhooks,
+  never,
+  HttpClient.HttpClient | Dns.Dns | KeyValueStore.KeyValueStore
+>;
 export function layer(
-  options: Options = {},
-): Layer.Layer<Webhooks, never, HttpClient.HttpClient | Dns.Dns | KeyValueStore.KeyValueStore> {
+  options: Options = {}
+): Layer.Layer<
+  Webhooks,
+  never,
+  HttpClient.HttpClient | Dns.Dns | KeyValueStore.KeyValueStore
+> {
   const allowedCallbacks = (options.allowedCallbacks ?? []).map(trustedOf);
   const maxTtl = maxTtlOf(options.maxTtl ?? "1 hour");
 
   return Layer.effect(
     Webhooks,
     Effect.gen(function* () {
-      const dns = options.resolveCallbacks === false ? undefined : yield* Dns.Dns;
+      const dns =
+        options.resolveCallbacks === false ? undefined : yield* Dns.Dns;
 
       const storage =
         options.persist === true
@@ -155,12 +175,14 @@ export function layer(
         storage,
         dns,
       });
-    }),
+    })
   );
 }
 
 /** Where a watch by webhook asks the server to POST, and the lifetime each grant asks for. */
-export type DeliveryOptions = ConstructorParameters<typeof Event.WebhookDelivery>[0];
+export type DeliveryOptions = ConstructorParameters<
+  typeof Event.WebhookDelivery
+>[0];
 
 /**
  * A watch's `mode` delivering by webhook: `client.watch(event, input, { mode:
@@ -209,6 +231,9 @@ export const layerReceiver = ({
 }: ReceiverOptions): Layer.Layer<Receiving, never, HttpRouter.HttpRouter> =>
   Layer.unwrap(
     Effect.map(makeReceiver(path), ({ receiving, handler }) =>
-      Layer.merge(Layer.succeed(Receiving, receiving), HttpRouter.add("POST", path, handler)),
-    ),
+      Layer.merge(
+        Layer.succeed(Receiving, receiving),
+        HttpRouter.add("POST", path, handler)
+      )
+    )
   );

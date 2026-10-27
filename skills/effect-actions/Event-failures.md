@@ -1,7 +1,6 @@
 # Event failure modes
 
-What you see when something is wrong, and the fix. Search for a fragment of the message.
-The tasks are in [Event.md](Event.md).
+What you see when something is wrong, and the fix. Search for a fragment of the message. The tasks are in [Event.md](Event.md).
 
 ## At `implement`
 

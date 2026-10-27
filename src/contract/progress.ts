@@ -7,9 +7,10 @@ import {
   Option,
   Queue,
   Schema,
-  type Scope,
   Stream,
 } from "effect";
+import type { Scope } from "effect";
+
 import type { Codec } from "./codec.js";
 import type { ErasedValue } from "./implementation.js";
 
@@ -25,7 +26,9 @@ export type ReportingOf<A extends { readonly progress: Codec | undefined }> =
     : [
         reporting: {
           /** Reports `value` to the caller, never waiting for it: see `Action.Options.progress`. */
-          readonly progress: (value: NonNullable<A["progress"]>["Type"]) => Effect.Effect<void>;
+          readonly progress: (
+            value: NonNullable<A["progress"]>["Type"]
+          ) => Effect.Effect<void>;
         },
       ];
 
@@ -61,28 +64,31 @@ interface Buffered {
  */
 const buffering = (
   progress: Codec,
-  sink: Reporting | undefined,
+  sink: Reporting | undefined
 ): Effect.Effect<Buffered, never, Scope.Scope> => {
   const check = Schema.decodeUnknownEffect(Schema.toType(progress));
   const checked = (value: ErasedValue) => Effect.orDie(check(value));
 
-  if (sink === undefined)
+  if (sink === undefined) {
     return Effect.succeed({
       reporting: { progress: (value) => Effect.asVoid(checked(value)) },
       drained: Effect.void,
     });
+  }
 
   return Effect.gen(function* () {
     const buffered = yield* Queue.sliding<unknown, Cause.Done>(capacity);
 
     const forwarding = yield* Effect.forkScoped(
-      Stream.runForEach(Stream.fromQueue(buffered), sink.progress),
+      Stream.runForEach(Stream.fromQueue(buffered), sink.progress)
     );
 
     return {
       reporting: {
         progress: (value) =>
-          Effect.flatMap(checked(value), (each) => Effect.asVoid(Queue.offer(buffered, each))),
+          Effect.flatMap(checked(value), (each) =>
+            Effect.asVoid(Queue.offer(buffered, each))
+          ),
       },
       drained: Effect.andThen(Queue.end(buffered), Fiber.join(forwarding)),
     };
@@ -90,7 +96,8 @@ const buffering = (
 };
 
 /** Whether what is buffered still reaches the caller after `cause` ends a call. */
-const drainsAfter = (cause: Cause.Cause<unknown>) => !Cause.hasInterruptsOnly(cause);
+const drainsAfter = (cause: Cause.Cause<unknown>) =>
+  !Cause.hasInterruptsOnly(cause);
 
 /**
  * Runs `handle` with what it reports by, as `buffering` makes it; what is buffered when it
@@ -99,15 +106,19 @@ const drainsAfter = (cause: Cause.Cause<unknown>) => !Cause.hasInterruptsOnly(ca
 export const reportedTo = <A, E, R>(
   progress: Codec | undefined,
   sink: Reporting | undefined,
-  handle: (reporting: Reporting | undefined) => Effect.Effect<A, E, R>,
+  handle: (reporting: Reporting | undefined) => Effect.Effect<A, E, R>
 ): Effect.Effect<A, E, R | Scope.Scope> => {
-  if (progress === undefined) return handle(undefined);
+  if (progress === undefined) {
+    return handle(undefined);
+  }
 
   return Effect.gen(function* () {
     const { reporting, drained } = yield* buffering(progress, sink);
     const exit = yield* Effect.exit(handle(reporting));
 
-    if (Exit.isSuccess(exit) || drainsAfter(exit.cause)) yield* drained;
+    if (Exit.isSuccess(exit) || drainsAfter(exit.cause)) {
+      yield* drained;
+    }
 
     return yield* exit;
   });
@@ -120,9 +131,11 @@ export const reportedTo = <A, E, R>(
 export const streamReportedTo = <A, E, R>(
   progress: Codec | undefined,
   sink: Reporting | undefined,
-  handle: (reporting: Reporting | undefined) => Stream.Stream<A, E, R>,
+  handle: (reporting: Reporting | undefined) => Stream.Stream<A, E, R>
 ): Stream.Stream<A, E, R> => {
-  if (progress === undefined) return handle(undefined);
+  if (progress === undefined) {
+    return handle(undefined);
+  }
 
   return Stream.unwrap(
     Effect.map(buffering(progress, sink), ({ reporting, drained }) =>
@@ -131,10 +144,10 @@ export const streamReportedTo = <A, E, R>(
         Stream.catchCause((cause) =>
           drainsAfter(cause)
             ? Stream.unwrap(Effect.as(drained, Stream.failCause(cause)))
-            : Stream.failCause(cause),
-        ),
-      ),
-    ),
+            : Stream.failCause(cause)
+        )
+      )
+    )
   );
 };
 
@@ -144,17 +157,15 @@ export const streamReportedTo = <A, E, R>(
 const shown =
   (onProgress: NonNullable<CallOptions<unknown>["onProgress"]>) =>
   (value: ErasedValue): Effect.Effect<void> =>
-    Effect.catchCause(
+    Effect.catchCauseIf(
       Effect.suspend(() => onProgress(value)),
-      (cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.logWarning("onProgress failed", cause),
+      (cause) => !Cause.hasInterruptsOnly(cause),
+      (cause) => Effect.logWarning("onProgress failed", cause)
     );
 
 /** What a caller in process hands a call for `onProgress`, as `Action.client` and the toolkit do. */
 export const progressSink = (
-  onProgress: CallOptions<unknown>["onProgress"],
+  onProgress: CallOptions<unknown>["onProgress"]
 ): Reporting | undefined =>
   onProgress === undefined ? undefined : { progress: shown(onProgress) };
 
@@ -171,7 +182,9 @@ export type Progressed = Data.TaggedEnum<{
 export const Progressed = Data.taggedEnum<Progressed>();
 
 const endedEarly = Effect.die(
-  new Error("An answer streamed with its progress ended without its final element"),
+  new Error(
+    "An answer streamed with its progress ended without its final element"
+  )
 );
 
 /**
@@ -180,7 +193,7 @@ const endedEarly = Effect.die(
  */
 export const answerFrom = <E, R>(
   stream: Stream.Stream<Progressed, E, R>,
-  onProgress: CallOptions<unknown>["onProgress"],
+  onProgress: CallOptions<unknown>["onProgress"]
 ): Effect.Effect<unknown, E, R> => {
   const report = progressSink(onProgress)?.progress ?? (() => Effect.void);
 
@@ -190,10 +203,10 @@ export const answerFrom = <E, R>(
       () => Option.none<unknown>(),
       (final, element) =>
         Progressed.$is("Final")(element)
-          ? Effect.succeed(Option.some(element.value))
-          : Effect.as(report(element.value), final),
+          ? Effect.succeedSome(element.value)
+          : Effect.as(report(element.value), final)
     ),
-    Option.match({ onNone: () => endedEarly, onSome: Effect.succeed }),
+    Option.match({ onNone: () => endedEarly, onSome: Effect.succeed })
   );
 };
 
@@ -203,13 +216,13 @@ export const answerFrom = <E, R>(
  */
 export const elementsFrom = <E, R>(
   stream: Stream.Stream<Progressed, E, R>,
-  onProgress: CallOptions<unknown>["onProgress"],
+  onProgress: CallOptions<unknown>["onProgress"]
 ): Stream.Stream<unknown, E, R> => {
   const report = progressSink(onProgress)?.progress ?? (() => Effect.void);
 
   return Stream.flatMap(stream, (sent) =>
     Progressed.$is("Progress")(sent)
       ? Stream.fromEffectDrain(report(sent.value))
-      : Stream.make(sent.value),
+      : Stream.make(sent.value)
   );
 };

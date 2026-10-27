@@ -1,5 +1,6 @@
 import { Layer } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
+
 import { NoteStore } from "./notes/store.js";
 import { requestScopedRoutes } from "./routes.js";
 
@@ -13,8 +14,10 @@ const app = HttpRouter.toWebHandler(
     // DEMO ONLY: each instance of the worker holds notes of its own, lost when it stops. A
     // deployment provides a store every instance reaches.
     Layer.provide(NoteStore.layerMemory),
-    Layer.provide(HttpServer.layerServices),
-  ),
+    Layer.provide(HttpServer.layerServices)
+  )
 );
 
-export default { fetch: (request: Request) => app.handler(request) };
+export default {
+  fetch: async (request: Request) => await app.handler(request),
+};

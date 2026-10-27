@@ -1,10 +1,7 @@
 import { Clock, Data, Duration, Effect, Option, Schema, Stream } from "effect";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientRequest,
-  type HttpClientResponse,
-} from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import type { HttpClientResponse } from "effect/http";
+
 import type { CallbackCategory } from "../contract/Event.js";
 import { signature } from "./signing.js";
 
@@ -23,7 +20,7 @@ export interface Posting {
   readonly subscriptionId: string;
   readonly webhookId: string;
   readonly body: string;
-  readonly keys: ReadonlyArray<Uint8Array>;
+  readonly keys: readonly Uint8Array[];
 }
 
 const timeout = Duration.seconds(5);
@@ -43,8 +40,8 @@ const outbound = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         ...Option.getOrUndefined(init),
         redirect: "manual",
       }),
-      Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-    ),
+      Effect.provideService(HttpClient.TracerPropagationEnabled, false)
+    )
   );
 
 // Why: an attempt's request lives in its scope, so the body of an answer no one reads, a
@@ -52,10 +49,14 @@ const outbound = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 const sent = <A>(
   { url, subscriptionId, webhookId, body, keys }: Posting,
   checked: Effect.Effect<void, void>,
-  answer: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A>,
+  answer: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<A>
 ): Effect.Effect<A, AttemptFailed, HttpClient.HttpClient> =>
   Effect.gen(function* () {
-    const unreached = new AttemptFailed({ category: "connection_refused", final: false });
+    const unreached = new AttemptFailed({
+      category: "connection_refused",
+      final: false,
+    });
+
     const timestamp = Math.floor((yield* Clock.currentTimeMillis) / 1000);
     const signed = yield* signature(keys, webhookId, timestamp, body);
     const client = HttpClient.withScope(yield* HttpClient.HttpClient);
@@ -67,7 +68,7 @@ const sent = <A>(
         "webhook-signature": signed,
         "x-mcp-subscription-id": subscriptionId,
       }),
-      HttpClientRequest.bodyText(body, "application/json"),
+      HttpClientRequest.bodyText(body, "application/json")
     );
 
     const answered = Effect.flatMap(
@@ -79,19 +80,20 @@ const sent = <A>(
               new AttemptFailed({
                 category: statusCategory(response.status),
                 final: response.status === 410 || response.status === 413,
-              }),
-            ),
+              })
+            )
     );
 
     return yield* Effect.andThen(
       Effect.mapError(checked, () => unreached),
-      outbound(answered),
+      outbound(answered)
     ).pipe(
       Effect.timeoutOrElse({
         duration: timeout,
-        orElse: () => Effect.fail(new AttemptFailed({ category: "timeout", final: false })),
+        orElse: () =>
+          Effect.fail(new AttemptFailed({ category: "timeout", final: false })),
       }),
-      Effect.scoped,
+      Effect.scoped
     );
   });
 
@@ -102,11 +104,13 @@ const sent = <A>(
  */
 export const attempt = (
   posting: Posting,
-  checked: Effect.Effect<void, void>,
+  checked: Effect.Effect<void, void>
 ): Effect.Effect<void, AttemptFailed, HttpClient.HttpClient> =>
   sent(posting, checked, () => Effect.void);
 
-const Challenged = Schema.fromJsonString(Schema.Struct({ challenge: Schema.String }));
+const Challenged = Schema.fromJsonString(
+  Schema.Struct({ challenge: Schema.String })
+);
 
 // Why: an echoed challenge is a few dozen bytes, so an answer is read this far and no further: a
 // callback answering more holds neither the attempt until its timeout nor the server's memory.
@@ -124,17 +128,17 @@ const textOf = (response: HttpClientResponse.HttpClientResponse) =>
         ({ bytes, text }, chunk: Uint8Array) => ({
           bytes: bytes + chunk.length,
           text: text + decoder.decode(chunk, { stream: true }),
-        }),
+        })
       ),
       Stream.takeUntil(({ bytes }) => bytes > answerLimit),
       Stream.runLast,
       Effect.map((last) =>
         Option.map(
           Option.filter(last, ({ bytes }) => bytes <= answerLimit),
-          ({ text }) => text + decoder.decode(),
-        ),
+          ({ text }) => text + decoder.decode()
+        )
       ),
-      Effect.orElseSucceed(() => Option.none<string>()),
+      Effect.orElseSucceed(() => Option.none<string>())
     );
   });
 
@@ -144,15 +148,15 @@ const textOf = (response: HttpClientResponse.HttpClientResponse) =>
  */
 export const challenged = (
   posting: Posting,
-  checked: Effect.Effect<void, void>,
+  checked: Effect.Effect<void, void>
 ): Effect.Effect<string | undefined, AttemptFailed, HttpClient.HttpClient> =>
   sent(posting, checked, (response) =>
     Effect.map(textOf(response), (text) =>
       Option.getOrUndefined(
         Option.map(
           Option.flatMap(text, Schema.decodeUnknownOption(Challenged)),
-          ({ challenge }) => challenge,
-        ),
-      ),
-    ),
+          ({ challenge }) => challenge
+        )
+      )
+    )
   );

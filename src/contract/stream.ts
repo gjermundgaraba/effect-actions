@@ -1,5 +1,8 @@
-import { type Effect, Predicate, Schema, Stream as Elements } from "effect";
-import { type Codec, type CodecOf, codecOf, type Fields } from "./codec.js";
+import { Predicate, Schema, Stream as Elements } from "effect";
+import type { Effect } from "effect";
+
+import { codecOf } from "./codec.js";
+import type { Codec, CodecOf, Fields } from "./codec.js";
 
 const TypeId = "~effect-actions/Stream";
 
@@ -28,15 +31,20 @@ const streams = Schema.declare(Elements.isStream);
  * - An element breaking its schema is the call's defect, as an answer breaking `success` is.
  * - With `progress`, values and elements are each in their order, not against each other: a value may reach `onProgress` after an element yielded after it.
  */
-export const Stream = <const E extends Codec | Fields>(element: E): StreamOf<CodecOf<E>> =>
-  Schema.make<StreamOf<CodecOf<E>>>(streams.ast, { [TypeId]: TypeId, element: codecOf(element) });
+export const Stream = <const E extends Codec | Fields>(
+  element: E
+): StreamOf<CodecOf<E>> =>
+  Schema.make<StreamOf<CodecOf<E>>>(streams.ast, {
+    [TypeId]: TypeId,
+    element: codecOf(element),
+  });
+
+const isStreamOf = (success: Codec): success is StreamOf<Codec> =>
+  Predicate.hasProperty(success, TypeId);
 
 /** The element schema of an action answering a stream, `undefined` for any other action. */
 export const elementOf = (success: Codec): Codec | undefined =>
   isStreamOf(success) ? success.element : undefined;
-
-const isStreamOf = (success: Codec): success is StreamOf<Codec> =>
-  Predicate.hasProperty(success, TypeId);
 
 // Why: Not distributive, and `never` answering one value: a handler of an erased list's action,
 // `Extract`ed by a name it may not hold, is a `Handler<never>`, which any handler satisfies.

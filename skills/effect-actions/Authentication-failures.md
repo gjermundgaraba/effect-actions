@@ -1,9 +1,6 @@
 # Authentication failure modes
 
-What you see when something is wrong, and the fix: compiler diagnostics and errors the library
-does not word. Search for a fragment of the message. A message the library throws says its
-fix itself. Tasks: [Authentication.md](Authentication.md),
-[Authentication-advanced.md](Authentication-advanced.md).
+What you see when something is wrong, and the fix: compiler diagnostics and errors the library does not word. Search for a fragment of the message. A message the library throws says its fix itself. Tasks: [Authentication.md](Authentication.md), [Authentication-advanced.md](Authentication-advanced.md).
 
 ## Types and startup
 

@@ -1,4 +1,5 @@
 import { Option, Schema, SchemaTransformation, Struct } from "effect";
+
 import { Forbidden, Refusal } from "./errors.js";
 import * as Event from "./Event.js";
 
@@ -7,10 +8,10 @@ import * as Event from "./Event.js";
 // termination, in every delivery mode, carries them.
 /** The error codes SEP-3415 defines, each naming one reason. */
 export const eventCodes = {
-  notFound: -32023,
-  forbidden: -32024,
-  unsupported: -32026,
-  callbackEndpoint: -32027,
+  notFound: -32_023,
+  forbidden: -32_024,
+  unsupported: -32_026,
+  callbackEndpoint: -32_027,
 } as const;
 
 /** A SEP-3415 error as sent: its code, its message, and what its `data` says. */
@@ -32,7 +33,7 @@ interface Sent<A extends Reason> {
 // by it, and a client's decoded, so the two cannot drift. `NotSubscribed` and `NotServed` share
 // `notFound`, told apart by `kind`; `NotSubscribed` comes first, and `NotServed` takes any other
 // `data`, as a server naming neither means the event.
-const sent: { readonly [T in Reason["_tag"]]: Sent<Extract<Reason, { readonly _tag: T }>> } = {
+const sent = {
   NotSubscribed: {
     code: eventCodes.notFound,
     data: Schema.Struct({ kind: Schema.Literal("subscription") }).pipe(
@@ -41,8 +42,8 @@ const sent: { readonly [T in Reason["_tag"]]: Sent<Extract<Reason, { readonly _t
         SchemaTransformation.transform({
           decode: () => new Event.NotSubscribed(),
           encode: () => ({ kind: "subscription" as const }),
-        }),
-      ),
+        })
+      )
     ),
   },
   NotServed: {
@@ -50,11 +51,14 @@ const sent: { readonly [T in Reason["_tag"]]: Sent<Extract<Reason, { readonly _t
     data: Schema.UndefinedOr(Schema.Json).pipe(
       Schema.decodeTo(
         Schema.instanceOf(Event.NotServed),
-        SchemaTransformation.transform<Event.NotServed, Schema.Json | undefined>({
+        SchemaTransformation.transform<
+          Event.NotServed,
+          Schema.Json | undefined
+        >({
           decode: () => new Event.NotServed(),
           encode: () => ({ kind: "event" }),
-        }),
-      ),
+        })
+      )
     ),
   },
   Unsupported: {
@@ -65,8 +69,8 @@ const sent: { readonly [T in Reason["_tag"]]: Sent<Extract<Reason, { readonly _t
         SchemaTransformation.transform({
           decode: (fields) => new Event.Unsupported(fields),
           encode: ({ feature, value }) => ({ feature, value }),
-        }),
-      ),
+        })
+      )
     ),
   },
   // Why: SEP-3415 names the category `reason`, which `Event.CallbackFailed` calls `category`
@@ -77,12 +81,15 @@ const sent: { readonly [T in Reason["_tag"]]: Sent<Extract<Reason, { readonly _t
       Schema.decodeTo(
         Schema.instanceOf(Event.CallbackFailed),
         SchemaTransformation.transform({
-          decode: ({ reason }) => new Event.CallbackFailed({ category: reason }),
+          decode: ({ reason }) =>
+            new Event.CallbackFailed({ category: reason }),
           encode: ({ category }) => ({ reason: category }),
-        }),
-      ),
+        })
+      )
     ),
   },
+} satisfies {
+  readonly [T in Reason["_tag"]]: Sent<Extract<Reason, { readonly _tag: T }>>;
 };
 
 const encodeRefusal = Schema.encodeUnknownSync(Schema.toCodecJson(Refusal));
@@ -93,9 +100,16 @@ const decodeRefusal = Schema.decodeUnknownOption(Schema.toCodecJson(Refusal));
  * The SEP-3415 error `error` is sent as: a refusal's `-32024`, its message and the refusal as
  * its data, or its reason's code and data beside its message.
  */
-export const sentError = (error: Event.SubscriptionError | Refusal): SentError => {
-  if (Schema.is(Refusal)(error))
-    return { code: eventCodes.forbidden, message: error.message, data: encodeRefusal(error) };
+export const sentError = (
+  error: Event.SubscriptionError | Refusal
+): SentError => {
+  if (Schema.is(Refusal)(error)) {
+    return {
+      code: eventCodes.forbidden,
+      message: error.message,
+      data: encodeRefusal(error),
+    };
+  }
 
   const { code, data } = sent[error.reason._tag];
 
@@ -110,8 +124,14 @@ export const sentError = (error: Event.SubscriptionError | Refusal): SentError =
  * The refusal a SEP-3415 error carries, as `sentError` writes one: its `data` decoded, or
  * `Forbidden` with its message where `data` is no refusal.
  */
-export const refusalOf = (error: { readonly message: string; readonly data?: unknown }): Refusal =>
-  Option.getOrElse(decodeRefusal(error.data), () => new Forbidden({ message: error.message }));
+export const refusalOf = (error: {
+  readonly message: string;
+  readonly data?: unknown;
+}): Refusal =>
+  Option.getOrElse(
+    decodeRefusal(error.data),
+    () => new Forbidden({ message: error.message })
+  );
 
 /**
  * What a SEP-3415 error of the event `name` names, as a subscription's request fails with one and
@@ -120,15 +140,25 @@ export const refusalOf = (error: { readonly message: string; readonly data?: unk
  */
 export const reasonOf = (
   name: string,
-  error: { readonly code?: number | undefined; readonly message: string; readonly data?: unknown },
+  error: {
+    readonly code?: number | undefined;
+    readonly message: string;
+    readonly data?: unknown;
+  }
 ): Event.SubscriptionError | Refusal | undefined => {
-  if (error.code === eventCodes.forbidden) return refusalOf(error);
+  if (error.code === eventCodes.forbidden) {
+    return refusalOf(error);
+  }
 
   for (const { code, data } of Object.values(sent)) {
     const reason =
-      code === error.code ? Schema.decodeUnknownOption(data)(error.data) : Option.none();
+      code === error.code
+        ? Schema.decodeUnknownOption(data)(error.data)
+        : Option.none();
 
-    if (Option.isSome(reason)) return Event.SubscriptionError.of(name, reason.value);
+    if (Option.isSome(reason)) {
+      return Event.SubscriptionError.of(name, reason.value);
+    }
   }
 
   return undefined;

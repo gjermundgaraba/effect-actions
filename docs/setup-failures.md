@@ -1,7 +1,6 @@
 # Setup failure modes
 
-What you see when something is wrong, and the fix. Search for a fragment of the message.
-The tasks are in [setup.md](setup.md).
+What you see when something is wrong, and the fix. Search for a fragment of the message. The tasks are in [setup.md](setup.md).
 
 - `TS1149: File name '…/assistant.ts' differs from already included file name '…/Assistant.ts' only in casing`: a lowercase file is named for its domain beside the domain's contract. Name lowercase files for their role, such as `handlers.ts` or `turns.ts`: on a disk that ignores case the two are one file.
 - `Cannot find module '@gjermundgaraba/effect-actions'`: there is no root export. Import a subpath from [Entry points](setup.md#entry-points), never the root or a `dist/` path.

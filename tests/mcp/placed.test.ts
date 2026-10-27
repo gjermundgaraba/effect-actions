@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
+
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { authenticate } from "../support/app/authentication.js";
@@ -21,8 +22,8 @@ describe("ActionMcp.layerHttp serving placed contracts", () => {
               HttpClientRequest.setHeader(
                 HttpClientRequest.bearerToken(request, "alice"),
                 "x-trace",
-                "t1",
-              ),
+                "t1"
+              )
             ),
           });
 
@@ -39,26 +40,33 @@ describe("ActionMcp.layerHttp serving placed contracts", () => {
                 name: "worker",
                 version: "0.0.0",
                 authentication: Login,
-              }).pipe(Layer.provide(authenticate)),
-            ),
-          ),
+              }).pipe(Layer.provide(authenticate))
+            )
+          )
         );
 
-        expect(answered.user).toEqual({ id: "1", name: "Ada" });
-        expect(answered.counts.map((item) => (item._tag === "Gap" ? "gap" : item.data))).toEqual([
-          { count: 0 },
-        ]);
+        expect(answered.user).toStrictEqual({ id: "1", name: "Ada" });
+        expect(
+          answered.counts.map((item) =>
+            item._tag === "Gap" ? "gap" : item.data
+          )
+        ).toStrictEqual([{ count: 0 }]);
         expect(
           reached.requests.map(({ url, headers }) => [
             url,
             headers.get("authorization"),
             headers.get("x-trace"),
             [...headers.keys()].filter((name) => name.startsWith("mcp-")),
-          ]),
-        ).toEqual([
+          ])
+        ).toStrictEqual([
           ["http://localhost/api/getUser", "Bearer alice", "t1", []],
-          ["http://localhost/api/events/count.changed", "Bearer alice", "t1", []],
+          [
+            "http://localhost/api/events/count.changed",
+            "Bearer alice",
+            "t1",
+            [],
+          ],
         ]);
-      }),
+      })
   );
 });

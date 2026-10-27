@@ -10,20 +10,26 @@ import {
 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
+
 import { Schema } from "effect";
-import cloudflareManifest from "../packages/cloudflare/package.json" with { type: "json" };
+
 import manifest from "../package.json" with { type: "json" };
+import cloudflareManifest from "../packages/cloudflare/package.json" with { type: "json" };
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
-const cloudflare = join(root, "packages/cloudflare");
+const cloudflare = path.join(root, "packages/cloudflare");
 
-const decodeInstalled = Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }));
+const decodeInstalled = Schema.decodeUnknownSync(
+  Schema.Struct({ version: Schema.String })
+);
 
 const versionIn = (directory: string, name: string) =>
-  decodeInstalled(createRequire(join(directory, "package.json"))(`${name}/package.json`)).version;
+  decodeInstalled(
+    createRequire(path.join(directory, "package.json"))(`${name}/package.json`)
+  ).version;
 
 const compilerOptions = {
   target: "es2023",
@@ -37,20 +43,22 @@ const compilerOptions = {
 };
 
 const refuseInternalKeys = (declarations: string) => {
-  const keys = readFileSync(declarations, "utf8").match(/"~[^"]*"/g);
+  const keys = readFileSync(declarations, "utf-8").match(/"~[^"]*"/gu);
 
   if (keys !== null) {
-    throw new Error(`${declarations} prints internal keys: ${[...new Set(keys)].join(", ")}`);
+    throw new Error(
+      `${declarations} prints internal keys: ${[...new Set(keys)].join(", ")}`
+    );
   }
 };
 
 const declared =
-  /^(?:export )?(?:declare )?(?:const|function|class|interface|type|enum|namespace) ([\w$]+)/;
+  /^(?:export )?(?:declare )?(?:const|function|class|interface|type|enum|namespace) (?<name>[\w$]+)/u;
 
 const exportedHere =
-  /^export (?:declare )?(?:const|function|class|interface|type|enum|namespace) ([\w$]+)/;
+  /^export (?:declare )?(?:const|function|class|interface|type|enum|namespace) (?<name>[\w$]+)/u;
 
-const exportList = /^export \{([^}]*)\};?$/;
+const exportList = /^export \{(?<names>[^}]*)\};?$/u;
 
 const namesIn = (list: string) =>
   list
@@ -59,41 +67,57 @@ const namesIn = (list: string) =>
       (entry) =>
         entry
           .trim()
-          .replace(/^type /, "")
+          .replace(/^type /u, "")
           .split(" as ")[0]
-          ?.trim() ?? "",
+          ?.trim() ?? ""
     )
     .filter((name) => name !== "");
 
 const refuseUndocumented = (directory: string) => {
-  for (const entry of readdirSync(directory, { recursive: true, encoding: "utf8" })) {
-    if (!entry.endsWith(".d.mts")) continue;
+  for (const entry of readdirSync(directory, {
+    recursive: true,
+    encoding: "utf-8",
+  })) {
+    if (!entry.endsWith(".d.mts")) {
+      continue;
+    }
 
-    const lines = readFileSync(join(directory, entry), "utf8").split("\n");
+    const lines = readFileSync(path.join(directory, entry), "utf-8").split(
+      "\n"
+    );
+
     const documented = new Map<string, boolean>();
 
     for (const [index, line] of lines.entries()) {
-      const name = declared.exec(line)?.[1];
+      const name = declared.exec(line)?.groups?.["name"];
 
-      if (name !== undefined && documented.get(name) !== true)
-        documented.set(name, lines[index - 1]?.trimEnd().endsWith("*/") === true);
+      if (name !== undefined && documented.get(name) !== true) {
+        documented.set(
+          name,
+          lines[index - 1]?.trimEnd().endsWith("*/") === true
+        );
+      }
     }
 
     const exported = lines.flatMap((line) => {
-      const here = exportedHere.exec(line)?.[1];
+      const here = exportedHere.exec(line)?.groups?.["name"];
 
-      if (here !== undefined) return [here];
+      if (here !== undefined) {
+        return [here];
+      }
 
-      const list = exportList.exec(line)?.[1];
+      const list = exportList.exec(line)?.groups?.["names"];
 
       return list === undefined ? [] : namesIn(list);
     });
 
-    const undocumented = exported.filter((name) => documented.get(name) === false);
+    const undocumented = exported.filter(
+      (name) => documented.get(name) === false
+    );
 
     if (undocumented.length > 0) {
       throw new Error(
-        `${join(directory, entry)} ships ${undocumented.join(", ")} without JSDoc: put the comment on the exported declaration`,
+        `${path.join(directory, entry)} ships ${undocumented.join(", ")} without JSDoc: put the comment on the exported declaration`
       );
     }
   }
@@ -101,39 +125,51 @@ const refuseUndocumented = (directory: string) => {
 
 const refuseUnshipped = (source: string, installed: string) => {
   for (const directory of ["docs", "examples"]) {
-    for (const entry of readdirSync(join(source, directory))) {
-      if (!existsSync(join(installed, directory, entry)))
+    for (const entry of readdirSync(path.join(source, directory))) {
+      if (!existsSync(path.join(installed, directory, entry))) {
         throw new Error(`${directory}/${entry} is not in ${installed}`);
+      }
     }
   }
 };
 
-const untracked = spawnSync("git", ["ls-files", "--others", "--exclude-standard", "*.d.ts"], {
-  cwd: root,
-  encoding: "utf8",
-});
+const untracked = spawnSync(
+  "git",
+  ["ls-files", "--others", "--exclude-standard", "*.d.ts"],
+  {
+    cwd: root,
+    encoding: "utf-8",
+  }
+);
 
 const strayDeclarations =
-  untracked.status === 0 ? untracked.stdout.split("\n").filter((line) => line !== "") : [];
+  untracked.status === 0
+    ? untracked.stdout.split("\n").filter((line) => line !== "")
+    : [];
 
 if (strayDeclarations.length > 0) {
   throw new Error(
-    `The build wrote ${strayDeclarations.join(", ")} beside the sources: build a package's declarations from a tsconfig reaching its sources alone`,
+    `The build wrote ${strayDeclarations.join(", ")} beside the sources: build a package's declarations from a tsconfig reaching its sources alone`
   );
 }
 
-const consumer = mkdtempSync(join(tmpdir(), "effect-actions-consumer-"));
+const consumer = mkdtempSync(path.join(tmpdir(), "effect-actions-consumer-"));
 
-const run = (command: string, args: ReadonlyArray<string>, cwd = consumer) =>
+const run = (command: string, args: readonly string[], cwd = consumer) =>
   execFileSync(command, args, { cwd, stdio: "inherit" });
 
 try {
-  const tarball = join(consumer, "effect-actions.tgz");
+  const tarball = path.join(consumer, "effect-actions.tgz");
   run("vp", ["pm", "pack", "--out", tarball], root);
-  const cloudflareTarball = join(consumer, "effect-actions-cloudflare.tgz");
+
+  const cloudflareTarball = path.join(
+    consumer,
+    "effect-actions-cloudflare.tgz"
+  );
+
   run("vp", ["pm", "pack", "--out", cloudflareTarball], cloudflare);
   writeFileSync(
-    join(consumer, "package.json"),
+    path.join(consumer, "package.json"),
     JSON.stringify({
       private: true,
       type: "module",
@@ -141,15 +177,18 @@ try {
       dependencies: {
         [manifest.name]: `file:${tarball}`,
         [cloudflareManifest.name]: `file:${cloudflareTarball}`,
-        "@cloudflare/workers-types": versionIn(cloudflare, "@cloudflare/workers-types"),
+        "@cloudflare/workers-types": versionIn(
+          cloudflare,
+          "@cloudflare/workers-types"
+        ),
         effect: versionIn(root, "effect"),
         typescript: manifest.devDependencies.typescript,
       },
-    }),
+    })
   );
 
   writeFileSync(
-    join(consumer, "tsconfig.json"),
+    path.join(consumer, "tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
         ...compilerOptions,
@@ -158,52 +197,73 @@ try {
         lib: ["es2023", "esnext.disposable", "dom", "dom.iterable"],
       },
       include: ["*.ts", "quickstart/**/*.ts"],
-    }),
+    })
   );
-  cpSync(join(root, "scripts/package-consumer"), consumer, { recursive: true });
+  cpSync(path.join(root, "scripts/package-consumer"), consumer, {
+    recursive: true,
+  });
 
   run("vp", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
-  const installed = join(consumer, "node_modules", manifest.name);
-  const installedCloudflare = join(consumer, "node_modules", cloudflareManifest.name);
+  const installed = path.join(consumer, "node_modules", manifest.name);
+
+  const installedCloudflare = path.join(
+    consumer,
+    "node_modules",
+    cloudflareManifest.name
+  );
 
   refuseUnshipped(root, installed);
   refuseUnshipped(cloudflare, installedCloudflare);
-  refuseUndocumented(join(installed, "dist"));
-  refuseUndocumented(join(installedCloudflare, "dist"));
+  refuseUndocumented(path.join(installed, "dist"));
+  refuseUndocumented(path.join(installedCloudflare, "dist"));
 
-  const quickstart = join(installed, "examples", "quickstart", "src");
+  const quickstart = path.join(installed, "examples", "quickstart", "src");
 
-  for (const file of ["Api.ts", "routes.ts", "greeting/Greeting.ts", "greeting/handlers.ts"]) {
-    cpSync(join(quickstart, file), join(consumer, "quickstart", file));
+  for (const file of [
+    "Api.ts",
+    "routes.ts",
+    "greeting/Greeting.ts",
+    "greeting/handlers.ts",
+  ]) {
+    cpSync(
+      path.join(quickstart, file),
+      path.join(consumer, "quickstart", file)
+    );
   }
 
   writeFileSync(
-    join(consumer, "quickstart.ts"),
-    'export { Http } from "./quickstart/Api.js";\nexport { Greet } from "./quickstart/greeting/Greeting.js";\n',
+    path.join(consumer, "quickstart.ts"),
+    'export { Http } from "./quickstart/Api.js";\nexport { Greet } from "./quickstart/greeting/Greeting.js";\n'
   );
 
   writeFileSync(
-    join(consumer, "quickstart-server.ts"),
-    'export { routes } from "./quickstart/routes.js";\n',
+    path.join(consumer, "quickstart-server.ts"),
+    'export { routes } from "./quickstart/routes.js";\n'
   );
 
-  run(process.execPath, [join(consumer, "node_modules/typescript/bin/tsc")]);
+  run(process.execPath, [
+    path.join(consumer, "node_modules/typescript/bin/tsc"),
+  ]);
 
-  refuseInternalKeys(join(consumer, "declarations.d.ts"));
+  refuseInternalKeys(path.join(consumer, "declarations.d.ts"));
 
   run(process.execPath, ["index.js"]);
 
-  cpSync(join(cloudflare, "scripts/package-consumer"), join(consumer, "cloudflare"), {
-    recursive: true,
-  });
   cpSync(
-    join(installedCloudflare, "examples", "chat-rooms", "src"),
-    join(consumer, "cloudflare", "chat-rooms"),
-    { recursive: true },
+    path.join(cloudflare, "scripts/package-consumer"),
+    path.join(consumer, "cloudflare"),
+    {
+      recursive: true,
+    }
+  );
+  cpSync(
+    path.join(installedCloudflare, "examples", "chat-rooms", "src"),
+    path.join(consumer, "cloudflare", "chat-rooms"),
+    { recursive: true }
   );
 
   writeFileSync(
-    join(consumer, "cloudflare", "tsconfig.json"),
+    path.join(consumer, "cloudflare", "tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
         ...compilerOptions,
@@ -212,16 +272,16 @@ try {
         lib: ["es2023"],
       },
       include: ["*.ts", "chat-rooms/**/*.ts"],
-    }),
+    })
   );
 
   run(process.execPath, [
-    join(consumer, "node_modules/typescript/bin/tsc"),
+    path.join(consumer, "node_modules/typescript/bin/tsc"),
     "-p",
-    join(consumer, "cloudflare"),
+    path.join(consumer, "cloudflare"),
   ]);
 
-  refuseInternalKeys(join(consumer, "cloudflare", "worker.d.ts"));
+  refuseInternalKeys(path.join(consumer, "cloudflare", "worker.d.ts"));
 } finally {
   rmSync(consumer, { recursive: true, force: true });
 }

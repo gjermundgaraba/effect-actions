@@ -1,6 +1,7 @@
 import { NodeRuntime } from "@effect/platform-node";
-import { Console, Effect, Layer } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Console, Effect, Layer } from "effect";
+
 import { demoModel } from "./assistant/demo-model.js";
 import { CurrentMember } from "./identity/Identity.js";
 import { members } from "./identity/members.js";
@@ -18,7 +19,10 @@ const program = Effect.gen(function* () {
   // `authorize` and handler, with no transport. The store is memory, so file an issue first.
   const tracker = yield* Action.client(issues);
 
-  yield* tracker.createIssue({ title: "Crash on save", body: "Stack trace attached." });
+  yield* tracker.createIssue({
+    title: "Crash on save",
+    body: "Stack trace attached.",
+  });
 
   const turn = yield* triage("Close what is done.");
 
@@ -40,8 +44,12 @@ program.pipe(
   // No remote caller: this host names the member the assistant acts for, around the turn.
   // DEMO ONLY: a real host names whoever asked.
   Effect.provideService(CurrentMember, members.ada),
-  Effect.provide(layer.pipe(Layer.provideMerge(Layer.merge(IssueStore.layerMemory, limiter)))),
-  // DEMO ONLY: a scripted model. A real one is a provider's layer, in its place.
-  Effect.provide(demoModel),
-  NodeRuntime.runMain,
+  Effect.provide(
+    layer.pipe(
+      Layer.provideMerge(Layer.merge(IssueStore.layerMemory, limiter)),
+      // DEMO ONLY: a scripted model. A real one is a provider's layer, in its place.
+      Layer.provideMerge(demoModel)
+    )
+  ),
+  NodeRuntime.runMain()
 );

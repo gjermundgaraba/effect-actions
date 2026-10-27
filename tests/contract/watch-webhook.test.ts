@@ -1,17 +1,29 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Exit, Fiber, Layer, Predicate, Schema, Stream } from "effect";
+import {
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect";
 import { KeyValueStore } from "effect/persistence";
 import { TestClock } from "effect/testing";
+
 import * as Action from "../../src/contract/Action.js";
 import { WebhookSecret } from "../../src/contract/callback.js";
 import * as Event from "../../src/contract/Event.js";
-import {
-  type Grant,
-  type Transport,
-  watching,
-  type WebhookRequest,
+import { Receiving, webhookFed } from "../../src/contract/receiving.js";
+import type { Delivered } from "../../src/contract/receiving.js";
+import { watching } from "../../src/contract/watch.js";
+import type {
+  Grant,
+  Transport,
+  WebhookRequest,
 } from "../../src/contract/watch.js";
-import { type Delivered, Receiving, webhookFed } from "../../src/contract/receiving.js";
 import { secretOf, settled } from "../support/webhook.js";
 
 const Changed = Event.make("user.changed", {
@@ -20,12 +32,12 @@ const Changed = Event.make("user.changed", {
   caller: Action.Anyone,
 });
 
-class Blip extends Data.TaggedError("Blip")<{}> {}
+class Blip extends Data.TaggedError("Blip") {}
 
 interface Server {
-  readonly requests: Array<WebhookRequest>;
+  readonly requests: WebhookRequest[];
   readonly answers: Array<Effect.Effect<Grant, Blip>>;
-  readonly unsubscribed: Array<string>;
+  readonly unsubscribed: string[];
   unsubscribe: Effect.Effect<void>;
   deliver: (body: Delivered) => boolean;
   registered: number;
@@ -44,10 +56,18 @@ const grant = (cursor: string, refreshInMs: number | null, truncated = false) =>
   Effect.succeed({
     cursor,
     truncated,
-    refreshBefore: refreshInMs === null ? null : new Date(refreshInMs).toISOString(),
+    refreshBefore:
+      refreshInMs === null ? null : new Date(refreshInMs).toISOString(),
   });
 
-const transportOf = (server: Server): Transport<unknown, Receiving> => ({
+const readDelivery = webhookFed(Changed);
+
+const transportOf = (
+  server: Server
+): Transport<
+  Blip | Effect.Error<ReturnType<typeof readDelivery>>,
+  Receiving
+> => ({
   name: Changed.name,
   poll: () => Effect.die("A watch by webhook polled"),
   stream: () => Stream.die("A watch by webhook streamed"),
@@ -65,7 +85,7 @@ const transportOf = (server: Server): Transport<unknown, Receiving> => ({
 
         return server.unsubscribe;
       }),
-    read: webhookFed(Changed),
+    read: readDelivery,
   },
   transient: Predicate.isTagged("Blip"),
 });
@@ -84,7 +104,9 @@ const receivingOf = (server: Server) =>
       }),
   });
 
-const delivery = new Event.WebhookDelivery({ baseUrl: "https://hooks.example.com" });
+const delivery = new Event.WebhookDelivery({
+  baseUrl: "https://hooks.example.com",
+});
 
 const occurrence = (id: string, cursor: string) => ({
   eventId: id,
@@ -96,7 +118,9 @@ const occurrence = (id: string, cursor: string) => ({
 
 const ids = (received: Iterable<Event.Received<Event.Any>>) =>
   Array.from(received, (each) =>
-    Predicate.isTagged(each, "Occurrence") ? each.eventId : `gap at ${each.cursor}`,
+    Predicate.isTagged(each, "Occurrence")
+      ? each.eventId
+      : `gap at ${each.cursor}`
   );
 
 describe("a watch by webhook", () => {
@@ -108,10 +132,10 @@ describe("a watch by webhook", () => {
         const store = yield* KeyValueStore.KeyValueStore;
 
         yield* Effect.forkScoped(
-          watching(transportOf(server), { mode: delivery, resume: { store, key: "k" } }).pipe(
-            Stream.runDrain,
-            Effect.provide(receivingOf(server)),
-          ),
+          watching(transportOf(server), {
+            mode: delivery,
+            resume: { store, key: "k" },
+          }).pipe(Stream.runDrain, Effect.provide(receivingOf(server)))
         );
 
         yield* settled(() => server.requests.length === 1);
@@ -122,12 +146,17 @@ describe("a watch by webhook", () => {
         yield* settled(() => server.requests.length === 2);
         yield* Effect.yieldNow;
 
-        expect(server.requests.map(({ delivery, cursor }) => [delivery.url.href, cursor])).toEqual([
+        expect(
+          server.requests.map((request) => [
+            request.delivery.url.href,
+            request.cursor,
+          ])
+        ).toStrictEqual([
           ["https://hooks.example.com/hooks?watch=w1", null],
           ["https://hooks.example.com/hooks?watch=w1", "1"],
         ]);
         expect(yield* store.get("k")).toBe("5");
-      }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory)),
+      }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory))
   );
 
   it.effect(
@@ -140,8 +169,8 @@ describe("a watch by webhook", () => {
           watching(transportOf(server), { mode: delivery }).pipe(
             Stream.take(3),
             Stream.runCollect,
-            Effect.provide(receivingOf(server)),
-          ),
+            Effect.provide(receivingOf(server))
+          )
         );
 
         yield* settled(() => server.requests.length === 1);
@@ -150,8 +179,12 @@ describe("a watch by webhook", () => {
         server.deliver({ type: "gap", cursor: "9" });
         server.deliver(occurrence("c1", "10"));
 
-        expect(ids(yield* Fiber.join(read))).toEqual(["gap at 3", "gap at 9", "c1"]);
-      }).pipe(Effect.scoped),
+        expect(ids(yield* Fiber.join(read))).toStrictEqual([
+          "gap at 3",
+          "gap at 9",
+          "c1",
+        ]);
+      }).pipe(Effect.scoped)
   );
 
   it.effect(
@@ -164,8 +197,8 @@ describe("a watch by webhook", () => {
           watching(transportOf(server), { mode: delivery }).pipe(
             Stream.take(2),
             Stream.runCollect,
-            Effect.provide(receivingOf(server)),
-          ),
+            Effect.provide(receivingOf(server))
+          )
         );
 
         yield* settled(() => server.requests.length === 1);
@@ -179,86 +212,104 @@ describe("a watch by webhook", () => {
 
         yield* TestClock.adjust("1 second");
 
-        expect(ids(yield* Fiber.join(read))).toEqual(["c1", "c2"]);
+        expect(ids(yield* Fiber.join(read))).toStrictEqual(["c1", "c2"]);
         expect(accepted).toBe(true);
         expect(server.registered).toBe(1);
-        expect(server.requests.map(({ cursor }) => cursor)).toEqual([null, "1", "1"]);
-        expect(server.unsubscribed).toEqual(["https://hooks.example.com/hooks?watch=w1"]);
-      }).pipe(Effect.scoped),
+        expect(server.requests.map(({ cursor }) => cursor)).toStrictEqual([
+          null,
+          "1",
+          "1",
+        ]);
+        expect(server.unsubscribed).toStrictEqual([
+          "https://hooks.example.com/hooks?watch=w1",
+        ]);
+      }).pipe(Effect.scoped)
   );
 
   it.effect("fails where it is read with a defect its refresh dies of", () =>
     Effect.gen(function* () {
-      const server = makeServer(grant("0", 60_000), Effect.die(new Error("The refresh broke.")));
+      const server = makeServer(
+        grant("0", 60_000),
+        Effect.die(new Error("The refresh broke."))
+      );
 
       const read = yield* Effect.forkScoped(
         watching(transportOf(server), { mode: delivery }).pipe(
           Stream.runDrain,
           Effect.provide(receivingOf(server)),
-          Effect.exit,
-        ),
+          Effect.exit
+        )
       );
 
       yield* settled(() => server.requests.length === 1);
       yield* TestClock.adjust("30 seconds");
 
       expect(Exit.hasDies(yield* Fiber.join(read))).toBe(true);
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped)
   );
 
-  it.effect("refuses a body while 16 wait unread, and reads each one it accepted", () =>
-    Effect.gen(function* () {
-      const server = makeServer(grant("0", null));
-      const gate = yield* Deferred.make<void>();
+  it.effect(
+    "refuses a body while 16 wait unread, and reads each one it accepted",
+    () =>
+      Effect.gen(function* () {
+        const server = makeServer(grant("0", null));
+        const gate = yield* Deferred.make<undefined>();
 
-      const read = yield* Effect.forkScoped(
-        watching(transportOf(server), { mode: delivery }).pipe(
-          Stream.tap(() => Deferred.await(gate)),
-          Stream.take(20),
-          Stream.runCollect,
-          Effect.provide(receivingOf(server)),
-        ),
-      );
+        const read = yield* Effect.forkScoped(
+          watching(transportOf(server), { mode: delivery }).pipe(
+            Stream.tap(() => Deferred.await(gate)),
+            Stream.take(20),
+            Stream.runCollect,
+            Effect.provide(receivingOf(server))
+          )
+        );
 
-      yield* settled(() => server.requests.length === 1);
+        yield* settled(() => server.requests.length === 1);
 
-      const sent = Array.from({ length: 20 }, (_, index) => `c${index}`);
-      const accepted = sent.filter((id, index) => server.deliver(occurrence(id, String(index))));
+        const sent = Array.from({ length: 20 }, (_, index) => `c${index}`);
 
-      expect(accepted).toEqual(sent.slice(0, 16));
+        const accepted = sent.filter((id, index) =>
+          server.deliver(occurrence(id, String(index)))
+        );
 
-      yield* Deferred.succeed(gate, undefined);
+        expect(accepted).toStrictEqual(sent.slice(0, 16));
 
-      for (const id of sent.slice(accepted.length)) {
-        yield* settled(() => server.deliver(occurrence(id, String(sent.indexOf(id)))));
-      }
+        yield* Deferred.succeed(gate, undefined);
 
-      expect(ids(yield* Fiber.join(read))).toEqual(sent);
-    }).pipe(Effect.scoped),
+        for (const id of sent.slice(accepted.length)) {
+          yield* settled(() =>
+            server.deliver(occurrence(id, String(sent.indexOf(id))))
+          );
+        }
+
+        expect(ids(yield* Fiber.join(read))).toStrictEqual(sent);
+      }).pipe(Effect.scoped)
   );
 
-  it.effect("ends within its bound when the server never answers its unsubscribe", () =>
-    Effect.gen(function* () {
-      const server = makeServer(grant("0", null));
+  it.effect(
+    "ends within its bound when the server never answers its unsubscribe",
+    () =>
+      Effect.gen(function* () {
+        const server = makeServer(grant("0", null));
 
-      server.unsubscribe = Effect.never;
+        server.unsubscribe = Effect.never;
 
-      const read = yield* Effect.forkChild(
-        watching(transportOf(server), { mode: delivery }).pipe(
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.provide(receivingOf(server)),
-        ),
-      );
+        const read = yield* Effect.forkChild(
+          watching(transportOf(server), { mode: delivery }).pipe(
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.provide(receivingOf(server))
+          )
+        );
 
-      yield* settled(() => server.requests.length === 1);
+        yield* settled(() => server.requests.length === 1);
 
-      server.deliver(occurrence("c1", "1"));
+        server.deliver(occurrence("c1", "1"));
 
-      yield* TestClock.adjust("5 seconds");
+        yield* TestClock.adjust("5 seconds");
 
-      expect(ids(yield* Fiber.join(read))).toEqual(["c1"]);
-      expect(server.unsubscribed).toHaveLength(1);
-    }),
+        expect(ids(yield* Fiber.join(read))).toStrictEqual(["c1"]);
+        expect(server.unsubscribed).toHaveLength(1);
+      })
   );
 });

@@ -1,11 +1,7 @@
 import { Context, Effect, Layer, PubSub, Stream } from "effect";
-import {
-  type Comment,
-  type Issue,
-  type IssueChange,
-  IssueNotFound,
-  type Status,
-} from "./Issues.js";
+
+import { IssueNotFound } from "./Issues.js";
+import type { Comment, Issue, IssueChange, Status } from "./Issues.js";
 
 /**
  * Where issues live, each in one workspace. Every method but `changes` takes the workspace, so
@@ -18,28 +14,34 @@ export class IssueStore extends Context.Service<
     readonly list: (
       workspace: string,
       status: typeof Status.Type | undefined,
-      limit: number,
-    ) => Effect.Effect<ReadonlyArray<Issue>>;
+      limit: number
+    ) => Effect.Effect<readonly Issue[]>;
     /** Every issue, oldest first. */
     readonly all: (
       workspace: string,
-      status: typeof Status.Type | undefined,
+      status: typeof Status.Type | undefined
     ) => Stream.Stream<Issue>;
     readonly count: (
       workspace: string,
-      status: typeof Status.Type | undefined,
+      status: typeof Status.Type | undefined
     ) => Effect.Effect<number>;
-    readonly get: (workspace: string, id: string) => Effect.Effect<Issue, IssueNotFound>;
+    readonly get: (
+      workspace: string,
+      id: string
+    ) => Effect.Effect<Issue, IssueNotFound>;
     readonly create: (
       workspace: string,
-      draft: Pick<Issue, "title" | "body" | "assignee">,
+      draft: Pick<Issue, "title" | "body" | "assignee">
     ) => Effect.Effect<Issue>;
     readonly comment: (
       workspace: string,
       id: string,
-      comment: typeof Comment.Type,
+      comment: typeof Comment.Type
     ) => Effect.Effect<Issue, IssueNotFound>;
-    readonly close: (workspace: string, id: string) => Effect.Effect<Issue, IssueNotFound>;
+    readonly close: (
+      workspace: string,
+      id: string
+    ) => Effect.Effect<Issue, IssueNotFound>;
     /**
      * Every change from now on, in the order the store makes them, of every workspace: whatever
      * reads it filters by workspace itself, as `issueEvents`' `match` does.
@@ -52,8 +54,8 @@ export class IssueStore extends Context.Service<
   static readonly layerMemory = Layer.effect(
     IssueStore,
     Effect.gen(function* () {
-      const issues = new Map<string, Array<Issue>>();
-      const changed = yield* PubSub.unbounded<typeof IssueChange.Type>();
+      const issues = new Map<string, Issue[]>();
+      const changes = yield* PubSub.unbounded<typeof IssueChange.Type>();
 
       // Published in the step of the write, after it, so a subscriber never sees a change the
       // store did not make, and sees them in the order they were made. A database publishes
@@ -62,9 +64,9 @@ export class IssueStore extends Context.Service<
         workspace: string,
         issue: Issue,
         change: (typeof IssueChange.Type)["change"],
-        comment?: typeof Comment.Type,
+        comment?: typeof Comment.Type
       ) =>
-        PubSub.publishUnsafe(changed, {
+        PubSub.publishUnsafe(changes, {
           workspace,
           id: issue.id,
           title: issue.title,
@@ -75,13 +77,23 @@ export class IssueStore extends Context.Service<
 
       const of = (workspace: string) => issues.get(workspace) ?? [];
 
-      const having = (workspace: string, status: typeof Status.Type | undefined) =>
-        of(workspace).filter((issue) => status === undefined || issue.status === status);
+      const having = (
+        workspace: string,
+        status: typeof Status.Type | undefined
+      ) =>
+        of(workspace).filter(
+          (issue) => status === undefined || issue.status === status
+        );
 
-      const get = Effect.fn("IssueStore.get")(function* (workspace: string, id: string) {
+      const get = Effect.fn("IssueStore.get")(function* (
+        workspace: string,
+        id: string
+      ) {
         const issue = of(workspace).find((candidate) => candidate.id === id);
 
-        if (issue === undefined) return yield* new IssueNotFound({ id });
+        if (issue === undefined) {
+          return yield* new IssueNotFound({ id });
+        }
 
         return issue;
       });
@@ -95,19 +107,25 @@ export class IssueStore extends Context.Service<
         id: string,
         to: (issue: Issue) => Issue,
         kind: (typeof IssueChange.Type)["change"],
-        comment?: typeof Comment.Type,
+        comment?: typeof Comment.Type
       ) {
         const issue = of(workspace).find((candidate) => candidate.id === id);
 
-        if (issue === undefined) return yield* new IssueNotFound({ id });
+        if (issue === undefined) {
+          return yield* new IssueNotFound({ id });
+        }
 
         const changed = to(issue);
 
-        if (changed === issue) return issue;
+        if (changed === issue) {
+          return issue;
+        }
 
         issues.set(
           workspace,
-          of(workspace).map((current) => (current === issue ? changed : current)),
+          of(workspace).map((current) =>
+            current === issue ? changed : current
+          )
         );
 
         publish(workspace, changed, kind, comment);
@@ -117,11 +135,14 @@ export class IssueStore extends Context.Service<
 
       return IssueStore.of({
         list: (workspace, status, limit) =>
-          Effect.sync(() => having(workspace, status).toReversed().slice(0, limit)),
+          Effect.sync(() =>
+            having(workspace, status).toReversed().slice(0, limit)
+          ),
         // A database reads it in pages, by id, so an export never holds the workspace whole.
         all: (workspace, status) =>
           Stream.suspend(() => Stream.fromIterable(having(workspace, status))),
-        count: (workspace, status) => Effect.sync(() => having(workspace, status).length),
+        count: (workspace, status) =>
+          Effect.sync(() => having(workspace, status).length),
         get,
         create: (workspace, draft) =>
           Effect.sync(() => {
@@ -145,17 +166,20 @@ export class IssueStore extends Context.Service<
             id,
             (issue) => ({ ...issue, comments: [...issue.comments, comment] }),
             "commented",
-            comment,
+            comment
           ),
         close: (workspace, id) =>
           change(
             workspace,
             id,
-            (issue) => (issue.status === "closed" ? issue : { ...issue, status: "closed" }),
-            "closed",
+            (issue) =>
+              issue.status === "closed"
+                ? issue
+                : { ...issue, status: "closed" },
+            "closed"
           ),
-        changes: Stream.fromPubSub(changed),
+        changes: Stream.fromPubSub(changes),
       });
-    }),
+    })
   );
 }

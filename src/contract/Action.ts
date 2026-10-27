@@ -1,68 +1,78 @@
-import { Array as Arr, Cause, Effect, Layer, Predicate, Schema, Stream as Elements } from "effect";
-import type { Scope, Context } from "effect";
-import { Anyone, assertCaller } from "./caller.js";
-import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
-import { assertKnown, assertName, assertOnce, heldOnce } from "./names.js";
-import { type Call, inputOf, jsonRoundTrip, onProgressOf, watchInput } from "./call.js";
-import { type BuiltIn, InvalidInput } from "./errors.js";
-import { progressSink, type ReportingOf } from "./progress.js";
-import { type Answer, elementOf } from "./stream.js";
-import { Idempotency, keyed } from "./idempotency.js";
 import {
-  type Authorizer,
-  authorizerOf,
-  type Deferred,
-  type ErasedAuthorizer,
-} from "./authorizer.js";
-import type { NoInput } from "./codec.js";
-import { type Codec, type CodecOf, codecOf, type Fields } from "./codec.js";
+  Array as Arr,
+  Cause,
+  Effect,
+  Layer,
+  Predicate,
+  Schema,
+  Stream as Elements,
+} from "effect";
+import type { Scope, Context } from "effect";
+
+import { authorizerOf } from "./authorizer.js";
+import type { Authorizer, Deferred, ErasedAuthorizer } from "./authorizer.js";
+import { inputOf, jsonRoundTrip, onProgressOf, watchInput } from "./call.js";
+import type { Call } from "./call.js";
+import { Anyone, assertCaller } from "./caller.js";
+import { codecOf } from "./codec.js";
+import type { Codec, CodecOf, Fields, NoInput } from "./codec.js";
+import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
+import { InvalidInput } from "./errors.js";
+import type { BuiltIn } from "./errors.js";
 import type * as Event from "./Event.js";
 import { NotServed, SubscriptionError } from "./Event.js";
-import {
-  acquireFeeds,
-  type EventBuildError,
-  type EventBuildServices,
-  type EventOf,
-  type EventRequestOf,
-  eventsOf,
-  type Feed,
-  feedBuilders,
-  type HoldingEvents,
-  type ServingEvents,
+import { acquireFeeds, eventsOf, feedBuilders } from "./feed.js";
+import type {
+  EventBuildError,
+  EventBuildServices,
+  EventOf,
+  EventRequestOf,
+  Feed,
+  HoldingEvents,
+  ServingEvents,
 } from "./feed.js";
-import { polledOn, queuedPush, readOn } from "./push.js";
-import { selectFrom } from "./serving.js";
-import { type WatchArgs, watching } from "./watch.js";
+import { Idempotency, keyed } from "./idempotency.js";
 import {
-  type ActionOf,
-  type Authorize,
-  type BuildServices,
-  type BuildError,
   acquire,
   builtWith,
   elementsOf,
-  type ErasedHandler,
-  type ErasedValue,
-  type Handlers as ErasedHandlers,
   Implementation,
-  type Member,
   memoized,
   provideBuilders,
-  type RequestOf,
-  type Protected,
-  type Holding,
-  type Known,
-  type Offered,
-  type OptionalUnless,
-  type SelectedEventsOf,
-  type SelectedOf,
-  type Serving,
-  type Served,
   toList,
   uniqueKey,
-  type Written,
-  type WrittenHandler,
 } from "./implementation.js";
+import type {
+  ActionOf,
+  Authorize,
+  BuildServices,
+  BuildError,
+  ErasedHandler,
+  ErasedValue,
+  Handlers as ErasedHandlers,
+  Member,
+  RequestOf,
+  Protected,
+  Holding,
+  Known,
+  Offered,
+  OptionalUnless,
+  SelectedEventsOf,
+  SelectedOf,
+  Serving,
+  Served,
+  Written,
+  WrittenHandler,
+} from "./implementation.js";
+import { assertKnown, assertName, assertOnce, heldOnce } from "./names.js";
+import { progressSink } from "./progress.js";
+import type { ReportingOf } from "./progress.js";
+import { polledOn, queuedPush, readOn } from "./push.js";
+import { selectFrom } from "./serving.js";
+import { elementOf } from "./stream.js";
+import type { Answer } from "./stream.js";
+import { watching } from "./watch.js";
+import type { WatchArgs } from "./watch.js";
 
 export type { BuildServices } from "./implementation.js";
 
@@ -193,7 +203,7 @@ export interface Options {
    * - An entry that is a `Schema.suspend` whose thunk reads a `const` declared further down throws a `ReferenceError` at `make`, which reads every `_tag` when called: declare the error first.
    * - A failure the schemas reject, undeclared or breaking a check, is the call's defect on every surface, beside the `SchemaError` saying why; a class error built with `disableChecks` is accepted and fails to encode instead.
    */
-  readonly error?: Codec | ReadonlyArray<Codec> | undefined;
+  readonly error?: Codec | readonly Codec[] | undefined;
   /**
    * Whether the action leaves its resource unchanged. Required: an action nobody classified
    * is the one a reviewer must check. An implementation's `authorize` may read it, and MCP's
@@ -230,7 +240,9 @@ type UnknownMcp<O> = O extends { readonly mcp?: infer H }
   ? Exclude<H extends unknown ? keyof H : never, keyof Mcp>
   : never;
 
-type KnownMcp<O> = { readonly mcp?: { readonly [K in UnknownMcp<O>]: never } };
+interface KnownMcp<O> {
+  readonly mcp?: { readonly [K in UnknownMcp<O>]: never };
+}
 
 type StringFields<I> = {
   readonly [F in keyof I]-?: I[F] extends string | undefined ? F : never;
@@ -250,38 +262,52 @@ type KnownKey<O> = O extends { readonly idempotencyKey: infer K extends string }
       }
   : unknown;
 
-type KeyOf<O> = O extends { readonly idempotencyKey: infer K extends string } ? K : undefined;
+type KeyOf<O> = O extends { readonly idempotencyKey: infer K extends string }
+  ? K
+  : undefined;
 
 type ErrorMembers<G> = G extends ReadonlyArray<infer E> ? E : G;
 
 type OnlyOptions<O> = {
-  readonly [K in Exclude<O extends unknown ? keyof O : never, keyof Options>]: never;
+  readonly [
+    K in Exclude<O extends unknown ? keyof O : never, keyof Options>
+  ]: never;
 };
 
 // Why: `O` is inferred from the argument, which the compiler then never checks for excess
 // properties: a misspelled option or hint would be ignored. Options that fail `Options` itself
 // infer as `Options`, whose error the compiler already reports; checked against the rules too,
 // a missing option would be reported as the whole argument not being assignable.
-type Rules<O> = Options extends O ? unknown : OnlyOptions<O> & KnownMcp<O> & KnownKey<O>;
+type Rules<O> = Options extends O
+  ? unknown
+  : OnlyOptions<O> & KnownMcp<O> & KnownKey<O>;
 
 type OptionOf<O, K extends keyof Options, Default> = O extends unknown
   ? K extends keyof O
     ?
         | Exclude<O[K], undefined>
-        | ({} extends Pick<O, K> ? Default : undefined extends O[K] ? Default : never)
+        | ({} extends Pick<O, K>
+            ? Default
+            : undefined extends O[K]
+              ? Default
+              : never)
     : Default
   : never;
 
-type SchemaOf<O, K extends "input" | "success", Default extends Codec> = CodecOf<
-  Extract<OptionOf<O, K, Default>, Codec | Fields>
->;
+type SchemaOf<
+  O,
+  K extends "input" | "success",
+  Default extends Codec,
+> = CodecOf<Extract<OptionOf<O, K, Default>, Codec | Fields>>;
 
-type ProgressOf<O> = [Extract<OptionOf<O, "progress", never>, Codec | Fields>] extends [never]
+type ProgressOf<O> = [
+  Extract<OptionOf<O, "progress", never>, Codec | Fields>,
+] extends [never]
   ? undefined
   : CodecOf<Extract<OptionOf<O, "progress", never>, Codec | Fields>>;
 
 type ErrorSchemasOf<O> = ReadonlyArray<
-  ErrorMembers<Extract<OptionOf<O, "error", []>, Codec | ReadonlyArray<Codec>>>
+  ErrorMembers<Extract<OptionOf<O, "error", []>, Codec | readonly Codec[]>>
 >;
 
 /**
@@ -293,7 +319,7 @@ export interface Action<
   Name extends string,
   Input extends Codec,
   Success extends Codec,
-  Errors extends ReadonlyArray<Codec>,
+  ErrorSchemas extends readonly Codec[],
   ReadOnly extends boolean = boolean,
   Caller extends Options["caller"] = Options["caller"],
   Progress extends Codec | undefined = Codec | undefined,
@@ -309,7 +335,7 @@ export interface Action<
   readonly input: Input;
   readonly success: Success;
   /** The declared failures, as a list: one given alone is a list of one. */
-  readonly error: Errors;
+  readonly error: ErrorSchemas;
   /** What the handler reports while it runs, as a schema; `undefined` where none is declared. */
   readonly progress: Progress;
   readonly readOnly: ReadOnly;
@@ -320,13 +346,13 @@ export interface Action<
 }
 
 /** Any action, with its schemas erased. */
-export type Any = Action<string, Codec, Codec, ReadonlyArray<Codec>>;
+export type Any = Action<string, Codec, Codec, readonly Codec[]>;
 
 /**
  * A list of declared errors, as an action's `error` holds it, and a binding's or an
  * authentication descriptor's: `<E extends Action.Errors>` constrains one.
  */
-export type Errors = ReadonlyArray<Codec>;
+export type Errors = readonly Codec[];
 
 /**
  * Receives decoded input, and what it reports progress by where `A` declares `progress`; may
@@ -342,8 +368,8 @@ export type Handler<A extends Any, R = never> = (
  * written apart from `implement` returns, `satisfies Action.Handlers<typeof actions>`, so its
  * handlers are typed from their contracts, as another authorizer of the same handlers needs.
  */
-export type Handlers<A extends ReadonlyArray<Any>, R = never> = {
-  readonly [Action in A[number] as Action["name"]]: Handler<Action, R>;
+export type Handlers<A extends readonly Any[], R = never> = {
+  readonly [Each in A[number] as Each["name"]]: Handler<Each, R>;
 };
 
 /**
@@ -360,7 +386,7 @@ export type Handlers<A extends ReadonlyArray<Any>, R = never> = {
  */
 export function make<const Name extends string, const O extends Options>(
   name: Name,
-  options: O & NoInfer<Rules<O>>,
+  options: O & NoInfer<Rules<O>>
 ): Action<
   Name,
   SchemaOf<O, "input", typeof NoInput>,
@@ -378,8 +404,10 @@ export function make(name: string, options: Options): Any {
 
   assertCaller(caller);
 
-  if (readOnly !== true && readOnly !== false) {
-    throw new Error(`Invalid readOnly: ${String(readOnly)} (set true or false)`);
+  if (!Predicate.isBoolean(readOnly)) {
+    throw new Error(
+      `Invalid readOnly: ${String(readOnly)} (set true or false)`
+    );
   }
 
   const action: Any = {
@@ -387,17 +415,22 @@ export function make(name: string, options: Options): Any {
     name,
     description: options.description,
     input: codecOf(options.input ?? {}),
-    success: options.success === undefined ? Schema.Void : codecOf(options.success),
+    success:
+      options.success === undefined ? Schema.Void : codecOf(options.success),
     error: errorList(options.error),
-    progress: options.progress === undefined ? undefined : codecOf(options.progress),
+    progress:
+      options.progress === undefined ? undefined : codecOf(options.progress),
     readOnly,
     mcp: { ...options.mcp },
     idempotencyKey: options.idempotencyKey,
   };
 
-  if (action.idempotencyKey !== undefined && elementOf(action.success) !== undefined) {
+  if (
+    action.idempotencyKey !== undefined &&
+    elementOf(action.success) !== undefined
+  ) {
     throw new Error(
-      `Action "${name}" answers a stream, so it takes no idempotencyKey (a kept answer is whole: answer a value, or remove the key)`,
+      `Action "${name}" answers a stream, so it takes no idempotencyKey (a kept answer is whole: answer a value, or remove the key)`
     );
   }
 
@@ -417,26 +450,32 @@ export function make(name: string, options: Options): Any {
  * `Extract` over the list does not. The list is typed by its members, as every surface types
  * one. A name held twice is refused, as a surface refuses it.
  */
-export function byName<const Actions extends ReadonlyArray<Any>>(
-  actions: Actions,
+export function byName<const Actions extends readonly Any[]>(
+  actions: Actions
 ): { readonly [A in Actions[number] as A["name"]]: A };
-export function byName(actions: ReadonlyArray<Any>): { readonly [name: string]: Any } {
+export function byName(actions: readonly Any[]): {
+  readonly [name: string]: Any;
+} {
   assertOnce("action", actions);
 
   return Object.fromEntries(actions.map((action) => [action.name, action]));
 }
 
-type Target = Any | ReadonlyArray<Any>;
+type Target = Any | readonly Any[];
 
 // Why: A sentence in the parameter's type, where the error TypeScript reports for a call without
 // `authorize` ends. Rejected: a constraint named `ProtectedActionsTakeAuthorize`, the earlier
 // decision. The error named it for one action alone, a list's named its member type, and both
 // ended in `'typeof CurrentUser' is not assignable to type 'unique symbol'`.
-type TakesNoAuthorize<T extends Target> = [Protected<ActionsOf<T>>] extends [never]
+type TakesNoAuthorize<T extends Target> = [Protected<ActionsOf<T>>] extends [
+  never,
+]
   ? unknown
   : "A protected action takes { authorize }: your rule, or Action.allowAll";
 
-type ActionsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Extract<T, Any>;
+type ActionsOf<T extends Target> = T extends readonly Any[]
+  ? T[number]
+  : Extract<T, Any>;
 
 type NamesOf<T extends Target> = ActionsOf<T>["name"];
 
@@ -470,13 +509,24 @@ type Several<T extends Target, RequestServices> = {
     : never;
 };
 
-type HandlersOf<T extends Target, R, RequestServices> = Single<T, R> | Several<T, RequestServices>;
+type HandlersOf<T extends Target, R, RequestServices> =
+  | Single<T, R>
+  | Several<T, RequestServices>;
 
-type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = Implementation<
+type Implemented<
+  T extends Target,
+  RequestServices,
+  R,
+  EX,
+  RX,
+  RA,
+  EAX,
+  RAX,
+> = Implementation<
   ActionsOf<T>,
   {
     readonly [K in NamesOf<T>]: Exclude<
-      T extends ReadonlyArray<Any> ? RequestServices[K & keyof RequestServices] : R,
+      T extends readonly Any[] ? RequestServices[K & keyof RequestServices] : R,
       Scope.Scope
     >;
   },
@@ -516,7 +566,7 @@ export const allowAll: Authorize<Any> = () => Effect.void;
 // following error." before the cause. This one is first, so an authorizer is typed from it.
 export function implement<
   const T extends Target,
-  RequestServices extends (T extends ReadonlyArray<Any>
+  RequestServices extends (T extends readonly Any[]
     ? { readonly [K in NamesOf<T>]: unknown }
     : never),
   R = never,
@@ -531,12 +581,14 @@ export function implement<
     | HandlersOf<T, R, RequestServices>
     | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
   options: [Protected<ActionsOf<T>>] extends [never]
-    ? { readonly authorize?: "A public-only target takes no authorize" } | undefined
-    : { readonly authorize: Authorizer<Protected<ActionsOf<T>>, RA, EAX, RAX> },
+    ?
+        | { readonly authorize?: "A public-only target takes no authorize" }
+        | undefined
+    : { readonly authorize: Authorizer<Protected<ActionsOf<T>>, RA, EAX, RAX> }
 ): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
 export function implement<
   const T extends Target,
-  RequestServices extends (T extends ReadonlyArray<Any>
+  RequestServices extends (T extends readonly Any[]
     ? { readonly [K in NamesOf<T>]: unknown }
     : never),
   R = never,
@@ -546,12 +598,12 @@ export function implement<
   actions: T & TakesNoAuthorize<T>,
   handlers:
     | HandlersOf<T, R, RequestServices>
-    | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
+    | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>
 ): Implemented<T, RequestServices, R, EX, RX, never, never, never>;
 export function implement(
   actions: Target,
   handlers: Built | Effect.Effect<Built, unknown, unknown>,
-  options?: { readonly authorize?: ErasedAuthorizer<Any> },
+  options?: { readonly authorize?: ErasedAuthorizer<Any> }
 ): Implementation<Any, {}, unknown, unknown, unknown, unknown, unknown> {
   const listed = Arr.ensure(actions);
   const names = listed.map((action) => action.name);
@@ -561,27 +613,38 @@ export function implement(
   const authorizer = authorizerOf(
     { singular: "action", module: "Action" },
     listed.some((action) => action.caller !== Anyone),
-    options?.authorize,
+    options?.authorize
   );
 
   const pairWithActions = (built: Built): Written => {
-    const keyed: ErasedHandlers<unknown> = Predicate.isFunction(built)
-      ? Object.fromEntries(Array.isArray(actions) ? [] : listed.map(({ name }) => [name, built]))
+    const handlersByName: ErasedHandlers<unknown> = Predicate.isFunction(built)
+      ? Object.fromEntries(
+          Array.isArray(actions) ? [] : listed.map(({ name }) => [name, built])
+        )
       : built;
 
-    assertKnown("handlers", Object.keys(keyed), names, "remove it, or list its action");
+    assertKnown(
+      "handlers",
+      Object.keys(handlersByName),
+      names,
+      "remove it, or list its action"
+    );
 
     const bound = listed.flatMap((action) => {
-      const handle = Object.hasOwn(keyed, action.name) ? keyed[action.name] : undefined;
+      const handle = Object.hasOwn(handlersByName, action.name)
+        ? handlersByName[action.name]
+        : undefined;
 
       return Predicate.isFunction(handle) ? [[action, handle] as const] : [];
     });
 
-    const missing = names.filter((name) => !bound.some(([action]) => action.name === name));
+    const missing = names.filter(
+      (name) => !bound.some(([action]) => action.name === name)
+    );
 
     if (missing.length > 0) {
       throw new Error(
-        `Missing handlers: ${missing.join(", ")} (return the handler for one action, or a record with an own function per listed action)`,
+        `Missing handlers: ${missing.join(", ")} (return the handler for one action, or a record with an own function per listed action)`
       );
     }
 
@@ -595,8 +658,11 @@ export function implement(
   const recorded = listed.some((action) => action.idempotencyKey !== undefined)
     ? Effect.flatMap(paired, (written) =>
         Effect.map(Effect.service(Idempotency), (store) =>
-          written.map(([action, handle]) => [action, keyed(action, store, handle)] as const),
-        ),
+          written.map(
+            ([action, handle]) =>
+              [action, keyed(action, store, handle)] as const
+          )
+        )
       )
     : paired;
 
@@ -618,18 +684,20 @@ export function implement(
  * - Do not wrap a server in `Layer.fresh`: two servers already share no build. It is for two surfaces in one graph that must each have a build of their own; provide what they share, authentication included, outside it.
  */
 export function layer<const Apps extends Served>(
-  implementations: Apps,
+  implementations: Apps
 ): Layer.Layer<
   never,
   BuildError<Member<Apps>> | EventBuildError<Member<Apps>>,
   BuildServices<Member<Apps>> | EventBuildServices<Member<Apps>>
 >;
-export function layer(implementations: Served): Layer.Layer<never, unknown, unknown> {
+export function layer(
+  implementations: Served
+): Layer.Layer<never, unknown, unknown> {
   return Layer.empty.pipe(
     provideBuilders([
       ...toList(implementations).map((app) => Implementation.layerOf(app)),
       ...feedBuilders(eventsOf(implementations)),
-    ]),
+    ])
   );
 }
 
@@ -648,7 +716,10 @@ export type Client<
   Listed extends Any = Extract<ActionOf<Member<Apps>>, Any>,
   ListedEvents extends Event.Any = EventOf<Member<Apps>>,
 > = {
-  readonly [A in Serving<Member<Apps>, Listed> as A["name"]]: Method<A, RequestOf<Member<Apps>, A>>;
+  readonly [A in Serving<Member<Apps>, Listed> as A["name"]]: Method<
+    A,
+    RequestOf<Member<Apps>, A>
+  >;
 } & Watching<Member<Apps>, ListedEvents>;
 
 /**
@@ -668,40 +739,51 @@ export type Watch<App, Listed extends Event.Any = EventOf<App>> = <
   EventRequestOf<App, E>
 >;
 
-type Watching<App, Listed extends Event.Any> = [ServingEvents<App, Listed>] extends [never]
+type Watching<App, Listed extends Event.Any> = [
+  ServingEvents<App, Listed>,
+] extends [never]
   ? unknown
   : { readonly watch: Watch<App, Listed> };
 
 type ErasedMethod = (
-  ...input: ReadonlyArray<ErasedValue>
-) => Effect.Effect<ErasedValue, unknown, unknown> | Elements.Stream<ErasedValue, unknown, unknown>;
+  ...input: readonly ErasedValue[]
+) =>
+  | Effect.Effect<ErasedValue, unknown, unknown>
+  | Elements.Stream<ErasedValue, unknown, unknown>;
 
 const received = <S extends Codec>(schema: S) => {
   const sent = jsonRoundTrip(schema);
 
   return (value: S["Type"]): Effect.Effect<S["Type"], Schema.SchemaError> =>
-    Effect.map(sent(value), ({ value }) => value);
+    Effect.map(sent(value), (roundTripped) => roundTripped.value);
 };
 
 const mapFailuresInPlace = (
   cause: Cause.Cause<unknown>,
-  failure: (error: ErasedValue) => Effect.Effect<ErasedValue, Schema.SchemaError>,
+  failure: (
+    error: ErasedValue
+  ) => Effect.Effect<ErasedValue, Schema.SchemaError>
 ): Effect.Effect<Cause.Cause<unknown>> =>
   Effect.map(
     Effect.forEach(cause.reasons, (reason) =>
       Cause.isFailReason(reason)
         ? Effect.match(failure(reason.error), {
-            onFailure: (refused) => Cause.combine(Cause.die(refused), Cause.die(reason.error)),
+            onFailure: (refused) =>
+              Cause.combine(Cause.die(refused), Cause.die(reason.error)),
             onSuccess: (decoded) =>
               Cause.fail(
                 Predicate.isError(reason.error) && Predicate.isError(decoded)
                   ? Object.assign(decoded, { stack: reason.error.stack })
-                  : decoded,
+                  : decoded
               ),
-          }).pipe(Effect.map((mapped) => Cause.annotate(mapped, Cause.reasonAnnotations(reason))))
-        : Effect.succeed(Cause.fromReasons([reason])),
+          }).pipe(
+            Effect.map((mapped) =>
+              Cause.annotate(mapped, Cause.reasonAnnotations(reason))
+            )
+          )
+        : Effect.succeed(Cause.fromReasons([reason]))
     ),
-    (causes) => Cause.fromReasons(causes.flatMap(({ reasons }) => reasons)),
+    (causes) => Cause.fromReasons(causes.flatMap(({ reasons }) => reasons))
   );
 
 const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
@@ -713,24 +795,25 @@ const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
   const declared = (cause: Cause.Cause<ErasedValue>) =>
     Effect.flatMap(mapFailuresInPlace(cause, failure), Effect.failCause);
 
-  const called = (args: ReadonlyArray<ErasedValue>) =>
+  const called = (args: readonly ErasedValue[]) =>
     inputOf(action, args).pipe(
       Effect.flatMap(input),
       Effect.mapError(InvalidInput.fromSchemaError),
-      Effect.map((value) => run(value, progressSink(onProgressOf(args)))),
+      Effect.map((value) => run(value, progressSink(onProgressOf(args))))
     );
 
-  if (element !== undefined)
+  if (element !== undefined) {
     return (...args) =>
       Elements.unwrap(Effect.map(called(args), elementsOf)).pipe(
         Elements.catchCause((cause) => Elements.fromEffect(declared(cause))),
-        Elements.mapEffect((value) => Effect.orDie(success(value))),
+        Elements.mapEffect((value) => Effect.orDie(success(value)))
       );
+  }
 
   return (...args) =>
     called(args).pipe(
       Effect.flatMap((answer) => Effect.catchCause(answer, declared)),
-      Effect.flatMap((value) => Effect.orDie(success(value))),
+      Effect.flatMap((value) => Effect.orDie(success(value)))
     );
 };
 
@@ -745,8 +828,62 @@ export interface ClientOptions<A extends Any | Event.Any> {
    *
    * - A list naming actions alone watches no event type: the client has no `watch` until the event types are listed beside them.
    */
-  readonly actions?: ReadonlyArray<A> | undefined;
+  readonly actions?: readonly A[] | undefined;
 }
+
+type ErasedWatch = (
+  event: Event.Any,
+  input?: ErasedValue,
+  options?: Event.WatchOptions<unknown>
+) => Elements.Stream<Event.Received<Event.Any>, unknown, unknown>;
+
+const watcherOf =
+  (feeds: readonly Feed[]): ErasedWatch =>
+  (event, input, options) => {
+    const feed = feeds.find((held) => held.event === event);
+
+    if (feed === undefined) {
+      return Elements.fail(SubscriptionError.of(event.name, new NotServed()));
+    }
+
+    return Elements.unwrap(
+      Effect.map(watchInput(event, input), ({ value }) => {
+        // Why: In process, no principal tells subscribers apart, so each watch is a subscriber
+        // of its own: a poll subscription's `subscription` hook runs as the one who polls, and is
+        // released as the watch ends, its key never polled again.
+        const subscriber = uniqueKey();
+
+        return watching(
+          {
+            name: event.name,
+            poll: polledOn(
+              "In process",
+              event.name
+            )((cursor) => feed.poll(value, cursor, { subscriber })),
+            // Why: Read through the boundary every surface serves a stream by, so a source's
+            // failure is reported once and read on from, in process as over a network. With no
+            // network between, each position arrives in order, and one element waits, so a
+            // reader slower than a log source falls behind its log into a `Gap`.
+            stream: (cursor) =>
+              Elements.unwrap(
+                Effect.flatMap(feed.stream(value), (open) =>
+                  Effect.map(
+                    queuedPush(open, cursor, Effect.succeed, {
+                      inOrder: true,
+                      capacity: 1,
+                    }),
+                    (queue) => Elements.fromQueue(queue)
+                  )
+                )
+              ).pipe(readOn("In process", event.name)),
+          },
+          options
+        ).pipe(
+          Elements.ensuring(feed.release?.(value, subscriber) ?? Effect.void)
+        );
+      })
+    );
+  };
 
 /**
  * Call implementations in process: one method per action, taking its input directly as
@@ -771,7 +908,9 @@ export interface ClientOptions<A extends Any | Event.Any> {
  */
 export function client<
   const Apps extends Served,
-  const O extends ClientOptions<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> = {},
+  const O extends ClientOptions<
+    ActionOf<Member<Apps>> | EventOf<Member<Apps>>
+  > = {},
 >(
   implementations: Apps,
   ...options: OptionalUnless<
@@ -781,13 +920,20 @@ export function client<
       NoInfer<Known<O, ClientOptions<Any>>>
   >
 ): Effect.Effect<
-  Client<Apps, Offered<O, ActionOf<Member<Apps>>>, Offered<O, EventOf<Member<Apps>>>>,
+  Client<
+    Apps,
+    Offered<O, ActionOf<Member<Apps>>>,
+    Offered<O, EventOf<Member<Apps>>>
+  >,
   | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | EventBuildError<
       HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
       SelectedEventsOf<O, Apps>
     >,
-  | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | BuildServices<
+      Holding<Member<Apps>, SelectedOf<O, Apps>>,
+      SelectedOf<O, Apps>
+    >
   | EventBuildServices<
       HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
       SelectedEventsOf<O, Apps>
@@ -796,78 +942,38 @@ export function client<
 >;
 export function client(
   served: Served,
-  options?: { readonly actions?: ReadonlyArray<Any | Event.Any> | undefined },
-): Effect.Effect<{ readonly [name: string]: ErasedMethod | ErasedWatch }, unknown, unknown> {
+  options?: { readonly actions?: ReadonlyArray<Any | Event.Any> | undefined }
+): Effect.Effect<
+  { readonly [name: string]: ErasedMethod | ErasedWatch },
+  unknown,
+  unknown
+> {
   const { apps, events } = selectFrom(served, options?.actions);
 
   assertOnce(
     "action",
     apps.flatMap((app) => app.actions),
-    heldOnce,
+    heldOnce
   );
   assertOnce(
     "event",
     events.flatMap((app) => app.events),
-    heldOnce,
+    heldOnce
   );
 
   return Effect.map(
     builtWith(
-      [...apps.map((app) => Implementation.layerOf(app)), ...feedBuilders(events)],
-      Effect.all([acquire(apps, undefined), acquireFeeds(events)]),
+      [
+        ...apps.map((app) => Implementation.layerOf(app)),
+        ...feedBuilders(events),
+      ],
+      Effect.all([acquire(apps, undefined), acquireFeeds(events)])
     ),
     ([bound, feeds]) => ({
-      ...Object.fromEntries(bound.map(([action, run]) => [action.name, methodOf(action, run)])),
+      ...Object.fromEntries(
+        bound.map(([action, run]) => [action.name, methodOf(action, run)])
+      ),
       ...(feeds.length === 0 ? {} : { watch: watcherOf(feeds) }),
-    }),
+    })
   );
 }
-
-type ErasedWatch = (
-  event: Event.Any,
-  input?: ErasedValue,
-  options?: Event.WatchOptions<unknown>,
-) => Elements.Stream<Event.Received<Event.Any>, unknown, unknown>;
-
-const watcherOf =
-  (feeds: ReadonlyArray<Feed>): ErasedWatch =>
-  (event, input, options) => {
-    const feed = feeds.find((held) => held.event === event);
-
-    if (feed === undefined) {
-      return Elements.fail(SubscriptionError.of(event.name, new NotServed()));
-    }
-
-    return Elements.unwrap(
-      Effect.map(watchInput(event, input), ({ value }) => {
-        // Why: In process, no principal tells subscribers apart, so each watch is a subscriber
-        // of its own: a poll subscription's `subscription` hook runs as the one who polls, and is
-        // released as the watch ends, its key never polled again.
-        const subscriber = uniqueKey();
-
-        return watching(
-          {
-            name: event.name,
-            poll: polledOn(
-              "In process",
-              event.name,
-            )((cursor) => feed.poll(value, cursor, { subscriber })),
-            // Why: Read through the boundary every surface serves a stream by, so a source's
-            // failure is reported once and read on from, in process as over a network. With no
-            // network between, each position arrives in order, and one element waits, so a
-            // reader slower than a log source falls behind its log into a `Gap`.
-            stream: (cursor) =>
-              Elements.unwrap(
-                Effect.flatMap(feed.stream(value), (open) =>
-                  Effect.map(
-                    queuedPush(open, cursor, Effect.succeed, { inOrder: true, capacity: 1 }),
-                    (queue) => Elements.fromQueue(queue),
-                  ),
-                ),
-              ).pipe(readOn("In process", event.name)),
-          },
-          options,
-        ).pipe(Elements.ensuring(feed.release?.(value, subscriber) ?? Effect.void));
-      }),
-    );
-  };

@@ -1,5 +1,6 @@
-import { Effect, Stream } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Effect, Stream } from "effect";
+
 import { authorize } from "../identity/authorize.js";
 import { ExportIssues } from "./Issues.js";
 import { IssueStore } from "./store.js";
@@ -23,12 +24,12 @@ export const exports = Action.implement(
               // `progress` never waits for the caller, dropping the oldest values a slow one has not taken:
               // `exported` may skip numbers, so it says how far the export is, not what arrived.
               Stream.mapEffect(([issue, index]) =>
-                Effect.as(progress({ exported: index + 1, total }), issue),
-              ),
-            ),
-          ),
-        ),
+                Effect.as(progress({ exported: index + 1, total }), issue)
+              )
+            )
+          )
+        )
       );
   }),
-  { authorize },
+  { authorize }
 );

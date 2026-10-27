@@ -1,28 +1,40 @@
 import { Context, Effect, Layer } from "effect";
-import { type Change, UserNotFound, type User } from "./contracts.js";
+
+import { UserNotFound } from "./contracts.js";
+import type { Change, User } from "./contracts.js";
 
 interface UsersService {
-  readonly get: (tenantId: string, id: string) => Effect.Effect<typeof User.Type, UserNotFound>;
+  readonly get: (
+    tenantId: string,
+    id: string
+  ) => Effect.Effect<typeof User.Type, UserNotFound>;
 
   readonly rename: (
     actor: { readonly id: string; readonly tenantId: string },
     id: string,
-    name: string,
+    name: string
   ) => Effect.Effect<typeof User.Type, UserNotFound>;
 
   readonly count: Effect.Effect<number>;
 
-  readonly changes: (tenantId: string) => Effect.Effect<ReadonlyArray<typeof Change.Type>>;
+  readonly changes: (
+    tenantId: string
+  ) => Effect.Effect<ReadonlyArray<typeof Change.Type>>;
 }
 
-export class Users extends Context.Service<Users, UsersService>()("example/Users") {
+export class Users extends Context.Service<Users, UsersService>()(
+  "example/Users"
+) {
   static readonly layerMemory = Layer.sync(Users, () => {
     const users = new Map([
       ["acme/1", { id: "1", name: "Ada" }],
       ["other/1", { id: "1", name: "Grace" }],
     ]);
 
-    const get = Effect.fn("Users.get")(function* (tenantId: string, id: string) {
+    const get = Effect.fn("Users.get")(function* (
+      tenantId: string,
+      id: string
+    ) {
       const user = users.get(`${tenantId}/${id}`);
 
       if (user === undefined) {
@@ -37,7 +49,7 @@ export class Users extends Context.Service<Users, UsersService>()("example/Users
     const rename = Effect.fn("Users.rename")(function* (
       actor: { readonly id: string; readonly tenantId: string },
       id: string,
-      name: string,
+      name: string
     ) {
       yield* get(actor.tenantId, id);
       const user = { id, name };

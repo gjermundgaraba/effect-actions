@@ -1,9 +1,11 @@
 import { Context, Effect, Layer } from "effect";
-import { type Build, BuildNotFound } from "./Builds.js";
+
+import { BuildNotFound } from "./Builds.js";
+import type { Build } from "./Builds.js";
 
 /** One page of the builds finished since a cursor. */
 export interface Finished {
-  readonly builds: ReadonlyArray<Build>;
+  readonly builds: readonly Build[];
   readonly cursor: string;
   readonly hasMore: boolean;
   /** Whether builds before the page may be missing: the cursor was not one of this store's. */
@@ -11,6 +13,24 @@ export interface Finished {
   /** The store's epoch: a build's id is unique within it, and a restarted memory store starts another. */
   readonly epoch: string;
 }
+
+// The position a cursor of `epoch` names, among `length` builds; none for another epoch's cursor
+// or one that is not a cursor at all.
+const positionOf = (
+  epoch: string,
+  cursor: string,
+  length: number
+): number | undefined => {
+  const [of, at] = cursor.split(":");
+  const position = Number(at);
+
+  return of === epoch &&
+    Number.isInteger(position) &&
+    position >= 0 &&
+    position <= length
+    ? position
+    : undefined;
+};
 
 /**
  * Where finished builds are recorded, in the order they finished. Which pipelines a member may
@@ -23,26 +43,26 @@ export class BuildStore extends Context.Service<
     readonly finish: (
       pipeline: string,
       status: Build["status"],
-      log: ReadonlyArray<string>,
+      log: readonly string[]
     ) => Effect.Effect<Build>;
     /** The log of build `buildId`, which must be one of `pipelines`. */
     readonly logOf: (
-      pipelines: ReadonlyArray<string>,
-      buildId: string,
-    ) => Effect.Effect<ReadonlyArray<string>, BuildNotFound>;
+      pipelines: readonly string[],
+      buildId: string
+    ) => Effect.Effect<readonly string[], BuildNotFound>;
     /**
      * The builds of `pipelines` finished after `cursor`, at most `limit`; a `null` cursor is
      * the current position, with none.
      */
     readonly finishedSince: (
-      pipelines: ReadonlyArray<string>,
+      pipelines: readonly string[],
       cursor: string | null,
-      limit: number,
+      limit: number
     ) => Effect.Effect<Finished>;
     /** How `pipeline`'s last build ended, `null` before any did or where it is not of `pipelines`. */
     readonly statusOf: (
-      pipelines: ReadonlyArray<string>,
-      pipeline: string,
+      pipelines: readonly string[],
+      pipeline: string
     ) => Effect.Effect<Build["status"] | null>;
   }
 >()("build-events/BuildStore") {
@@ -53,13 +73,17 @@ export class BuildStore extends Context.Service<
   // sequence column, so a subscriber resumes after a restart.
   static readonly layerMemory = Layer.sync(BuildStore, () => {
     const epoch = crypto.randomUUID();
-    const finished: Array<Build> = [];
-    const logs = new Map<string, ReadonlyArray<string>>();
+    const finished: Build[] = [];
+    const logs = new Map<string, readonly string[]>();
 
     return BuildStore.of({
       finish: (pipeline, status, log) =>
         Effect.sync(() => {
-          const build = { id: `build-${finished.length + 1}`, pipeline, status };
+          const build = {
+            id: `build-${finished.length + 1}`,
+            pipeline,
+            status,
+          };
 
           finished.push(build);
           logs.set(build.id, log);
@@ -70,13 +94,19 @@ export class BuildStore extends Context.Service<
         const build = finished.find(({ id }) => id === buildId);
         const log = logs.get(buildId);
 
-        return build === undefined || log === undefined || !pipelines.includes(build.pipeline)
+        return build === undefined ||
+          log === undefined ||
+          !pipelines.includes(build.pipeline)
           ? Effect.fail(new BuildNotFound({ buildId }))
           : Effect.succeed(log);
       },
       finishedSince: (pipelines, cursor, limit) =>
         Effect.sync(() => {
-          const at = cursor === null ? finished.length : positionOf(epoch, cursor, finished.length);
+          const at =
+            cursor === null
+              ? finished.length
+              : positionOf(epoch, cursor, finished.length);
+
           const from = at ?? 0;
           const next = finished.slice(from, from + limit);
 
@@ -91,20 +121,10 @@ export class BuildStore extends Context.Service<
       statusOf: (pipelines, pipeline) =>
         Effect.sync(() =>
           pipelines.includes(pipeline)
-            ? (finished.findLast((build) => build.pipeline === pipeline)?.status ?? null)
-            : null,
+            ? (finished.findLast((build) => build.pipeline === pipeline)
+                ?.status ?? null)
+            : null
         ),
     });
   });
 }
-
-// The position a cursor of `epoch` names, among `length` builds; none for another epoch's cursor
-// or one that is not a cursor at all.
-const positionOf = (epoch: string, cursor: string, length: number): number | undefined => {
-  const [of, at] = cursor.split(":");
-  const position = Number(at);
-
-  return of === epoch && Number.isInteger(position) && position >= 0 && position <= length
-    ? position
-    : undefined;
-};

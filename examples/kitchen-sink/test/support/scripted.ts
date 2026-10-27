@@ -1,7 +1,8 @@
 import { Effect, Layer, Ref, Stream } from "effect";
-import { AiError, LanguageModel, type Response } from "effect/ai";
+import { AiError, LanguageModel } from "effect/ai";
+import type { Response } from "effect/ai";
 
-type Reply = ReadonlyArray<Response.PartEncoded>;
+type Reply = readonly Response.PartEncoded[];
 
 // A model for a test: it answers its first request with the first reply it was given, its
 // second with the second, whatever the prompt says. A reply is the parts a provider sends, or
@@ -24,11 +25,11 @@ export const scripted = (
               return Effect.isEffect(reply)
                 ? Effect.map(reply, (parts) => [...parts])
                 : Effect.succeed([...reply]);
-            },
+            }
           ),
         streamText: () => Stream.empty,
       });
-    }),
+    })
   );
 
 export const down: Effect.Effect<never, AiError.AiError> = Effect.fail(
@@ -36,5 +37,5 @@ export const down: Effect.Effect<never, AiError.AiError> = Effect.fail(
     module: "scripted",
     method: "generateText",
     reason: new AiError.UnknownError({ description: "The provider is down." }),
-  }),
+  })
 );

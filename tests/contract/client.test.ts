@@ -3,6 +3,7 @@ import {
   Cause,
   Effect,
   Exit,
+  Function,
   Layer,
   Option,
   Predicate,
@@ -11,6 +12,7 @@ import {
   SchemaTransformation,
   Stream,
 } from "effect";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import { actors, CurrentActor } from "../support/app/authorization.js";
@@ -22,11 +24,19 @@ const asAlice = Effect.provideService(CurrentActor, actors.alice);
 
 const asReader = Effect.provideService(CurrentActor, actors.reader);
 
+const acquiredAsAlice = <A, E, R>(
+  call: (users: Action.Client<typeof userActions>) => Effect.Effect<A, E, R>
+) =>
+  Effect.flatMap(Action.client(userActions).pipe(asAlice), call).pipe(
+    Effect.scoped,
+    Effect.provide(Users.layerMemory)
+  );
+
 const Ping = Action.make("ping", {
   description: "Ping",
   readOnly: true,
   caller: Action.Anyone,
-  success: Schema.Number,
+  success: Schema.Finite,
 });
 
 describe("Action.client", () => {
@@ -36,50 +46,53 @@ describe("Action.client", () => {
       Effect.gen(function* () {
         const users = yield* Action.client(userActions);
 
-        const renamed = yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
+        const renamed = yield* users
+          .renameUser({ id: "1", name: "Bea" })
+          .pipe(asAlice);
 
         const refused = yield* Effect.flip(
-          users.renameUser({ id: "1", name: "Cy" }).pipe(asReader),
+          users.renameUser({ id: "1", name: "Cy" }).pipe(asReader)
         );
 
-        const unchangedByRefusal = yield* users.getUser({ id: "1" }).pipe(asReader);
+        const unchangedByRefusal = yield* users
+          .getUser({ id: "1" })
+          .pipe(asReader);
+
         const { changes } = yield* users.listChanges().pipe(asReader);
 
-        expect(renamed).toEqual({ id: "1", name: "Bea" });
+        expect(renamed).toStrictEqual({ id: "1", name: "Bea" });
         expect(refused).toBeInstanceOf(Action.Forbidden);
         expect(refused).toMatchObject({ scopes: ["users:write"] });
-        expect(unchangedByRefusal).toEqual({ id: "1", name: "Bea" });
-        expect(changes).toEqual([{ actorId: "alice", userId: "1", name: "Bea" }]);
-      }).pipe(Effect.provide(Users.layerMemory)),
+        expect(unchangedByRefusal).toStrictEqual({ id: "1", name: "Bea" });
+        expect(changes).toStrictEqual([
+          { actorId: "alice", userId: "1", name: "Bea" },
+        ]);
+      }).pipe(Effect.provide(Users.layerMemory))
   );
 
   it("reads the caller around each call, never one around its acquisition", async () => {
-    const acquiredAsAlice = <A, E, R>(
-      call: (users: Action.Client<typeof userActions>) => Effect.Effect<A, E, R>,
-    ) =>
-      Effect.flatMap(Action.client(userActions).pipe(asAlice), call).pipe(
-        Effect.scoped,
-        Effect.provide(Users.layerMemory),
-      );
+    const who = await Effect.runPromise(
+      acquiredAsAlice((users) => users.whoAmI().pipe(asReader))
+    );
 
-    const who = await Effect.runPromise(acquiredAsAlice((users) => users.whoAmI().pipe(asReader)));
-
-    expect(who).toEqual({ id: "reader", tenantId: "acme" });
+    expect(who).toStrictEqual({ id: "reader", tenantId: "acme" });
 
     const callWithoutCaller = await Effect.runPromiseExit(
       // @ts-expect-error -- Deliberately call without a caller: the acquisition's is not the call's.
-      acquiredAsAlice((users) => users.whoAmI()),
+      acquiredAsAlice((users) => users.whoAmI())
     );
 
     assert(Exit.isFailure(callWithoutCaller));
-    expect(Cause.squash(callWithoutCaller.cause)).toBeInstanceOf(Action.Unauthenticated);
+    expect(Cause.squash(callWithoutCaller.cause)).toBeInstanceOf(
+      Action.Unauthenticated
+    );
   });
 
   it.effect(
     "refuses input that does not pass through its codec with InvalidInput, before authorize",
     () =>
       Effect.gen(function* () {
-        const calls: Array<string> = [];
+        const calls: string[] = [];
 
         const NonEmpty = Schema.String.check(Schema.isMinLength(1));
 
@@ -94,211 +107,271 @@ describe("Action.client", () => {
         const app = Action.implement(
           Rename,
           (input) =>
-            Effect.sync(() => (calls.push(`handler ${JSON.stringify(input)}`), input.name)),
-          { authorize: () => Effect.sync(() => void calls.push("authorize")) },
+            Effect.sync(() => {
+              calls.push(`handler ${JSON.stringify(input)}`);
+
+              return input.name;
+            }),
+          {
+            authorize: () =>
+              Effect.sync(() => {
+                calls.push("authorize");
+              }),
+          }
         );
 
         const widerThanInput = { id: "1", name: "Bea", admin: true };
 
         const client = yield* Action.client(app);
-        const invalid = yield* Effect.flip(client.rename({ id: "", name: "" }).pipe(asAlice));
-        const undeclaredFieldDropped = yield* client.rename(widerThanInput).pipe(asAlice);
+
+        const invalid = yield* Effect.flip(
+          client.rename({ id: "", name: "" }).pipe(asAlice)
+        );
+
+        const undeclaredFieldDropped = yield* client
+          .rename(widerThanInput)
+          .pipe(asAlice);
 
         expect(invalid).toBeInstanceOf(Action.InvalidInput);
         expect(invalid.message).toContain('at ["id"]');
         expect(invalid.message).toContain('at ["name"]');
         expect(undeclaredFieldDropped).toBe("Bea");
-        expect(calls).toEqual(["authorize", 'handler {"id":"1","name":"Bea"}']);
-      }),
+        expect(calls).toStrictEqual([
+          "authorize",
+          'handler {"id":"1","name":"Bea"}',
+        ]);
+      })
   );
 
-  it.effect("gives the handler the input a remote one decodes, and the caller the success", () =>
-    Effect.gen(function* () {
-      class Filters extends Schema.Class<Filters>("Filters")({
-        tag: Schema.optionalKey(Schema.String),
-      }) {}
+  it.effect(
+    "gives the handler the input a remote one decodes, and the caller the success",
+    () =>
+      Effect.gen(function* () {
+        class Filters extends Schema.Class<Filters>("Filters")({
+          tag: Schema.optionalKey(Schema.String),
+        }) {}
 
-      const Double = Action.make("double", {
-        description: "Double",
-        readOnly: true,
-        caller: Action.Anyone,
-        input: { value: Schema.FiniteFromString },
-        success: Schema.Finite,
-      });
+        const Double = Action.make("double", {
+          description: "Double",
+          readOnly: true,
+          caller: Action.Anyone,
+          input: { value: Schema.FiniteFromString },
+          success: Schema.Finite,
+        });
 
-      const Search = Action.make("search", {
-        description: "Search",
-        readOnly: true,
-        caller: Action.Anyone,
-        input: Filters,
-        success: Schema.String,
-      });
+        const Search = Action.make("search", {
+          description: "Search",
+          readOnly: true,
+          caller: Action.Anyone,
+          input: Filters,
+          success: Schema.String,
+        });
 
-      const Greet = Action.make("greet", {
-        description: "Greet",
-        readOnly: true,
-        caller: Action.Anyone,
-        input: { name: Schema.String.pipe(Schema.decode(SchemaTransformation.trim())) },
-        success: Schema.String,
-      });
+        const Greet = Action.make("greet", {
+          description: "Greet",
+          readOnly: true,
+          caller: Action.Anyone,
+          input: {
+            name: Schema.String.pipe(
+              Schema.decode(SchemaTransformation.trim())
+            ),
+          },
+          success: Schema.String,
+        });
 
-      const Zero = Action.make("zero", {
-        description: "Zero",
-        readOnly: true,
-        caller: Action.Anyone,
-        input: { value: Schema.Number },
-        success: Schema.Array(Schema.Number),
-      });
+        const Zero = Action.make("zero", {
+          description: "Zero",
+          readOnly: true,
+          caller: Action.Anyone,
+          input: { value: Schema.Finite },
+          success: Schema.Array(Schema.Finite),
+        });
 
-      const app = Action.implement([Double, Search, Greet, Zero], {
-        double: ({ value }) => Effect.succeed(value * 2),
-        search: (filters) => Effect.succeed(filters instanceof Filters ? "instance" : "plain"),
-        greet: ({ name }) => Effect.succeed(`Hello, ${name}`),
-        zero: ({ value }) => Effect.succeed([value, -0]),
-      });
+        const app = Action.implement([Double, Search, Greet, Zero], {
+          double: ({ value }) => Effect.succeed(value * 2),
+          search: (filters) =>
+            Effect.succeed(filters instanceof Filters ? "instance" : "plain"),
+          greet: ({ name }) => Effect.succeed(`Hello, ${name}`),
+          zero: ({ value }) => Effect.succeed([value, -0]),
+        });
 
-      const client = yield* Action.client(app);
-      const doubled = yield* client.double({ value: 21 });
-      const greeted = yield* client.greet({ name: " Bea " });
-      const negativeZerosAsZero = yield* client.zero({ value: -0 });
-      const omittedInputAsClassInstance = yield* client.search();
-      const plainObjectRefused = yield* Effect.flip(client.search({ tag: "x" }));
+        const client = yield* Action.client(app);
+        const doubled = yield* client.double({ value: 21 });
+        const greeted = yield* client.greet({ name: " Bea " });
+        const negativeZerosAsZero = yield* client.zero({ value: -0 });
+        const omittedInputAsClassInstance = yield* client.search();
 
-      expect(doubled).toBe(42);
-      expect(greeted).toBe("Hello, Bea");
-      expect(negativeZerosAsZero.map((zero) => Object.is(zero, 0))).toEqual([true, true]);
-      expect(omittedInputAsClassInstance).toBe("instance");
-      expect(plainObjectRefused).toBeInstanceOf(Action.InvalidInput);
-      expect(plainObjectRefused.message).toContain("Expected Filters");
-    }),
-  );
-
-  it.effect("leaves the input out where `{}` is a valid encoded input, and only there", () =>
-    Effect.gen(function* () {
-      const Page = Action.make("page", {
-        description: "Page",
-        readOnly: true,
-        caller: Action.Anyone,
-        input: { limit: Schema.Number.pipe(Schema.withDecodingDefaultKey(Effect.succeed(20))) },
-        success: Schema.Number,
-      });
-
-      const Signed = Action.make("signed", {
-        description: "Signed",
-        readOnly: true,
-        caller: Action.Anyone,
-        input: Schema.Struct({ token: Schema.String }).pipe(
-          Schema.decodeTo(
-            Schema.Struct({}),
-            SchemaTransformation.transform({ decode: () => ({}), encode: () => ({ token: "t" }) }),
-          ),
-        ),
-        success: Schema.String,
-      });
-
-      const client = yield* Action.client(
-        Action.implement([Page, Signed], {
-          page: ({ limit }) => Effect.succeed(limit),
-          signed: () => Effect.succeed("signed"),
-        }),
-      );
-
-      expect(yield* client.page()).toBe(20);
-      expect(yield* client.signed({})).toBe("signed");
-
-      // @ts-expect-error -- Its encoded form requires a field: the argument is required.
-      const omitted = yield* Effect.flip(client.signed());
-
-      expect(omitted).toBeInstanceOf(Action.InvalidInput);
-    }),
-  );
-
-  it.effect("gives each call a scope of its own, and releases the builders with the client's", () =>
-    Effect.gen(function* () {
-      const log: Array<string> = [];
-
-      const logged = (name: string) =>
-        Effect.acquireRelease(
-          Effect.sync(() => log.push(`${name} acquire`)),
-          () => Effect.sync(() => log.push(`${name} release`)),
+        const plainObjectRefused = yield* Effect.flip(
+          client.search({ tag: "x" })
         );
 
-      const Guarded = Action.make("ping", {
-        description: "Ping",
-        readOnly: true,
-        caller: CurrentActor,
-        success: Schema.Number,
-      });
-
-      const app = Action.implement(
-        Guarded,
-        Effect.as(logged("builder"), () => Effect.as(logged("handler"), 1)),
-        {
-          authorize: Effect.as(logged("authorize builder"), () =>
-            Effect.asVoid(logged("authorize")),
-          ),
-        },
-      );
-
-      yield* Effect.gen(function* () {
-        const client = yield* Action.client(app);
-
-        log.push("acquired");
-        yield* client.ping().pipe(asAlice);
-        yield* client.ping().pipe(asAlice);
-        log.push("called twice");
-      }).pipe(Effect.scoped);
-
-      const built = ["authorize builder acquire", "builder acquire"];
-      const call = ["authorize acquire", "handler acquire", "handler release", "authorize release"];
-      const released = ["authorize builder release", "builder release"];
-
-      expect(log.slice(0, 2).toSorted()).toEqual(built);
-      expect(log.slice(2, -2)).toEqual(["acquired", ...call, ...call, "called twice"]);
-      expect(log.slice(-2).toSorted()).toEqual(released);
-    }),
+        expect(doubled).toBe(42);
+        expect(greeted).toBe("Hello, Bea");
+        expect(
+          negativeZerosAsZero.map((zero) => Object.is(zero, 0))
+        ).toStrictEqual([true, true]);
+        expect(omittedInputAsClassInstance).toBe("instance");
+        expect(plainObjectRefused).toBeInstanceOf(Action.InvalidInput);
+        expect(plainObjectRefused.message).toContain("Expected Filters");
+      })
   );
 
-  it.effect("releases what a failed call acquired when it fails, the handler's first", () =>
-    Effect.gen(function* () {
-      class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
+  it.effect(
+    "leaves the input out where `{}` is a valid encoded input, and only there",
+    () =>
+      Effect.gen(function* () {
+        const Page = Action.make("page", {
+          description: "Page",
+          readOnly: true,
+          caller: Action.Anyone,
+          input: {
+            limit: Schema.Finite.pipe(
+              Schema.withDecodingDefaultKey(Effect.succeed(20))
+            ),
+          },
+          success: Schema.Finite,
+        });
 
-      const log: Array<string> = [];
+        const Signed = Action.make("signed", {
+          description: "Signed",
+          readOnly: true,
+          caller: Action.Anyone,
+          input: Schema.Struct({ token: Schema.String }).pipe(
+            Schema.decodeTo(
+              Schema.Struct({}),
+              SchemaTransformation.transform({
+                decode: () => ({}),
+                encode: () => ({ token: "t" }),
+              })
+            )
+          ),
+          success: Schema.String,
+        });
 
-      const logged = (name: string) =>
-        Effect.acquireRelease(
-          Effect.sync(() => log.push(`${name} acquire`)),
-          () => Effect.sync(() => log.push(`${name} release`)),
+        const client = yield* Action.client(
+          Action.implement([Page, Signed], {
+            page: ({ limit }) => Effect.succeed(limit),
+            signed: () => Effect.succeed("signed"),
+          })
         );
 
-      const Guarded = Action.make("ping", {
-        description: "Ping",
-        readOnly: true,
-        caller: CurrentActor,
-        error: [Busy],
-      });
+        expect(yield* client.page()).toBe(20);
+        expect(yield* client.signed({})).toBe("signed");
 
-      const app = Action.implement(
-        Guarded,
-        () => Effect.andThen(logged("handler"), Effect.fail(new Busy())),
-        { authorize: () => Effect.asVoid(logged("authorize")) },
-      );
+        // @ts-expect-error -- Its encoded form requires a field: the argument is required.
+        const omitted = yield* Effect.flip(client.signed());
 
-      yield* Effect.gen(function* () {
-        const client = yield* Action.client(app);
+        expect(omitted).toBeInstanceOf(Action.InvalidInput);
+      })
+  );
 
-        expect(yield* Effect.flip(client.ping().pipe(asAlice))).toEqual(new Busy());
-        log.push("failed");
-      }).pipe(Effect.scoped);
+  it.effect(
+    "gives each call a scope of its own, and releases the builders with the client's",
+    () =>
+      Effect.gen(function* () {
+        const log: string[] = [];
 
-      expect(log).toEqual([
-        "authorize acquire",
-        "handler acquire",
-        "handler release",
-        "authorize release",
-        "failed",
-      ]);
-    }),
+        const logged = (name: string) =>
+          Effect.acquireRelease(
+            Effect.sync(() => log.push(`${name} acquire`)),
+            () => Effect.sync(() => log.push(`${name} release`))
+          );
+
+        const Guarded = Action.make("ping", {
+          description: "Ping",
+          readOnly: true,
+          caller: CurrentActor,
+          success: Schema.Finite,
+        });
+
+        const app = Action.implement(
+          Guarded,
+          Effect.as(logged("builder"), () => Effect.as(logged("handler"), 1)),
+          {
+            authorize: Effect.as(logged("authorize builder"), () =>
+              Effect.asVoid(logged("authorize"))
+            ),
+          }
+        );
+
+        yield* Effect.gen(function* () {
+          const client = yield* Action.client(app);
+
+          log.push("acquired");
+          yield* client.ping().pipe(asAlice);
+          yield* client.ping().pipe(asAlice);
+          log.push("called twice");
+        }).pipe(Effect.scoped);
+
+        const built = ["authorize builder acquire", "builder acquire"];
+
+        const call = [
+          "authorize acquire",
+          "handler acquire",
+          "handler release",
+          "authorize release",
+        ];
+
+        const released = ["authorize builder release", "builder release"];
+
+        expect(log.slice(0, 2).toSorted()).toStrictEqual(built);
+        expect(log.slice(2, -2)).toStrictEqual([
+          "acquired",
+          ...call,
+          ...call,
+          "called twice",
+        ]);
+        expect(log.slice(-2).toSorted()).toStrictEqual(released);
+      })
+  );
+
+  it.effect(
+    "releases what a failed call acquired when it fails, the handler's first",
+    () =>
+      Effect.gen(function* () {
+        class Busy extends Schema.TaggedError<
+          Busy,
+          { readonly brand: unique symbol }
+        >()("Busy", {}) {}
+
+        const log: string[] = [];
+
+        const logged = (name: string) =>
+          Effect.acquireRelease(
+            Effect.sync(() => log.push(`${name} acquire`)),
+            () => Effect.sync(() => log.push(`${name} release`))
+          );
+
+        const Guarded = Action.make("ping", {
+          description: "Ping",
+          readOnly: true,
+          caller: CurrentActor,
+          error: [Busy],
+        });
+
+        const app = Action.implement(
+          Guarded,
+          () => Effect.andThen(logged("handler"), Effect.fail(new Busy())),
+          { authorize: () => Effect.asVoid(logged("authorize")) }
+        );
+
+        yield* Effect.gen(function* () {
+          const client = yield* Action.client(app);
+
+          expect(yield* Effect.flip(client.ping().pipe(asAlice))).toStrictEqual(
+            new Busy()
+          );
+          log.push("failed");
+        }).pipe(Effect.scoped);
+
+        expect(log).toStrictEqual([
+          "authorize acquire",
+          "handler acquire",
+          "handler release",
+          "authorize release",
+          "failed",
+        ]);
+      })
   );
 
   it.effect(
@@ -329,7 +402,9 @@ describe("Action.client", () => {
           description: "A label",
           readOnly: true,
           caller: Action.Anyone,
-          success: Schema.String.pipe(Schema.decode(SchemaTransformation.trim())),
+          success: Schema.String.pipe(
+            Schema.decode(SchemaTransformation.trim())
+          ),
         });
 
         const widerThanSuccess = { id: "1", secret: "s" };
@@ -345,26 +420,32 @@ describe("Action.client", () => {
         const defect = yield* defectOf(client.name());
 
         expect(Schema.isSchemaError(defect) && defect.message).toContain(
-          "Expected a value with a length of at least 1",
+          "Expected a value with a length of at least 1"
         );
 
-        expect(yield* client.profile()).toEqual({ id: "1" });
+        expect(yield* client.profile()).toStrictEqual({ id: "1" });
         expect(yield* client.nothing()).toBeUndefined();
         expect(yield* client.label()).toBe("Bea");
-      }),
+      })
   );
 
   it.effect(
     "gives the caller a failure as a remote one decodes it, from where the handler failed",
     () =>
       Effect.gen(function* () {
-        class Mislabeled extends Schema.TaggedError<Mislabeled>()("Mislabeled", {
+        class Mislabeled extends Schema.TaggedError<
+          Mislabeled,
+          { readonly brand: unique symbol }
+        >()("Mislabeled", {
           label: Schema.String.pipe(Schema.decode(SchemaTransformation.trim())),
         }) {}
 
         const Missing = Schema.TaggedStruct("Missing", { id: Schema.String });
 
-        class Busy extends Schema.TaggedError<Busy>()("Busy", {
+        class Busy extends Schema.TaggedError<
+          Busy,
+          { readonly brand: unique symbol }
+        >()("Busy", {
           reason: Schema.String.pipe(
             Schema.decodeTo(
               Schema.String,
@@ -372,11 +453,11 @@ describe("Action.client", () => {
                 decode: (reason) => Effect.succeed(reason),
                 encode: (reason) =>
                   Effect.as(
-                    Effect.promise(() => Promise.resolve()),
-                    reason,
+                    Effect.promise(async () => {}),
+                    reason
                   ),
-              }),
-            ),
+              })
+            )
           ),
         }) {}
 
@@ -416,46 +497,63 @@ describe("Action.client", () => {
 
         const error = Cause.squash(mislabeled);
 
-        expect(error).toEqual(new Mislabeled({ label: "Bea" }));
-        expect(notFound).toEqual(Missing.make({ id: "1" }));
-        expect(busy).toEqual(new Busy({ reason: "full" }));
-        expect(Predicate.isError(error) && error.stack).toContain("client.test.ts");
-        expect(Cause.pretty(mislabeled)).toMatch(/^\s+at label$/m);
-      }),
+        expect(error).toStrictEqual(new Mislabeled({ label: "Bea" }));
+        expect(notFound).toStrictEqual(Missing.make({ id: "1" }));
+        expect(busy).toStrictEqual(new Busy({ reason: "full" }));
+        expect(Predicate.isError(error) && error.stack).toContain(
+          "client.test.ts"
+        );
+        expect(Cause.pretty(mislabeled)).toMatch(/^\s+at label$/mu);
+      })
   );
 
-  it.effect("dies with a failure that does not pass through its codec, as a server's 500", () =>
-    Effect.gen(function* () {
-      class Unlisted extends Schema.TaggedError<Unlisted>()("Unlisted", {}) {}
+  it.effect(
+    "dies with a failure that does not pass through its codec, as a server's 500",
+    () =>
+      Effect.gen(function* () {
+        class Unlisted extends Schema.TaggedError<
+          Unlisted,
+          { readonly brand: unique symbol }
+        >()("Unlisted", {}) {}
 
-      class Counted extends Schema.TaggedError<Counted>()("Counted", { count: Schema.Int }) {}
+        class Counted extends Schema.TaggedError<
+          Counted,
+          { readonly brand: unique symbol }
+        >()("Counted", {
+          count: Schema.Int,
+        }) {}
 
-      const Count = Action.make("count", {
-        description: "Count",
-        readOnly: true,
-        caller: Action.Anyone,
-        error: [Counted],
-      });
+        const Count = Action.make("count", {
+          description: "Count",
+          readOnly: true,
+          caller: Action.Anyone,
+          error: [Counted],
+        });
 
-      const app = Action.implement([Count, Ping], {
-        count: () => Effect.fail(new Counted({ count: 1.5 }, { disableChecks: true })),
-        // @ts-expect-error -- `ping` does not declare `Unlisted`; plain JavaScript can still fail with it.
-        ping: () => Effect.fail(new Unlisted()),
-      });
+        const app = Action.implement([Count, Ping], {
+          count: () =>
+            Effect.fail(new Counted({ count: 1.5 }, { disableChecks: true })),
+          // @ts-expect-error -- `ping` does not declare `Unlisted`; plain JavaScript can still fail with it.
+          ping: () => Effect.fail(new Unlisted()),
+        });
 
-      const client = yield* Action.client(app);
-      const unencoded = yield* defectOf(client.count());
-      const undeclared = yield* Effect.exit(client.ping());
+        const client = yield* Action.client(app);
+        const unencoded = yield* defectOf(client.count());
+        const undeclared = yield* Effect.exit(client.ping());
 
-      const failureThenSchemaError = Exit.isFailure(undeclared)
-        ? undeclared.cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)
-        : [];
+        const failureThenSchemaError = Exit.isFailure(undeclared)
+          ? undeclared.cause.reasons
+              .filter(Cause.isDieReason)
+              .map(({ defect }) => defect)
+          : [];
 
-      expect(Schema.isSchemaError(unencoded) && unencoded.message).toContain('at ["count"]');
-      expect(failureThenSchemaError).toHaveLength(2);
-      expect(failureThenSchemaError[0]).toBeInstanceOf(Unlisted);
-      expect(Schema.isSchemaError(failureThenSchemaError[1])).toBe(true);
-    }),
+        expect(Schema.isSchemaError(unencoded) && unencoded.message).toContain(
+          'at ["count"]'
+        );
+        expect(failureThenSchemaError).toHaveLength(2);
+        expect(failureThenSchemaError[0]).toBeInstanceOf(Unlisted);
+        expect(Schema.isSchemaError(failureThenSchemaError[1])).toBe(true);
+      })
   );
 
   it.effect("passes a failure its schema checks asynchronously", () =>
@@ -463,14 +561,16 @@ describe("Action.client", () => {
       const CheckedAfterPromise = Schema.declareConstructor<string>()(
         [],
         () => (input, ast) =>
-          Effect.promise(() => Promise.resolve()).pipe(
+          Effect.promise(async () => {}).pipe(
             Effect.flatMap(() =>
               Predicate.isString(input)
                 ? Effect.succeed(input)
-                : Effect.fail(new SchemaIssue.InvalidType(ast, Option.some(input))),
-            ),
+                : Effect.fail(
+                    new SchemaIssue.InvalidType(ast, Option.some(input))
+                  )
+            )
           ),
-        { toCodecJson: () => undefined },
+        { toCodecJson: Function.constUndefined }
       );
 
       const Quota = Schema.TaggedStruct("Quota", { code: CheckedAfterPromise });
@@ -483,51 +583,68 @@ describe("Action.client", () => {
         error: [Quota],
       });
 
-      const client = yield* Action.client(Action.implement(Status, () => Effect.fail(quota)));
-
-      expect(yield* Effect.flip(client.status())).toEqual(quota);
-    }),
-  );
-
-  it.effect("keeps a failure's whole cause: its trace and a defect beside it", () =>
-    Effect.gen(function* () {
-      class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
-
-      const Status = Action.make("status", {
-        description: "Status",
-        readOnly: true,
-        caller: Action.Anyone,
-        error: [Busy],
-      });
-
-      const busy = new Busy();
-      const cleanup = new Error("cleanup failed");
-
       const client = yield* Action.client(
-        Action.implement(Status, () =>
-          Effect.failCause(Cause.combine(Cause.fail(busy), Cause.die(cleanup))).pipe(
-            Effect.withSpan("quota"),
-          ),
-        ),
+        Action.implement(Status, () => Effect.fail(quota))
       );
 
-      const cause = yield* Effect.flip(Effect.sandbox(client.status()));
+      expect(yield* Effect.flip(client.status())).toStrictEqual(quota);
+    })
+  );
 
-      expect(cause.reasons.filter(Cause.isFailReason).map(({ error }) => error)).toEqual([busy]);
-      expect(cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)).toEqual([
-        cleanup,
-      ]);
-      expect(Cause.pretty(cause)).toMatch(/^\s+at quota \(.*client\.test\.ts/m);
-    }),
+  it.effect(
+    "keeps a failure's whole cause: its trace and a defect beside it",
+    () =>
+      Effect.gen(function* () {
+        class Busy extends Schema.TaggedError<
+          Busy,
+          { readonly brand: unique symbol }
+        >()("Busy", {}) {}
+
+        const Status = Action.make("status", {
+          description: "Status",
+          readOnly: true,
+          caller: Action.Anyone,
+          error: [Busy],
+        });
+
+        const busy = new Busy();
+        const cleanup = new Error("cleanup failed");
+
+        const client = yield* Action.client(
+          Action.implement(Status, () =>
+            Effect.failCause(
+              Cause.combine(Cause.fail(busy), Cause.die(cleanup))
+            ).pipe(Effect.withSpan("quota"))
+          )
+        );
+
+        const cause = yield* Effect.flip(Effect.sandbox(client.status()));
+
+        expect(
+          cause.reasons.filter(Cause.isFailReason).map(({ error }) => error)
+        ).toStrictEqual([busy]);
+        expect(
+          cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)
+        ).toStrictEqual([cleanup]);
+        expect(Cause.pretty(cause)).toMatch(
+          /^\s+at quota \(.*client\.test\.ts/mu
+        );
+      })
   );
 
   it.effect(
     "keeps the trace of a failure it makes a defect, and checks each failure of a cause apart",
     () =>
       Effect.gen(function* () {
-        class Busy extends Schema.TaggedError<Busy>()("Busy", {}) {}
+        class Busy extends Schema.TaggedError<
+          Busy,
+          { readonly brand: unique symbol }
+        >()("Busy", {}) {}
 
-        class Unlisted extends Schema.TaggedError<Unlisted>()("Unlisted", {}) {}
+        class Unlisted extends Schema.TaggedError<
+          Unlisted,
+          { readonly brand: unique symbol }
+        >()("Unlisted", {}) {}
 
         const Status = Action.make("status", {
           description: "Status",
@@ -541,27 +658,30 @@ describe("Action.client", () => {
 
         const client = yield* Action.client(
           Action.implement(Status, () =>
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- The failure under test: a cause holding an undeclared failure beside a declared one, as plain JavaScript could.
-            Effect.failCause(Cause.combine(Cause.fail(busy), Cause.fail(unlisted as never))).pipe(
-              Effect.withSpan("quota"),
-            ),
-          ),
+            Effect.failCause(
+              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The failure under test: a cause holding an undeclared failure beside a declared one, as plain JavaScript could.
+              Cause.combine(Cause.fail(busy), Cause.fail(unlisted as never))
+            ).pipe(Effect.withSpan("quota"))
+          )
         );
 
         const cause = yield* Effect.flip(Effect.sandbox(client.status()));
 
-        expect(cause.reasons.filter(Cause.isFailReason).map(({ error }) => error)).toEqual([busy]);
-        expect(cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)).toEqual([
-          unlisted,
-          expect.any(Schema.SchemaError),
-        ]);
+        expect(
+          cause.reasons.filter(Cause.isFailReason).map(({ error }) => error)
+        ).toStrictEqual([busy]);
+        expect(
+          cause.reasons.filter(Cause.isDieReason).map(({ defect }) => defect)
+        ).toStrictEqual([unlisted, expect.any(Schema.SchemaError)]);
         expect(
           cause.reasons
             .filter(Cause.isDieReason)
             .map((reason) => Cause.pretty(Cause.fromReasons([reason])))
-            .every((printed) => /^\s+at quota \(.*client\.test\.ts/m.test(printed)),
+            .every((printed) =>
+              /^\s+at quota \(.*client\.test\.ts/mu.test(printed)
+            )
         ).toBe(true);
-      }),
+      })
   );
 
   it.effect(
@@ -580,63 +700,74 @@ describe("Action.client", () => {
             name: span.name,
             parent: Option.match(span.parent, {
               onNone: () => "",
-              onSome: (parent) => (Predicate.isTagged(parent, "Span") ? parent.name : ""),
+              onSome: (parent) =>
+                Predicate.isTagged(parent, "Span") ? parent.name : "",
             }),
-          })),
+          }))
         );
 
-        const client = yield* Action.client(app).pipe(Effect.withSpan("acquisition"));
+        const client = yield* Action.client(app).pipe(
+          Effect.withSpan("acquisition")
+        );
 
         const result = {
           inside: yield* client.where().pipe(Effect.withSpan("caller")),
           outside: yield* client.where(),
         };
 
-        expect(result).toEqual({
+        expect(result).toStrictEqual({
           inside: { name: "where", parent: "caller" },
           outside: { name: "where", parent: "" },
         });
-      }),
+      })
   );
 
-  it.effect("calls a selection of its actions with its builder and its authorize", () =>
-    Effect.gen(function* () {
-      let built = 0;
+  it.effect(
+    "calls a selection of its actions with its builder and its authorize",
+    () =>
+      Effect.gen(function* () {
+        let built = 0;
 
-      const Read = Action.make("read", {
-        description: "Read",
-        readOnly: true,
-        caller: CurrentActor,
-      });
+        const Read = Action.make("read", {
+          description: "Read",
+          readOnly: true,
+          caller: CurrentActor,
+        });
 
-      const Write = Action.make("write", {
-        description: "Write",
-        readOnly: false,
-        caller: CurrentActor,
-      });
+        const Write = Action.make("write", {
+          description: "Write",
+          readOnly: false,
+          caller: CurrentActor,
+        });
 
-      const app = Action.implement(
-        [Read, Write],
-        Effect.sync(() => {
-          built++;
+        const app = Action.implement(
+          [Read, Write],
+          Effect.sync(() => {
+            built += 1;
 
-          return { read: () => Effect.void, write: () => Effect.void };
-        }),
-        {
-          authorize: (action) =>
-            !action.readOnly ? Effect.fail(new Action.Forbidden()) : Effect.void,
-        },
-      );
+            return { read: () => Effect.void, write: () => Effect.void };
+          }),
+          {
+            authorize: (action) =>
+              action.readOnly
+                ? Effect.void
+                : Effect.fail(new Action.Forbidden()),
+          }
+        );
 
-      const all = yield* Action.client(app);
-      const writer = yield* Action.client(app, { actions: [Write] });
+        const all = yield* Action.client(app);
+        const writer = yield* Action.client(app, { actions: [Write] });
 
-      expect(yield* Effect.flip(all.write().pipe(asAlice))).toBeInstanceOf(Action.Forbidden);
-      expect(yield* Effect.flip(writer.write().pipe(asAlice))).toBeInstanceOf(Action.Forbidden);
-      expect(yield* all.read().pipe(asAlice)).toBeUndefined();
-      expect(Object.keys(writer)).toEqual(["write"]);
-      expect(built).toBe(1);
-    }).pipe(Effect.provide(Layer.empty)),
+        expect(yield* Effect.flip(all.write().pipe(asAlice))).toBeInstanceOf(
+          Action.Forbidden
+        );
+        expect(yield* Effect.flip(writer.write().pipe(asAlice))).toBeInstanceOf(
+          Action.Forbidden
+        );
+        expect(yield* all.read().pipe(asAlice)).toBeUndefined();
+        expect(Object.keys(writer)).toStrictEqual(["write"]);
+        expect(built).toBe(1);
+      }).pipe(Effect.provide(Layer.empty))
   );
 
   it("builds once when acquired, for every call, into the graph it is acquired in", async () => {
@@ -645,10 +776,12 @@ describe("Action.client", () => {
     const app = Action.implement(
       Ping,
       Effect.sync(() => {
-        const run = ++built;
+        built += 1;
+
+        const run = built;
 
         return () => Effect.succeed(run);
-      }),
+      })
     );
 
     const twice = Effect.gen(function* () {
@@ -658,11 +791,14 @@ describe("Action.client", () => {
       return [yield* first.ping(), yield* first.ping(), yield* second.ping()];
     }).pipe(Effect.scoped);
 
-    const sharingProvidedGraph = await Effect.runPromise(twice.pipe(Effect.provide(Layer.empty)));
+    const sharingProvidedGraph = await Effect.runPromise(
+      twice.pipe(Effect.provide(Layer.empty))
+    );
+
     const eachInAGraphOfItsOwn = await Effect.runPromise(twice);
 
-    expect(sharingProvidedGraph).toEqual([1, 1, 1]);
-    expect(eachInAGraphOfItsOwn).toEqual([2, 2, 3]);
+    expect(sharingProvidedGraph).toStrictEqual([1, 1, 1]);
+    expect(eachInAGraphOfItsOwn).toStrictEqual([2, 2, 3]);
   });
 
   it.effect.each(["the builder acquiring it", "the surface"])(
@@ -674,22 +810,24 @@ describe("Action.client", () => {
         const inner = Action.implement(
           Ping,
           Effect.sync(() => {
-            const run = ++built;
+            built += 1;
+
+            const run = built;
 
             return () => Effect.succeed(run);
-          }),
+          })
         );
 
         const Pong = Action.make("pong", {
           description: "Pong",
           readOnly: true,
           caller: Action.Anyone,
-          success: Schema.Number,
+          success: Schema.Finite,
         });
 
         const outer = Action.implement(
           Pong,
-          Effect.map(Action.client(inner), (client) => () => client.ping()),
+          Effect.map(Action.client(inner), (client) => () => client.ping())
         );
 
         const { toolkit, layer: composite } = ActionToolkit.make(outer);
@@ -708,21 +846,23 @@ describe("Action.client", () => {
 
         expect(results).toMatchObject([{ result: 1 }]);
         expect(built).toBe(1);
-      }),
+      })
   );
 
   it("refuses a name twice, and a value no Action.implement made, where it is made", () => {
     const again = Action.implement(Ping, () => Effect.succeed(2));
     const ping = Action.implement(Ping, () => Effect.succeed(1));
 
-    expect(() => Action.client([ping, again])).toThrow("Duplicate action: ping");
+    expect(() => Action.client([ping, again])).toThrow(
+      "Duplicate action: ping"
+    );
 
     // oxlint-disable-next-line typescript/no-misused-spread -- Deliberate nominal-fabrication fixture.
     const copy = { ...ping };
 
     // @ts-expect-error -- A copy of an implementation is not one.
     expect(() => Action.client(copy)).toThrow(
-      "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice",
+      "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice"
     );
   });
 });

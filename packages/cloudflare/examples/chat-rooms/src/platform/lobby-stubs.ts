@@ -1,6 +1,7 @@
+import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { env } from "cloudflare:workers";
 import { Effect, Layer } from "effect";
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+
 import { Activity } from "../chat/activity.js";
 import { Room } from "../chat/room.js";
 import { MessageStore } from "../chat/store.js";
@@ -16,8 +17,8 @@ const lobbyStub = () => env.CHAT_LOBBY.getByName("lobby");
 // the cause is in its logs.
 export const layerLobbyHost = Layer.effect(LobbyHost)(
   Effect.map(ActionDurableObject.client(LobbyCalls), (lobby) =>
-    LobbyHost.of({ previews: Effect.orDie(lobby(lobbyStub).previews()) }),
-  ),
+    LobbyHost.of({ previews: Effect.orDie(lobby(lobbyStub).previews()) })
+  )
 );
 
 // The room's task, worker.ts's `lobby`: telling the lobby the room's latest activity. The room's
@@ -40,6 +41,6 @@ export const tellLobby = Effect.gen(function* () {
 // change and again after it, so a crash at any point leaves the task to the alarm.
 export const layerActivity = Layer.effect(Activity)(
   Effect.map(ActionDurableObject.Tasks, (tasks) =>
-    Activity.of({ changing: (change) => tasks.runAfter("lobby", change) }),
-  ),
+    Activity.of({ changing: (change) => tasks.runAfter("lobby", change) })
+  )
 );

@@ -1,6 +1,7 @@
-import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Schema } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 
 export const Environment = Schema.Literals(["staging", "production"]).annotate({
@@ -15,7 +16,8 @@ export const Deploy = Schema.Struct({
   version: Schema.String,
   requestedBy: Schema.String,
   approvers: Schema.Array(Schema.String).annotate({
-    description: "The members watching its environment when it was requested, asked to approve it.",
+    description:
+      "The members watching its environment when it was requested, asked to approve it.",
   }),
 });
 
@@ -33,7 +35,9 @@ export const DeployRequested = Event.make("deploy.requested", {
   description:
     "Someone asked for a deploy. Watching an environment stands you by to approve its deploys.",
   input: {
-    environment: Schema.optional(Environment).annotate({ description: "Only deploys to here." }),
+    environment: Schema.optional(Environment).annotate({
+      description: "Only deploys to here.",
+    }),
   },
   payload: Deploy,
   caller: CurrentMember,

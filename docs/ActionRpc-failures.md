@@ -1,7 +1,6 @@
 # ActionRpc failure modes
 
-What you see when something is wrong, and the fix. Search for a fragment of the message.
-The tasks are in [ActionRpc.md](ActionRpc.md).
+What you see when something is wrong, and the fix. Search for a fragment of the message. The tasks are in [ActionRpc.md](ActionRpc.md).
 
 - A type error on `middleware` naming `"Layer middleware fails only with the binding's errors and needs no client"`: a middleware declares an error neither the binding nor the built-ins hold, or is `requiredForClient`. Add the error to the binding's `error`, or check in the handler, declaring the error on its actions.
 - `Type 'HttpRouter' is not assignable to type 'never'` where the server is launched: an rpc protocol was provided around `HttpRouter.serve`, whose router it adds its route to. Provide the protocol to the rpc layer.

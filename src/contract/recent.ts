@@ -12,7 +12,9 @@ export const makeRecent = (size: number): Recent => {
     add: (id) => {
       ids.add(id);
 
-      if (ids.size > size) ids.delete(ids.values().next().value ?? id);
+      if (ids.size > size) {
+        ids.delete(ids.values().next().value ?? id);
+      }
     },
   };
 };

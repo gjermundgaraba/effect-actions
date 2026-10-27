@@ -1,13 +1,9 @@
-import { Context, Effect, Layer, Queue, type Scope, Stream } from "effect";
+import { Context, Effect, Layer, Queue, Stream } from "effect";
+import type { Scope } from "effect";
+
 import type * as Event from "./Event.js";
-import {
-  type Bounds,
-  type Log,
-  type LogStorage,
-  makeLog,
-  makeLogStore,
-  memoryStorage,
-} from "./log.js";
+import { makeLog, makeLogStore, memoryStorage } from "./log.js";
+import type { Bounds, Log, LogStorage } from "./log.js";
 
 /** What `notify` and `publish` take: the key whose subscribers they reach. */
 export interface KeyOptions {
@@ -25,7 +21,7 @@ type ErasedEmitted = Event.Emitted<Event.Any>;
  * each take completing once it was woken since the last.
  */
 export type Wakes = (
-  key: string | undefined,
+  key: string | undefined
 ) => Effect.Effect<Effect.Effect<void>, never, Scope.Scope>;
 
 /**
@@ -52,7 +48,7 @@ export interface RevisionStorage {
   readonly epoch: string;
   readonly get: (name: string) => Effect.Effect<number>;
   /** Adds one to each counter `names` names. */
-  readonly bump: (names: ReadonlyArray<string>) => Effect.Effect<void>;
+  readonly bump: (names: readonly string[]) => Effect.Effect<void>;
 }
 
 /** Revisions kept in memory, starting again, in a new epoch, with each call. */
@@ -64,7 +60,9 @@ const memoryRevisions = (): RevisionStorage => {
     get: (name) => Effect.sync(() => counts.get(name) ?? 0),
     bump: (names) =>
       Effect.sync(() => {
-        for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+        for (const name of names) {
+          counts.set(name, (counts.get(name) ?? 0) + 1);
+        }
       }),
   };
 };
@@ -97,12 +95,15 @@ export class Events extends Context.Service<
   Events,
   {
     /** Wakes the subscribers of `event`'s check source to read it now, rather than at their next poll. */
-    readonly notify: (event: Event.Any, options?: KeyOptions) => Effect.Effect<void>;
+    readonly notify: (
+      event: Event.Any,
+      options?: KeyOptions
+    ) => Effect.Effect<void>;
     /** Appends `emitted` to `event`'s log, delivering it to the log source's subscribers now. */
     readonly publish: <E extends Event.Any>(
       event: E,
       emitted: Event.Emitted<E>,
-      options?: KeyOptions,
+      options?: KeyOptions
     ) => Effect.Effect<void>;
   }
 >()("effect-actions/Event/Events") {}
@@ -112,7 +113,7 @@ interface Attachments {
   /** How a check or current source's subscribers are woken, for as long as the scope lasts. */
   readonly check: (
     event: Event.Any,
-    current: boolean,
+    current: boolean
   ) => Effect.Effect<Checking, never, Scope.Scope>;
   /**
    * `event`'s one log, kept as long as the `Events` is, made with `bounds` at the first
@@ -121,7 +122,7 @@ interface Attachments {
   readonly log: (
     event: Event.Any,
     bounds: Bounds | undefined,
-    emit: Emitting | undefined,
+    emit: Emitting | undefined
   ) => Effect.Effect<Log<ErasedEmitted>, never, Scope.Scope>;
 }
 
@@ -130,22 +131,24 @@ interface Attachments {
 const attached = new WeakMap<Events["Service"], Attachments>();
 
 /** How sources attach to `events`, the `Events` `makeEvents` made; one made otherwise dies. */
-export const attachmentsOf = (events: Events["Service"]): Effect.Effect<Attachments> =>
+export const attachmentsOf = (
+  events: Events["Service"]
+): Effect.Effect<Attachments> =>
   Effect.suspend(() => {
     const attachments = attached.get(events);
 
     return attachments === undefined
       ? Effect.die(
           new Error(
-            "This Event.Events serves no event implementation: provide Event.layerMemory, or one Event.makeEvents builds",
-          ),
+            "This Event.Events serves no event implementation: provide Event.layerMemory, or one Event.makeEvents builds"
+          )
         )
       : Effect.succeed(attachments);
   });
 
 interface Waiter {
   readonly key: string | undefined;
-  readonly woken: Queue.Queue<void>;
+  readonly woken: Queue.Queue<undefined>;
 }
 
 type Emitting = Stream.Stream<ErasedEmitted & KeyOptions>;
@@ -164,14 +167,17 @@ interface Kept {
 export const reaches = (target: string | undefined, key: string | undefined) =>
   target === undefined || key === undefined || target === key;
 
-const holding = <A>(set: Set<A>, value: A): Effect.Effect<A, never, Scope.Scope> =>
+const holding = <A>(
+  set: Set<A>,
+  value: A
+): Effect.Effect<A, never, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.sync(() => {
       set.add(value);
 
       return value;
     }),
-    () => Effect.sync(() => set.delete(value)),
+    () => Effect.sync(() => set.delete(value))
   );
 
 /** `makeEvents`' options: where it keeps logs, and whether check sources are read on a timer. */
@@ -213,7 +219,7 @@ export interface MakeEventsOptions {
  * - A log's storage is made once per event for the life of the scope, its position read on every append and read: a storage emptied behind its back, as `storage.deleteAll` empties one, starts a new epoch, and a cursor from before reads a gap.
  */
 export const makeEvents = (
-  options: MakeEventsOptions,
+  options: MakeEventsOptions
 ): Effect.Effect<Events["Service"], never, Scope.Scope> =>
   Effect.gen(function* () {
     const polls = options.polls ?? true;
@@ -239,7 +245,8 @@ export const makeEvents = (
       return found;
     };
 
-    const isCheck = (event: Event.Any) => (checks.get(event)?.attached.size ?? 0) > 0;
+    const isCheck = (event: Event.Any) =>
+      (checks.get(event)?.attached.size ?? 0) > 0;
 
     // Why: one emit stream feeds a log at a time, so two builds of one source never append each
     // occurrence twice, until it ends or fails, its build released or not: interrupting it as its
@@ -249,18 +256,22 @@ export const makeEvents = (
       Effect.suspend(() => {
         const [next] = kept.feeding ? [] : kept.waiting;
 
-        if (next === undefined) return Effect.void;
+        if (next === undefined) {
+          return Effect.void;
+        }
 
         kept.waiting.delete(next);
         kept.feeding = true;
 
         const fed = Effect.andThen(
-          kept.log.feed(Stream.map(next.emit, ({ key, ...value }) => ({ value, key }))),
+          kept.log.feed(
+            Stream.map(next.emit, ({ key, ...value }) => ({ value, key }))
+          ),
           Effect.suspend(() => {
             kept.feeding = false;
 
             return feed(kept);
-          }),
+          })
         );
 
         return Effect.asVoid(Effect.forkIn(fed, scope));
@@ -270,17 +281,17 @@ export const makeEvents = (
       Effect.tap(holding(kept.waiting, { emit }), () => feed(kept));
 
     const events = Events.of({
-      notify: (event, options) =>
+      notify: (event, notifyOptions) =>
         Effect.suspend(() => {
           if (!isCheck(event) && logs.has(event)) {
             return Effect.die(
               new Error(
-                `Event "${event.name}" has a log source, which keeps what is published: give each occurrence to publish (Event.Events.publish(event, { data }))`,
-              ),
+                `Event "${event.name}" has a log source, which keeps what is published: give each occurrence to publish (Event.Events.publish(event, { data }))`
+              )
             );
           }
 
-          const key = options?.key;
+          const key = notifyOptions?.key;
 
           // Why: The revision moves at every notify of an event not attached as a check source,
           // whose subscribers never read it: a request-scoped server attaches a current source
@@ -296,22 +307,26 @@ export const makeEvents = (
                 ]),
             Effect.sync(() => {
               for (const waiter of checkOf(event).waiters) {
-                if (reaches(key, waiter.key)) Queue.offerUnsafe(waiter.woken, undefined);
+                if (reaches(key, waiter.key)) {
+                  Queue.offerUnsafe(waiter.woken, undefined);
+                }
               }
-            }),
+            })
           );
         }),
-      publish: (event, emitted, options) =>
+      publish: (event, emitted, publishOptions) =>
         Effect.suspend(() => {
           const kept = logs.get(event);
 
-          if (kept !== undefined) return kept.log.append(emitted, options?.key);
+          if (kept !== undefined) {
+            return kept.log.append(emitted, publishOptions?.key);
+          }
 
           return isCheck(event)
             ? Effect.die(
                 new Error(
-                  `Event "${event.name}" has a check source, which reads your store: write the occurrence there, then wake its subscribers (Event.Events.notify(event))`,
-                ),
+                  `Event "${event.name}" has a check source, which reads your store: write the occurrence there, then wake its subscribers (Event.Events.notify(event))`
+                )
               )
             : Effect.void;
         }),
@@ -324,29 +339,37 @@ export const makeEvents = (
           (): Checking => ({
             polls,
             wakes: (key) =>
-              Effect.flatMap(Queue.sliding<void>(1), (woken) =>
-                Effect.as(holding(checkOf(event).waiters, { key, woken }), Queue.take(woken)),
+              Effect.flatMap(Queue.sliding<undefined>(1), (woken) =>
+                Effect.as(
+                  holding(checkOf(event).waiters, { key, woken }),
+                  Queue.take(woken)
+                )
               ),
             revision: (key) =>
               key === undefined
                 ? Effect.map(
                     revisions.get(everyKey(event)),
-                    (count) => `${revisions.epoch}:${count}`,
+                    (count) => `${revisions.epoch}:${count}`
                   )
                 : Effect.map(
-                    Effect.all([revisions.get(noKey(event)), revisions.get(ofKey(event, key))]),
-                    ([unkeyed, keyed]) => `${revisions.epoch}:${unkeyed + keyed}:${key}`,
+                    Effect.all([
+                      revisions.get(noKey(event)),
+                      revisions.get(ofKey(event, key)),
+                    ]),
+                    ([unkeyed, keyed]) =>
+                      `${revisions.epoch}:${unkeyed + keyed}:${key}`
                   ),
-          }),
+          })
         ),
       log: (event, bounds, emit) =>
         Effect.suspend(() => {
-          if (emit !== undefined && !emits)
+          if (emit !== undefined && !emits) {
             return Effect.die(
               new Error(
-                `Event "${event.name}" has a log source fed by emit, which this Event.Events does not consume, as its host does not last between requests (publish each occurrence with Event.Events.publish as the host receives it, such as in a call or a route)`,
-              ),
+                `Event "${event.name}" has a log source fed by emit, which this Event.Events does not consume, as its host does not last between requests (publish each occurrence with Event.Events.publish as the host receives it, such as in a call or a route)`
+              )
             );
+          }
 
           const kept = logs.get(event) ?? {
             log: makeLog(makeLogStore(options.log(event), bounds)),
@@ -356,7 +379,10 @@ export const makeEvents = (
 
           logs.set(event, kept);
 
-          return Effect.as(emit === undefined ? Effect.void : fedBy(kept, emit), kept.log);
+          return Effect.as(
+            emit === undefined ? Effect.void : fedBy(kept, emit),
+            kept.log
+          );
         }),
     });
 
@@ -374,5 +400,5 @@ export const makeEvents = (
  * - Several builds of one log source share its log, and its `emit` feeds it from one build at a time, so nothing is appended twice.
  */
 export const layerMemory: Layer.Layer<Events> = Layer.effect(Events)(
-  makeEvents({ log: () => memoryStorage() }),
+  makeEvents({ log: () => memoryStorage() })
 );

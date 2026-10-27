@@ -1,6 +1,7 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 import { Approvers } from "./approvers.js";
 import { DeployRequested, RequestDeploy } from "./Deploys.js";
@@ -25,10 +26,13 @@ export const deploys = Action.implement(
 
         // Nothing else keeps a deploy request, so `deploy.requested` is a log source: the
         // library keeps what is published here, and delivers it to each subscriber at once.
-        yield* events.publish(DeployRequested, { eventId: deploy.id, data: deploy });
+        yield* events.publish(DeployRequested, {
+          eventId: deploy.id,
+          data: deploy,
+        });
 
         return deploy;
       });
   }),
-  { authorize: Action.allowAll },
+  { authorize: Action.allowAll }
 );

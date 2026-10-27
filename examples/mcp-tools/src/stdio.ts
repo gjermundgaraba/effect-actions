@@ -1,7 +1,8 @@
 import { NodeRuntime, NodeStdio } from "@effect/platform-node";
-import { Effect, Layer } from "effect";
 import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
+import { Effect, Layer } from "effect";
+
 import { serverInfo } from "./instructions.js";
 import { fakeFarm } from "./platform/fake-farm.js";
 import { printFarm } from "./platform/print-farm.js";
@@ -22,5 +23,5 @@ ActionMcp.runStdio(printers, serverInfo).pipe(
   // stdout carries the protocol alone. Applied last, this sends every log to stderr, the
   // sign-in line `printFarm` logs included, and a startup failure too.
   ActionCli.logToStderr,
-  NodeRuntime.runMain,
+  NodeRuntime.runMain()
 );

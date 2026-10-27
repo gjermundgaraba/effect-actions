@@ -9,26 +9,29 @@ import {
   SchemaAST,
   Stdio,
   Stream,
-  type Types,
 } from "effect";
+import type { Types } from "effect";
 import { CliError, Command, Flag, Param } from "effect/cli";
+
 import type * as Action from "../contract/Action.js";
-import { assertDistinct } from "../contract/names.js";
 import { literalValues, members, unsuspended } from "../contract/ast.js";
-import { withStderrConsole } from "../stdio/console.js";
-import { InvalidInput } from "../contract/errors.js";
 import { decodeInput } from "../contract/call.js";
-import type { CallOptions } from "../contract/progress.js";
-import * as Event from "../contract/Event.js";
-import { type ErasedValue, elementsOf } from "../contract/implementation.js";
-import { type Each, elementOf } from "../contract/stream.js";
-import { ReceivedOf } from "../contract/occurrence.js";
 import { errorSchemas } from "../contract/declared.js";
+import { InvalidInput } from "../contract/errors.js";
+import * as Event from "../contract/Event.js";
+import { elementsOf } from "../contract/implementation.js";
+import type { ErasedValue } from "../contract/implementation.js";
+import { assertDistinct } from "../contract/names.js";
+import { ReceivedOf } from "../contract/occurrence.js";
+import type { CallOptions } from "../contract/progress.js";
+import { elementOf } from "../contract/stream.js";
+import type { Each } from "../contract/stream.js";
+import { withStderrConsole } from "../stdio/console.js";
 
 type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
   ? true extends Types.IsUnion<E>
     ? never
-    : E extends ReadonlyArray<unknown>
+    : E extends readonly unknown[]
       ? never
       : E extends object
         ? string extends keyof E
@@ -40,7 +43,10 @@ type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
 // Why: Required fields only. An empty stdin for an optional field would have to mean either an
 // empty value or the field left out.
 type StdinField<A extends Action.Any> = A["input"]["Encoded"] extends infer E
-  ? Exclude<Field<A>, { [K in keyof E]-?: {} extends Pick<E, K> ? K : never }[keyof E]>
+  ? Exclude<
+      Field<A>,
+      { [K in keyof E]-?: {} extends Pick<E, K> ? K : never }[keyof E]
+    >
   : never;
 
 /** How one command of `A` is named, takes its input and prints its result. */
@@ -91,10 +97,10 @@ export interface Options<A extends Action.Any> {
 
 export const kebab = (name: string): string => {
   const kebabbed = name
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .replace(/_/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replaceAll(/(?<upper>[A-Z]+)(?<word>[A-Z][a-z])/gu, "$<upper>-$<word>")
+    .replaceAll(/(?<lower>[a-z0-9])(?<upper>[A-Z])/gu, "$<lower>-$<upper>")
+    .replaceAll("_", "-")
+    .replaceAll(/^-+|-+$/gu, "")
     .toLowerCase();
 
   return kebabbed === "" ? name : kebabbed;
@@ -102,43 +108,73 @@ export const kebab = (name: string): string => {
 
 const renderedCommandJsonFlag = Flag.Boolean("json").pipe(
   Flag.withDefault(false),
-  Flag.withDescription("Print machine-readable JSON"),
+  Flag.withDescription("Print machine-readable JSON")
 );
 
-const jsonKinds = ["null", "boolean", "number", "string", "array", "object"] as const;
+const jsonKinds = [
+  "null",
+  "boolean",
+  "number",
+  "string",
+  "array",
+  "object",
+] as const;
 
 type JsonKind = (typeof jsonKinds)[number];
 
-const jsonKindOf = (value: Schema.Json | SchemaAST.LiteralValue): JsonKind =>
-  value === null
-    ? "null"
-    : Predicate.isBoolean(value)
-      ? "boolean"
-      : Predicate.isNumber(value)
-        ? "number"
-        : Predicate.isString(value)
-          ? "string"
-          : Array.isArray(value)
-            ? "array"
-            : "object";
+const jsonKindOf = (value: Schema.Json | SchemaAST.LiteralValue): JsonKind => {
+  if (value === null) {
+    return "null";
+  }
 
-const acceptedJsonKindsOf = (ast: SchemaAST.AST): ReadonlyArray<JsonKind> =>
-  members(ast).flatMap((member): ReadonlyArray<JsonKind> => {
-    if (SchemaAST.isLiteral(member)) return [jsonKindOf(member.literal)];
+  if (Predicate.isBoolean(value)) {
+    return "boolean";
+  }
 
-    if (SchemaAST.isEnum(member)) return member.enums.map(([, value]) => jsonKindOf(value));
+  if (Predicate.isNumber(value)) {
+    return "number";
+  }
 
-    if (SchemaAST.isNull(member)) return ["null"];
+  if (Predicate.isString(value)) {
+    return "string";
+  }
 
-    if (SchemaAST.isBoolean(member)) return ["boolean"];
+  return Array.isArray(value) ? "array" : "object";
+};
 
-    if (SchemaAST.isNumber(member)) return ["number"];
+const acceptedJsonKindsOf = (ast: SchemaAST.AST): readonly JsonKind[] =>
+  members(ast).flatMap((member): readonly JsonKind[] => {
+    if (SchemaAST.isLiteral(member)) {
+      return [jsonKindOf(member.literal)];
+    }
 
-    if (SchemaAST.isString(member) || SchemaAST.isTemplateLiteral(member)) return ["string"];
+    if (SchemaAST.isEnum(member)) {
+      return member.enums.map(([, value]) => jsonKindOf(value));
+    }
 
-    if (SchemaAST.isArrays(member)) return ["array"];
+    if (SchemaAST.isNull(member)) {
+      return ["null"];
+    }
 
-    if (SchemaAST.isObjects(member)) return ["object"];
+    if (SchemaAST.isBoolean(member)) {
+      return ["boolean"];
+    }
+
+    if (SchemaAST.isNumber(member)) {
+      return ["number"];
+    }
+
+    if (SchemaAST.isString(member) || SchemaAST.isTemplateLiteral(member)) {
+      return ["string"];
+    }
+
+    if (SchemaAST.isArrays(member)) {
+      return ["array"];
+    }
+
+    if (SchemaAST.isObjects(member)) {
+      return ["object"];
+    }
 
     return jsonKinds;
   });
@@ -148,13 +184,13 @@ const jsonOfAcceptedKindOrText = (encoded: SchemaAST.AST) => {
 
   return Schema.Union([
     Schema.fromJsonString(Schema.Json).check(
-      Schema.makeFilter((json) => accepted.has(jsonKindOf(json))),
+      Schema.makeFilter((json) => accepted.has(jsonKindOf(json)))
     ),
     Schema.String,
   ]);
 };
 
-const stringChoicesOf = (ast: SchemaAST.AST): ReadonlyArray<string> | undefined => {
+const stringChoicesOf = (ast: SchemaAST.AST): readonly string[] | undefined => {
   const accepted = members(ast).flatMap(literalValues);
 
   return accepted.every(Predicate.isString) ? accepted : undefined;
@@ -167,29 +203,39 @@ const takesTextAsIs = (encoded: SchemaAST.AST): boolean =>
   SchemaAST.isString(encoded) ||
   SchemaAST.isTemplateLiteral(encoded);
 
-const valueParam = (kind: Kind, name: string, field: SchemaAST.AST): Param.Param<Kind, unknown> => {
+const valueParam = (
+  kind: Kind,
+  name: string,
+  field: SchemaAST.AST
+): Param.Param<Kind, unknown> => {
   const encoded = unsuspended(field);
 
   if (takesTextAsIs(encoded)) {
     const literals = stringChoicesOf(encoded);
 
-    return literals === undefined ? Param.String(kind, name) : Param.Literals(kind, name, literals);
+    return literals === undefined
+      ? Param.String(kind, name)
+      : Param.Literals(kind, name, literals);
   }
 
-  if (SchemaAST.isBoolean(encoded)) return Param.Boolean(kind, name);
+  if (SchemaAST.isBoolean(encoded)) {
+    return Param.Boolean(kind, name);
+  }
 
   return Param.String(kind, name).pipe(
     Param.withSchema(jsonOfAcceptedKindOrText(encoded)),
-    Param.withMetavar("value"),
+    Param.withMetavar("value")
   );
 };
 
 const withoutOptionalAbsence = (ast: SchemaAST.AST): SchemaAST.AST => {
-  const members = SchemaAST.isUnion(ast)
-    ? ast.types.filter((member) => !SchemaAST.isNull(member) && !SchemaAST.isUndefined(member))
+  const present = SchemaAST.isUnion(ast)
+    ? ast.types.filter(
+        (member) => !SchemaAST.isNull(member) && !SchemaAST.isUndefined(member)
+      )
     : [];
 
-  return members.length === 1 && members[0] !== undefined ? members[0] : ast;
+  return present.length === 1 && present[0] !== undefined ? present[0] : ast;
 };
 
 const optionalAddedNull = (plain: SchemaAST.AST): boolean => {
@@ -199,11 +245,13 @@ const optionalAddedNull = (plain: SchemaAST.AST): boolean => {
 };
 
 const repeatedElementOf = (
-  ast: SchemaAST.AST,
+  ast: SchemaAST.AST
 ): { readonly element: SchemaAST.AST; readonly min: number } | undefined => {
   const encoded = unsuspended(ast);
 
-  if (!SchemaAST.isArrays(encoded)) return undefined;
+  if (!SchemaAST.isArrays(encoded)) {
+    return undefined;
+  }
 
   const [element, ...after] = encoded.rest;
 
@@ -211,7 +259,9 @@ const repeatedElementOf = (
     element === undefined ||
     after.length > 0 ||
     !encoded.elements.every((first) => first === element) ||
-    !acceptedJsonKindsOf(element).every((kind) => kind === "string" || kind === "number")
+    !acceptedJsonKindsOf(element).every(
+      (kind) => kind === "string" || kind === "number"
+    )
   ) {
     return undefined;
   }
@@ -224,6 +274,43 @@ const repeatedElementOf = (
 // `Param.variadic` repeats one parameter and `Param.orElse` makes two.
 const noElementOccurrence = "[]";
 
+const namedFieldsOf = (
+  ast: SchemaAST.AST
+): ReadonlyMap<PropertyKey, SchemaAST.AST> => {
+  const fields = SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast;
+
+  return new Map(
+    fields !== undefined && SchemaAST.isObjects(fields)
+      ? fields.propertySignatures.map((property) => [
+          property.name,
+          property.type,
+        ])
+      : []
+  );
+};
+
+const elementFieldsOf = (
+  array: SchemaAST.AST
+): readonly string[] | undefined => {
+  if (!SchemaAST.isArrays(array)) {
+    return undefined;
+  }
+
+  const [element, ...others] = [...array.elements, ...array.rest];
+
+  if (element === undefined || others.some((other) => other !== element)) {
+    return undefined;
+  }
+
+  const fields = namedFieldsOf(unsuspended(element));
+
+  return fields.size === 0
+    ? undefined
+    : Array.from(fields, ([name, field]) =>
+        SchemaAST.isOptional(field) ? `${String(name)}?` : String(name)
+      );
+};
+
 // Why: The help of Effect CLI shows a flag's name and the kind of its value, which say neither that
 // a flag repeats, nor that `--no-<flag>` is a switch's `false`, nor that a value is JSON. A switch
 // of a required field is `false` when left out, which its help says; an optional one is left
@@ -232,46 +319,43 @@ const jsonHintOf = (encoded: SchemaAST.AST): string | undefined => {
   const value = unsuspended(encoded);
   const kinds = new Set(acceptedJsonKindsOf(value));
 
-  if (kinds.size !== 1) return undefined;
+  if (kinds.size !== 1) {
+    return undefined;
+  }
 
-  if (kinds.has("object")) return "A JSON object.";
+  if (kinds.has("object")) {
+    return "A JSON object.";
+  }
 
-  if (!kinds.has("array")) return undefined;
+  if (!kinds.has("array")) {
+    return undefined;
+  }
 
   const fields = elementFieldsOf(value);
 
-  return fields === undefined ? "A JSON array." : `A JSON array of {${fields.join(", ")}}.`;
+  return fields === undefined
+    ? "A JSON array."
+    : `A JSON array of {${fields.join(", ")}}.`;
 };
 
-const elementFieldsOf = (array: SchemaAST.AST): ReadonlyArray<string> | undefined => {
-  if (!SchemaAST.isArrays(array)) return undefined;
-
-  const [element, ...others] = [...array.elements, ...array.rest];
-
-  if (element === undefined || others.some((other) => other !== element)) return undefined;
-
-  const fields = namedFieldsOf(unsuspended(element));
-
-  return fields.size === 0
-    ? undefined
-    : Array.from(fields, ([name, field]) =>
-        SchemaAST.isOptional(field) ? `${String(name)}?` : String(name),
-      );
-};
-
-const withHint = (description: string | undefined, hint: string | undefined) => {
-  if (hint === undefined || description === undefined) return description ?? hint;
+const withHint = (
+  description: string | undefined,
+  hint: string | undefined
+) => {
+  if (hint === undefined || description === undefined) {
+    return description ?? hint;
+  }
 
   const stated = description.trimEnd();
 
-  return /[.!?:]$/.test(stated) ? `${stated} ${hint}` : `${stated}. ${hint}`;
+  return /[.!?:]$/u.test(stated) ? `${stated} ${hint}` : `${stated}. ${hint}`;
 };
 
 const fieldParam = (
   kind: Kind,
   name: string,
   encoded: SchemaAST.AST,
-  plain: SchemaAST.AST | undefined,
+  plain: SchemaAST.AST | undefined
 ): Pick<FieldParam, "param" | "repeats" | "hint"> => {
   const optional = SchemaAST.isOptional(encoded);
 
@@ -290,15 +374,19 @@ const fieldParam = (
         ? valueParam(kind, name, repeats.element)
         : Param.Literals(kind, name, [...literals, noElementOccurrence]);
 
-    const listed = (values: ReadonlyArray<unknown>) =>
-      Option.some(values.filter((value) => value !== noElementOccurrence));
+    const listed = (values: readonly unknown[]) =>
+      Option.some(values.filter((given) => given !== noElementOccurrence));
 
     return {
       param: optional
         ? Param.variadic(elements).pipe(
-            Param.map((values) => (values.length === 0 ? Option.none() : listed(values))),
+            Param.map((values) =>
+              values.length === 0 ? Option.none() : listed(values)
+            )
           )
-        : Param.variadic(elements, { min: repeats.min }).pipe(Param.map(listed)),
+        : Param.variadic(elements, { min: repeats.min }).pipe(
+            Param.map(listed)
+          ),
       repeats: true,
       hint: kind === Param.flagKind ? "Repeat for each value." : undefined,
     };
@@ -315,7 +403,8 @@ const fieldParam = (
     };
   }
 
-  const isSwitch = kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(encoded));
+  const isSwitch =
+    kind === Param.flagKind && SchemaAST.isBoolean(unsuspended(encoded));
 
   return {
     param: isSwitch
@@ -337,18 +426,14 @@ interface FieldParam {
 
 type Parsed = Readonly<Record<string, Option.Option<unknown>>>;
 
-const namedFieldsOf = (ast: SchemaAST.AST): ReadonlyMap<PropertyKey, SchemaAST.AST> => {
-  const fields = SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast;
-
-  return new Map(
-    fields !== undefined && SchemaAST.isObjects(fields)
-      ? fields.propertySignatures.map((property) => [property.name, property.type])
-      : [],
-  );
-};
-
 const isTransformedAsWhole = (ast: SchemaAST.AST): boolean =>
-  (SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast)?.encoding !== undefined;
+  (SchemaAST.isDeclaration(ast) ? ast.typeParameters[0] : ast)?.encoding !==
+  undefined;
+
+const describedBeforeLastCheck = (ast: SchemaAST.AST): string | undefined =>
+  [ast.annotations, ...(ast.checks ?? []).map((check) => check.annotations)]
+    .map((annotations) => annotations?.["description"])
+    .findLast(Predicate.isString);
 
 // Why: Effect resolves a description from the last check alone, once a schema has checks. One
 // annotated before a check is on the schema or on an earlier check, where a tool's listing reads
@@ -362,15 +447,13 @@ const ownOrSuspendedDescriptionOf = (ast: SchemaAST.AST): string | undefined =>
   ast.context?.annotations?.description ??
   SchemaAST.resolveDescription(ast) ??
   describedBeforeLastCheck(ast) ??
-  (SchemaAST.isSuspend(ast) ? ownOrSuspendedDescriptionOf(ast.thunk()) : undefined);
-
-const describedBeforeLastCheck = (ast: SchemaAST.AST): string | undefined =>
-  [ast.annotations, ...(ast.checks ?? []).map((check) => check.annotations)]
-    .map((annotations) => annotations?.["description"])
-    .findLast(Predicate.isString);
+  (SchemaAST.isSuspend(ast)
+    ? ownOrSuspendedDescriptionOf(ast.thunk())
+    : undefined);
 
 const describedThroughAbsence = (ast: SchemaAST.AST): string | undefined =>
-  ownOrSuspendedDescriptionOf(ast) ?? ownOrSuspendedDescriptionOf(withoutOptionalAbsence(ast));
+  ownOrSuspendedDescriptionOf(ast) ??
+  ownOrSuspendedDescriptionOf(withoutOptionalAbsence(ast));
 
 const describedByElement = (ast: SchemaAST.AST): string | undefined => {
   const array = unsuspended(withoutOptionalAbsence(ast));
@@ -382,25 +465,28 @@ const describedByElement = (ast: SchemaAST.AST): string | undefined => {
 const fieldParams = (
   encoded: SchemaAST.Objects,
   input: SchemaAST.AST,
-  positional: ReadonlyArray<string>,
-  aliases: Readonly<Record<string, string | undefined>>,
-): ReadonlyArray<FieldParam> => {
+  positional: readonly string[],
+  aliases: Readonly<Record<string, string | undefined>>
+): readonly FieldParam[] => {
   const plainEncodedFields = namedFieldsOf(SchemaAST.toEncoded(input));
 
   const declaredFieldsUnlessRenamed = namedFieldsOf(
-    isTransformedAsWhole(input) ? encoded : SchemaAST.toType(input),
+    isTransformedAsWhole(input) ? encoded : SchemaAST.toType(input)
   );
 
   return encoded.propertySignatures.map((property) => {
     const field = String(property.name);
     const declaredField = declaredFieldsUnlessRenamed.get(property.name);
-    const kind = positional.includes(field) ? Param.argumentKind : Param.flagKind;
+
+    const kind = positional.includes(field)
+      ? Param.argumentKind
+      : Param.flagKind;
 
     const { param, repeats, hint } = fieldParam(
       kind,
       kebab(field),
       property.type,
-      plainEncodedFields.get(property.name),
+      plainEncodedFields.get(property.name)
     );
 
     const alias = kind === Param.flagKind ? aliases[field] : undefined;
@@ -410,13 +496,16 @@ const fieldParams = (
     const description =
       describedThroughAbsence(documented) ??
       describedThroughAbsence(property.type) ??
-      (repeats ? (describedByElement(documented) ?? describedByElement(property.type)) : undefined);
+      (repeats
+        ? (describedByElement(documented) ?? describedByElement(property.type))
+        : undefined);
 
     const help = withHint(description, hint);
 
     return {
       field,
-      param: help === undefined ? aliased : Param.withDescription(aliased, help),
+      param:
+        help === undefined ? aliased : Param.withDescription(aliased, help),
       optional: SchemaAST.isOptional(property.type),
       repeats,
       hint,
@@ -426,9 +515,9 @@ const fieldParams = (
 };
 
 const positionalOrder = (
-  params: ReadonlyArray<FieldParam>,
-  positional: ReadonlyArray<string>,
-): ReadonlyArray<FieldParam> => {
+  params: readonly FieldParam[],
+  positional: readonly string[]
+): readonly FieldParam[] => {
   assertDistinct("positional argument", positional, (field) => field, {
     fix: "list each field once",
   });
@@ -438,7 +527,7 @@ const positionalOrder = (
 
     if (found === undefined) {
       throw new Error(
-        `Not an input field: ${field} (positional names fields of the action's input)`,
+        `Not an input field: ${field} (positional names fields of the action's input)`
       );
     }
 
@@ -446,20 +535,26 @@ const positionalOrder = (
   });
 
   const firstOptional = ordered.findIndex((param) => param.optional);
-  const late = ordered.slice(firstOptional === -1 ? ordered.length : firstOptional);
+
+  const late = ordered.slice(
+    firstOptional === -1 ? ordered.length : firstOptional
+  );
+
   const misplaced = late.find((param) => !param.optional);
 
   if (misplaced !== undefined) {
     throw new Error(
-      `Required positional argument after an optional one: ${misplaced.field} (list every required field first)`,
+      `Required positional argument after an optional one: ${misplaced.field} (list every required field first)`
     );
   }
 
-  const repeatedBeforeLast = ordered.slice(0, -1).find((param) => param.repeats);
+  const repeatedBeforeLast = ordered
+    .slice(0, -1)
+    .find((param) => param.repeats);
 
   if (repeatedBeforeLast !== undefined) {
     throw new Error(
-      `Repeated positional argument before another one: ${repeatedBeforeLast.field} (list an array field last)`,
+      `Repeated positional argument before another one: ${repeatedBeforeLast.field} (list an array field last)`
     );
   }
 
@@ -470,7 +565,7 @@ const wholeInputFlag = (encoded: SchemaAST.AST) =>
   Flag.String("input").pipe(
     Flag.withSchema(jsonOfAcceptedKindOrText(encoded)),
     Flag.withDescription("Whole action input as JSON; omitted, {}"),
-    Flag.optional,
+    Flag.optional
   );
 
 type Render = Options<Action.Any>["render"];
@@ -478,14 +573,20 @@ type Render = Options<Action.Any>["render"];
 const printedOutput = (
   action: Action.Any,
   value: ErasedValue,
-  render: Render,
+  render: Render
 ): Effect.Effect<Option.Option<string>> =>
   Effect.map(
-    Effect.orDie(Schema.encodeEffect(Schema.toCodecJson(action.success))(value)),
+    Effect.orDie(
+      Schema.encodeEffect(Schema.toCodecJson(action.success))(value)
+    ),
     (encoded) =>
       render === undefined && SchemaAST.isVoid(action.success.ast)
         ? Option.none()
-        : Option.some(render === undefined ? JSON.stringify(encoded, null, 2) : render(value)),
+        : Option.some(
+            render === undefined
+              ? JSON.stringify(encoded, null, 2)
+              : render(value)
+          )
   );
 
 /**
@@ -514,17 +615,31 @@ export class UserError<out E = unknown> extends CliError.UserError {
   }
 }
 
-const ownStringProperty = <E>(error: E, key: "_tag" | "message"): string | undefined => {
-  if (!Predicate.hasProperty(error, key)) return undefined;
+const ownStringProperty = (
+  error: unknown,
+  key: "_tag" | "message"
+): string | undefined => {
+  if (!Predicate.hasProperty(error, key)) {
+    return undefined;
+  }
 
   const value = error[key];
 
   return Predicate.isString(value) ? value : undefined;
 };
 
-const describedWithoutFields = <E>(error: E, seen: Set<unknown> = new Set()): string => {
-  const name = ownStringProperty(error, "_tag") ?? (error instanceof Error ? error.name : "Error");
-  const message = Predicate.isString(error) ? error : (ownStringProperty(error, "message") ?? "");
+const describedWithoutFields = (
+  error: unknown,
+  seen = new Set<unknown>()
+): string => {
+  const name =
+    ownStringProperty(error, "_tag") ??
+    (error instanceof Error ? error.name : "Error");
+
+  const message = Predicate.isString(error)
+    ? error
+    : (ownStringProperty(error, "message") ?? "");
+
   const named = message === "" ? name : `${name}: ${message}`;
 
   seen.add(error);
@@ -538,7 +653,7 @@ const describedWithoutFields = <E>(error: E, seen: Set<unknown> = new Set()): st
 
 const userErrorOf = (errors: Action.Errors) => {
   const encode = Schema.encodeUnknownEffect(
-    Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors))),
+    Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors)))
   );
 
   // Why: The schema that holds every field of the failure, before the first that accepts it. A
@@ -548,7 +663,9 @@ const userErrorOf = (errors: Action.Errors) => {
     encode(error, { onExcessProperty: "error" }).pipe(
       Effect.catch(() => encode(error)),
       Effect.orElseSucceed(() => describedWithoutFields(error)),
-      Effect.flatMap((userMessage) => Effect.fail(new UserError<E>({ cause: error, userMessage }))),
+      Effect.flatMap((userMessage) =>
+        Effect.fail(new UserError<E>({ cause: error, userMessage }))
+      )
     );
 };
 
@@ -561,15 +678,18 @@ export const failingAsDerived = (errors: Action.Errors) => {
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     Effect.catchIf(
       self,
-      (error): error is Exclude<E, CliError.CliError> => !CliError.isCliError(error),
-      failure,
+      (error): error is Exclude<E, CliError.CliError> =>
+        !CliError.isCliError(error),
+      failure
     );
 };
 
 const unreadableStdinField = (field: string, message: string) =>
   new InvalidInput({ message, issues: [{ path: [field], message }] });
 
-const fieldValueFromText = (field: SchemaAST.AST): ((text: string) => Schema.Json) => {
+const fieldValueFromText = (
+  field: SchemaAST.AST
+): ((text: string) => Schema.Json) => {
   const encoded = unsuspended(field);
 
   return takesTextAsIs(encoded)
@@ -584,17 +704,18 @@ const stdinTextOf = (field: string) =>
     // derived command, with `stdin` or without.
     const stdio = yield* Effect.serviceOption(Stdio.Stdio);
 
-    if (Option.isNone(stdio))
+    if (Option.isNone(stdio)) {
       return yield* Effect.die(
         new Error(
-          "Stdio is not provided (provide NodeServices.layer, or Stdio.layerTest in a test)",
-        ),
+          "Stdio is not provided (provide NodeServices.layer, or Stdio.layerTest in a test)"
+        )
       );
+    }
 
     if (yield* stdio.value.stdinIsTerminal) {
       return yield* unreadableStdinField(
         field,
-        `${field} is read from stdin, which is a terminal: pipe it in`,
+        `${field} is read from stdin, which is a terminal: pipe it in`
       );
     }
 
@@ -602,25 +723,29 @@ const stdinTextOf = (field: string) =>
       Stream.decodeText(),
       Stream.mkString,
       Effect.mapError((error) =>
-        unreadableStdinField(field, `stdin cannot be read: ${error.message}`),
-      ),
+        unreadableStdinField(field, `stdin cannot be read: ${error.message}`)
+      )
     );
 
-    return text.replace(/[\r\n]+$/, "");
+    return text.replace(/[\r\n]+$/u, "");
   });
 
 interface InputConfig<A extends Pick<Action.Any, "input">> {
-  readonly flags: Readonly<Record<string, Param.Param<Kind, Option.Option<unknown>>>>;
-  readonly positional: ReadonlyArray<FieldParam>;
-  readonly decode: (parsed: Parsed) => Effect.Effect<A["input"]["Type"], InvalidInput>;
+  readonly flags: Readonly<
+    Record<string, Param.Param<Kind, Option.Option<unknown>>>
+  >;
+  readonly positional: readonly FieldParam[];
+  readonly decode: (
+    parsed: Parsed
+  ) => Effect.Effect<A["input"]["Type"], InvalidInput>;
   readonly stdinHelp: string | undefined;
 }
 
 const inputConfig = <A extends Pick<Action.Any, "input">>(
   action: A,
-  positional: ReadonlyArray<string>,
+  positional: readonly string[],
   aliases: Readonly<Record<string, string | undefined>>,
-  stdin: string | undefined,
+  stdin: string | undefined
 ): InputConfig<A> => {
   const codec = Schema.toCodecJson(action.input);
   const encoded = unsuspended(SchemaAST.toEncoded(codec.ast));
@@ -628,25 +753,38 @@ const inputConfig = <A extends Pick<Action.Any, "input">>(
 
   const isStructOfNamedFields =
     SchemaAST.isObjects(encoded) &&
-    encoded.indexSignatures.every((signature) => SchemaAST.isNever(signature.type));
+    encoded.indexSignatures.every((signature) =>
+      SchemaAST.isNever(signature.type)
+    );
 
   if (isStructOfNamedFields) {
-    const params = fieldParams(encoded, unsuspended(action.input.ast), positional, aliases);
+    const params = fieldParams(
+      encoded,
+      unsuspended(action.input.ast),
+      positional,
+      aliases
+    );
 
     const fromStdin = Option.map(Option.fromUndefinedOr(stdin), (field) => {
-      const property = encoded.propertySignatures.find(({ name }) => name === field);
+      const property = encoded.propertySignatures.find(
+        ({ name }) => name === field
+      );
 
       if (property === undefined || SchemaAST.isOptional(property.type)) {
         throw new Error(
-          `Not a required input field: ${field} (stdin names a required field of the action's input)`,
+          `Not a required input field: ${field} (stdin names a required field of the action's input)`
         );
       }
 
       if (positional.includes(field)) {
-        throw new Error(`Both positional and stdin: ${field} (take it from one of them)`);
+        throw new Error(
+          `Both positional and stdin: ${field} (take it from one of them)`
+        );
       }
 
-      const description = params.find((param) => param.field === field)?.description;
+      const description = params.find(
+        (param) => param.field === field
+      )?.description;
 
       return {
         field,
@@ -658,20 +796,22 @@ const inputConfig = <A extends Pick<Action.Any, "input">>(
     const flagged = new Set(
       params
         .map(({ field }) => field)
-        .filter((field) => !positional.includes(field) && field !== stdin),
+        .filter((field) => !positional.includes(field) && field !== stdin)
     );
 
     const stray = Object.keys(aliases).find((field) => !flagged.has(field));
 
     if (stray !== undefined) {
       throw new Error(
-        `Not a flag's input field: ${stray} (aliases name fields read from flags, neither positional nor stdin)`,
+        `Not a flag's input field: ${stray} (aliases name fields read from flags, neither positional nor stdin)`
       );
     }
 
     return {
       flags: Object.fromEntries(
-        params.flatMap(({ field, param }) => (flagged.has(field) ? [[field, param]] : [])),
+        params.flatMap(({ field, param }) =>
+          flagged.has(field) ? [[field, param]] : []
+        )
       ),
       positional: positionalOrder(params, positional),
       decode: (parsed) =>
@@ -679,46 +819,59 @@ const inputConfig = <A extends Pick<Action.Any, "input">>(
           onNone: () => decode(Record.getSomes(parsed)),
           onSome: ({ field, value }) =>
             Effect.flatMap(stdinTextOf(field), (text) =>
-              decode({ ...Record.getSomes(parsed), [field]: value(text) }),
+              decode({ ...Record.getSomes(parsed), [field]: value(text) })
             ),
         }),
-      stdinHelp: Option.getOrUndefined(Option.map(fromStdin, ({ help }) => help)),
+      stdinHelp: Option.getOrUndefined(
+        Option.map(fromStdin, ({ help }) => help)
+      ),
     };
   }
 
-  const asWhole = "(the input is not a struct, so it is one --input flag: drop the option)";
+  const asWhole =
+    "(the input is not a struct, so it is one --input flag: drop the option)";
 
   if (positional.length > 0) {
     throw new Error(
-      `Positional arguments need named input fields: ${positional.join(", ")} ${asWhole}`,
+      `Positional arguments need named input fields: ${positional.join(", ")} ${asWhole}`
     );
   }
 
   if (Object.keys(aliases).length > 0) {
     throw new Error(
-      `Aliases need named input fields: ${Object.keys(aliases).join(", ")} ${asWhole}`,
+      `Aliases need named input fields: ${Object.keys(aliases).join(", ")} ${asWhole}`
     );
   }
 
-  if (stdin !== undefined) throw new Error(`Stdin needs named input fields: ${stdin} ${asWhole}`);
+  if (stdin !== undefined) {
+    throw new Error(`Stdin needs named input fields: ${stdin} ${asWhole}`);
+  }
 
   return {
     flags: { input: wholeInputFlag(encoded) },
     positional: [],
-    decode: (parsed) => decode(Option.getOrElse(parsed["input"] ?? Option.none(), () => ({}))),
+    decode: (parsed) =>
+      decode(Option.getOrElse(parsed["input"] ?? Option.none(), () => ({}))),
     stdinHelp: undefined,
   };
 };
 
 // Why: Effect CLI keys a field's flag and an alias alike, by bare name, and prints a
 // one-character alias as `-n`, every other flag as `--name`.
-const aliasFlag = (alias: string) => (alias.length === 1 ? `-${alias}` : `--${alias}`);
+const aliasFlag = (alias: string) =>
+  alias.length === 1 ? `-${alias}` : `--${alias}`;
 
 // Why: On stderr, so stdout holds the answer alone, as a pipe reads it.
-const progressLinesOf = (progress: Action.Any["progress"]): CallOptions<unknown>["onProgress"] => {
-  if (progress === undefined) return undefined;
+const progressLinesOf = (
+  progress: Action.Any["progress"]
+): CallOptions<unknown>["onProgress"] => {
+  if (progress === undefined) {
+    return undefined;
+  }
 
-  const encode = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(progress)));
+  const encode = Schema.encodeUnknownEffect(
+    Schema.fromJsonString(Schema.toCodecJson(progress))
+  );
 
   return (value) => Effect.flatMap(Effect.orDie(encode(value)), Console.log);
 };
@@ -730,23 +883,33 @@ const progressLinesOf = (progress: Action.Any["progress"]): CallOptions<unknown>
 const printedOf = (action: Action.Any) => {
   const element = elementOf(action.success);
 
-  if (element === undefined)
-    return (value: ErasedValue, render: Render, print: (line: string) => void) =>
+  if (element === undefined) {
+    return (
+      value: ErasedValue,
+      render: Render,
+      print: (line: string) => void
+    ) =>
       Effect.flatMap(
         printedOutput(action, value, render),
         Option.match({
           onNone: () => Effect.void,
-          onSome: (line) => Effect.sync(() => print(line)),
-        }),
+          onSome: (line) =>
+            Effect.sync(() => {
+              print(line);
+            }),
+        })
       );
+  }
 
-  const encode = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.toCodecJson(element)));
+  const encode = Schema.encodeUnknownEffect(
+    Schema.fromJsonString(Schema.toCodecJson(element))
+  );
 
   return (value: ErasedValue, render: Render, print: (line: string) => void) =>
     Stream.runForEach(elementsOf(Effect.succeed(value)), (each) =>
-      Effect.map(Effect.orDie(encode(each)), (json) =>
-        print(render === undefined ? json : render(each)),
-      ),
+      Effect.map(Effect.orDie(encode(each)), (json) => {
+        print(render === undefined ? json : render(each));
+      })
     );
 };
 
@@ -754,10 +917,10 @@ export const command = <A extends Action.Any, E, R>(
   action: A,
   execute: (
     input: A["input"]["Type"],
-    onProgress: CallOptions<unknown>["onProgress"],
+    onProgress: CallOptions<unknown>["onProgress"]
   ) => Effect.Effect<A["success"]["Type"], E, R>,
   options: Options<A> | undefined,
-  errors: Action.Errors,
+  errors: Action.Errors
 ) => {
   const name = options?.name ?? kebab(action.name);
   const description = options?.description ?? action.description;
@@ -767,7 +930,7 @@ export const command = <A extends Action.Any, E, R>(
     action,
     options?.positional ?? [],
     options?.aliases ?? {},
-    options?.stdin,
+    options?.stdin
   );
 
   const failing = failingAsDerived(errors);
@@ -776,11 +939,16 @@ export const command = <A extends Action.Any, E, R>(
     "flag",
     [
       ...Object.keys(flags).map(
-        (field) => [kebab(field), `--${kebab(field)}`, `field ${field}`] as const,
+        (field) =>
+          [kebab(field), `--${kebab(field)}`, `field ${field}`] as const
       ),
-      ...(render === undefined ? [] : [["json", "--json", "render's --json"] as const]),
+      ...(render === undefined
+        ? []
+        : [["json", "--json", "render's --json"] as const]),
       ...Object.entries(options?.aliases ?? {}).flatMap(([field, alias]) => {
-        const bare = Predicate.isString(alias) ? alias.replace(/^-+/, "") : undefined;
+        const bare = Predicate.isString(alias)
+          ? alias.replace(/^-+/u, "")
+          : undefined;
 
         return bare === undefined
           ? []
@@ -790,20 +958,25 @@ export const command = <A extends Action.Any, E, R>(
     ([key]) => key,
     {
       labelOf: ([, label]) => label,
-      claimantOf: ([, , claimant]) => claimant,
+      claimantOf: (claim) => claim[2],
       fix:
         render === undefined
           ? "rename the field or the alias"
           : "rename the field or the alias, or drop `render`",
-    },
+    }
   );
 
   const args = positional.map(({ param }) => param);
 
-  const parsedFields = (input: Parsed, values: ReadonlyArray<Option.Option<unknown>>) => ({
+  const parsedFields = (
+    input: Parsed,
+    values: ReadonlyArray<Option.Option<unknown>>
+  ) => ({
     ...input,
     ...Object.fromEntries(
-      positional.map(({ field }, index) => [field, values[index] ?? Option.none()] as const),
+      positional.map(
+        ({ field }, index) => [field, values[index] ?? Option.none()] as const
+      )
     ),
   });
 
@@ -814,29 +987,33 @@ export const command = <A extends Action.Any, E, R>(
     Console.consoleWith((stdout) =>
       decode(parsed).pipe(
         Effect.flatMap((input) => execute(input, progressLines)),
-        Effect.flatMap((value) => printed(value, rendered, (line) => stdout.log(line))),
+        Effect.flatMap((value) =>
+          printed(value, rendered, (line) => {
+            stdout.log(line);
+          })
+        ),
         failing,
-        withStderrConsole,
-      ),
+        withStderrConsole
+      )
     );
 
-  const command =
+  const projected =
     render === undefined
       ? Command.make(name, { input: flags, args }, ({ input, args: values }) =>
-          run(parsedFields(input, values), undefined),
+          run(parsedFields(input, values), undefined)
         )
       : Command.make(
           name,
           { input: flags, args, json: renderedCommandJsonFlag },
           ({ input, args: values, json }) =>
-            run(parsedFields(input, values), json ? undefined : render),
+            run(parsedFields(input, values), json ? undefined : render)
         );
 
   return stdinHelp === undefined
-    ? Command.withDescription(command, description)
-    : command.pipe(
+    ? Command.withDescription(projected, description)
+    : projected.pipe(
         Command.withDescription(`${description}\n\n${stdinHelp}`),
-        Command.withShortDescription(description),
+        Command.withShortDescription(description)
       );
 };
 
@@ -849,18 +1026,24 @@ export const watchCommand = <E, R>(
   event: Event.Any,
   watch: (
     input: ErasedValue,
-    cursor: string | undefined,
+    cursor: string | undefined
   ) => Stream.Stream<Event.Received<Event.Any>, E, R>,
-  errors: Action.Errors,
+  errors: Action.Errors
 ) => {
   const { flags, decode } = inputConfig(event, [], {}, undefined);
-  const encode = Schema.encodeEffect(Schema.fromJsonString(Schema.toCodecJson(ReceivedOf(event))));
+
+  const encode = Schema.encodeEffect(
+    Schema.fromJsonString(Schema.toCodecJson(ReceivedOf(event)))
+  );
+
   const failing = failingAsDerived([...errors, Event.SubscriptionError]);
 
   assertDistinct(
     "flag",
     [
-      ...Object.keys(flags).map((field) => [kebab(field), `field ${field}`] as const),
+      ...Object.keys(flags).map(
+        (field) => [kebab(field), `field ${field}`] as const
+      ),
       ["cursor", "--cursor"] as const,
     ],
     ([key]) => key,
@@ -868,27 +1051,36 @@ export const watchCommand = <E, R>(
       labelOf: ([key]) => `--${key}`,
       claimantOf: ([, claimant]) => claimant,
       fix: "rename the field",
-    },
+    }
   );
 
   const cursor = Flag.String("cursor").pipe(
-    Flag.withDescription("Where to resume: a cursor an earlier line carried; omitted, from now"),
-    Flag.optional,
+    Flag.withDescription(
+      "Where to resume: a cursor an earlier line carried; omitted, from now"
+    ),
+    Flag.optional
   );
 
-  return Command.make(event.name, { input: flags, cursor }, ({ input, cursor: from }) =>
-    Console.consoleWith((stdout) =>
-      decode(input).pipe(
-        Effect.flatMap((value) =>
-          Stream.runForEach(watch(value, Option.getOrUndefined(from)), (received) =>
-            Effect.flatMap(Effect.orDie(encode(received)), (line) =>
-              Effect.sync(() => stdout.log(line)),
-            ),
+  return Command.make(
+    event.name,
+    { input: flags, cursor },
+    ({ input, cursor: from }) =>
+      Console.consoleWith((stdout) =>
+        decode(input).pipe(
+          Effect.flatMap((value) =>
+            Stream.runForEach(
+              watch(value, Option.getOrUndefined(from)),
+              (received) =>
+                Effect.flatMap(Effect.orDie(encode(received)), (line) =>
+                  Effect.sync(() => {
+                    stdout.log(line);
+                  })
+                )
+            )
           ),
-        ),
-        failing,
-        withStderrConsole,
-      ),
-    ),
+          failing,
+          withStderrConsole
+        )
+      )
   ).pipe(Command.withDescription(event.description));
 };

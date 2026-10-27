@@ -1,5 +1,6 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Effect } from "effect";
+
 import { CurrentUser, scopes } from "./Identity.js";
 
 // The one rule, read from each contract: a read needs the read scope, anything else the write
@@ -11,6 +12,9 @@ export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
   const user = yield* CurrentUser;
 
   if (!user.scopes.includes(scope)) {
-    return yield* new Action.Forbidden({ message: `Requires ${scope}.`, scopes: [scope] });
+    return yield* new Action.Forbidden({
+      message: `Requires ${scope}.`,
+      scopes: [scope],
+    });
   }
 });

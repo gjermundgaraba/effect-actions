@@ -1,11 +1,15 @@
-import { Effect, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect, Schema } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 
 export const Status = Schema.Literals(["open", "closed"]);
 
-export const Comment = Schema.Struct({ author: Schema.String, text: Schema.String });
+export const Comment = Schema.Struct({
+  author: Schema.String,
+  text: Schema.String,
+});
 
 export const Issue = Schema.Struct({
   id: Schema.String,
@@ -20,16 +24,18 @@ export type Issue = typeof Issue.Type;
 
 // A declared error is part of the contract: every client decodes it as this class, and its
 // status is what HTTP answers with. Without `httpApiStatus` it would be a 422.
-export class IssueNotFound extends Schema.TaggedError<IssueNotFound>()(
-  "IssueNotFound",
-  { id: Schema.String },
-  { httpApiStatus: 404 },
-) {}
+export class IssueNotFound extends Schema.TaggedError<
+  IssueNotFound,
+  { readonly brand: unique symbol }
+>()("IssueNotFound", { id: Schema.String }, { httpApiStatus: 404 }) {}
 
-export class RateLimited extends Schema.TaggedError<RateLimited>()(
+export class RateLimited extends Schema.TaggedError<
+  RateLimited,
+  { readonly brand: unique symbol }
+>()(
   "RateLimited",
   { retryAfterSeconds: Schema.Finite },
-  { httpApiStatus: 429 },
+  { httpApiStatus: 429 }
 ) {}
 
 // A shared error list: what any write to an existing issue may fail with. Each such action
@@ -52,20 +58,23 @@ const change = {
 const Text = Schema.String.check(Schema.isMinLength(1));
 
 export const ListIssues = Action.make("listIssues", {
-  description: "List your workspace's issues, newest first, without bodies or comments.",
+  description:
+    "List your workspace's issues, newest first, without bodies or comments.",
   input: {
     // Optional: left out, issues of every status are listed.
     status: Schema.optional(Status),
     // Defaulted: left out, the handler receives 20. A field description is also the help text
     // of its CLI flag and the description in the tool's schema.
-    limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })).pipe(
+    limit: Schema.Int.check(
+      Schema.isBetween({ minimum: 1, maximum: 100 })
+    ).pipe(
       Schema.annotate({ description: "How many issues to list, at most 100." }),
-      Schema.withDecodingDefaultKey(Effect.succeed(20)),
+      Schema.withDecodingDefaultKey(Effect.succeed(20))
     ),
   },
   success: {
     issues: Schema.Array(
-      Schema.Struct({ id: Schema.String, title: Schema.String, status: Status }),
+      Schema.Struct({ id: Schema.String, title: Schema.String, status: Status })
     ),
   },
   readOnly: true,
@@ -83,7 +92,11 @@ export const GetIssue = Action.make("getIssue", {
 
 export const CreateIssue = Action.make("createIssue", {
   description: "File an issue in your workspace.",
-  input: { title: Text, body: Schema.String, assignee: Schema.optional(Schema.String) },
+  input: {
+    title: Text,
+    body: Schema.String,
+    assignee: Schema.optional(Schema.String),
+  },
   success: Issue,
   error: RateLimited,
   readOnly: false,
@@ -109,7 +122,13 @@ export const CloseIssue = Action.make("closeIssue", {
   mcp: { ...change.mcp, idempotentHint: true },
 });
 
-export const Issues = [ListIssues, GetIssue, CreateIssue, CommentOnIssue, CloseIssue] as const;
+export const Issues = [
+  ListIssues,
+  GetIssue,
+  CreateIssue,
+  CommentOnIssue,
+  CloseIssue,
+] as const;
 
 // An action answering a stream: its handler returns a `Stream` of issues, and every client's
 // call returns one, each issue read as the server sends it. It reports how far it is, too.
@@ -117,14 +136,21 @@ export const Issues = [ListIssues, GetIssue, CreateIssue, CommentOnIssue, CloseI
 // result, so it would collect the whole export before answering, every issue at once in a
 // model's context. HTTP, RPC and the CLI serve it.
 export const ExportIssues = Action.make("exportIssues", {
-  description: "Stream every issue of your workspace, oldest first, with bodies and comments.",
+  description:
+    "Stream every issue of your workspace, oldest first, with bodies and comments.",
   input: {
-    status: Schema.optional(Status).annotate({ description: "Only issues of this status." }),
+    status: Schema.optional(Status).annotate({
+      description: "Only issues of this status.",
+    }),
   },
   success: Action.Stream(Issue),
   progress: {
-    exported: Schema.Finite.annotate({ description: "How many issues were sent." }),
-    total: Schema.Finite.annotate({ description: "How many the export holds." }),
+    exported: Schema.Finite.annotate({
+      description: "How many issues were sent.",
+    }),
+    total: Schema.Finite.annotate({
+      description: "How many the export holds.",
+    }),
   },
   // An export is costly, so it is limited too: refused before its first issue, a 429.
   error: RateLimited,
@@ -148,9 +174,12 @@ export const IssueChange = Schema.Struct({
 export const IssueChanged = Event.make("issue.changed", {
   description: "An issue in your workspace was filed, commented on or closed.",
   input: {
-    status: Schema.optional(Status).annotate({ description: "Only issues now of this status." }),
+    status: Schema.optional(Status).annotate({
+      description: "Only issues now of this status.",
+    }),
     comments: Schema.optional(Schema.Boolean).annotate({
-      description: "Whether a change carries the comment it added; omitted, it does.",
+      description:
+        "Whether a change carries the comment it added; omitted, it does.",
     }),
   },
   payload: IssueChange,

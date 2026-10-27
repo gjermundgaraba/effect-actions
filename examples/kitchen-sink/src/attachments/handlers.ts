@@ -1,5 +1,6 @@
-import { Effect } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Effect } from "effect";
+
 import { authorize } from "../identity/authorize.js";
 import { CurrentMember } from "../identity/Identity.js";
 import { writeLimit } from "../issues/write-limit.js";
@@ -27,11 +28,15 @@ export const attachments = Action.implement(
             });
           }
 
-          return yield* limited((member) => store.add(member.workspace, issue, name, image));
+          return yield* limited((member) =>
+            store.add(member.workspace, issue, name, image)
+          );
         }),
       getAttachment: ({ id }) =>
-        Effect.flatMap(CurrentMember, (member) => store.get(member.workspace, id)),
+        Effect.flatMap(CurrentMember, (member) =>
+          store.get(member.workspace, id)
+        ),
     };
   }),
-  { authorize },
+  { authorize }
 );

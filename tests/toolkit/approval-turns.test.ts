@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Ref, Schema, Stream } from "effect";
-import { AiError, Chat, LanguageModel, type Response } from "effect/ai";
+import { AiError, Chat, LanguageModel } from "effect/ai";
+import type { Response } from "effect/ai";
+
 import * as Action from "../../src/contract/Action.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 
@@ -12,9 +14,12 @@ const Erase = Action.make("erase", {
   success: Schema.String,
 });
 
-const erasing = (id: string) => ({ type: "tool-call", id, name: "erase", params: { id } }) as const;
+const erasing = (id: string) =>
+  ({ type: "tool-call", id, name: "erase", params: { id } }) as const;
 
-const conversation = (replies: ReadonlyArray<ReadonlyArray<Response.PartEncoded> | "fails">) =>
+const conversation = (
+  replies: ReadonlyArray<readonly Response.PartEncoded[] | "fails">
+) =>
   Effect.gen(function* () {
     const erased: string[] = [];
     const requests = yield* Ref.make(0);
@@ -23,10 +28,10 @@ const conversation = (replies: ReadonlyArray<ReadonlyArray<Response.PartEncoded>
       Action.implement(Erase, ({ id }) =>
         Effect.as(
           Effect.sync(() => erased.push(id)),
-          `erased ${id}`,
-        ),
+          `erased ${id}`
+        )
       ),
-      { needsApproval: () => true },
+      { needsApproval: () => true }
     );
 
     const model = yield* LanguageModel.make({
@@ -41,11 +46,13 @@ const conversation = (replies: ReadonlyArray<ReadonlyArray<Response.PartEncoded>
                   AiError.make({
                     module: "approval-turns",
                     method: "generateText",
-                    reason: new AiError.UnknownError({ description: "The model is down" }),
-                  }),
+                    reason: new AiError.UnknownError({
+                      description: "The model is down",
+                    }),
+                  })
                 )
               : Effect.succeed([...reply]);
-          },
+          }
         ),
       streamText: () => Stream.empty,
     });
@@ -55,7 +62,10 @@ const conversation = (replies: ReadonlyArray<ReadonlyArray<Response.PartEncoded>
     const turn = (prompt: Parameters<typeof chat.generateText>[0]["prompt"]) =>
       chat
         .generateText({ prompt, toolkit })
-        .pipe(Effect.provideService(LanguageModel.LanguageModel, model), Effect.provide(layer));
+        .pipe(
+          Effect.provideService(LanguageModel.LanguageModel, model),
+          Effect.provide(layer)
+        );
 
     const answering = (...answers: ReadonlyArray<readonly [string, boolean]>) =>
       turn([
@@ -72,9 +82,11 @@ const conversation = (replies: ReadonlyArray<ReadonlyArray<Response.PartEncoded>
     return { erased, requests, chat, turn, answering };
   });
 
-const approvalIdsOf = (response: { readonly content: ReadonlyArray<Response.AnyPart> }) =>
+const approvalIdsOf = (response: {
+  readonly content: readonly Response.AnyPart[];
+}) =>
   response.content.flatMap((part) =>
-    part.type === "tool-approval-request" ? [part.approvalId] : [],
+    part.type === "tool-approval-request" ? [part.approvalId] : []
   );
 
 describe("turns of a conversation that asks approval", () => {
@@ -91,24 +103,28 @@ describe("turns of a conversation that asks approval", () => {
         const asked = yield* turn("erase a and b");
         const [first = "", second = ""] = approvalIdsOf(asked);
 
-        expect(asked.toolResults).toEqual([]);
-        expect(erased).toEqual([]);
+        expect(asked.toolResults).toStrictEqual([]);
+        expect(erased).toStrictEqual([]);
 
         const one = yield* answering([first, true]);
 
-        expect(erased).toEqual(["a"]);
+        expect(erased).toStrictEqual(["a"]);
         expect(yield* Ref.get(requests)).toBe(2);
         expect(one.text).toBe("one erased");
-        expect(one.toolResults.map(({ result }) => result)).toEqual(["erased a"]);
-        expect(one.toolCalls).toEqual([]);
-        expect(approvalIdsOf(one)).toEqual([]);
+        expect(one.toolResults.map(({ result }) => result)).toStrictEqual([
+          "erased a",
+        ]);
+        expect(one.toolCalls).toStrictEqual([]);
+        expect(approvalIdsOf(one)).toStrictEqual([]);
 
         const two = yield* answering([second, true]);
 
-        expect(erased).toEqual(["a", "b"]);
+        expect(erased).toStrictEqual(["a", "b"]);
         expect(yield* Ref.get(requests)).toBe(3);
-        expect(two.toolResults.map(({ result }) => result)).toEqual(["erased b"]);
-      }),
+        expect(two.toolResults.map(({ result }) => result)).toStrictEqual([
+          "erased b",
+        ]);
+      })
   );
 
   it.effect(
@@ -128,12 +144,12 @@ describe("turns of a conversation that asks approval", () => {
         const failed = yield* Effect.flip(answering([first, true]));
 
         expect(failed).toBeInstanceOf(AiError.AiError);
-        expect(erased).toEqual(["a"]);
-        expect(yield* Ref.get(chat.history)).toEqual(recorded);
+        expect(erased).toStrictEqual(["a"]);
+        expect(yield* Ref.get(chat.history)).toStrictEqual(recorded);
 
         yield* answering([first, true]);
 
-        expect(erased).toEqual(["a", "a"]);
-      }),
+        expect(erased).toStrictEqual(["a", "a"]);
+      })
   );
 });

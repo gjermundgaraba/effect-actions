@@ -31,8 +31,7 @@ jobs:
       - run: vp update -r effect@^4 @effect/platform-node@^4 @effect/vitest@^4
       - name: Show the Effect releases under test
         run: >-
-          node -e 'for (const p of ["effect", "@effect/platform-node", "@effect/vitest"])
-          console.log(p, JSON.parse(require("fs").readFileSync(`node_modules/${p}/package.json`, "utf8")).version)'
+          node -e 'for (const p of ["effect", "@effect/platform-node", "@effect/vitest"]) console.log(p, JSON.parse(require("fs").readFileSync(`node_modules/${p}/package.json`, "utf8")).version)'
       - run: vp check
       - run: vp test
       - run: vp run test:package

@@ -1,0 +1,931 @@
+import { expectTypeOf } from "@effect/vitest";
+import { Context, Effect, Schema } from "effect";
+import { CliError, Command } from "effect/cli";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import type { HttpClientError } from "effect/http";
+
+import * as ActionCli from "../../src/cli/ActionCli.js";
+import * as Action from "../../src/contract/Action.js";
+import * as ActionHttp from "../../src/http/ActionHttp.js";
+import type { SignInRequired } from "../support/credentials.js";
+import { authorizing, Credentials } from "../support/credentials.js";
+
+class Build extends Context.Service<Build, string>()("cli-types/Build") {}
+
+class OneRequest extends Context.Service<OneRequest, string>()(
+  "cli-types/OneRequest"
+) {}
+
+class TwoRequest extends Context.Service<TwoRequest, number>()(
+  "cli-types/TwoRequest"
+) {}
+
+class Authorizing extends Context.Service<Authorizing, string>()(
+  "cli-types/Authorizing"
+) {}
+
+const One = Action.make("one", {
+  description: "One",
+  readOnly: false,
+  caller: Action.Anyone,
+  input: Schema.Struct({ value: Schema.String }),
+  success: Schema.String,
+});
+
+const Two = Action.make("two", {
+  description: "Two",
+  readOnly: false,
+  caller: Action.Anyone,
+  input: Schema.Struct({ value: Schema.Finite }),
+  success: Schema.Finite,
+});
+
+const local = Action.implement(
+  [One, Two],
+  Effect.map(Build, (prefix) => ({
+    one: ({ value }: { value: string }) =>
+      Effect.map(OneRequest, (request) => `${prefix}${request}${value}`),
+    two: ({ value }: { value: number }) =>
+      Effect.map(TwoRequest, (request) => value + request),
+  }))
+);
+
+const localOne = ActionCli.command(local, One, {
+  render: (output) => output.toUpperCase(),
+});
+
+const localTwo = ActionCli.command(local, Two, {
+  render: (output) => output.toFixed(0),
+});
+
+const localGroup = ActionCli.make(local, { name: "local" });
+
+expectTypeOf<Command.Services<typeof localOne>>().toEqualTypeOf<
+  Build | OneRequest
+>();
+
+expectTypeOf<Command.Services<typeof localTwo>>().toEqualTypeOf<
+  Build | TwoRequest
+>();
+
+expectTypeOf<Command.Services<typeof localGroup>>().toEqualTypeOf<
+  Build | OneRequest | TwoRequest
+>();
+
+class Caller extends Context.Service<Caller, string>()("cli-types/Caller") {}
+
+const Guarded = Action.make("guarded", {
+  description: "Guarded",
+  readOnly: false,
+  caller: Caller,
+  input: Schema.Struct({ value: Schema.String }),
+  success: Schema.String,
+});
+
+const refuse = Effect.fn(function* (action: Action.Any) {
+  yield* Authorizing;
+
+  if (!action.readOnly) {
+    return yield* new Action.Unauthenticated();
+  }
+
+  return yield* new Action.Forbidden();
+});
+
+const refusing = ActionCli.command(
+  Action.implement(Guarded, ({ value }) => Effect.succeed(value), {
+    authorize: refuse,
+  }),
+  Guarded,
+  { render: (output) => output.toUpperCase() }
+);
+
+expectTypeOf<Command.Error<typeof localOne>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn>
+>();
+
+expectTypeOf<Command.Error<typeof localGroup>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn>
+>();
+
+expectTypeOf<Command.Error<typeof refusing>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn>
+>();
+
+expectTypeOf<Command.Services<typeof refusing>>().toEqualTypeOf<
+  Authorizing | Caller
+>();
+
+const operated = refusing.pipe(Command.provideSync(Caller, "operator"));
+
+expectTypeOf<Command.Services<typeof operated>>().toEqualTypeOf<Authorizing>();
+
+const Plain = Action.make("plain", {
+  description: "Plain",
+  readOnly: false,
+  caller: Action.Anyone,
+  success: Schema.String,
+});
+
+const noService = Action.implement(Plain, () => Effect.succeed("plain"));
+
+const plainCommand = ActionCli.command(noService, Plain);
+
+const plainGroup = ActionCli.make(noService, { name: "plain" });
+
+expectTypeOf<Command.Services<typeof plainCommand>>().toBeNever();
+
+expectTypeOf<Command.Services<typeof plainGroup>>().toBeNever();
+
+const implementedInsideList = ActionCli.make(
+  [local, Action.implement(Plain, () => Effect.succeed("plain"))],
+  { name: "inline" }
+);
+
+expectTypeOf<Command.Services<typeof implementedInsideList>>().toEqualTypeOf<
+  Build | OneRequest | TwoRequest
+>();
+
+const Scoped = Action.make("scoped", {
+  description: "Scoped",
+  readOnly: false,
+  caller: Action.Anyone,
+  success: Schema.String,
+});
+
+const scoped = Action.implement(
+  [Scoped],
+  Effect.acquireRelease(
+    Effect.succeed({ scoped: () => Effect.succeed("scoped") }),
+    () => Effect.void
+  )
+);
+
+const scopedCommand = ActionCli.command(scoped, Scoped);
+
+const scopedGroup = ActionCli.make(scoped, { name: "scoped" });
+
+expectTypeOf<Command.Services<typeof scopedCommand>>().toBeNever();
+
+expectTypeOf<Command.Services<typeof scopedGroup>>().toBeNever();
+
+const ScopedHandler = Action.make("scopedHandler", {
+  description: "Scoped handler",
+  readOnly: false,
+  caller: Action.Anyone,
+  success: Schema.String,
+});
+
+const scopedHandler = Action.implement(ScopedHandler, () =>
+  Effect.acquireRelease(Effect.succeed("scoped handler"), () => Effect.void)
+);
+
+const scopedHandlerCommand = ActionCli.command(scopedHandler, ScopedHandler);
+
+const scopedHandlerGroup = ActionCli.make(scopedHandler, {
+  name: "scoped-handler",
+});
+
+expectTypeOf<Command.Services<typeof scopedHandlerCommand>>().toBeNever();
+
+expectTypeOf<Command.Services<typeof scopedHandlerGroup>>().toBeNever();
+
+// @ts-expect-error -- A local command selects an action implemented by `apps`.
+ActionCli.command(local, Plain);
+
+// @ts-expect-error -- The renderer receives the selected action's exact success value.
+ActionCli.command(local, Two, { render: (output: string) => output });
+
+class Domain extends Schema.TaggedError<
+  Domain,
+  { readonly brand: unique symbol }
+>()("Domain", {}) {}
+
+const RemoteAction = Action.make("remote", {
+  description: "Remote",
+  readOnly: false,
+  caller: Action.Anyone,
+  input: Schema.Struct({ value: Schema.String }),
+  success: Schema.String,
+  error: [Domain],
+});
+
+const Count = Action.make("count", {
+  description: "Count",
+  readOnly: false,
+  caller: Action.Anyone,
+  success: Schema.Finite,
+});
+
+const Other = Action.make("other", {
+  description: "Other",
+  readOnly: false,
+  caller: Action.Anyone,
+  success: Schema.String,
+});
+
+const http = ActionHttp.make([RemoteAction, Count, Other]);
+
+const remote = ActionCli.remoteCommand(http, RemoteAction, {
+  render: (output) => output.toUpperCase(),
+});
+
+const remoteCount = ActionCli.remoteCommand(http, Count, {
+  render: (output) => output.toFixed(0),
+});
+
+const remoteGroup = ActionCli.remote(http, { name: "remote" });
+
+expectTypeOf<
+  Command.Services<typeof remote>
+>().toEqualTypeOf<HttpClient.HttpClient>();
+
+expectTypeOf<
+  Command.Services<typeof remoteGroup>
+>().toEqualTypeOf<HttpClient.HttpClient>();
+
+void remoteCount;
+
+// @ts-expect-error -- A remote command selects an action of the binding.
+ActionCli.remoteCommand(http, Plain);
+
+const connection = ActionHttp.client(http, {
+  baseUrl: "http://api.example.com",
+  transformClient: HttpClient.mapRequest(
+    HttpClientRequest.bearerToken("secret")
+  ),
+});
+
+const connected = ActionCli.remoteCommand(http, RemoteAction, {
+  client: connection,
+  render: String,
+});
+
+const connectedGroup = ActionCli.remote(http, {
+  name: "remote",
+  client: connection,
+});
+
+expectTypeOf<
+  Command.Services<typeof connected>
+>().toEqualTypeOf<HttpClient.HttpClient>();
+
+expectTypeOf<
+  Command.Services<typeof connectedGroup>
+>().toEqualTypeOf<HttpClient.HttpClient>();
+
+class OwnFailure extends Schema.TaggedError<
+  OwnFailure,
+  { readonly brand: unique symbol }
+>()("OwnFailure", {}) {}
+
+const own = Command.make("own", {}, () =>
+  Effect.andThen(OneRequest, () => Effect.fail(new OwnFailure()))
+);
+
+const grouped = Command.make("grouped", {}, () => Effect.asVoid(TwoRequest));
+
+const remoteWithOwn = ActionCli.remote(http, {
+  name: "remote",
+  subcommands: [own, { group: "Others", commands: [grouped] }],
+});
+
+expectTypeOf<Command.Services<typeof remoteWithOwn>>().toEqualTypeOf<
+  HttpClient.HttpClient | OneRequest | TwoRequest
+>();
+
+expectTypeOf<
+  Extract<Command.Error<typeof remoteWithOwn>, OwnFailure>
+>().toEqualTypeOf<OwnFailure>();
+
+expectTypeOf<
+  Extract<Command.Error<typeof remoteGroup>, OwnFailure>
+>().toEqualTypeOf<never>();
+
+type RemoteFailure =
+  | Domain
+  | Action.BuiltIn
+  | HttpClientError.HttpClientError
+  | Schema.SchemaError;
+
+const signedIn = ActionCli.remoteCommand(http, RemoteAction, {
+  client: ActionHttp.client(http, { transformClient: authorizing }),
+  render: String,
+});
+
+expectTypeOf<Command.Error<typeof signedIn>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure | SignInRequired>
+>();
+
+expectTypeOf<Command.Services<typeof signedIn>>().toEqualTypeOf<
+  HttpClient.HttpClient | Credentials
+>();
+
+expectTypeOf<Command.Error<typeof connected>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure>
+>();
+
+expectTypeOf<Command.Error<typeof remoteGroup>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure>
+>();
+
+const signedInGroup = ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  client: ActionHttp.client(http, { transformClient: authorizing }),
+  subcommands: [own],
+});
+
+expectTypeOf<Command.Error<typeof signedInGroup>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure | SignInRequired> | OwnFailure
+>();
+
+expectTypeOf<Command.Services<typeof signedInGroup>>().toEqualTypeOf<
+  HttpClient.HttpClient | Credentials | OneRequest
+>();
+
+// @ts-expect-error -- A run provides what the client's methods require.
+const unprovided: Command.Command<
+  string,
+  Record<string, never>,
+  Record<string, never>,
+  unknown,
+  HttpClient.HttpClient
+> = signedInGroup;
+
+void unprovided;
+
+const configured = ActionCli.remote(http, {
+  name: "remote",
+  client: Effect.flatMap(Credentials, ({ token }) =>
+    Effect.flatMap(token, (bearer) =>
+      ActionHttp.client(http, {
+        transformClient: HttpClient.mapRequest(
+          HttpClientRequest.bearerToken(bearer)
+        ),
+      })
+    )
+  ),
+});
+
+expectTypeOf<Command.Error<typeof configured>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure | SignInRequired>
+>();
+
+expectTypeOf<Command.Services<typeof configured>>().toEqualTypeOf<
+  HttpClient.HttpClient | Credentials
+>();
+
+const fetched = ActionCli.remoteCommand(http, RemoteAction, {
+  client: Effect.succeed(ActionHttp.fetchClient(http)),
+});
+
+expectTypeOf<Command.Error<typeof fetched>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure>
+>();
+
+expectTypeOf<Command.Services<typeof fetched>>().toBeNever();
+
+declare const maybeFetched:
+  | Effect.Effect<ActionHttp.Client<typeof http>>
+  | undefined;
+
+const maybeGroup = ActionCli.remote(http, {
+  name: "remote",
+  client: maybeFetched,
+});
+
+expectTypeOf<
+  Command.Services<typeof maybeGroup>
+>().toEqualTypeOf<HttpClient.HttpClient>();
+
+const maybeCommand = ActionCli.remoteCommand(http, RemoteAction, {
+  client: maybeFetched,
+});
+
+expectTypeOf<
+  Command.Services<typeof maybeCommand>
+>().toEqualTypeOf<HttpClient.HttpClient>();
+
+const prompting = ActionCli.remote(http, {
+  name: "remote",
+  client: Effect.andThen(
+    Effect.fail(
+      new CliError.UserError({ cause: undefined, userMessage: "Sign in first" })
+    ),
+    ActionHttp.client(http)
+  ),
+});
+
+expectTypeOf<Command.Error<typeof prompting>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure> | CliError.UserError
+>();
+
+const localWithOwn = ActionCli.make(local, {
+  name: "local",
+  actions: [One],
+  subcommands: [grouped],
+});
+
+expectTypeOf<Command.Services<typeof localWithOwn>>().toEqualTypeOf<
+  Build | OneRequest | TwoRequest
+>();
+
+const erased: ActionCli.Options<typeof RemoteAction> = {
+  name: "remote",
+  subcommands: [own],
+};
+
+const erasedGroup = ActionCli.remote(http, erased);
+
+expectTypeOf<
+  Command.Services<typeof erasedGroup>
+>().toEqualTypeOf<HttpClient.HttpClient>();
+
+const satisfied = {
+  name: "remote",
+  subcommands: [own],
+} satisfies ActionCli.Options<typeof RemoteAction>;
+
+const satisfiedGroup = ActionCli.remote(http, satisfied);
+
+expectTypeOf<Command.Services<typeof satisfiedGroup>>().toEqualTypeOf<
+  HttpClient.HttpClient | OneRequest
+>();
+
+expectTypeOf<
+  Extract<Command.Error<typeof satisfiedGroup>, OwnFailure>
+>().toEqualTypeOf<OwnFailure>();
+
+const localFailing = ActionCli.make(local, {
+  name: "local",
+  subcommands: [own],
+});
+
+expectTypeOf<
+  Extract<Command.Error<typeof localFailing>, OwnFailure>
+>().toEqualTypeOf<OwnFailure>();
+
+// @ts-expect-error -- A subcommand of your own is an Effect CLI command.
+ActionCli.remote(http, { name: "remote", subcommands: [One] });
+
+const remoteOptions: ActionCli.Options<typeof RemoteAction | typeof Count> = {
+  name: "remote",
+  commands: { remote: { render: String } },
+};
+
+const fromAnnotatedOptions = ActionCli.remote(http, {
+  ...remoteOptions,
+  client: connection,
+});
+
+expectTypeOf<
+  Command.Services<typeof fromAnnotatedOptions>
+>().toEqualTypeOf<HttpClient.HttpClient>();
+
+export const unconnected: ActionCli.Options<typeof RemoteAction> = {
+  name: "x",
+  // @ts-expect-error -- `make`'s options take no client.
+  client: connection,
+};
+
+// @ts-expect-error -- A local command runs in process and connects nowhere.
+ActionCli.command(local, One, { client: connection });
+
+// @ts-expect-error -- So does a local aggregate.
+ActionCli.make(local, { name: "local", client: connection });
+
+const optionsBuiltApart = { client: connection };
+
+// @ts-expect-error -- A local command's options from a variable.
+ActionCli.command(local, One, optionsBuiltApart);
+
+const misspelled = { ...optionsBuiltApart, rendr: String };
+
+// @ts-expect-error -- No option `rendr` on a remote command, from a variable either.
+ActionCli.remoteCommand(http, RemoteAction, misspelled);
+
+// @ts-expect-error -- A binding is a remote command's, never a local one's.
+ActionCli.command(http, RemoteAction);
+
+// @ts-expect-error -- Nor a local aggregate's.
+ActionCli.make(http, { name: "remote" });
+
+// @ts-expect-error -- Implementations are a local command's.
+ActionCli.remoteCommand(local, One);
+
+// @ts-expect-error -- And a local aggregate's.
+ActionCli.remote(local, { name: "local" });
+
+declare const remotely: boolean;
+
+// @ts-expect-error -- Neither implementations nor a binding.
+ActionCli.make(remotely ? http : local, { name: "either" });
+
+const either = remotely
+  ? ActionCli.remote(http, { name: "either" })
+  : ActionCli.make(local, { name: "either" });
+
+expectTypeOf<Command.Services<typeof either>>().toEqualTypeOf<
+  HttpClient.HttpClient | Build | OneRequest | TwoRequest
+>();
+
+ActionCli.remote(http, {
+  name: "remote",
+  // @ts-expect-error -- A subcommand's options are its syntax alone.
+  commands: { remote: { client: connection } },
+});
+
+class Gone extends Schema.TaggedError<
+  Gone,
+  { readonly brand: unique symbol }
+>()("Gone", {}, { httpApiStatus: 410 }) {}
+
+const Erring = Action.make("erring", {
+  description: "Declares an error",
+  readOnly: true,
+  caller: Action.Anyone,
+  success: Schema.String,
+  error: [Gone],
+});
+
+const Bound = ActionHttp.make([Plain, Erring]);
+
+type Transport = HttpClientError.HttpClientError | Schema.SchemaError;
+
+const boundPlain = ActionCli.remoteCommand(Bound, Plain);
+
+const boundErring = ActionCli.remoteCommand(Bound, Erring);
+
+const boundAll = ActionCli.remote(Bound, { name: "remote" });
+
+declare const ownCommand: Effect.Effect<
+  void,
+  Gone | Transport | CliError.UserError,
+  Build
+>;
+
+expectTypeOf(
+  ownCommand.pipe(ActionCli.toUserError([Plain, Erring]))
+).toEqualTypeOf<
+  Effect.Effect<
+    void,
+    ActionCli.UserError<Gone | Transport> | CliError.UserError,
+    Build
+  >
+>();
+
+expectTypeOf(ownCommand.pipe(ActionCli.toUserError(Bound))).toEqualTypeOf<
+  Effect.Effect<
+    void,
+    ActionCli.UserError<Gone | Transport> | CliError.UserError,
+    Build
+  >
+>();
+
+expectTypeOf<Command.Error<typeof boundPlain>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn | Transport>
+>();
+
+expectTypeOf<Command.Error<typeof boundErring>>().toEqualTypeOf<
+  ActionCli.UserError<Gone | Action.BuiltIn | Transport>
+>();
+
+expectTypeOf<Command.Error<typeof boundAll>>().toEqualTypeOf<
+  ActionCli.UserError<Gone | Action.BuiltIn | Transport>
+>();
+
+class Throttled extends Schema.TaggedError<
+  Throttled,
+  { readonly brand: unique symbol }
+>()("Throttled", {}, { httpApiStatus: 429 }) {}
+
+const Throttling = ActionHttp.make([Plain, Erring], { error: [Throttled] });
+
+const throttledPlain = ActionCli.remoteCommand(Throttling, Plain);
+
+const throttledAll = ActionCli.remote(Throttling, { name: "remote" });
+
+expectTypeOf<Command.Error<typeof throttledPlain>>().toEqualTypeOf<
+  ActionCli.UserError<Throttled | Action.BuiltIn | Transport>
+>();
+
+expectTypeOf<Command.Error<typeof throttledAll>>().toEqualTypeOf<
+  ActionCli.UserError<Throttled | Gone | Action.BuiltIn | Transport>
+>();
+
+// @ts-expect-error -- An aggregate remote command needs a name.
+ActionCli.remote(Bound, {});
+
+const commandOptions: ActionCli.CommandOptions<typeof RemoteAction> = {
+  render: (output) => output,
+};
+
+const makeOptions: ActionCli.Options<typeof RemoteAction> = {
+  name: "r",
+  commands: {
+    remote: { positional: ["value"], render: (output) => output.toUpperCase() },
+  },
+};
+
+ActionCli.remoteCommand(http, RemoteAction, commandOptions);
+
+ActionCli.remote(http, makeOptions);
+
+ActionCli.remote(http, {
+  name: "r",
+  commands: { count: { render: (output) => output.toFixed(0) } },
+});
+
+ActionCli.make(local, {
+  name: "l",
+  commands: { one: { positional: ["value"] } },
+});
+
+ActionCli.remote(http, {
+  name: "r",
+  // @ts-expect-error -- A subcommand's renderer receives its own action's success.
+  commands: { count: { render: (output: string) => output } },
+});
+
+// @ts-expect-error -- No action is named so.
+ActionCli.remote(http, { name: "r", commands: { missing: {} } });
+
+ActionCli.command(local, One, { positional: ["value"] });
+
+ActionCli.remoteCommand(http, RemoteAction, { positional: ["value"] });
+
+// @ts-expect-error -- Not a field of the input.
+ActionCli.command(local, One, { positional: ["other"] });
+
+const ScalarInput = Action.make("scalarInput", {
+  description: "A scalar input",
+  readOnly: true,
+  caller: Action.Anyone,
+  input: Schema.String,
+});
+
+const UnionInput = Action.make("unionInput", {
+  description: "A union input",
+  readOnly: true,
+  caller: Action.Anyone,
+  input: Schema.Union([
+    Schema.Struct({ a: Schema.String }),
+    Schema.Struct({ a: Schema.Finite }),
+  ]),
+});
+
+const inputKinds = Action.implement([ScalarInput, UnionInput, Other], {
+  scalarInput: () => Effect.void,
+  unionInput: () => Effect.void,
+  other: () => Effect.succeed("other"),
+});
+
+expectTypeOf<
+  ActionCli.CommandOptions<typeof ScalarInput>["positional"]
+>().toEqualTypeOf<readonly never[] | undefined>();
+
+expectTypeOf<
+  ActionCli.CommandOptions<typeof Other>["positional"]
+>().toEqualTypeOf<readonly never[] | undefined>();
+
+// @ts-expect-error -- A union input has no positional fields, even shared ones.
+ActionCli.command(inputKinds, UnionInput, { positional: ["a"] });
+
+const Store = Action.make("store", {
+  description: "Store a secret",
+  readOnly: false,
+  caller: Action.Anyone,
+  input: {
+    value: Schema.String,
+    kind: Schema.Literals(["gh", "claude"]),
+    count: Schema.Finite,
+    when: Schema.Date,
+    note: Schema.optional(Schema.String),
+  },
+});
+
+expectTypeOf<ActionCli.CommandOptions<typeof Store>["stdin"]>().toEqualTypeOf<
+  "value" | "kind" | "count" | "when" | undefined
+>();
+
+expectTypeOf<
+  ActionCli.CommandOptions<typeof ScalarInput>["stdin"]
+>().toEqualTypeOf<undefined>();
+
+const stored = Action.implement(Store, () => Effect.void);
+
+ActionCli.command(stored, Store, { stdin: "value" });
+
+ActionCli.make(stored, { name: "s", commands: { store: { stdin: "value" } } });
+
+// @ts-expect-error -- An aggregate's command reads only a required field from stdin.
+ActionCli.make(stored, { name: "s", commands: { store: { stdin: "note" } } });
+
+// @ts-expect-error -- An optional field is not read from stdin.
+ActionCli.command(stored, Store, { stdin: "note" });
+
+class Unavailable extends Schema.TaggedError<
+  Unavailable,
+  { readonly brand: unique symbol }
+>()("Unavailable", {}) {}
+
+const Declares = Action.make("declares", {
+  description: "Declares an error",
+  readOnly: true,
+  caller: Action.Anyone,
+  success: Schema.String,
+  error: [Domain],
+});
+
+const declares = ActionCli.command(
+  Action.implement(
+    Declares,
+    Effect.as(Effect.fail(new Unavailable()), () => Effect.succeed("declared"))
+  ),
+  Declares
+);
+
+expectTypeOf<Command.Error<typeof declares>>().toEqualTypeOf<
+  ActionCli.UserError<Domain | Unavailable | Action.BuiltIn>
+>();
+
+Command.runWith(declares, { version: "0" })([]).pipe(
+  Effect.catchTag("UserError", (error) => {
+    expectTypeOf<typeof error.cause>().toBeUnknown();
+
+    return error.cause instanceof Domain
+      ? Effect.succeed(error.cause._tag)
+      : Effect.fail(error);
+  })
+);
+
+export const recoveredByReasonTag = Command.runWith(declares, { version: "0" })(
+  []
+).pipe(
+  Effect.catchReason("UserError", "Domain", (domain) => {
+    expectTypeOf(domain).toEqualTypeOf<Domain>();
+
+    return Effect.succeed(domain._tag);
+  })
+);
+
+Command.runWith(declares, { version: "0" })([]).pipe(
+  // @ts-expect-error -- A tag no failure of the command has.
+  Effect.catchReason("UserError", "Other", Effect.succeed)
+);
+
+const matched = (error: Command.Error<typeof declares>) =>
+  // @ts-expect-error -- `UserError` is a type only: `instanceof` would leave its cause `any`.
+  error instanceof ActionCli.UserError;
+
+void matched;
+
+const localListed = ActionCli.make(local, {
+  name: "local",
+  actions: [Two],
+  commands: { two: { render: (output) => output.toFixed(0) } },
+});
+
+expectTypeOf<Command.Services<typeof localListed>>().toEqualTypeOf<
+  Build | TwoRequest
+>();
+
+const boundListed = ActionCli.remote(Bound, {
+  name: "remote",
+  actions: [Plain],
+});
+
+expectTypeOf<Command.Error<typeof boundListed>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn | Transport>
+>();
+
+// @ts-expect-error -- An action of neither.
+ActionCli.make(local, { name: "local", actions: [Plain] });
+
+const unbuilt = Action.implement(
+  One,
+  Effect.as(
+    Effect.fail(
+      new CliError.UserError({ cause: undefined, userMessage: "Set TOKEN" })
+    ),
+    () => Effect.succeed("")
+  )
+);
+
+const unbuiltOne = ActionCli.command(unbuilt, One);
+
+expectTypeOf<Command.Error<typeof unbuiltOne>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn> | CliError.UserError
+>();
+
+const unbuiltGroup = ActionCli.make(unbuilt, { name: "local" });
+
+expectTypeOf<Command.Error<typeof unbuiltGroup>>().toEqualTypeOf<
+  ActionCli.UserError<Action.BuiltIn> | CliError.UserError
+>();
+
+const remoteOnly = Effect.succeed({
+  remote: ({ value }: { value: string }) =>
+    value === "" ? Effect.fail(new Domain()) : Effect.succeed(value),
+});
+
+const remoteGroupOnly = ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  client: remoteOnly,
+});
+
+expectTypeOf<Command.Error<typeof remoteGroupOnly>>().toEqualTypeOf<
+  ActionCli.UserError<Domain>
+>();
+
+expectTypeOf<Command.Services<typeof remoteGroupOnly>>().toBeNever();
+
+// @ts-expect-error -- Without `actions`, the client holds every action of the binding.
+ActionCli.remote(http, { name: "remote", client: remoteOnly });
+
+const countOnly = Effect.succeed({ count: () => Effect.succeed(1) });
+
+ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  // @ts-expect-error -- The client holds each listed action.
+  client: countOnly,
+});
+
+const remoteCommandOnly = ActionCli.remoteCommand(http, RemoteAction, {
+  client: remoteOnly,
+});
+
+expectTypeOf<Command.Error<typeof remoteCommandOnly>>().toEqualTypeOf<
+  ActionCli.UserError<Domain>
+>();
+
+// @ts-expect-error -- A remote command's client holds its action.
+ActionCli.remoteCommand(http, RemoteAction, { client: countOnly });
+
+const overridden = Effect.map(ActionHttp.client(http), (full) => ({
+  ...full,
+  count: () => Effect.fail(new OwnFailure()),
+}));
+
+const overriddenRemote = ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  client: overridden,
+});
+
+expectTypeOf<Command.Error<typeof overriddenRemote>>().toEqualTypeOf<
+  ActionCli.UserError<RemoteFailure>
+>();
+
+const numberInput = Effect.succeed({
+  remote: (value: number) => Effect.succeed(String(value)),
+});
+
+ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  // @ts-expect-error -- A listed action's method takes its input.
+  client: numberInput,
+});
+
+const renderedRemoteOnly = ActionCli.remote(http, {
+  name: "remote",
+  actions: [RemoteAction],
+  client: remoteOnly,
+  commands: { remote: { render: (value) => value } },
+});
+
+expectTypeOf<Command.Error<typeof renderedRemoteOnly>>().toEqualTypeOf<
+  ActionCli.UserError<Domain>
+>();
+
+const renderedRemoteCommandOnly = ActionCli.remoteCommand(http, RemoteAction, {
+  client: remoteOnly,
+  render: (value) => value,
+});
+
+expectTypeOf<Command.Error<typeof renderedRemoteCommandOnly>>().toEqualTypeOf<
+  ActionCli.UserError<Domain>
+>();
+
+ActionCli.remote(http, {
+  name: "remote",
+  // @ts-expect-error -- An unannotated `render` narrows nothing without `actions`.
+  client: remoteOnly,
+  commands: { remote: { render: (value) => value } },
+});
+
+declare const mayList: {
+  readonly actions?: ReadonlyArray<typeof RemoteAction>;
+};
+
+ActionCli.remote(http, {
+  name: "remote",
+  ...mayList,
+  // @ts-expect-error -- Nor does `actions` that may be absent, which selects every action.
+  client: remoteOnly,
+  commands: { remote: { render: (value) => value } },
+});

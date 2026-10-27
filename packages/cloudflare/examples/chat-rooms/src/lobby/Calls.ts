@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup } from "effect/rpc";
+
 import { RoomPreview } from "./Lobby.js";
 
 // The lobby's own API, over its stub: a room tells it its latest activity, and the Worker reads
@@ -9,5 +10,5 @@ import { RoomPreview } from "./Lobby.js";
 // `tellLobby`, in lobby-stubs.ts, which sends it.
 export const LobbyCalls = RpcGroup.make(
   Rpc.make("roomChanged", { payload: RoomPreview }),
-  Rpc.make("previews", { success: Schema.Array(RoomPreview) }),
+  Rpc.make("previews", { success: Schema.Array(RoomPreview) })
 );

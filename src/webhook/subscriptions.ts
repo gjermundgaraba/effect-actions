@@ -19,28 +19,37 @@ import {
   Stream,
   Struct,
 } from "effect";
-import { type HttpClient, HttpRouter, HttpServerRequest } from "effect/http";
+import { HttpRouter, HttpServerRequest } from "effect/http";
+import type { HttpClient } from "effect/http";
 import type { Dns } from "effect/net";
+
 import type { SigningSecret } from "../contract/callback.js";
 import type { Keyed, Named } from "../contract/caller.js";
-import * as Event from "../contract/Event.js";
 import { canonicalInput } from "../contract/canonical.js";
-import { sentError } from "../contract/codes.js";
 import type { Codec } from "../contract/codec.js";
+import { sentError } from "../contract/codes.js";
+import * as Event from "../contract/Event.js";
 import { encodeUntaggedOf } from "../contract/occurrence.js";
-import { type Pushed, pushed, refusalIn } from "../contract/push.js";
+import { pushed, refusalIn } from "../contract/push.js";
+import type { Pushed } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
 import type { DeliveryStatus, Subscribed } from "../contract/subscribe.js";
-import type { Subscribing, Subscription, WebhookFeed, Webhooks } from "../contract/webhooks.js";
+import type {
+  Subscribing,
+  Subscription,
+  WebhookFeed,
+  Webhooks,
+} from "../contract/webhooks.js";
 import { checkedHost } from "./address.js";
-import { type AttemptFailed, attempt, challenged } from "./attempt.js";
+import { attempt, challenged } from "./attempt.js";
+import type { AttemptFailed } from "./attempt.js";
 import { randomToken, subscriptionId } from "./signing.js";
 import type { Storage, Stored } from "./stored.js";
 
 /** How `Webhook.layer` grants, verifies and retries, each with its default resolved. */
 export interface Policy {
   readonly maxTtl: Duration.Duration;
-  readonly allowedCallbacks: ReadonlyArray<URL>;
+  readonly allowedCallbacks: readonly URL[];
   readonly retryFor: Duration.Duration;
   /** Where subscriptions are kept past a restart, with `persist`. */
   readonly storage: Storage | undefined;
@@ -58,7 +67,9 @@ const encoder = new TextEncoder();
 
 // Why: A `terminated` envelope ends a subscription no refresh can resume, so it is tried a few
 // times, a second apart and doubling, and then given up, never suspended.
-const lastAttempts = Schedule.exponential(Duration.seconds(1)).pipe(Schedule.upTo({ times: 3 }));
+const lastAttempts = Schedule.exponential(Duration.seconds(1)).pipe(
+  Schedule.upTo({ times: 3 })
+);
 
 /** One webhook subscription as the layer holds it, its mutable parts replaced by a refresh. */
 interface Held {
@@ -89,22 +100,31 @@ const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 // Why: A refresh resumes a suspended subscription with a fresh `retryFor`, as its failures are
 // timed from `failedSince`; one still delivering keeps the budget its failures began.
 const active = (status: DeliveryStatus): DeliveryStatus =>
-  status.active ? status : { ...Struct.omit(status, ["failedSince"]), active: true };
+  status.active
+    ? status
+    : { ...Struct.omit(status, ["failedSince"]), active: true };
 
 // Why: Every grant expires, `ttlMs: null` granted `maxTtl` as an omitted one is, so a
 // subscription whose subscriber is gone, suspended or not, ends at its grant, never held for good.
 const grantOf = (ttlMs: number | null | undefined, policy: Policy) =>
-  Duration.clamp(ttlMs === null || ttlMs === undefined ? policy.maxTtl : Duration.millis(ttlMs), {
-    minimum: minTtl,
-    maximum: policy.maxTtl,
-  });
+  Duration.clamp(
+    ttlMs === null || ttlMs === undefined
+      ? policy.maxTtl
+      : Duration.millis(ttlMs),
+    {
+      minimum: minTtl,
+      maximum: policy.maxTtl,
+    }
+  );
 
-const trusted = (url: URL, prefixes: ReadonlyArray<URL>) =>
+const trusted = (url: URL, prefixes: readonly URL[]) =>
   prefixes.some(
     ({ origin, pathname }) =>
       url.origin === origin &&
       (url.pathname === pathname ||
-        url.pathname.startsWith(pathname.endsWith("/") ? pathname : `${pathname}/`)),
+        url.pathname.startsWith(
+          pathname.endsWith("/") ? pathname : `${pathname}/`
+        ))
   );
 
 // Why: A delivery runs as its subscriber, in the subscribe request's context, but not in the
@@ -115,13 +135,13 @@ const snapshotOf = Context.omit(
   Scope.Scope,
   HttpServerRequest.HttpServerRequest,
   HttpServerRequest.ParsedSearchParams,
-  HttpRouter.RouteContext,
+  HttpRouter.RouteContext
 );
 
 const unencoded = Effect.die(
   new Error(
-    "A webhook subscriber's identity did not encode by its authentication's schema (give Authentication.make a schema that encodes every identity its verifier provides)",
-  ),
+    "A webhook subscriber's identity did not encode by its authentication's schema (give Authentication.make a schema that encodes every identity its verifier provides)"
+  )
 );
 
 /**
@@ -129,9 +149,37 @@ const unencoded = Effect.die(
  * subscriber and POSTing what it reads to the callback, until it expires, is unsubscribed, or
  * is refused.
  */
+const confirmedAt = (cursor: string | null) =>
+  Effect.tap(Deferred.make<Confirmed, unknown>(), (confirmation) =>
+    Deferred.succeed(confirmation, { cursor, truncated: false })
+  );
+
+const failedCallback = (feed: WebhookFeed, category: Event.CallbackCategory) =>
+  Event.SubscriptionError.of(
+    feed.event.name,
+    new Event.CallbackFailed({ category })
+  );
+
+// Why: The callback is named by its URL as parsed, as it is kept: by the string given, a
+// spelling parsing changes, such as an explicit default port, names another subscription
+// once it is restored.
+const idOf = ({ feed, principal, input, delivery: { url } }: Subscription) =>
+  Effect.flatMap(canonicalInput(feed.event.input, input), (encoded) =>
+    subscriptionId(
+      `${principal}\u0000${url.href}\u0000${feed.event.name}\u0000${encoded}`
+    )
+  );
+
+const named = (feeds: readonly WebhookFeed[]) =>
+  feeds.map(({ event }) => `"${event.name}"`).join(", ");
+
 export const makeWebhooks = (
-  policy: Policy,
-): Effect.Effect<Webhooks["Service"], never, Scope.Scope | HttpClient.HttpClient> =>
+  policy: Policy
+): Effect.Effect<
+  Webhooks["Service"],
+  never,
+  Scope.Scope | HttpClient.HttpClient
+> =>
   Effect.gen(function* () {
     const built = yield* Effect.context<HttpClient.HttpClient>();
     const workers = yield* FiberMap.make<string>();
@@ -144,13 +192,14 @@ export const makeWebhooks = (
 
     const { storage } = policy;
 
-    const holds = (subscription: Held) => held.get(subscription.id) === subscription;
+    const holds = (subscription: Held) =>
+      held.get(subscription.id) === subscription;
 
     // Why: Only the subscription a layer holds now is kept: an old worker's last write, after its
     // end or its replacement's start, would bring back what was removed.
     const kept = (subscription: Held) =>
       Effect.sync(() => {
-        if (storage !== undefined && holds(subscription))
+        if (storage !== undefined && holds(subscription)) {
           storage.mark(subscription.id, {
             ...subscription.kept,
             url: subscription.url,
@@ -160,11 +209,17 @@ export const makeWebhooks = (
             watermark: subscription.watermark,
             status: subscription.status,
           });
+        }
       });
 
-    const dropped = (id: string) => Effect.sync(() => storage?.mark(id, undefined));
+    const dropped = (id: string) =>
+      Effect.sync(() => storage?.mark(id, undefined));
+
     const verified = new Map<string, number>();
-    const locks = yield* RcMap.make({ lookup: (_id: string) => Semaphore.make(1) });
+
+    const locks = yield* RcMap.make({
+      lookup: (_id: string) => Semaphore.make(1),
+    });
 
     const retryForMillis = Duration.toMillis(policy.retryFor);
 
@@ -175,7 +230,9 @@ export const makeWebhooks = (
     // gives up `retryFor` after the failures began.
     const failingFor = ({ status }: Held) =>
       Effect.map(Clock.currentTimeMillis, (now) =>
-        status.failedSince === undefined ? 0 : now - Date.parse(status.failedSince),
+        status.failedSince === undefined
+          ? 0
+          : now - Date.parse(status.failedSince)
       );
 
     const retrying = (subscription: Held) => ({
@@ -184,25 +241,38 @@ export const makeWebhooks = (
           Duration.clamp(Duration.millis(failing), {
             minimum: Duration.seconds(1),
             maximum: Duration.minutes(5),
-          }),
-        ),
+          })
+        )
       ),
       while: (failure: AttemptFailed) =>
         failure.final
           ? Effect.succeed(false)
-          : Effect.map(failingFor(subscription), (failing) => failing < retryForMillis),
+          : Effect.map(
+              failingFor(subscription),
+              (failing) => failing < retryForMillis
+            ),
     });
 
     const locked =
       (id: string) =>
       <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        Effect.scoped(Effect.flatMap(RcMap.get(locks, id), (lock) => lock.withPermits(1)(effect)));
+        Effect.scoped(
+          Effect.flatMap(RcMap.get(locks, id), (lock) =>
+            lock.withPermits(1)(effect)
+          )
+        );
 
     // Why: The subscriber's context replaces the one an effect runs in, where `provideContext`
     // would merge it: the worker is forked from the subscribe request, whose services it would
     // otherwise keep.
-    const asSubscriber = <A, E>(subscription: Held, effect: Effect.Effect<A, E, unknown>) =>
-      Effect.updateContext<A, E, unknown, never>(effect, () => subscription.context);
+    const asSubscriber = <A, E>(
+      subscription: Held,
+      effect: Effect.Effect<A, E, unknown>
+    ) =>
+      Effect.updateContext<A, E, unknown, never>(
+        effect,
+        () => subscription.context
+      );
 
     // Why: A callback `allowedCallbacks` trusts skips the address check too, as SEP-3415 lets a
     // server configured to allow it deliver to an address not globally reachable.
@@ -216,16 +286,17 @@ export const makeWebhooks = (
               webhookId,
               body,
               keys:
-                subscription.previous !== undefined && now < subscription.previous.until
+                subscription.previous !== undefined &&
+                now < subscription.previous.until
                   ? [subscription.secret.key, subscription.previous.key]
                   : [subscription.secret.key],
             },
             trusted(subscription.url, policy.allowedCallbacks)
               ? Effect.void
-              : checkedHost(subscription.url, policy.dns),
+              : checkedHost(subscription.url, policy.dns)
           ),
-          built,
-        ),
+          built
+        )
       );
 
     const recorded = (subscription: Held, failure: AttemptFailed | undefined) =>
@@ -247,7 +318,7 @@ export const makeWebhooks = (
             status.failedSince !== undefined
             ? Effect.void
             : kept(subscription);
-        }),
+        })
       );
 
     const suspended = (subscription: Held) =>
@@ -256,9 +327,9 @@ export const makeWebhooks = (
           Effect.sync(() => {
             subscription.status = { ...subscription.status, active: false };
           }),
-          kept(subscription),
+          kept(subscription)
         ),
-        Effect.never,
+        Effect.never
       );
 
     // Why: A delivery abandoned at a `410` or a `413` ends the failures its budget is timed from:
@@ -267,9 +338,11 @@ export const makeWebhooks = (
     const abandoned = (subscription: Held) =>
       Effect.andThen(
         Effect.sync(() => {
-          subscription.status = Struct.omit(subscription.status, ["failedSince"]);
+          subscription.status = Struct.omit(subscription.status, [
+            "failedSince",
+          ]);
         }),
-        kept(subscription),
+        kept(subscription)
       );
 
     // Why: Each delivery is retried apart, with a fresh timestamp and signature, backing off to 5
@@ -284,13 +357,19 @@ export const makeWebhooks = (
         Effect.matchEffect({
           onSuccess: () => Effect.as(recorded(subscription, undefined), true),
           onFailure: (failure) =>
-            failure.final ? Effect.as(abandoned(subscription), false) : suspended(subscription),
-        }),
+            failure.final
+              ? Effect.as(abandoned(subscription), false)
+              : suspended(subscription),
+        })
       );
 
     const gapped = (subscription: Held, cursor: string | null) =>
-      Effect.flatMap(randomToken(), (token) =>
-        delivered(subscription, `msg_gap_${token}`, JSON.stringify({ type: "gap", cursor })),
+      Effect.flatMap(randomToken, (token) =>
+        delivered(
+          subscription,
+          `msg_gap_${token}`,
+          JSON.stringify({ type: "gap", cursor })
+        )
       );
 
     // Why: Deliveries are serial, each acknowledged or abandoned before the next is read, so the
@@ -302,7 +381,7 @@ export const makeWebhooks = (
     const deliverTo = (
       subscription: Held,
       input: Event.Any["input"]["Type"],
-      confirmation: Deferred.Deferred<Confirmed, unknown>,
+      confirmation: Deferred.Deferred<Confirmed, unknown>
     ) => {
       const encode = encodeUntaggedOf(subscription.feed.event);
 
@@ -313,11 +392,14 @@ export const makeWebhooks = (
               Effect.sync(() => {
                 subscription.watermark = cursor;
               }),
-              kept(subscription),
+              kept(subscription)
             );
 
       const confirmed = (cursor: string | null, truncated: boolean) =>
-        Effect.andThen(moved(cursor), Deferred.succeed(confirmation, { cursor, truncated }));
+        Effect.andThen(
+          moved(cursor),
+          Deferred.succeed(confirmation, { cursor, truncated })
+        );
 
       const skipped = (cursor: string | null) =>
         Effect.andThen(gapped(subscription, cursor), moved(cursor));
@@ -325,25 +407,33 @@ export const makeWebhooks = (
       return (sent: Pushed): Effect.Effect<void, unknown> =>
         Match.valueTags(sent, {
           Checked: ({ cursor }) =>
-            Deferred.isDoneUnsafe(confirmation) ? moved(cursor) : confirmed(cursor, false),
+            Deferred.isDoneUnsafe(confirmation)
+              ? moved(cursor)
+              : confirmed(cursor, false),
           Gap: ({ cursor }) =>
-            Deferred.isDoneUnsafe(confirmation) ? skipped(cursor) : confirmed(cursor, true),
+            Deferred.isDoneUnsafe(confirmation)
+              ? skipped(cursor)
+              : confirmed(cursor, true),
           Occurrence: (occurrence) =>
             Effect.gen(function* () {
-              const body = yield* asSubscriber(subscription, subscription.feed.admit(input)).pipe(
-                Effect.andThen(Effect.map(encode(occurrence), JSON.stringify)),
+              const body = yield* asSubscriber(
+                subscription,
+                subscription.feed.admit(input)
+              ).pipe(
+                Effect.andThen(Effect.map(encode(occurrence), JSON.stringify))
               );
 
               if (encoder.encode(body).length > maxBody) {
                 yield* Effect.logWarning(
-                  `Webhook delivery of ${occurrence.eventId} abandoned: its body is over 256 KiB`,
+                  `Webhook delivery of ${occurrence.eventId} abandoned: its body is over 256 KiB`
                 );
 
                 return yield* skipped(occurrence.cursor);
               }
 
-              if (yield* delivered(subscription, occurrence.eventId, body))
+              if (yield* delivered(subscription, occurrence.eventId, body)) {
                 return yield* moved(occurrence.cursor);
+              }
 
               return yield* skipped(occurrence.cursor);
             }),
@@ -353,31 +443,36 @@ export const makeWebhooks = (
 
     const expired = ({ expiresAt }: Held): Effect.Effect<void> =>
       Effect.flatMap(Clock.currentTimeMillis, (now) =>
-        Effect.sleep(Duration.millis(Math.max(expiresAt - now, 0))),
+        Effect.sleep(Duration.millis(Math.max(expiresAt - now, 0)))
       );
 
     const terminated = (subscription: Held, cause: Cause.Cause<unknown>) => {
       const refusal = refusalIn(cause);
 
-      return refusal === undefined
-        ? Cause.hasInterruptsOnly(cause)
-          ? Effect.void
-          : reported(cause)
-        : Effect.flatMap(randomToken(), (token) =>
-            post(
-              subscription,
-              `msg_terminated_${token}`,
-              JSON.stringify({ type: "terminated", error: sentError(refusal) }),
-            ).pipe(
-              Effect.retry({ schedule: lastAttempts, while: (failure) => !failure.final }),
-              Effect.ignore,
-            ),
-          );
+      if (refusal === undefined) {
+        return Cause.hasInterruptsOnly(cause) ? Effect.void : reported(cause);
+      }
+
+      return Effect.flatMap(randomToken, (token) =>
+        post(
+          subscription,
+          `msg_terminated_${token}`,
+          JSON.stringify({ type: "terminated", error: sentError(refusal) })
+        ).pipe(
+          Effect.retry({
+            schedule: lastAttempts,
+            while: (failure) => !failure.final,
+          }),
+          Effect.ignore
+        )
+      );
     };
 
     const ended = (subscription: Held) =>
       Effect.sync(() => {
-        if (holds(subscription)) held.delete(subscription.id);
+        if (holds(subscription)) {
+          held.delete(subscription.id);
+        }
       });
 
     // Why: A worker that ends of itself, expired, refused or failed, is removed from the store;
@@ -386,7 +481,7 @@ export const makeWebhooks = (
       Effect.suspend(() =>
         holds(subscription)
           ? Effect.andThen(ended(subscription), dropped(subscription.id))
-          : Effect.void,
+          : Effect.void
       );
 
     // Why: The end is handled after the read, where it can be interrupted: a `terminated`
@@ -399,84 +494,93 @@ export const makeWebhooks = (
       subscription: Held,
       input: Event.Any["input"]["Type"],
       cursor: string | null,
-      confirmation: Deferred.Deferred<Confirmed, unknown>,
+      confirmation: Deferred.Deferred<Confirmed, unknown>
     ) =>
       Effect.raceFirst(
         pushed(
           (from) =>
-            Stream.unwrap(Effect.map(subscription.feed.stream(input), (read) => read(from))),
+            Stream.unwrap(
+              Effect.map(subscription.feed.stream(input), (read) => read(from))
+            ),
           cursor,
           deliverTo(subscription, input, confirmation),
-          { inOrder: true, resumesUnconfirmed: Deferred.isDoneUnsafe(confirmation) },
+          {
+            inOrder: true,
+            resumesUnconfirmed: Deferred.isDoneUnsafe(confirmation),
+          }
         ),
-        expired(subscription),
+        expired(subscription)
       ).pipe(
         Effect.exit,
         Effect.tap(() => finished(subscription)),
-        Effect.flatMap((exit) =>
-          Deferred.isDoneUnsafe(confirmation)
-            ? Exit.isFailure(exit)
+        Effect.flatMap((exit) => {
+          if (Deferred.isDoneUnsafe(confirmation)) {
+            return Exit.isFailure(exit)
               ? terminated(subscription, exit.cause)
-              : Effect.void
-            : Exit.isFailure(exit)
-              ? Deferred.failCause(confirmation, exit.cause)
-              : Deferred.succeed(confirmation, { cursor, truncated: false }),
-        ),
+              : Effect.void;
+          }
+
+          return Exit.isFailure(exit)
+            ? Deferred.failCause(confirmation, exit.cause)
+            : Deferred.succeed(confirmation, { cursor, truncated: false });
+        }),
         Effect.onInterrupt(() =>
-          Effect.andThen(ended(subscription), Deferred.interrupt(confirmation)),
+          Effect.andThen(ended(subscription), Deferred.interrupt(confirmation))
         ),
-        (worker) => asSubscriber(subscription, worker),
+        (worker) => asSubscriber(subscription, worker)
       );
-
-    const confirmedAt = (cursor: string | null) =>
-      Effect.tap(Deferred.make<Confirmed, unknown>(), (confirmation) =>
-        Deferred.succeed(confirmation, { cursor, truncated: false }),
-      );
-
-    const failedCallback = (feed: WebhookFeed, category: Event.CallbackCategory) =>
-      Event.SubscriptionError.of(feed.event.name, new Event.CallbackFailed({ category }));
 
     // Why: A verified callback stays verified for as long as a subscription to it is granted, as
     // SEP-3415's soft state; entries past it are dropped as another is kept.
     const remembered = ({ verifiedAs, expiresAt }: Held, now: number) =>
       Effect.sync(() => {
-        for (const [each, expiry] of verified) if (expiry <= now) verified.delete(each);
+        for (const [each, expiry] of verified) {
+          if (expiry <= now) {
+            verified.delete(each);
+          }
+        }
 
-        verified.set(verifiedAs, Math.max(expiresAt, verified.get(verifiedAs) ?? 0));
+        verified.set(
+          verifiedAs,
+          Math.max(expiresAt, verified.get(verifiedAs) ?? 0)
+        );
       });
 
-    const verify = ({ verifiedAs, url, id, secret, feed }: Held, now: number) => {
-      if ((verified.get(verifiedAs) ?? 0) > now || trusted(url, policy.allowedCallbacks))
+    const verify = (
+      { verifiedAs, url, id, secret, feed }: Held,
+      now: number
+    ) => {
+      if (
+        (verified.get(verifiedAs) ?? 0) > now ||
+        trusted(url, policy.allowedCallbacks)
+      ) {
         return Effect.void;
+      }
 
       return Effect.gen(function* () {
-        const challenge = yield* randomToken();
+        const challenge = yield* randomToken;
 
         const echoed = yield* Effect.provideContext(
           challenged(
             {
               url,
               subscriptionId: id,
-              webhookId: `msg_verification_${yield* randomToken()}`,
+              webhookId: `msg_verification_${yield* randomToken}`,
               body: JSON.stringify({ type: "verification", challenge }),
               keys: [secret.key],
             },
-            checkedHost(url, policy.dns),
+            checkedHost(url, policy.dns)
           ),
-          built,
-        ).pipe(Effect.mapError(({ category }) => failedCallback(feed, category)));
+          built
+        ).pipe(
+          Effect.mapError(({ category }) => failedCallback(feed, category))
+        );
 
-        if (echoed !== challenge) return yield* failedCallback(feed, "challenge_failed");
+        if (echoed !== challenge) {
+          return yield* failedCallback(feed, "challenge_failed");
+        }
       });
     };
-
-    // Why: The callback is named by its URL as parsed, as it is kept: by the string given, a
-    // spelling parsing changes, such as an explicit default port, names another subscription
-    // once it is restored.
-    const idOf = ({ feed, principal, input, delivery: { url } }: Subscription) =>
-      Effect.flatMap(canonicalInput(feed.event.input, input), (encoded) =>
-        subscriptionId(`${principal}\u0000${url.href}\u0000${feed.event.name}\u0000${encoded}`),
-      );
 
     // Why: A worker replacing another, at a refresh, a subscribe after expiry, an unsubscribe or a
     // refusal, starts by awaiting the old one's end, its `subscription` hook released, so the two
@@ -486,14 +590,17 @@ export const makeWebhooks = (
     const handover = (
       id: string,
       next: Held | undefined,
-      worker: Effect.Effect<void, unknown, unknown>,
+      worker: Effect.Effect<void, unknown, unknown>
     ) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
           const previous = yield* FiberMap.get(workers, id);
 
-          if (next === undefined) held.delete(id);
-          else held.set(id, next);
+          if (next === undefined) {
+            held.delete(id);
+          } else {
+            held.set(id, next);
+          }
 
           yield* FiberMap.run(
             workers,
@@ -501,9 +608,9 @@ export const makeWebhooks = (
             Option.match(previous, {
               onNone: () => worker,
               onSome: (fiber) => Effect.andThen(Fiber.await(fiber), worker),
-            }),
+            })
           );
-        }),
+        })
       );
 
     // Why: A refresh replaces the subscriber's snapshot, its identity included, so its worker
@@ -514,7 +621,7 @@ export const makeWebhooks = (
       subscription: Held,
       granted: Granted,
       input: Event.Any["input"]["Type"],
-      now: number,
+      now: number
     ) =>
       Effect.gen(function* () {
         const { status, watermark } = subscription;
@@ -535,7 +642,11 @@ export const makeWebhooks = (
 
         const confirmation = yield* confirmedAt(watermark);
 
-        yield* handover(renewed.id, renewed, workerOf(renewed, input, watermark, confirmation));
+        yield* handover(
+          renewed.id,
+          renewed,
+          workerOf(renewed, input, watermark, confirmation)
+        );
         yield* remembered(renewed, now);
         yield* kept(renewed);
 
@@ -561,17 +672,21 @@ export const makeWebhooks = (
       Effect.gen(function* () {
         const { schema } = keyed;
 
-        if (storage === undefined || schema === undefined) return { input: null, identity: null };
+        if (storage === undefined || schema === undefined) {
+          return { input: null, identity: null };
+        }
 
         const identity = yield* Effect.service(feed.event.caller);
 
         return {
           input: yield* Effect.orDie(
-            Schema.encodeUnknownEffect(Schema.toCodecJson(feed.event.input))(input),
+            Schema.encodeUnknownEffect(Schema.toCodecJson(feed.event.input))(
+              input
+            )
           ),
           identity: yield* Effect.catch(
             Schema.encodeUnknownEffect(Schema.toCodecJson(schema))(identity),
-            () => unencoded,
+            () => unencoded
           ),
         };
       });
@@ -582,39 +697,55 @@ export const makeWebhooks = (
     // it, held until then or its expiry. Its id is derived again, so one whose input's canonical
     // form or subscriber's principal changed moves to the id its subscriber's next refresh names.
     const restoredFrom = (
-      storage: Storage,
-      feeds: ReadonlyArray<WebhookFeed>,
+      store: Storage,
+      feeds: readonly WebhookFeed[],
       keyed: Named,
       schema: Codec,
-      id: string,
+      id: string
     ) =>
       Effect.gen(function* () {
-        const record = Option.getOrUndefined(yield* storage.get(id));
+        const record = Option.getOrUndefined(yield* store.get(id));
 
-        if (record === undefined) return yield* dropped(id);
+        if (record === undefined) {
+          return yield* dropped(id);
+        }
 
         const feed = feeds.find(({ event }) => event.name === record.event);
 
-        if (feed === undefined) return;
+        if (feed === undefined) {
+          return;
+        }
 
         const { expiresAt, url, secret } = record;
 
-        if (expiresAt <= (yield* Clock.currentTimeMillis)) return yield* dropped(id);
+        if (expiresAt <= (yield* Clock.currentTimeMillis)) {
+          return yield* dropped(id);
+        }
 
-        const input = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(feed.event.input))(
-          record.input,
-        );
+        const input = yield* Schema.decodeEffect(
+          Schema.toCodecJson(feed.event.input)
+        )(record.input);
 
-        const identity = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(schema))(
-          record.identity,
+        const identity = yield* Schema.decodeEffect(Schema.toCodecJson(schema))(
+          record.identity
         );
 
         const principal = keyed.principal(identity);
-        const current = yield* idOf({ feed, principal, input, delivery: { url } });
 
-        if (current !== id) yield* dropped(id);
+        const current = yield* idOf({
+          feed,
+          principal,
+          input,
+          delivery: { url },
+        });
 
-        if (held.has(current)) return;
+        if (current !== id) {
+          yield* dropped(id);
+        }
+
+        if (held.has(current)) {
+          return;
+        }
 
         const subscription = heldOf({
           id: current,
@@ -636,64 +767,73 @@ export const makeWebhooks = (
           subscription,
           record.status.active
             ? workerOf(subscription, input, record.watermark, confirmation)
-            : Effect.andThen(expired(subscription), finished(subscription)),
+            : Effect.andThen(expired(subscription), finished(subscription))
         );
 
-        if (current !== id) yield* kept(subscription);
+        if (current !== id) {
+          yield* kept(subscription);
+        }
       }).pipe(Effect.catchCause(reported));
-
-    const named = (feeds: ReadonlyArray<WebhookFeed>) =>
-      feeds.map(({ event }) => `"${event.name}"`).join(", ");
 
     // Why: Each surface serves its feeds as it builds, MCP and HTTP alike, so restoring is
     // idempotent: a subscription held already, or of an event no surface serves, is left.
-    const serve = (feeds: ReadonlyArray<WebhookFeed>, keyed: Named) =>
+    const serve = (feeds: readonly WebhookFeed[], keyed: Named) =>
       Effect.gen(function* () {
         const { schema } = keyed;
 
         const namesake = feeds.filter(
-          ({ event }) => served.has(event.name) && served.get(event.name)?.event !== event,
+          ({ event }) =>
+            served.has(event.name) && served.get(event.name)?.event !== event
         );
 
         // Why: A subscription is keyed by its event's name, as SEP-3415's key is, so one layer
         // holding two event types of one name would refresh one's subscription for the other.
-        if (namesake.length > 0)
+        if (namesake.length > 0) {
           return yield* Effect.die(
             new Error(
-              `Webhook.layer serves ${named(namesake)} for two event types of that name (give each event type a name of its own, or each surface its own Webhook.layer)`,
-            ),
+              `Webhook.layer serves ${named(namesake)} for two event types of that name (give each event type a name of its own, or each surface its own Webhook.layer)`
+            )
           );
+        }
 
-        if (storage !== undefined && feeds.length > 0 && schema === undefined)
+        if (storage !== undefined && feeds.length > 0 && schema === undefined) {
           return yield* Effect.die(
             new Error(
-              `Webhook.layer persists webhook subscriptions, but the authentication of ${named(feeds)} has no schema to keep a subscriber's identity by (give its Authentication.make a schema)`,
-            ),
+              `Webhook.layer persists webhook subscriptions, but the authentication of ${named(feeds)} has no schema to keep a subscriber's identity by (give its Authentication.make a schema)`
+            )
           );
+        }
 
         const twice = feeds.filter(
-          ({ event }) => served.has(event.name) && served.get(event.name)?.schema !== schema,
+          ({ event }) =>
+            served.has(event.name) && served.get(event.name)?.schema !== schema
         );
 
-        if (storage !== undefined && twice.length > 0)
+        if (storage !== undefined && twice.length > 0) {
           return yield* Effect.die(
             new Error(
-              `Webhook.layer persists webhook subscriptions, but ${named(twice)} is served by two authentications with different schemas (serve each event with one authentication, or give them one schema)`,
-            ),
+              `Webhook.layer persists webhook subscriptions, but ${named(twice)} is served by two authentications with different schemas (serve each event with one authentication, or give them one schema)`
+            )
           );
+        }
 
         for (const { event } of feeds) {
           served.set(event.name, { event, schema });
         }
 
-        if (storage === undefined || schema === undefined) return;
+        if (storage === undefined || schema === undefined) {
+          return;
+        }
 
-        for (const id of storage.ids())
+        for (const id of storage.ids()) {
           yield* locked(id)(
             Effect.suspend(() =>
-              held.has(id) ? Effect.void : restoredFrom(storage, feeds, keyed, schema, id),
-            ),
+              held.has(id)
+                ? Effect.void
+                : restoredFrom(storage, feeds, keyed, schema, id)
+            )
           );
+        }
       });
 
     // Why: A refresh refused ends the subscription it names, as SEP-3415 ends one whose
@@ -716,7 +856,9 @@ export const makeWebhooks = (
         return yield* Effect.failCause(cause);
       });
 
-    const subscribe = (subscribing: Subscribing): Effect.Effect<Subscribed, unknown, unknown> =>
+    const subscribe = (
+      subscribing: Subscribing
+    ): Effect.Effect<Subscribed, unknown, unknown> =>
       Effect.gen(function* () {
         const {
           feed,
@@ -731,13 +873,18 @@ export const makeWebhooks = (
 
         return yield* locked(id)(
           Effect.gen(function* () {
-            yield* Effect.catchCause(feed.admit(input), (cause) => refused(id, cause));
+            yield* Effect.catchCause(feed.admit(input), (cause) =>
+              refused(id, cause)
+            );
 
             const now = yield* Clock.currentTimeMillis;
 
             const granted: Granted = {
               secret,
-              context: Context.merge(built, snapshotOf(yield* Effect.context<unknown>())),
+              context: Context.merge(
+                built,
+                snapshotOf(yield* Effect.context<unknown>())
+              ),
               kept: yield* keptOf(subscribing),
               expiresAt: now + Duration.toMillis(grantOf(ttlMs, policy)),
             };
@@ -746,8 +893,9 @@ export const makeWebhooks = (
 
             // Why: A subscription lapses at its grant, whether or not its worker has ended yet,
             // so a refresh at that instant subscribes afresh from its cursor, as after a restart.
-            if (existing !== undefined && now < existing.expiresAt)
+            if (existing !== undefined && now < existing.expiresAt) {
               return yield* refreshed(existing, granted, input, now);
+            }
 
             const subscription = heldOf({
               ...granted,
@@ -764,7 +912,11 @@ export const makeWebhooks = (
 
             const confirmation = yield* Deferred.make<Confirmed, unknown>();
 
-            yield* handover(id, subscription, workerOf(subscription, input, cursor, confirmation));
+            yield* handover(
+              id,
+              subscription,
+              workerOf(subscription, input, cursor, confirmation)
+            );
 
             const started = yield* Deferred.await(confirmation);
 
@@ -776,29 +928,37 @@ export const makeWebhooks = (
               cursor: started.cursor,
               truncated: started.truncated,
             };
-          }),
+          })
         );
       });
 
     // Why: A kept subscription the layer does not hold, one that no longer decodes, is removed
     // by its subscriber's unsubscribe, the one request that names its id.
-    const unsubscribe = (subscription: Subscription): Effect.Effect<void, unknown, unknown> =>
+    const unsubscribe = (
+      subscription: Subscription
+    ): Effect.Effect<void, unknown, unknown> =>
       Effect.flatMap(idOf(subscription), (id) =>
         locked(id)(
           Effect.gen(function* () {
             const now = yield* Clock.currentTimeMillis;
 
-            if (now < (held.get(id)?.expiresAt ?? 0))
-              return yield* Effect.andThen(handover(id, undefined, Effect.void), dropped(id));
+            if (now < (held.get(id)?.expiresAt ?? 0)) {
+              return yield* Effect.andThen(
+                handover(id, undefined, Effect.void),
+                dropped(id)
+              );
+            }
 
-            if (storage?.ids().includes(id) === true) return yield* dropped(id);
+            if (storage?.ids().includes(id) === true) {
+              return yield* dropped(id);
+            }
 
             return yield* Event.SubscriptionError.of(
               subscription.feed.event.name,
-              new Event.NotSubscribed(),
+              new Event.NotSubscribed()
             );
-          }),
-        ),
+          })
+        )
       );
 
     return { serve, subscribe, unsubscribe };

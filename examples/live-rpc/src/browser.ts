@@ -1,8 +1,9 @@
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { Effect, Layer, Stream } from "effect";
 import { Headers } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+
 import { MessagePosted, roomHeader } from "./chat/Chat.js";
 import { Rpc } from "./Rpc.js";
 
@@ -16,7 +17,7 @@ import { Rpc } from "./Rpc.js";
 export const connection = (url: string) =>
   RpcClient.layerProtocolSocket().pipe(
     Layer.provide(Socket.layerWebSocket(url)),
-    Layer.provide(RpcSerialization.layerJson),
+    Layer.provide(RpcSerialization.layerJson)
   );
 
 // The chat as a page uses it, on the connection provided around it.
@@ -40,12 +41,19 @@ export const openChat = Effect.gen(function* () {
         read: (after: number) =>
           client.readMessages({ after }).pipe(
             here,
-            Effect.map(({ messages }) => ({ access: "member" as const, messages })),
+            Effect.map(({ messages }) => ({
+              access: "member" as const,
+              messages,
+            })),
             Effect.catchTags({
               Unauthenticated: () =>
                 Effect.succeed({ access: "signed-out" as const, messages: [] }),
-              Forbidden: () => Effect.succeed({ access: "not-a-member" as const, messages: [] }),
-            }),
+              Forbidden: () =>
+                Effect.succeed({
+                  access: "not-a-member" as const,
+                  messages: [],
+                }),
+            })
           ),
 
         post: (text: string) => client.postMessage({ text }).pipe(here),
@@ -64,8 +72,8 @@ export const openChat = Effect.gen(function* () {
             .pipe(
               Stream.updateService(
                 RpcClient.CurrentHeaders,
-                Headers.merge(Headers.fromInput(headers)),
-              ),
+                Headers.merge(Headers.fromInput(headers))
+              )
             ),
 
         // A declared error arrives as the contract's class. A message someone else already
@@ -77,7 +85,7 @@ export const openChat = Effect.gen(function* () {
             Effect.catchTags({
               MessageNotFound: () => Effect.succeed("removed" as const),
               NotAuthor: () => Effect.succeed("not-yours" as const),
-            }),
+            })
           ),
       };
     },

@@ -1,5 +1,6 @@
-import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Schema } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 import { IssueWriteErrors } from "../issues/Issues.js";
 
@@ -13,11 +14,10 @@ export const Attachment = Schema.Struct({
 
 export type Attachment = typeof Attachment.Type;
 
-export class AttachmentNotFound extends Schema.TaggedError<AttachmentNotFound>()(
-  "AttachmentNotFound",
-  { id: Schema.String },
-  { httpApiStatus: 404 },
-) {}
+export class AttachmentNotFound extends Schema.TaggedError<
+  AttachmentNotFound,
+  { readonly brand: unique symbol }
+>()("AttachmentNotFound", { id: Schema.String }, { httpApiStatus: 404 }) {}
 
 // `Action.Image` is `{ data: Uint8Array, mimeType: string }`. In an input it is JSON over HTTP,
 // RPC and the CLI, the bytes in base64.

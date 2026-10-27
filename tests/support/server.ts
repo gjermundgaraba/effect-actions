@@ -1,7 +1,8 @@
 import { Array as Arr } from "effect";
+
+import type * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
-import type * as Action from "../../src/contract/Action.js";
 import { layer } from "./app/app.js";
 import { serve } from "./serve.js";
 
@@ -9,27 +10,26 @@ export const makeTestApp = () => serve(layer);
 
 type PublicAction = Action.Any & { readonly caller: typeof Action.Anyone };
 
-type Free = Action.Implementation<
+type Free<E> = Action.Implementation<
   PublicAction,
   { readonly [name: string]: never },
-  unknown,
+  E,
   never,
-  unknown,
-  never
+  unknown
 >;
 
-type Frees = Free | ReadonlyArray<Free>;
+type Frees<E> = Free<E> | ReadonlyArray<Free<E>>;
 
-export const makeTestHttp = (apps: Frees, options?: ActionHttp.Options) =>
+export const makeTestHttp = <E>(apps: Frees<E>, options?: ActionHttp.Options) =>
   serve(
     ActionHttp.layer(
       ActionHttp.make(
         Arr.ensure(apps).flatMap((app) => app.actions),
-        options ?? {},
+        options ?? {}
       ),
-      apps,
-    ),
+      apps
+    )
   );
 
-export const makeTestMcp = (apps: Frees) =>
+export const makeTestMcp = <E>(apps: Frees<E>) =>
   serve(ActionMcp.layerHttp(apps, { name: "test", version: "0" }));

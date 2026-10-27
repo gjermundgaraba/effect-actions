@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Logger, Schema } from "effect";
+
 import * as Action from "../../src/contract/Action.js";
 
 const Import = Action.make("importAll", {
@@ -15,56 +16,63 @@ const imports = Action.implement(Import, ({ count }, { progress }) =>
   Effect.as(
     Effect.forEach(
       Array.from({ length: count }, (_, index) => index + 1),
-      (done) => progress({ done, total: count }),
+      (done) => progress({ done, total: count })
     ),
-    { imported: count },
-  ),
+    { imported: count }
+  )
 );
 
 describe("an action reporting progress, in process", () => {
   it.effect("hands each value to onProgress, in order, before it answers", () =>
     Effect.gen(function* () {
       const client = yield* Action.client(imports);
-      const seen: Array<number> = [];
+      const seen: number[] = [];
 
       const answer = yield* client.importAll(
         { count: 3 },
-        { onProgress: ({ done }) => Effect.sync(() => seen.push(done)) },
+        { onProgress: ({ done }) => Effect.sync(() => seen.push(done)) }
       );
 
-      expect([seen, answer]).toEqual([[1, 2, 3], { imported: 3 }]);
-    }),
+      expect([seen, answer]).toStrictEqual([[1, 2, 3], { imported: 3 }]);
+    })
   );
 
-  it.effect("hands onProgress each value as it was reported, never through its JSON", () =>
-    Effect.gen(function* () {
-      const Stamp = Action.make("stamp", {
-        description: "Report when each step started.",
-        progress: { at: Schema.instanceOf(Date) },
-        readOnly: true,
-        caller: Action.Anyone,
-      });
+  it.effect(
+    "hands onProgress each value as it was reported, never through its JSON",
+    () =>
+      Effect.gen(function* () {
+        const Stamp = Action.make("stamp", {
+          description: "Report when each step started.",
+          progress: { at: Schema.instanceOf(Date) },
+          readOnly: true,
+          caller: Action.Anyone,
+        });
 
-      const at = new Date(0);
+        const at = new Date(0);
 
-      const client = yield* Action.client(
-        Action.implement(Stamp, (_, { progress }) => progress({ at })),
-      );
+        const client = yield* Action.client(
+          Action.implement(Stamp, (_, { progress }) => progress({ at }))
+        );
 
-      const seen: Array<Date> = [];
+        const seen: Date[] = [];
 
-      yield* client.stamp({}, { onProgress: (value) => Effect.sync(() => seen.push(value.at)) });
+        yield* client.stamp(
+          {},
+          { onProgress: (value) => Effect.sync(() => seen.push(value.at)) }
+        );
 
-      expect(seen).toEqual([at]);
-    }),
+        expect(seen).toStrictEqual([at]);
+      })
   );
 
   it.effect("answers alike without onProgress", () =>
     Effect.gen(function* () {
       const client = yield* Action.client(imports);
 
-      expect(yield* client.importAll({ count: 3 })).toEqual({ imported: 3 });
-    }),
+      expect(yield* client.importAll({ count: 3 })).toStrictEqual({
+        imported: 3,
+      });
+    })
   );
 
   it.effect(
@@ -72,118 +80,135 @@ describe("an action reporting progress, in process", () => {
     () =>
       Effect.gen(function* () {
         const client = yield* Action.client(imports);
-        const seen: Array<number> = [];
+        const seen: number[] = [];
 
         const answer = yield* client.importAll(
           { count: 100 },
-          { onProgress: ({ done }) => Effect.sync(() => seen.push(done)) },
+          { onProgress: ({ done }) => Effect.sync(() => seen.push(done)) }
         );
 
         const tookFirst = seen.findIndex((done, index) => done !== index + 1);
         const newest = tookFirst === -1 ? [] : seen.slice(tookFirst);
 
-        expect(answer).toEqual({ imported: 100 });
+        expect(answer).toStrictEqual({ imported: 100 });
         expect(seen.length).toBeLessThan(100);
         expect(seen.at(-1)).toBe(100);
-        expect(newest).toEqual(
-          Array.from({ length: newest.length }, (_, index) => 101 - newest.length + index),
+        expect(newest).toStrictEqual(
+          Array.from(
+            { length: newest.length },
+            (_, index) => 101 - newest.length + index
+          )
         );
-      }),
+      })
   );
 
-  it.effect("fails with a defect where a value breaks the progress schema", () =>
-    Effect.gen(function* () {
-      const broken = Action.implement(Import, (_input, { progress }) =>
-        Effect.as(progress({ done: Number.NaN, total: 1 }), { imported: 0 }),
-      );
+  it.effect(
+    "fails with a defect where a value breaks the progress schema",
+    () =>
+      Effect.gen(function* () {
+        const broken = Action.implement(Import, (_input, { progress }) =>
+          Effect.as(progress({ done: Number.NaN, total: 1 }), { imported: 0 })
+        );
 
-      const client = yield* Action.client(broken);
+        const client = yield* Action.client(broken);
 
-      const exit = yield* Effect.exit(
-        client.importAll({ count: 1 }, { onProgress: () => Effect.void }),
-      );
+        const exit = yield* Effect.exit(
+          client.importAll({ count: 1 }, { onProgress: () => Effect.void })
+        );
 
-      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-    }),
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+      })
   );
 
-  it.effect("answers where onProgress dies or throws, the handler running to its end", () =>
-    Effect.gen(function* () {
-      const client = yield* Action.client(imports);
-      const logged: Array<string> = [];
+  it.effect(
+    "answers where onProgress dies or throws, the handler running to its end",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* Action.client(imports);
+        const logged: string[] = [];
 
-      const broken = new Error("the page broke");
+        const broken = new Error("the page broke");
 
-      const answers = yield* Effect.forEach(
-        [
-          () => Effect.die(broken),
-          () => {
-            throw broken;
-          },
-        ],
-        (onProgress) => client.importAll({ count: 2 }, { onProgress }),
-      ).pipe(
-        Effect.provide(
-          Logger.layer([
-            Logger.make(({ message }) => {
-              logged.push(String(message));
-            }),
-          ]),
-        ),
-      );
+        const answers = yield* Effect.forEach(
+          [
+            () => Effect.die(broken),
+            () => {
+              throw broken;
+            },
+          ],
+          (onProgress) => client.importAll({ count: 2 }, { onProgress })
+        ).pipe(
+          Effect.provide(
+            Logger.layer([
+              Logger.make(({ message }) => {
+                logged.push(String(message));
+              }),
+            ])
+          )
+        );
 
-      expect(answers).toEqual([{ imported: 2 }, { imported: 2 }]);
-      expect(logged.filter((line) => line.includes("onProgress failed"))).toHaveLength(2 * 2);
-    }),
+        expect(answers).toStrictEqual([{ imported: 2 }, { imported: 2 }]);
+        expect(
+          logged.filter((line) => line.includes("onProgress failed"))
+        ).toHaveLength(2 * 2);
+      })
   );
 
   it.effect("interrupts the handler where its caller is interrupted", () =>
     Effect.gen(function* () {
-      const reported = yield* Deferred.make<void>();
-      const interrupted = yield* Deferred.make<void>();
+      const reported = yield* Deferred.make<undefined>();
+      const interrupted = yield* Deferred.make<undefined>();
 
       const waits = Action.implement(Import, (_input, { progress }) =>
         Effect.andThen(progress({ done: 1, total: 2 }), Effect.never).pipe(
-          Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
-        ),
+          Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))
+        )
       );
 
       const client = yield* Action.client(waits);
 
       const call = yield* Effect.forkChild(
-        client.importAll({ count: 2 }, { onProgress: () => Deferred.succeed(reported, undefined) }),
+        client.importAll(
+          { count: 2 },
+          { onProgress: () => Deferred.succeed(reported, undefined) }
+        )
       );
 
       yield* Deferred.await(reported);
       yield* Fiber.interrupt(call);
 
       expect(yield* Deferred.isDone(interrupted)).toBe(true);
-    }),
+    })
   );
 
   it.effect("drops a value reported after the answer", () =>
     Effect.gen(function* () {
-      const late = yield* Deferred.make<void>();
-      const seen: Array<number> = [];
+      const late = yield* Deferred.make<undefined>();
+      const seen: number[] = [];
 
       const forks = Action.implement(Import, (_input, { progress }) =>
         Effect.as(
-          Effect.forkDetach(Effect.andThen(Deferred.await(late), progress({ done: 2, total: 2 }))),
-          { imported: 1 },
-        ),
+          Effect.forkDetach(
+            Effect.andThen(
+              Deferred.await(late),
+              progress({ done: 2, total: 2 })
+            )
+          ),
+          { imported: 1 }
+        )
       );
 
       const client = yield* Action.client(forks);
 
       const answer = yield* client.importAll(
         { count: 1 },
-        { onProgress: ({ done }) => Effect.sync(() => seen.push(done)) },
+        { onProgress: ({ done }) => Effect.sync(() => seen.push(done)) }
       );
 
       yield* Deferred.succeed(late, undefined);
       yield* Effect.repeat(Effect.yieldNow, { times: 10 });
 
-      expect([answer, seen]).toEqual([{ imported: 1 }, []]);
-    }),
+      expect([answer, seen]).toStrictEqual([{ imported: 1 }, []]);
+    })
   );
 });

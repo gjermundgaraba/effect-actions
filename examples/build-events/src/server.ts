@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+
 import {
   NodeDns,
   NodeFileSystem,
@@ -6,11 +7,12 @@ import {
   NodePath,
   NodeRuntime,
 } from "@effect/platform-node";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { ByteSize, Config, Effect, Layer } from "effect";
 import { FetchHttpClient, HttpRouter, HttpServerRequest } from "effect/http";
 import { KeyValueStore } from "effect/persistence";
+
 import { BuildStore } from "./builds/store.js";
-import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { Approvers } from "./deploys/approvers.js";
 import { routes } from "./routes.js";
 
@@ -19,18 +21,23 @@ import { routes } from "./routes.js";
 const server = Layer.unwrap(
   Effect.gen(function* () {
     // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
-    const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));
+    const host = yield* Config.String("HOST").pipe(
+      Config.withDefault("127.0.0.1")
+    );
+
     const port = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
 
     const webhooks = yield* Config.String("WEBHOOKS_DIR").pipe(
-      Config.withDefault(".build-events/webhooks"),
+      Config.withDefault(".build-events/webhooks")
     );
 
     return HttpRouter.serve(routes).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
       // Request bodies have no size limit unless the host sets one. This covers every route
       // that reads its body whole, the MCP endpoint and the webhook subscribe routes included.
-      Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
+      Layer.provide(
+        Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))
+      ),
       // DEMO ONLY: builds and approvers live in this process's memory; a deployment provides
       // stores that last.
       Layer.provide([BuildStore.layerMemory, Approvers.layerMemory]),
@@ -43,13 +50,13 @@ const server = Layer.unwrap(
       // process its own, since the layer is its store's one writer.
       Layer.provide(
         KeyValueStore.layerFileSystem(webhooks).pipe(
-          Layer.provide([NodeFileSystem.layer, NodePath.layer]),
-        ),
+          Layer.provide([NodeFileSystem.layer, NodePath.layer])
+        )
       ),
       // Webhook delivery POSTs with fetch, and resolves each callback with the system's resolver.
-      Layer.provide([FetchHttpClient.layer, NodeDns.layer]),
+      Layer.provide([FetchHttpClient.layer, NodeDns.layer])
     );
-  }),
+  })
 );
 
-Layer.launch(server).pipe(NodeRuntime.runMain);
+Layer.launch(server).pipe(NodeRuntime.runMain());

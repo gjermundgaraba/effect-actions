@@ -1,5 +1,8 @@
-import { Predicate, type Schema } from "effect";
-import { type Headers, HttpClientRequest } from "effect/http";
+import { Predicate } from "effect";
+import type { Schema } from "effect";
+import { HttpClientRequest } from "effect/http";
+import type { Headers } from "effect/http";
+
 import { defaultPath, httpProtocol } from "./protocol.js";
 
 /**
@@ -32,7 +35,10 @@ export const statelessRequest = (method: string, params: Params) => {
         ...params,
         _meta: {
           "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/clientInfo": { name: "effect-actions", version: "0" },
+          "io.modelcontextprotocol/clientInfo": {
+            name: "effect-actions",
+            version: "0",
+          },
           ...params._meta,
           "io.modelcontextprotocol/protocolVersion": protocolVersion,
         },
@@ -71,13 +77,13 @@ export interface RequestOptions {
 export const request = (
   method: string,
   params: Params = {},
-  { headers = {}, url = defaultPath }: RequestOptions = {},
+  { headers = {}, url = defaultPath }: RequestOptions = {}
 ): HttpClientRequest.HttpClientRequest => {
   const { headers: routingHeaders, body } = statelessRequest(method, params);
 
   return HttpClientRequest.post(url).pipe(
     HttpClientRequest.setHeaders(headers),
     HttpClientRequest.setHeaders(routingHeaders),
-    HttpClientRequest.bodyJsonUnsafe(body),
+    HttpClientRequest.bodyJsonUnsafe(body)
   );
 };

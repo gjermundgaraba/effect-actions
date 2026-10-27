@@ -1,11 +1,28 @@
-import { Cause, Clock, Duration, Effect, Predicate, Queue, Schedule, Schema, Stream } from "effect";
+import {
+  Cause,
+  Clock,
+  Duration,
+  Effect,
+  Predicate,
+  Queue,
+  Schedule,
+  Schema,
+  Stream,
+} from "effect";
+
 import { CallbackUrl } from "./callback.js";
 import * as Event from "./Event.js";
 import { Checked, Gap } from "./occurrence.js";
-import { type Fed, type Page, paged } from "./pages.js";
-import { type Delivered, type Receiving, watchParameter } from "./receiving.js";
+import { paged } from "./pages.js";
+import type { Fed, Page } from "./pages.js";
+import { watchParameter } from "./receiving.js";
+import type { Delivered, Receiving } from "./receiving.js";
 import { makeRecent } from "./recent.js";
-import type { AnyWebhookCancellation, AnyWebhookSubscription, Subscribed } from "./subscribe.js";
+import type {
+  AnyWebhookCancellation,
+  AnyWebhookSubscription,
+  Subscribed,
+} from "./subscribe.js";
 
 /** A webhook subscription a watch asks for: where to POST, signed how, from where, for how long. */
 export type WebhookRequest = Omit<AnyWebhookSubscription, "input">;
@@ -21,9 +38,9 @@ export interface WebhookTransport<E, R> {
   readonly receiver: Effect.Effect<Receiving["Service"], never, R>;
   readonly subscribe: (request: WebhookRequest) => Effect.Effect<Grant, E, R>;
   readonly unsubscribe: (
-    request: Omit<AnyWebhookCancellation, "input">,
+    request: Omit<AnyWebhookCancellation, "input">
   ) => Effect.Effect<void, E, R>;
-  readonly read: (body: Delivered) => Effect.Effect<ReadonlyArray<Fed>, E>;
+  readonly read: (body: Delivered) => Effect.Effect<readonly Fed[], E>;
 }
 
 /**
@@ -47,20 +64,24 @@ const maxReconnectDelay = Duration.seconds(30);
 // Why: `Stream.retry` starts its schedule again at the first element after a failure, so the
 // backoff counts only the failures since the stream last delivered.
 const afterFailures = <E>(transient: (error: E) => boolean) =>
-  Schedule.min([Schedule.exponential(reconnectDelay), Schedule.spaced(maxReconnectDelay)]).pipe(
+  Schedule.min([
+    Schedule.exponential(reconnectDelay),
+    Schedule.spaced(maxReconnectDelay),
+  ]).pipe(
     Schedule.setInputType<E>(),
     Schedule.while(({ input }) => transient(input)),
     Schedule.tap(({ input, duration }) =>
       Effect.logWarning(
         `A watch reconnects in ${Duration.format(duration)} after a failure`,
-        input,
-      ),
-    ),
+        input
+      )
+    )
   );
 
-const isSubscriptionError: Predicate.Refinement<unknown, Event.SubscriptionError> = Schema.is(
-  Event.SubscriptionError,
-);
+const isSubscriptionError: Predicate.Refinement<
+  unknown,
+  Event.SubscriptionError
+> = Schema.is(Event.SubscriptionError);
 
 /** Whether a watch's failure says the server serves its event by poll alone, refusing to push it. */
 const pushRefused = Predicate.compose(
@@ -68,170 +89,12 @@ const pushRefused = Predicate.compose(
   ({ reason }) =>
     Predicate.isTagged(reason, "Unsupported") &&
     reason.feature === "deliveryMode" &&
-    reason.value === "push",
+    reason.value === "push"
 );
 
 // Why: Duplicates arrive within a reconnect or a replay of the last page, so the ids of the last
 // thousand occurrences are enough, and a long watch holds no more.
 const dedupeWindow = 1000;
-
-/**
- * The occurrences and gaps of one subscription, as every client's `watch` answers them. Each run
- * starts from `options`: what one run saw, the cursor and the ids it deduplicates by, ends with
- * it, and only `resume` carries a cursor to the next.
- */
-export const watching = <E, R, SE>(
-  transport: Transport<E, R>,
-  { cursor: given, mode, resume }: Event.WatchOptions<SE> = {},
-): Stream.Stream<
-  Event.Received<Event.Any>,
-  E | SE | Event.SubscriptionError | Schema.SchemaError,
-  R
-> =>
-  Stream.suspend(() => {
-    const seen = makeRecent(dedupeWindow);
-    let pending: string | null = null;
-
-    const keep = (cursor: string | null): Effect.Effect<void, SE> =>
-      cursor === null || resume === undefined ? Effect.void : resume.store.set(resume.key, cursor);
-
-    const fresh = (eventId: string) => {
-      if (seen.has(eventId)) return false;
-
-      seen.add(eventId);
-
-      return true;
-    };
-
-    // Why: A position is kept once what came before it is handled: an occurrence's when the next
-    // element is pulled, which a consumer does after handling it, and a page's end as it is read,
-    // after its occurrences. A consumer stopped mid-way then receives the unhandled one again.
-    const handled = Effect.fnUntraced(function* (
-      fed: Fed,
-    ): Effect.fn.Return<ReadonlyArray<Event.Received<Event.Any>>, SE> {
-      yield* keep(pending);
-      pending = null;
-
-      if (Predicate.isTagged(fed, "Checked")) {
-        yield* keep(fed.cursor);
-
-        return [];
-      }
-
-      if (Predicate.isTagged(fed, "Gap")) return [fed];
-
-      pending = fed.cursor;
-
-      return fresh(fed.eventId) ? [fed] : [];
-    });
-
-    const start: Effect.Effect<string | null, SE> =
-      given !== undefined || resume === undefined
-        ? Effect.succeed(given ?? null)
-        : Effect.map(resume.store.get(resume.key), (kept) => kept ?? null);
-
-    // Why: A subscription that ends or drops for a reason `transient` admits reopens from the last
-    // position it reached, as long as the watch is read: a second after it ends, and after a
-    // failure later each time, doubling to 30 seconds, until something arrives again. Each
-    // reconnect is logged, and the watch's error channel keeps the failures it cannot outlast.
-    // One that refuses to push, where `polled` is given, polls instead from that position.
-    const reconnecting = (
-      open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
-      cursor: string | null,
-      polled?: (cursor: string | null) => Stream.Stream<Fed, E, R>,
-    ): Stream.Stream<Fed, E, R> => {
-      const { transient } = transport;
-      let at = cursor;
-
-      const once = Stream.suspend(() => open(at)).pipe(
-        Stream.tap((fed) =>
-          Effect.sync(() => {
-            at = fed.cursor ?? at;
-          }),
-        ),
-      );
-
-      const reopened =
-        transient === undefined
-          ? once
-          : once.pipe(
-              Stream.repeat(Schedule.spaced(reconnectDelay)),
-              Stream.retry(afterFailures(transient)),
-            );
-
-      return polled === undefined
-        ? reopened
-        : reopened.pipe(Stream.catchIf(pushRefused, () => Stream.suspend(() => polled(at))));
-    };
-
-    const polled = (cursor: string | null) =>
-      reconnecting((at) => paged(transport.poll, at), cursor);
-
-    // Why: A watch keeps one place at the receiver, and one subscription, for as long as it runs:
-    // a reconnect refreshes it, and what the receiver accepted waits for the watch through it.
-    // Its callback is checked before it takes a place, so one the server would refuse fails here.
-    const webhooked = ({ baseUrl, ttl }: Event.WebhookDelivery, cursor: string | null) =>
-      Stream.unwrap(
-        Effect.gen(function* () {
-          const { webhook } = transport;
-
-          if (webhook === undefined)
-            return yield* Effect.fail(
-              Event.SubscriptionError.of(
-                transport.name,
-                new Event.Unsupported({ feature: "deliveryMode", value: "webhook" }),
-              ),
-            );
-
-          const base = yield* Schema.decodeUnknownEffect(CallbackUrl)(baseUrl);
-          const receiving = yield* webhook.receiver;
-          const received = yield* Queue.unbounded<Effect.Effect<ReadonlyArray<Fed>, E>>();
-
-          const { id, secret } = yield* receiving.register(
-            (body) =>
-              Queue.sizeUnsafe(received) < capacity &&
-              Queue.offerUnsafe(received, webhook.read(body)),
-          );
-
-          const url = new URL(`${base.pathname.replace(/\/$/u, "")}${receiving.path}`, base);
-
-          url.searchParams.set(watchParameter, id);
-
-          const request = {
-            delivery: { url, secret },
-            ttlMs: ttl === undefined ? undefined : Duration.toMillis(Duration.fromInputUnsafe(ttl)),
-          };
-
-          yield* Effect.addFinalizer(() =>
-            webhook
-              .unsubscribe({ delivery: { url } })
-              .pipe(Effect.timeout(unsubscribeTimeout), Effect.ignore),
-          );
-
-          return reconnecting((at) => delivered(webhook, request, received, at), cursor);
-        }),
-      );
-
-    return Stream.unwrap(
-      Effect.map(start, (cursor) =>
-        Predicate.isTagged(mode, "WebhookDelivery")
-          ? webhooked(mode, cursor)
-          : mode === "poll"
-            ? polled(cursor)
-            : reconnecting(transport.stream, cursor, mode === "stream" ? undefined : polled),
-      ),
-    ).pipe(
-      Stream.rechunk(1),
-      Stream.mapEffect(handled),
-      // Why: A failure is pulled as the next element is, after the consumer handled the last.
-      Stream.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Stream.failCause(cause)
-          : Stream.concat(Stream.fromEffectDrain(keep(pending)), Stream.failCause(cause)),
-      ),
-      Stream.flattenIterable,
-    );
-  });
 
 // Why: A watch holds what its receiver accepted until its consumer reads it, so a consumer
 // behind by this many has the next POST answered 503, which the server retries, rather than
@@ -251,12 +114,14 @@ const unsubscribeTimeout = Duration.seconds(5);
 const delivered = <E, R>(
   webhook: WebhookTransport<E, R>,
   request: Omit<WebhookRequest, "cursor">,
-  received: Queue.Queue<Effect.Effect<ReadonlyArray<Fed>, E>>,
-  cursor: string | null,
+  received: Queue.Queue<Effect.Effect<readonly Fed[], E>>,
+  cursor: string | null
 ): Stream.Stream<Fed, E, R> => {
   let at = cursor;
 
-  const subscribed = Effect.suspend(() => webhook.subscribe({ ...request, cursor: at })).pipe(
+  const subscribed = Effect.suspend(() =>
+    webhook.subscribe({ ...request, cursor: at })
+  ).pipe(
     Effect.tap((grant) =>
       Queue.offer(
         received,
@@ -264,19 +129,27 @@ const delivered = <E, R>(
           grant.truncated
             ? Gap.make({ cursor: grant.cursor })
             : Checked.make({ cursor: grant.cursor }),
-        ]),
-      ),
-    ),
+        ])
+      )
+    )
   );
 
-  const refreshed = (refreshBefore: string | null): Effect.Effect<never, E, R> =>
+  const refreshed = (
+    refreshBefore: string | null
+  ): Effect.Effect<never, E, R> =>
     refreshBefore === null
       ? Effect.never
       : Effect.flatMap(Clock.currentTimeMillis, (now) =>
           Effect.andThen(
-            Effect.sleep(Duration.millis(Math.max(0, (Date.parse(refreshBefore) - now) / 2))),
-            Effect.flatMap(subscribed, (grant) => refreshed(grant.refreshBefore)),
-          ),
+            Effect.sleep(
+              Duration.millis(
+                Math.max(0, (Date.parse(refreshBefore) - now) / 2)
+              )
+            ),
+            Effect.flatMap(subscribed, (grant) =>
+              refreshed(grant.refreshBefore)
+            )
+          )
         );
 
   return Stream.unwrap(
@@ -287,8 +160,8 @@ const delivered = <E, R>(
         Effect.catchCause(refreshed(grant.refreshBefore), (cause) =>
           Cause.hasInterruptsOnly(cause)
             ? Effect.void
-            : Queue.offer(received, Effect.failCause(cause)),
-        ),
+            : Queue.offer(received, Effect.failCause(cause))
+        )
       );
 
       return Stream.fromEffectRepeat(Effect.flatten(Queue.take(received))).pipe(
@@ -296,11 +169,205 @@ const delivered = <E, R>(
         Stream.tap((fed) =>
           Effect.sync(() => {
             at = fed.cursor ?? at;
-          }),
-        ),
+          })
+        )
       );
-    }),
+    })
   );
+};
+
+/**
+ * The occurrences and gaps of one subscription, as every client's `watch` answers them. Each run
+ * starts from `options`: what one run saw, the cursor and the ids it deduplicates by, ends with
+ * it, and only `resume` carries a cursor to the next.
+ */
+export const watching = <E, R, SE = never>(
+  transport: Transport<E, R>,
+  { cursor: given, mode, resume }: Event.WatchOptions<SE> = {}
+): Stream.Stream<
+  Event.Received<Event.Any>,
+  E | SE | Event.SubscriptionError | Schema.SchemaError,
+  R
+> => {
+  // Why: A subscription that ends or drops for a reason `transient` admits reopens from the last
+  // position it reached, as long as the watch is read: a second after it ends, and after a
+  // failure later each time, doubling to 30 seconds, until something arrives again. Each
+  // reconnect is logged, and the watch's error channel keeps the failures it cannot outlast.
+  // One that refuses to push, where `polled` is given, polls instead from that position.
+  const reconnecting = (
+    open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
+    cursor: string | null,
+    polled?: (cursor: string | null) => Stream.Stream<Fed, E, R>
+  ): Stream.Stream<Fed, E, R> => {
+    const { transient } = transport;
+    let at = cursor;
+
+    const once = Stream.suspend(() => open(at)).pipe(
+      Stream.tap((fed) =>
+        Effect.sync(() => {
+          at = fed.cursor ?? at;
+        })
+      )
+    );
+
+    const reopened =
+      transient === undefined
+        ? once
+        : once.pipe(
+            Stream.repeat(Schedule.spaced(reconnectDelay)),
+            Stream.retry(afterFailures(transient))
+          );
+
+    return polled === undefined
+      ? reopened
+      : reopened.pipe(
+          Stream.catchIf(pushRefused, () => Stream.suspend(() => polled(at)))
+        );
+  };
+
+  const polled = (cursor: string | null) =>
+    reconnecting((at) => paged(transport.poll, at), cursor);
+
+  // Why: A watch keeps one place at the receiver, and one subscription, for as long as it runs:
+  // a reconnect refreshes it, and what the receiver accepted waits for the watch through it.
+  // Its callback is checked before it takes a place, so one the server would refuse fails here.
+  const webhooked = (
+    { baseUrl, ttl }: Event.WebhookDelivery,
+    cursor: string | null
+  ) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const { webhook } = transport;
+
+        if (webhook === undefined) {
+          return yield* Event.SubscriptionError.of(
+            transport.name,
+            new Event.Unsupported({
+              feature: "deliveryMode",
+              value: "webhook",
+            })
+          );
+        }
+
+        const base = yield* Schema.decodeEffect(CallbackUrl)(baseUrl);
+        const receiving = yield* webhook.receiver;
+
+        const received =
+          yield* Queue.unbounded<Effect.Effect<readonly Fed[], E>>();
+
+        const { id, secret } = yield* receiving.register(
+          (body) =>
+            Queue.sizeUnsafe(received) < capacity &&
+            Queue.offerUnsafe(received, webhook.read(body))
+        );
+
+        const url = new URL(
+          `${base.pathname.replace(/\/$/u, "")}${receiving.path}`,
+          base
+        );
+
+        url.searchParams.set(watchParameter, id);
+
+        const request = {
+          delivery: { url, secret },
+          ttlMs:
+            ttl === undefined
+              ? undefined
+              : Duration.toMillis(Duration.fromInputUnsafe(ttl)),
+        };
+
+        yield* Effect.addFinalizer(() =>
+          webhook
+            .unsubscribe({ delivery: { url } })
+            .pipe(Effect.timeout(unsubscribeTimeout), Effect.ignore)
+        );
+
+        return reconnecting(
+          (at) => delivered(webhook, request, received, at),
+          cursor
+        );
+      })
+    );
+
+  return Stream.suspend(() => {
+    const seen = makeRecent(dedupeWindow);
+    let pending: string | null = null;
+
+    const keep = (cursor: string | null): Effect.Effect<void, SE> =>
+      cursor === null || resume === undefined
+        ? Effect.void
+        : resume.store.set(resume.key, cursor);
+
+    const fresh = (eventId: string) => {
+      if (seen.has(eventId)) {
+        return false;
+      }
+
+      seen.add(eventId);
+
+      return true;
+    };
+
+    // Why: A position is kept once what came before it is handled: an occurrence's when the next
+    // element is pulled, which a consumer does after handling it, and a page's end as it is read,
+    // after its occurrences. A consumer stopped mid-way then receives the unhandled one again.
+    const handled = Effect.fnUntraced(function* (
+      fed: Fed
+    ): Effect.fn.Return<ReadonlyArray<Event.Received<Event.Any>>, SE> {
+      yield* keep(pending);
+      pending = null;
+
+      if (Predicate.isTagged(fed, "Checked")) {
+        yield* keep(fed.cursor);
+
+        return [];
+      }
+
+      if (Predicate.isTagged(fed, "Gap")) {
+        return [fed];
+      }
+
+      pending = fed.cursor;
+
+      return fresh(fed.eventId) ? [fed] : [];
+    });
+
+    const start: Effect.Effect<string | null, SE> =
+      given !== undefined || resume === undefined
+        ? Effect.succeed(given ?? null)
+        : Effect.map(resume.store.get(resume.key), (kept) => kept ?? null);
+
+    return Stream.unwrap(
+      Effect.map(start, (cursor) => {
+        if (Predicate.isTagged(mode, "WebhookDelivery")) {
+          return webhooked(mode, cursor);
+        }
+
+        if (mode === "poll") {
+          return polled(cursor);
+        }
+
+        return reconnecting(
+          transport.stream,
+          cursor,
+          mode === "stream" ? undefined : polled
+        );
+      })
+    ).pipe(
+      Stream.rechunk(1),
+      Stream.mapEffect(handled),
+      // Why: A failure is pulled as the next element is, after the consumer handled the last.
+      Stream.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Stream.failCause(cause)
+          : Stream.concat(
+              Stream.fromEffectDrain(keep(pending)),
+              Stream.failCause(cause)
+            )
+      ),
+      Stream.flattenIterable
+    );
+  });
 };
 
 /**

@@ -1,7 +1,7 @@
-import { Context, Schema } from "effect";
-import { HttpApiSecurity } from "effect/http-api";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { Context, Schema } from "effect";
+import { HttpApiSecurity } from "effect/http-api";
 
 export const scopes = { read: "issues:read", write: "issues:write" } as const;
 
@@ -19,15 +19,18 @@ export interface Member {
  * provides it per request, and a local host (stdio, the assistant, a test) provides it itself.
  */
 export class CurrentMember extends Context.Service<CurrentMember, Member>()(
-  "tracker/CurrentMember",
+  "tracker/CurrentMember"
 ) {}
 
 // What a verifier may fail with besides a refusal: the issuer it checks tokens with is down.
 // It is not the caller's fault, so it is no 401: signing in again cannot help.
-export class IssuerUnavailable extends Schema.TaggedError<IssuerUnavailable>()(
+export class IssuerUnavailable extends Schema.TaggedError<
+  IssuerUnavailable,
+  { readonly brand: unique symbol }
+>()(
   "IssuerUnavailable",
   { retryAfterSeconds: Schema.Finite },
-  { httpApiStatus: 503 },
+  { httpApiStatus: 503 }
 ) {}
 
 // How an API client, the CLI and an MCP client prove they are CurrentMember: a bearer token,
@@ -49,16 +52,24 @@ export const Session = Authentication.make("tracker.Session", CurrentMember, {
 // What the API's request quota answers with. It is the bindings' error, not an action's:
 // middleware sends it on any action's route, before its input is decoded. Only HTTP and RPC
 // have that middleware.
-export class QuotaExceeded extends Schema.TaggedError<QuotaExceeded>()(
+export class QuotaExceeded extends Schema.TaggedError<
+  QuotaExceeded,
+  { readonly brand: unique symbol }
+>()(
   "QuotaExceeded",
   { retryAfterSeconds: Schema.Finite },
-  { httpApiStatus: 429 },
+  { httpApiStatus: 429 }
 ) {}
 
 // An action without input: its client method takes no argument, its command no flag.
 export const WhoAmI = Action.make("whoAmI", {
-  description: "Show who the credential identifies, in which workspace, with which scopes.",
-  success: { id: Schema.String, workspace: Schema.String, scopes: Schema.Array(Scope) },
+  description:
+    "Show who the credential identifies, in which workspace, with which scopes.",
+  success: {
+    id: Schema.String,
+    workspace: Schema.String,
+    scopes: Schema.Array(Scope),
+  },
   readOnly: true,
   caller: CurrentMember,
 });

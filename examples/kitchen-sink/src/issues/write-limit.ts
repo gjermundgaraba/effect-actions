@@ -1,7 +1,46 @@
 import { Duration, Effect } from "effect";
 import { RateLimiter } from "effect/persistence";
-import { CurrentMember, type Member } from "../identity/Identity.js";
+
+import { CurrentMember } from "../identity/Identity.js";
+import type { Member } from "../identity/Identity.js";
 import { RateLimited } from "./Issues.js";
+
+const limitedBy = Effect.gen(function* () {
+  const limiter = yield* RateLimiter.RateLimiter;
+
+  return <A, E, R>(
+    name: string,
+    limit: number,
+    run: (member: Member) => Effect.Effect<A, E, R>
+  ) =>
+    Effect.gen(function* () {
+      const member = yield* CurrentMember;
+
+      yield* limiter
+        .consume({
+          key: JSON.stringify([name, member.workspace, member.id]),
+          limit,
+          window: "1 minute",
+          onExceeded: "fail",
+        })
+        .pipe(
+          Effect.catchReason(
+            "RateLimiterError",
+            "RateLimitExceeded",
+            ({ retryAfter }) =>
+              Effect.fail(
+                new RateLimited({
+                  retryAfterSeconds: Duration.toSeconds(retryAfter),
+                })
+              ),
+            // Any other reason is the limiter's store failing: a defect, not the caller's.
+            Effect.die
+          )
+        );
+
+      return yield* run(member);
+    });
+});
 
 // The write limit: ten writes a minute per member. It is the handlers', not a surface's, so it
 // holds wherever they run: HTTP, MCP, RPC, stdio and the assistant's tools all count against
@@ -24,34 +63,6 @@ export const writeLimit = Effect.gen(function* () {
 export const exportLimit = Effect.gen(function* () {
   const limited = yield* limitedBy;
 
-  return <A, E, R>(read: (member: Member) => Effect.Effect<A, E, R>) => limited("exports", 2, read);
-});
-
-const limitedBy = Effect.gen(function* () {
-  const limiter = yield* RateLimiter.RateLimiter;
-
-  return <A, E, R>(name: string, limit: number, run: (member: Member) => Effect.Effect<A, E, R>) =>
-    Effect.gen(function* () {
-      const member = yield* CurrentMember;
-
-      yield* limiter
-        .consume({
-          key: JSON.stringify([name, member.workspace, member.id]),
-          limit,
-          window: "1 minute",
-          onExceeded: "fail",
-        })
-        .pipe(
-          Effect.catchReason(
-            "RateLimiterError",
-            "RateLimitExceeded",
-            ({ retryAfter }) =>
-              Effect.fail(new RateLimited({ retryAfterSeconds: Duration.toSeconds(retryAfter) })),
-            // Any other reason is the limiter's store failing: a defect, not the caller's.
-            Effect.die,
-          ),
-        );
-
-      return yield* run(member);
-    });
+  return <A, E, R>(read: (member: Member) => Effect.Effect<A, E, R>) =>
+    limited("exports", 2, read);
 });

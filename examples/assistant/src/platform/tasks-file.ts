@@ -1,6 +1,8 @@
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path from "node:path";
+
 import { Config, Effect, FileSystem, Layer, Schema } from "effect";
+
 import { TaskStore } from "../tasks/store.js";
 import { Task } from "../tasks/Tasks.js";
 
@@ -15,24 +17,26 @@ export const tasksFile = Layer.effect(
   Effect.gen(function* () {
     const files = yield* FileSystem.FileSystem;
 
-    const path = yield* Config.String("ASSISTANT_TASKS").pipe(
-      Config.withDefault(join(tmpdir(), "assistant-tasks.json")),
+    const file = yield* Config.String("ASSISTANT_TASKS").pipe(
+      Config.withDefault(path.join(tmpdir(), "assistant-tasks.json"))
     );
 
-    const load = files.readFileString(path).pipe(
-      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("[]")),
+    const load = files.readFileString(file).pipe(
+      Effect.catchReason("PlatformError", "NotFound", () =>
+        Effect.succeed("[]")
+      ),
       Effect.flatMap(Schema.decodeEffect(TasksFile)),
-      Effect.orDie,
+      Effect.orDie
     );
 
-    const save = (tasks: ReadonlyArray<Task>) =>
+    const save = (tasks: readonly Task[]) =>
       Schema.encodeEffect(TasksFile)(tasks).pipe(
-        Effect.flatMap((json) => files.writeFileString(path, json)),
+        Effect.flatMap((json) => files.writeFileString(file, json)),
         // A log, not a result: a command sends its handler's logs to stderr.
-        Effect.tap(() => Effect.log(`Saved ${tasks.length} tasks to ${path}.`)),
-        Effect.orDie,
+        Effect.tap(() => Effect.log(`Saved ${tasks.length} tasks to ${file}.`)),
+        Effect.orDie
       );
 
     return TaskStore.make(load, save);
-  }),
+  })
 );

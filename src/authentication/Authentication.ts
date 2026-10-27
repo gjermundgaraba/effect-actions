@@ -1,33 +1,44 @@
 import {
-  type Array as Arr,
   Context,
   Effect,
+  Function,
   Layer,
   Match,
   Option,
   Predicate,
   Redacted,
-  type Schema,
-  type Scope,
 } from "effect";
-import { HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { HttpApiBuilder, HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
+import type { Array as Arr, Schema, Scope } from "effect";
 import {
-  type Any,
-  type Credential,
-  type Descriptor,
-  type Provider,
-  providerOf,
-  type Runtime,
-  type Security,
-  type SecurityMiddleware,
-  type VerifierFailure,
-} from "./provider.js";
+  HttpEffect,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
+import {
+  HttpApiBuilder,
+  HttpApiMiddleware,
+  HttpApiSecurity,
+} from "effect/http-api";
+
 import type { Errors } from "../contract/Action.js";
 import type { Codec } from "../contract/codec.js";
-import { assertDistinctTags, errorList, type ErrorsOf } from "../contract/declared.js";
-import { builtIns, type Refusal, scopeToken, Unauthenticated } from "../contract/errors.js";
+import { assertDistinctTags, errorList } from "../contract/declared.js";
+import type { ErrorsOf } from "../contract/declared.js";
+import { builtIns, scopeToken, Unauthenticated } from "../contract/errors.js";
+import type { Refusal } from "../contract/errors.js";
 import type { Known, OptionalUnless } from "../contract/implementation.js";
+import { providerOf } from "./provider.js";
+import type {
+  Any,
+  Credential,
+  Descriptor,
+  Provider,
+  Runtime,
+  Security,
+  SecurityMiddleware,
+  VerifierFailure,
+} from "./provider.js";
 import {
   answer,
   answerStepUp,
@@ -39,7 +50,7 @@ import {
   plain,
 } from "./refusal.js";
 
-const bearerAuthorizationHeader = /^[ \t]*Bearer +(.*[^ \t])[ \t]*$/i;
+const bearerAuthorizationHeader = /^[ \t]*Bearer +(?<token>.*[^ \t])[ \t]*$/iu;
 
 /**
  * The bearer token of an `Authorization` header, `authorization`, or none, read as Effect's
@@ -49,11 +60,13 @@ const bearerAuthorizationHeader = /^[ \t]*Bearer +(.*[^ \t])[ \t]*$/i;
  * `protect`.
  */
 export const bearerTokenOf = (
-  authorization: string | null | undefined,
-): Option.Option<Redacted.Redacted<string>> =>
+  authorization: string | null | undefined
+): Option.Option<Redacted.Redacted> =>
   Option.map(
-    Option.fromNullishOr(bearerAuthorizationHeader.exec(authorization ?? "")?.[1]),
-    (token): Redacted.Redacted<string> => Redacted.make(token),
+    Option.fromNullishOr(
+      bearerAuthorizationHeader.exec(authorization ?? "")?.groups?.["token"]
+    ),
+    (token): Redacted.Redacted => Redacted.make(token)
   );
 
 /** An OAuth protected resource (RFC 9728), as `layer` publishes it. */
@@ -77,7 +90,7 @@ export interface ProtectedResource {
    * Every scope the resource accepts, each an OAuth scope token, which a client requests when a
    * 401 names none.
    */
-  readonly scopesSupported?: ReadonlyArray<string>;
+  readonly scopesSupported?: readonly string[];
   /**
    * The scopes every 401 names, each an OAuth scope token: what a client requests when it
    * authenticates, rather than every scope supported.
@@ -109,8 +122,9 @@ const namedOf = (options: ProtectedResource | undefined): Named => ({
   metadataUrl: options === undefined ? undefined : metadataUrlOf(options).href,
 });
 
-const presentsBearerToken = (authorization: string | null | undefined): boolean =>
-  Option.isSome(bearerTokenOf(authorization));
+const presentsBearerToken = (
+  authorization: string | null | undefined
+): boolean => Option.isSome(bearerTokenOf(authorization));
 
 const bearerChallengeOf = (named: Named, presented: boolean): string =>
   bearer([
@@ -121,24 +135,31 @@ const bearerChallengeOf = (named: Named, presented: boolean): string =>
 
 const assertPublishableResource = (
   oauth: boolean,
-  options: ProtectedResource | Effect.Effect<unknown, unknown, unknown> | undefined,
+  options:
+    | ProtectedResource
+    | Effect.Effect<unknown, unknown, unknown>
+    | undefined
 ): void => {
-  if (options === undefined) return;
+  if (options === undefined) {
+    return;
+  }
 
   if (!oauth) {
     throw new Error(
-      "A protected resource is published only for a Bearer scheme: drop `protectedResource`, or authenticate with a Bearer descriptor",
+      "A protected resource is published only for a Bearer scheme: drop `protectedResource`, or authenticate with a Bearer descriptor"
     );
   }
 
-  if (Effect.isEffect(options)) return;
+  if (Effect.isEffect(options)) {
+    return;
+  }
 
   for (const key of ["scopesSupported", "scopesRequired"] as const) {
     const invalid = options[key]?.find((scope) => !scopeToken.test(scope));
 
     if (invalid !== undefined) {
       throw new Error(
-        `Invalid scope in ${key}: "${invalid}", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`,
+        `Invalid scope in ${key}: "${invalid}", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`
       );
     }
   }
@@ -147,29 +168,48 @@ const assertPublishableResource = (
 
   if (resource === null) {
     throw new Error(
-      `A protected resource is an absolute URL: ${JSON.stringify(options.resource)} is not one; give the public URL of the endpoint clients connect to, such as https://api.example.com/mcp, read from configuration`,
+      `A protected resource is an absolute URL: ${JSON.stringify(options.resource)} is not one; give the public URL of the endpoint clients connect to, such as https://api.example.com/mcp, read from configuration`
     );
   }
 
   if (resource.href.includes("#")) {
     throw new Error(
-      `A protected resource has no fragment: ${options.resource}; drop the "#", which no request URL carries, so its discovery would never answer`,
+      `A protected resource has no fragment: ${options.resource}; drop the "#", which no request URL carries, so its discovery would never answer`
     );
   }
 };
 
 const withNoStoreAndChallenge = (
   response: HttpServerResponse.HttpServerResponse,
-  challenge: string | undefined,
+  wwwAuthenticate: string | undefined
 ): HttpServerResponse.HttpServerResponse =>
   HttpServerResponse.setHeaders(response, {
-    ...(response.headers["cache-control"] === undefined ? { "cache-control": "no-store" } : {}),
-    ...(challenge !== undefined &&
+    ...(response.headers["cache-control"] === undefined
+      ? { "cache-control": "no-store" }
+      : {}),
+    ...(wwwAuthenticate !== undefined &&
     response.status === 401 &&
     response.headers["www-authenticate"] === undefined
-      ? { "www-authenticate": challenge }
+      ? { "www-authenticate": wwwAuthenticate }
       : {}),
   });
+
+const isBearer = (security: Security): boolean =>
+  Predicate.isTagged(security, "Http") &&
+  security.scheme.toLowerCase() === "bearer";
+
+const openApiComponentKey = /^[\w.-]+$/u;
+
+const nonBearerChallengeOf = (
+  security: Security,
+  name: string
+): string | undefined =>
+  Match.value(security).pipe(
+    Match.tag("Http", ({ scheme }) => challenge(scheme, [])),
+    Match.tag("Basic", () => challenge("Basic", [["realm", name]])),
+    Match.tag("ApiKey", Function.constUndefined),
+    Match.exhaustive
+  );
 
 /** What `refusalResponse` answers about. */
 export interface RefusalResponseOptions<D extends Any = Any> {
@@ -206,15 +246,18 @@ type DeclaredOf<D> = D extends { readonly error: infer E extends Errors }
  */
 export const refusalResponse = <D extends Any = never>(
   error: Refusal | DeclaredOf<D>,
-  options?: RefusalResponseOptions<D>,
+  options?: RefusalResponseOptions<D>
 ): HttpServerResponse.HttpServerResponse => {
   const authentication = options?.authentication;
-  const oauth = authentication === undefined || isBearer(authentication.security);
+
+  const oauth =
+    authentication === undefined || isBearer(authentication.security);
+
   assertPublishableResource(oauth, options?.protectedResource);
 
   const named = namedOf(options?.protectedResource);
 
-  const challenge =
+  const wwwAuthenticate =
     authentication !== undefined && !oauth
       ? nonBearerChallengeOf(authentication.security, authentication.name)
       : bearerChallengeOf(named, presentsBearerToken(options?.authorization));
@@ -224,23 +267,41 @@ export const refusalResponse = <D extends Any = never>(
 
     if (response === undefined) {
       throw new Error(
-        "Not a refusal, nor an error the authentication declares: pass the descriptor declaring it as `authentication`, or answer the error yourself",
+        "Not a refusal, nor an error the authentication declares: pass the descriptor declaring it as `authentication`, or answer the error yourself"
       );
     }
 
-    return withNoStoreAndChallenge(response, challenge);
+    return withNoStoreAndChallenge(response, wwwAuthenticate);
   }
 
   return withNoStoreAndChallenge(
     oauth ? answer(error, named.metadataUrl) : plain(error),
-    challenge,
+    wwwAuthenticate
   );
 };
 
 // Why: A prefilter sparing most requests a URL parse, which must admit every URL the parser may
 // resolve to a discovery path. The parser copies `.well-known` as it is and removes only a tab or a
 // newline, which Node refuses in a request target but another platform may pass through.
-const mayResolveToDiscoveryPath = /\.well-known|[\t\n\r]/;
+const mayResolveToDiscoveryPath = /\.well-known|[\t\n\r]/u;
+
+const corsPreflight = (request: HttpServerRequest.HttpServerRequest) => {
+  const requested = request.headers["access-control-request-headers"];
+
+  return HttpServerResponse.empty({
+    status: 204,
+    headers: {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, HEAD, OPTIONS",
+      ...(requested === undefined
+        ? {}
+        : {
+            "access-control-allow-headers": requested,
+            vary: "Access-Control-Request-Headers",
+          }),
+    },
+  });
+};
 
 const discoveryMiddleware = (options: ProtectedResource) => {
   const discoveryUrl = metadataUrlOf(options);
@@ -254,35 +315,27 @@ const discoveryMiddleware = (options: ProtectedResource) => {
       scopes_supported: options.scopesSupported,
       resource_name: options.resourceName,
     },
-    { headers: { "access-control-allow-origin": "*" } },
+    { headers: { "access-control-allow-origin": "*" } }
   );
 
-  const corsPreflight = (request: HttpServerRequest.HttpServerRequest) => {
-    const requested = request.headers["access-control-request-headers"];
-
-    return HttpServerResponse.empty({
-      status: 204,
-      headers: {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "GET, HEAD, OPTIONS",
-        ...(requested === undefined
-          ? {}
-          : { "access-control-allow-headers": requested, vary: "Access-Control-Request-Headers" }),
-      },
-    });
-  };
-
-  return <E, R>(next: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+  return <E, R>(
+    next: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>
+  ) =>
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
       const targeted =
         mayResolveToDiscoveryPath.test(request.url) &&
         URL.canParse(request.url, discoveryUrl.origin) &&
-        new URL(request.url, discoveryUrl.origin).href.slice(discoveryUrl.origin.length) === target;
+        new URL(request.url, discoveryUrl.origin).href.slice(
+          discoveryUrl.origin.length
+        ) === target;
 
-      if (targeted && (request.method === "GET" || request.method === "HEAD"))
+      if (targeted && (request.method === "GET" || request.method === "HEAD")) {
         return Effect.succeed(metadata);
+      }
 
-      if (targeted && request.method === "OPTIONS") return Effect.succeed(corsPreflight(request));
+      if (targeted && request.method === "OPTIONS") {
+        return Effect.succeed(corsPreflight(request));
+      }
 
       return next;
     });
@@ -298,19 +351,6 @@ const resourceAnswersOf = (options: ProtectedResource | undefined) => {
     published: options === undefined ? undefined : discoveryMiddleware(options),
   };
 };
-
-const isBearer = (security: Security): boolean =>
-  Predicate.isTagged(security, "Http") && security.scheme.toLowerCase() === "bearer";
-
-const openApiComponentKey = /^[\w.-]+$/;
-
-const nonBearerChallengeOf = (security: Security, name: string): string | undefined =>
-  Match.value(security).pipe(
-    Match.tag("Http", ({ scheme }) => challenge(scheme, [])),
-    Match.tag("Basic", () => challenge("Basic", [["realm", name]])),
-    Match.tag("ApiKey", () => undefined),
-    Match.exhaustive,
-  );
 
 /** What `make` takes besides the name and the identity `A`. */
 export interface Options<A = unknown> {
@@ -384,10 +424,18 @@ type SecurityOf<O> = O extends { readonly security: infer S extends Security }
  * one name only for one declaration, whose values a server and a client may hold as `layer` says.
  * Guide: `docs/Authentication.md` in this package; in an application: `examples/notes-service/src/identity/`.
  */
-export const make = <const Name extends string, I, A, const O extends Options<never> = {}>(
+export const make = <
+  const Name extends string,
+  I,
+  A,
+  const O extends Options<never> = {},
+>(
   name: Name,
   identity: Context.Key<I, A>,
-  ...options: OptionalUnless<O, O & NoInfer<Known<O, Options>> & PrincipalOf<A> & SchemaOf<O, A>>
+  ...options: OptionalUnless<
+    O,
+    O & NoInfer<Known<O, Options>> & PrincipalOf<A> & SchemaOf<O, A>
+  >
 ): Descriptor<I, A, SecurityOf<O>, Name, ErrorsOf<O>> => {
   const security: Security = options[0]?.security ?? HttpApiSecurity.bearer;
   const error = errorList(options[0]?.error);
@@ -399,7 +447,7 @@ export const make = <const Name extends string, I, A, const O extends Options<ne
   // which `OpenApi.fromApi` merges silently where their schemes are equal.
   if (!openApiComponentKey.test(name)) {
     throw new Error(
-      `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key: use only letters, digits, "_", "." and "-"`,
+      `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key: use only letters, digits, "_", "." and "-"`
     );
   }
 
@@ -411,27 +459,31 @@ export const make = <const Name extends string, I, A, const O extends Options<ne
     !Predicate.isTagged(security, "Basic")
   ) {
     throw new Error(
-      "Authentication takes one native HttpApiSecurity scheme as `security`: omit it for Bearer, or give one scheme, such as `HttpApiSecurity.basic`, never a record of them",
+      "Authentication takes one native HttpApiSecurity scheme as `security`: omit it for Bearer, or give one scheme, such as `HttpApiSecurity.basic`, never a record of them"
     );
   }
 
   return {
     name,
     identity,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A type read from the options: `SecurityOf` is the scheme given, or Bearer wherever it may be left out.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: A type read from the options: `SecurityOf` is the scheme given, or Bearer wherever it may be left out.
     security: security as SecurityOf<O>,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A type read from the options: `ErrorsOf` is the list given, one schema as a list of one, or none.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: A type read from the options: `ErrorsOf` is the list given, one schema as a list of one, or none.
     error: error as ErrorsOf<O>,
     ...(principal === undefined ? {} : { principal }),
     ...(schema === undefined ? {} : { schema }),
     "~provider": Context.Service<Provider<I, Name>, Runtime>(
-      `effect-actions/Authentication/Provider/${name}`,
+      `effect-actions/Authentication/Provider/${name}`
     ),
-    "~middleware": HttpApiMiddleware.Service<SecurityMiddleware<I, Name>, { provides: I }>()(
-      `effect-actions/Authentication/Security/${name}`,
-      { security: { [name]: security } },
+    "~middleware": HttpApiMiddleware.Service<
+      SecurityMiddleware<I, Name>,
+      { provides: I }
+    >()(`effect-actions/Authentication/Security/${name}`, {
+      security: { [name]: security },
+    }),
+    "~verified": Context.Service<never, unknown>(
+      `effect-actions/Authentication/Verified/${name}`
     ),
-    "~verified": Context.Service<never, unknown>(`effect-actions/Authentication/Verified/${name}`),
   };
 };
 
@@ -449,7 +501,7 @@ export type { Any, Descriptor, Provider } from "./provider.js";
  * - Only a missing or empty credential is refused before it runs; Basic's reaches it when its username or its password is non-empty, so it may receive an empty username.
  */
 export type Verify<A, S extends Security, R, E = never> = (
-  credential: HttpApiSecurity.HttpApiSecurity.Type<S>,
+  credential: HttpApiSecurity.HttpApiSecurity.Type<S>
 ) => Effect.Effect<A, Refusal | E, R>;
 
 /** What `layer` takes besides the descriptor and the verifier. */
@@ -516,11 +568,15 @@ export function layer<
   authentication: Descriptor<I, A, S, Name, E>,
   verify:
     | Verify<NoInfer<A>, NoInfer<S>, R, NoInfer<E[number]["Type"]>>
-    | Effect.Effect<Verify<NoInfer<A>, NoInfer<S>, R, NoInfer<E[number]["Type"]>>, EX, RX>,
+    | Effect.Effect<
+        Verify<NoInfer<A>, NoInfer<S>, R, NoInfer<E[number]["Type"]>>,
+        EX,
+        RX
+      >,
   options?: {
     /** The OAuth protected resource to publish: its rules are on `LayerOptions.protectedResource`. */
     readonly protectedResource?: P;
-  } & ResourceOf<S>,
+  } & ResourceOf<S>
 ): Layer.Layer<
   Provider<I, Name>,
   EX | Effect.Error<P>,
@@ -532,12 +588,16 @@ export function layer(
   authentication: Any,
   verify:
     | Verify<unknown, Security, unknown, unknown>
-    | Effect.Effect<Verify<unknown, Security, unknown, unknown>, unknown, unknown>,
-  options: LayerOptions<unknown, unknown> = {},
+    | Effect.Effect<
+        Verify<unknown, Security, unknown, unknown>,
+        unknown,
+        unknown
+      >,
+  options: LayerOptions<unknown, unknown> = {}
 ): Layer.Layer<Provider<unknown>, unknown, unknown> {
   const { security } = authentication;
   const oauth = isBearer(security);
-  const protectedResource = options.protectedResource;
+  const { protectedResource } = options;
   assertPublishableResource(oauth, protectedResource);
 
   const resource = Effect.isEffect(protectedResource)
@@ -549,7 +609,9 @@ export function layer(
     : Effect.succeed(resourceAnswersOf(protectedResource));
 
   const missing = new Unauthenticated({
-    message: oauth ? "A bearer token is required." : "A credential is required.",
+    message: oauth
+      ? "A bearer token is required."
+      : "A credential is required.",
   });
 
   return Layer.effect(
@@ -566,23 +628,29 @@ export function layer(
 
       if (!Predicate.isFunction(verifier)) {
         return yield* Effect.die(
-          new Error("Missing verify: pass a verify function, or an Effect building one"),
+          new Error(
+            "Missing verify: pass a verify function, or an Effect building one"
+          )
         );
       }
 
       const authenticate = (credential: Credential) =>
         presented(credential) ? verifier(credential) : Effect.fail(missing);
 
-      const noStoreOnFailure = HttpEffect.appendPreResponseHandler((_request, response) =>
-        Effect.succeed(HttpServerResponse.setHeader(response, "cache-control", "no-store")),
+      const noStoreOnFailure = HttpEffect.appendPreResponseHandler(
+        (_request, response) =>
+          Effect.succeed(
+            HttpServerResponse.setHeader(response, "cache-control", "no-store")
+          )
       );
 
-      const challengeOf = (credential: Credential) =>
-        !oauth
-          ? nonBearerChallengeOf(security, authentication.name)
-          : presented(credential)
-            ? invalid
-            : anonymous;
+      const challengeOf = (credential: Credential) => {
+        if (!oauth) {
+          return nonBearerChallengeOf(security, authentication.name);
+        }
+
+        return presented(credential) ? invalid : anonymous;
+      };
 
       const refuse = (error: VerifierFailure) =>
         isRefusal(error)
@@ -590,15 +658,21 @@ export function layer(
           : Effect.suspend(() => {
               const response = declaredResponse(authentication.error, error);
 
-              return response === undefined ? Effect.die(error) : Effect.succeed(response);
+              return response === undefined
+                ? Effect.die(error)
+                : Effect.succeed(response);
             });
 
       const verified = (
         credential: Credential,
-        route: Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>,
-        slot: Context.Key<unknown, unknown>,
+        route: Effect.Effect<
+          HttpServerResponse.HttpServerResponse,
+          unknown,
+          unknown
+        >,
+        slot: Context.Key<unknown, unknown>
       ) => {
-        const challenge = challengeOf(credential);
+        const wwwAuthenticate = challengeOf(credential);
 
         return Effect.matchEffect(authenticate(credential), {
           onFailure: refuse,
@@ -606,8 +680,8 @@ export function layer(
         }).pipe(
           Effect.onError(() => noStoreOnFailure),
           HttpEffect.withPreResponseHandler((_request, response) =>
-            Effect.succeed(withNoStoreAndChallenge(response, challenge)),
-          ),
+            Effect.succeed(withNoStoreAndChallenge(response, wwwAuthenticate))
+          )
         );
       };
 
@@ -616,32 +690,52 @@ export function layer(
         authenticate,
         middleware: {
           [authentication.name]: (
-            route: Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>,
-            { credential }: { readonly credential: Credential },
+            route: Effect.Effect<
+              HttpServerResponse.HttpServerResponse,
+              unknown,
+              unknown
+            >,
+            { credential }: { readonly credential: Credential }
           ) => verified(credential, route, authentication.identity),
         },
         stepUp: (route) =>
           oauth
-            ? Effect.catchIf(route, isStepUp, (error) => Effect.succeed(answer(error, metadataUrl)))
+            ? Effect.catchIf(route, isStepUp, (error) =>
+                Effect.succeed(answer(error, metadataUrl))
+              )
             : route,
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
         http: ((route, optional) =>
-          Effect.flatMap(HttpApiBuilder.securityDecode(security), (credential) =>
-            optional && !presented(credential)
-              ? route
-              : verified(
-                  credential,
-                  oauth ? answerStepUp(route, metadataUrl) : route,
-                  authentication["~verified"],
-                ),
+          Effect.flatMap(
+            HttpApiBuilder.securityDecode(security),
+            (credential) =>
+              optional && !presented(credential)
+                ? route
+                : verified(
+                    credential,
+                    oauth ? answerStepUp(route, metadataUrl) : route,
+                    authentication["~verified"]
+                  )
           )) as Runtime["http"],
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
-        route: ((route: Effect.Effect<HttpServerResponse.HttpServerResponse, unknown, unknown>) =>
-          Effect.flatMap(HttpApiBuilder.securityDecode(security), (credential) =>
-            verified(credential, Effect.catchIf(route, isRefusal, refuse), authentication.identity),
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
+        route: ((
+          route: Effect.Effect<
+            HttpServerResponse.HttpServerResponse,
+            unknown,
+            unknown
+          >
+        ) =>
+          Effect.flatMap(
+            HttpApiBuilder.securityDecode(security),
+            (credential) =>
+              verified(
+                credential,
+                Effect.catchIf(route, isRefusal, refuse),
+                authentication.identity
+              )
           )) as Runtime["route"],
       };
-    }),
+    })
   );
 }
 
@@ -676,9 +770,18 @@ export type Protection<I, Name extends string> = HttpRouter.Middleware<{
  * - A failure that enclosing middleware serializes is `no-store` whatever the route set: only a response the route itself returns keeps its caching.
  * - An erased descriptor, `Any`, provides no service the types can name: its identity is `unknown`, which would discharge every request service the route owes.
  */
-export const protect = <I, A, S extends Security, Name extends string, E extends Errors>(
-  authentication: Descriptor<I, A, S, Name, E>,
+export const protect = <
+  I,
+  A,
+  S extends Security,
+  Name extends string,
+  E extends Errors,
+>(
+  authentication: Descriptor<I, A, S, Name, E>
 ): Protection<I, Name> =>
   HttpRouter.middleware<{ provides: Provides<I>; handles: Refusal }>()(
-    Effect.map(providerOf(authentication), (runtime) => (route) => runtime.route(route)),
+    Effect.map(
+      providerOf(authentication),
+      (runtime) => (route) => runtime.route(route)
+    )
   );

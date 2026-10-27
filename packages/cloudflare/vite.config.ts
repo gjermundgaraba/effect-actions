@@ -1,9 +1,12 @@
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vite-plus";
+
 import { pack } from "../../tools/pack.ts";
 
 export default defineConfig({
-  plugins: [cloudflareTest({ wrangler: { configPath: "./tests/wrangler.jsonc" } })],
+  plugins: [
+    cloudflareTest({ wrangler: { configPath: "./tests/wrangler.jsonc" } }),
+  ],
   test: {
     include: ["tests/**/*.test.ts"],
     // Why: under @cloudflare/vitest-plugin 1.4.4, the warm-module response for a later file in a

@@ -1,34 +1,98 @@
-import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { Cause, Effect, Exit, Fiber, Predicate, Schedule } from "effect";
-import { RpcClient } from "effect/rpc";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import { Cause, Effect, Exit, Fiber, Predicate, Schedule } from "effect";
+import { RpcClient } from "effect/rpc";
+
 import { noteHeader, Overdrawn } from "../support/app.js";
+import {
+  nextMessage,
+  scopedClientOver,
+  upgradeToRpc,
+} from "../support/socket.js";
 import type { Room } from "../worker.js";
-import { nextMessage, scopedClientOver, upgradeToRpc } from "../support/socket.js";
 
 const room = (name: string) => env.ROOM.getByName(name);
 
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
-describe("layerWebSocket", () => {
-  it.effect("serves rpcs on a socket, as the upgrade request's token, with declared errors", () =>
-    Effect.gen(function* () {
-      const client = yield* scopedClientOver(yield* upgradeToRpc(room("serves"), bearer("ada")));
+const replaceAttachment = (
+  stub: DurableObjectStub,
+  attachment: { readonly headers: string } | undefined
+) =>
+  Effect.promise(
+    async () =>
+      await runInDurableObject(stub, (_, state) => {
+        const [held] = state.getWebSockets();
 
-      expect(yield* client.whoami()).toBe("ada");
-      expect(yield* client.spend({ amount: 4 })).toEqual({ left: 6 });
-      expect(yield* Effect.flip(client.spend({ amount: 7 }))).toEqual(new Overdrawn({ by: 1 }));
-    }).pipe(Effect.scoped),
+        if (held === undefined) {
+          throw new Error("No socket");
+        }
+
+        held.serializeAttachment(attachment);
+
+        return Predicate.isNullish(held.deserializeAttachment());
+      })
   );
 
-  it.effect("authenticates each message with its own token over the saved one", () =>
-    Effect.gen(function* () {
-      const client = yield* scopedClientOver(yield* upgradeToRpc(room("own-token"), bearer("ada")));
+const upgradeWith = (name: string, bytes: number) =>
+  Effect.gen(function* () {
+    const stub = room(name);
 
-      expect(yield* client.whoami().pipe(RpcClient.withHeaders(bearer("grace")))).toBe("grace");
-      expect(yield* client.whoami()).toBe("ada");
-    }).pipe(Effect.scoped),
+    const response = yield* Effect.promise(
+      async () =>
+        await stub.fetch("https://object/rpc", {
+          headers: {
+            upgrade: "websocket",
+            authorization: `Bearer ${"x".repeat(bytes)}`,
+          },
+        })
+    );
+
+    response.webSocket?.accept();
+
+    const held = yield* Effect.promise(
+      async () =>
+        await runInDurableObject(
+          stub,
+          (_, state) => state.getWebSockets().length
+        )
+    );
+
+    return [response.status, held];
+  });
+
+describe("layerWebSocket", () => {
+  it.effect(
+    "serves rpcs on a socket, as the upgrade request's token, with declared errors",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* scopedClientOver(
+          yield* upgradeToRpc(room("serves"), bearer("ada"))
+        );
+
+        expect(yield* client.whoami()).toBe("ada");
+        expect(yield* client.spend({ amount: 4 })).toStrictEqual({ left: 6 });
+        expect(yield* Effect.flip(client.spend({ amount: 7 }))).toStrictEqual(
+          new Overdrawn({ by: 1 })
+        );
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "authenticates each message with its own token over the saved one",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* scopedClientOver(
+          yield* upgradeToRpc(room("own-token"), bearer("ada"))
+        );
+
+        expect(
+          yield* client.whoami().pipe(RpcClient.withHeaders(bearer("grace")))
+        ).toBe("grace");
+        expect(yield* client.whoami()).toBe("ada");
+      }).pipe(Effect.scoped)
   );
 
   it.effect(
@@ -36,21 +100,29 @@ describe("layerWebSocket", () => {
     () =>
       Effect.gen(function* () {
         const client = yield* scopedClientOver(
-          yield* upgradeToRpc(room("own-native"), bearer("ada")),
+          yield* upgradeToRpc(room("own-native"), bearer("ada"))
         );
 
-        expect(yield* client.whose().pipe(RpcClient.withHeaders(bearer("grace")))).toBe("grace");
+        expect(
+          yield* client.whose().pipe(RpcClient.withHeaders(bearer("grace")))
+        ).toBe("grace");
         expect(yield* client.whose()).toBe("ada");
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.scoped)
   );
 
-  it.effect("refuses a socket's protected calls without a token, and serves its public ones", () =>
-    Effect.gen(function* () {
-      const client = yield* scopedClientOver(yield* upgradeToRpc(room("anonymous")));
+  it.effect(
+    "refuses a socket's protected calls without a token, and serves its public ones",
+    () =>
+      Effect.gen(function* () {
+        const client = yield* scopedClientOver(
+          yield* upgradeToRpc(room("anonymous"))
+        );
 
-      expect(yield* Effect.flip(client.whoami())).toBeInstanceOf(Action.Unauthenticated);
-      expect(yield* client.readNote()).toBe("none");
-    }).pipe(Effect.scoped),
+        expect(yield* Effect.flip(client.whoami())).toBeInstanceOf(
+          Action.Unauthenticated
+        );
+        expect(yield* client.readNote()).toBe("none");
+      }).pipe(Effect.scoped)
   );
 
   it.effect(
@@ -58,62 +130,66 @@ describe("layerWebSocket", () => {
     () =>
       Effect.gen(function* () {
         const stub = room("hibernates");
-        const socket = yield* upgradeToRpc(stub, { ...bearer("grace"), [noteHeader]: "kept" });
+
+        const socket = yield* upgradeToRpc(stub, {
+          ...bearer("grace"),
+          [noteHeader]: "kept",
+        });
+
         const client = yield* scopedClientOver(socket);
 
-        expect(yield* client.spend({ amount: 3 })).toEqual({ left: 7 });
+        expect(yield* client.spend({ amount: 3 })).toStrictEqual({ left: 7 });
 
-        yield* Effect.promise(() => evictDurableObject(stub));
+        yield* Effect.promise(async () => {
+          await evictDurableObject(stub);
+        });
 
         expect(yield* client.whoami()).toBe("grace");
         expect(yield* client.readNote()).toBe("kept");
-        expect(yield* client.spend({ amount: 3 })).toEqual({ left: 7 });
-      }).pipe(Effect.scoped),
+        expect(yield* client.spend({ amount: 3 })).toStrictEqual({ left: 7 });
+      }).pipe(Effect.scoped)
   );
-
-  const replaceAttachment = (
-    stub: DurableObjectStub,
-    attachment: { readonly headers: string } | undefined,
-  ) =>
-    Effect.promise(() =>
-      runInDurableObject(stub, (_, state) => {
-        const [held] = state.getWebSockets();
-
-        if (held === undefined) throw new Error("No socket");
-
-        held.serializeAttachment(attachment);
-
-        return Predicate.isNullish(held.deserializeAttachment());
-      }),
-    );
 
   it.effect(
     "serves a socket whose attachment the runtime dropped, with each message's own headers",
     () =>
       Effect.gen(function* () {
         const stub = room("dropped-attachment");
-        const client = yield* scopedClientOver(yield* upgradeToRpc(stub, bearer("ada")));
+
+        const client = yield* scopedClientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
 
         expect(yield* client.whoami()).toBe("ada");
         expect(yield* replaceAttachment(stub, undefined)).toBe(true);
-        expect(yield* client.whoami().pipe(RpcClient.withHeaders(bearer("grace")))).toBe("grace");
-        expect(yield* Effect.flip(client.whoami())).toBeInstanceOf(Action.Unauthenticated);
-      }).pipe(Effect.scoped),
+        expect(
+          yield* client.whoami().pipe(RpcClient.withHeaders(bearer("grace")))
+        ).toBe("grace");
+        expect(yield* Effect.flip(client.whoami())).toBeInstanceOf(
+          Action.Unauthenticated
+        );
+      }).pipe(Effect.scoped)
   );
 
-  it.effect("answers a message on a socket whose attachment does not decode with a defect", () =>
-    Effect.gen(function* () {
-      const stub = room("unreadable-attachment");
-      const socket = yield* upgradeToRpc(stub, bearer("ada"));
-      const client = yield* scopedClientOver(socket);
+  it.effect(
+    "answers a message on a socket whose attachment does not decode with a defect",
+    () =>
+      Effect.gen(function* () {
+        const stub = room("unreadable-attachment");
+        const socket = yield* upgradeToRpc(stub, bearer("ada"));
+        const client = yield* scopedClientOver(socket);
 
-      expect(yield* replaceAttachment(stub, { headers: "not pairs" })).toBe(false);
+        expect(yield* replaceAttachment(stub, { headers: "not pairs" })).toBe(
+          false
+        );
 
-      const exit = yield* Effect.exit(client.whoami().pipe(RpcClient.withHeaders(bearer("ada"))));
+        const exit = yield* Effect.exit(
+          client.whoami().pipe(RpcClient.withHeaders(bearer("ada")))
+        );
 
-      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-      expect(socket.readyState).toBe(WebSocket.OPEN);
-    }).pipe(Effect.scoped),
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+        expect(socket.readyState).toBe(WebSocket.OPEN);
+      }).pipe(Effect.scoped)
   );
 
   it.effect("answers a client's ping without waking the object", () =>
@@ -121,61 +197,88 @@ describe("layerWebSocket", () => {
       const stub = room("pings");
       const socket = yield* upgradeToRpc(stub);
 
-      const pong = yield* Effect.promise(
-        () =>
-          new Promise<string>((resolve) => {
-            socket.addEventListener("message", ({ data }) => resolve(String(data)), { once: true });
-            socket.send(JSON.stringify({ _tag: "Ping" }));
-          }),
+      const pong = yield* Effect.promise(async () => {
+        const { promise, resolve } = Promise.withResolvers<string>();
+
+        socket.addEventListener(
+          "message",
+          ({ data }) => {
+            resolve(String(data));
+          },
+          { once: true }
+        );
+        socket.send(JSON.stringify({ _tag: "Ping" }));
+
+        return await promise;
+      });
+
+      expect(JSON.parse(pong)).toStrictEqual({ _tag: "Pong" });
+
+      const answered = yield* Effect.promise(
+        async () =>
+          await runInDurableObject(stub, (_, state) =>
+            state
+              .getWebSockets()
+              .map((held) => state.getWebSocketAutoResponseTimestamp(held))
+          )
       );
 
-      expect(JSON.parse(pong)).toEqual({ _tag: "Pong" });
-
-      const answered = yield* Effect.promise(() =>
-        runInDurableObject(stub, (_, state) =>
-          state.getWebSockets().map((held) => state.getWebSocketAutoResponseTimestamp(held)),
-        ),
-      );
-
-      expect(answered).toEqual([expect.any(Date)]);
-    }),
+      expect(answered).toStrictEqual([expect.any(Date)]);
+    })
   );
 
-  it.effect("ends a message's event before its call ends, and answers the call after", () =>
-    Effect.gen(function* () {
-      const stub = room("outlives");
-      const socket = yield* upgradeToRpc(stub);
+  it.effect(
+    "ends a message's event before its call ends, and answers the call after",
+    () =>
+      Effect.gen(function* () {
+        const stub = room("outlives");
+        const socket = yield* upgradeToRpc(stub);
 
-      const reply = new Promise<unknown>((resolve) =>
-        socket.addEventListener("message", ({ data }) => resolve(JSON.parse(String(data))), {
-          once: true,
-        }),
-      );
+        const { promise: reply, resolve } = Promise.withResolvers<unknown>();
 
-      const lasted = yield* Effect.promise(() =>
-        runInDurableObject(stub, async (instance: Room, state) => {
-          const [held] = state.getWebSockets();
+        socket.addEventListener(
+          "message",
+          ({ data }) => {
+            resolve(JSON.parse(String(data)));
+          },
+          {
+            once: true,
+          }
+        );
 
-          if (held === undefined) throw new Error("No socket");
+        const lasted = yield* Effect.promise(
+          async () =>
+            await runInDurableObject(stub, async (instance: Room, state) => {
+              const [held] = state.getWebSockets();
 
-          const started = Date.now();
+              if (held === undefined) {
+                throw new Error("No socket");
+              }
 
-          await instance.webSocketMessage(
-            held,
-            JSON.stringify({ _tag: "Request", id: 1, tag: "pause", payload: {}, headers: [] }),
-          );
+              const started = Date.now();
 
-          return Date.now() - started;
-        }),
-      );
+              await instance.webSocketMessage(
+                held,
+                JSON.stringify({
+                  _tag: "Request",
+                  id: 1,
+                  tag: "pause",
+                  payload: {},
+                  headers: [],
+                })
+              );
 
-      expect(lasted).toBeLessThan(100);
-      expect(yield* Effect.promise(() => reply)).toMatchObject({
-        _tag: "Exit",
-        requestId: 1,
-        exit: { _tag: "Success" },
-      });
-    }),
+              return Date.now() - started;
+            })
+        );
+
+        expect(lasted).toBeLessThan(100);
+        expect(yield* Effect.promise(async () => await reply)).toMatchObject({
+          _tag: "Exit",
+          requestId: 1,
+          exit: { _tag: "Success" },
+        });
+      })
   );
 
   it.live("interrupts a socket's running call when the socket closes", () =>
@@ -184,15 +287,27 @@ describe("layerWebSocket", () => {
       const socket = yield* upgradeToRpc(stub);
 
       const stored = (key: string) =>
-        Effect.promise(() => runInDurableObject(stub, (_, state) => state.storage.get(key))).pipe(
+        Effect.promise(
+          async () =>
+            await runInDurableObject(
+              stub,
+              async (_, state) => await state.storage.get(key)
+            )
+        ).pipe(
           Effect.repeat({
             until: (value) => value === true,
             schedule: Schedule.spaced("5 millis"),
-          }),
+          })
         );
 
       socket.send(
-        JSON.stringify({ _tag: "Request", id: 1, tag: "hold", payload: {}, headers: [] }),
+        JSON.stringify({
+          _tag: "Request",
+          id: 1,
+          tag: "hold",
+          payload: {},
+          headers: [],
+        })
       );
 
       yield* stored("holdStarted");
@@ -200,7 +315,7 @@ describe("layerWebSocket", () => {
       socket.close(1000);
 
       expect(yield* stored("holdInterrupted")).toBe(true);
-    }),
+    })
   );
 
   it.live(
@@ -208,24 +323,38 @@ describe("layerWebSocket", () => {
     () =>
       Effect.gen(function* () {
         const stub = room("lost-call");
-        const lost = yield* scopedClientOver(yield* upgradeToRpc(stub, bearer("ada")));
-        const answered = yield* scopedClientOver(yield* upgradeToRpc(stub, bearer("ada")));
+
+        const lost = yield* scopedClientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
+
+        const answered = yield* scopedClientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
 
         expect(yield* answered.whoami()).toBe("ada");
 
         const held = yield* Effect.forkChild(lost.hold());
 
-        yield* Effect.promise(() =>
-          runInDurableObject(stub, (_, state) => state.storage.get("holdStarted")),
+        yield* Effect.promise(
+          async () =>
+            await runInDurableObject(
+              stub,
+              async (_, state) => await state.storage.get("holdStarted")
+            )
         ).pipe(
           Effect.repeat({
             until: (value) => value === true,
             schedule: Schedule.spaced("5 millis"),
-          }),
+          })
         );
 
-        yield* Effect.promise(() => evictDurableObject(stub));
-        yield* Effect.promise(() => stub.fetch("https://object/unrouted"));
+        yield* Effect.promise(async () => {
+          await evictDurableObject(stub);
+        });
+        yield* Effect.promise(
+          async () => await stub.fetch("https://object/unrouted")
+        );
 
         const exit = yield* Fiber.await(held).pipe(Effect.timeout("2 seconds"));
 
@@ -233,32 +362,38 @@ describe("layerWebSocket", () => {
           reason: { _tag: "SocketCloseError", code: 1012 },
         });
         expect(yield* answered.whoami()).toBe("ada");
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.scoped)
   );
 
   it.effect(
     "answers a client's close with its own code and reason, without the runtime's reply",
     () =>
       Effect.gen(function* () {
-        const socket = yield* upgradeToRpc(room("answers-close"), bearer("ada"));
-
-        const closed = Effect.promise(
-          () =>
-            new Promise<CloseEvent>((resolve) =>
-              socket.addEventListener("close", resolve, { once: true }),
-            ),
+        const socket = yield* upgradeToRpc(
+          room("answers-close"),
+          bearer("ada")
         );
+
+        const closed = Effect.promise(async () => {
+          const { promise, resolve } = Promise.withResolvers<CloseEvent>();
+
+          socket.addEventListener("close", resolve, { once: true });
+
+          return await promise;
+        });
 
         socket.close(4000, "page left");
 
-        const { code, reason, wasClean } = yield* closed.pipe(Effect.timeout("2 seconds"));
+        const { code, reason, wasClean } = yield* closed.pipe(
+          Effect.timeout("2 seconds")
+        );
 
-        expect({ code, reason, wasClean }).toEqual({
+        expect({ code, reason, wasClean }).toStrictEqual({
           code: 4000,
           reason: "page left",
           wasClean: true,
         });
-      }),
+      })
   );
 
   it.effect("ignores a close event for a socket already answered", () =>
@@ -267,142 +402,182 @@ describe("layerWebSocket", () => {
 
       yield* upgradeToRpc(stub, bearer("ada"));
 
-      yield* Effect.promise(() =>
-        runInDurableObject(stub, async (instance, state) => {
+      yield* Effect.promise(async () => {
+        await runInDurableObject(stub, async (instance, state) => {
           const [socket] = state.getWebSockets();
 
-          if (socket === undefined) throw new Error("No socket");
+          if (socket === undefined) {
+            throw new Error("No socket");
+          }
 
-          await instance.webSocketClose(socket, 1000, "", true);
-          await instance.webSocketClose(socket, 1000, "", true);
-        }),
-      );
-    }),
+          await expect(
+            instance.webSocketClose(socket, 1000, "", true)
+          ).resolves.toBeUndefined();
+          await expect(
+            instance.webSocketClose(socket, 1000, "", true)
+          ).resolves.toBeUndefined();
+        });
+      });
+    })
   );
 
-  it.effect("answers a frame it cannot read with a defect, and serves the socket after it", () =>
-    Effect.gen(function* () {
-      const socket = yield* upgradeToRpc(room("answers-unreadable"), bearer("ada"));
+  it.effect(
+    "answers a frame it cannot read with a defect, and serves the socket after it",
+    () =>
+      Effect.gen(function* () {
+        const socket = yield* upgradeToRpc(
+          room("answers-unreadable"),
+          bearer("ada")
+        );
 
-      const received: Array<unknown> = [];
+        const received: unknown[] = [];
 
-      socket.addEventListener("message", ({ data }) => received.push(JSON.parse(String(data))));
-      socket.send("{");
-      socket.send("null");
-      socket.send(
-        JSON.stringify({ _tag: "Request", id: 5, tag: "whoami", payload: {}, headers: null }),
-      );
+        socket.addEventListener("message", ({ data }) => {
+          received.push(JSON.parse(String(data)));
+        });
+        socket.send("{");
+        socket.send("null");
+        socket.send(
+          JSON.stringify({
+            _tag: "Request",
+            id: 5,
+            tag: "whoami",
+            payload: {},
+            headers: null,
+          })
+        );
 
-      yield* Effect.promise(() => vi.waitUntil(() => received.length >= 3, { timeout: 5_000 }));
+        yield* Effect.promise(
+          async () =>
+            await vi.waitUntil(() => received.length >= 3, { timeout: 5000 })
+        );
 
-      expect(received).toEqual([
-        expect.objectContaining({ _tag: "Defect" }),
-        expect.objectContaining({ _tag: "Defect" }),
-        expect.objectContaining({ _tag: "Defect" }),
-      ]);
-      expect(yield* (yield* scopedClientOver(socket)).whoami()).toBe("ada");
-    }).pipe(Effect.scoped),
+        expect(received).toStrictEqual([
+          expect.objectContaining({ _tag: "Defect" }),
+          expect.objectContaining({ _tag: "Defect" }),
+          expect.objectContaining({ _tag: "Defect" }),
+        ]);
+        expect(yield* (yield* scopedClientOver(socket)).whoami()).toBe("ada");
+      }).pipe(Effect.scoped)
   );
 
-  it.live("keeps a socket open through an eviction once a defect answered its calls", () =>
-    Effect.gen(function* () {
-      const stub = room("defect-settles");
-      const socket = yield* upgradeToRpc(stub, bearer("ada"));
-      const received: Array<unknown> = [];
+  it.live(
+    "keeps a socket open through an eviction once a defect answered its calls",
+    () =>
+      Effect.gen(function* () {
+        const stub = room("defect-settles");
+        const socket = yield* upgradeToRpc(stub, bearer("ada"));
+        const received: unknown[] = [];
 
-      socket.addEventListener("message", ({ data }) => received.push(JSON.parse(String(data))));
-      socket.send(
-        JSON.stringify({ _tag: "Request", id: 5, tag: "whoami", payload: {}, headers: null }),
-      );
+        socket.addEventListener("message", ({ data }) => {
+          received.push(JSON.parse(String(data)));
+        });
+        socket.send(
+          JSON.stringify({
+            _tag: "Request",
+            id: 5,
+            tag: "whoami",
+            payload: {},
+            headers: null,
+          })
+        );
 
-      yield* Effect.promise(() => vi.waitUntil(() => received.length >= 1, { timeout: 5_000 }));
-      yield* Effect.promise(() => evictDurableObject(stub));
-      yield* Effect.promise(() => stub.fetch("https://object/unrouted"));
+        yield* Effect.promise(
+          async () =>
+            await vi.waitUntil(() => received.length >= 1, { timeout: 5000 })
+        );
+        yield* Effect.promise(async () => {
+          await evictDurableObject(stub);
+        });
+        yield* Effect.promise(
+          async () => await stub.fetch("https://object/unrouted")
+        );
 
-      expect(received).toEqual([expect.objectContaining({ _tag: "Defect" })]);
-      expect(yield* (yield* scopedClientOver(socket)).whoami()).toBe("ada");
-    }).pipe(Effect.scoped),
+        expect(received).toStrictEqual([
+          expect.objectContaining({ _tag: "Defect" }),
+        ]);
+        expect(yield* (yield* scopedClientOver(socket)).whoami()).toBe("ada");
+      }).pipe(Effect.scoped)
   );
 
-  it.effect("refuses to build two protocols at one path under different prefixes", () =>
-    Effect.gen(function* () {
-      const failure = yield* Effect.flip(
-        Effect.tryPromise(() => env.PREFIXED.getByName("prefixed").fetch("https://object/a/rpc")),
-      );
+  it.effect(
+    "refuses to build two protocols at one path under different prefixes",
+    () =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          Effect.tryPromise(
+            async () =>
+              await env.PREFIXED.getByName("prefixed").fetch(
+                "https://object/a/rpc"
+              )
+          )
+        );
 
-      expect(String(failure.cause)).toContain("a router prefix does not tell them apart");
-    }),
+        expect(String(failure.cause)).toContain(
+          "a router prefix does not tell them apart"
+        );
+      })
   );
 
   it.effect(
     "keeps an upgrade's 12 KB of headers in its attachment, and refuses 20 KB, past the runtime's 16 KiB, with 431",
     () =>
       Effect.gen(function* () {
-        const upgradeWith = (name: string, bytes: number) =>
-          Effect.gen(function* () {
-            const stub = room(name);
-
-            const response = yield* Effect.promise(() =>
-              stub.fetch("https://object/rpc", {
-                headers: { upgrade: "websocket", authorization: `Bearer ${"x".repeat(bytes)}` },
-              }),
-            );
-
-            response.webSocket?.accept();
-
-            const held = yield* Effect.promise(() =>
-              runInDurableObject(stub, (_, state) => state.getWebSockets().length),
-            );
-
-            return [response.status, held];
-          });
-
-        expect(yield* upgradeWith("fits", 12_000)).toEqual([101, 1]);
-        expect(yield* upgradeWith("too-large", 20_000)).toEqual([431, 0]);
-      }),
+        expect(yield* upgradeWith("fits", 12_000)).toStrictEqual([101, 1]);
+        expect(yield* upgradeWith("too-large", 20_000)).toStrictEqual([431, 0]);
+      })
   );
 
-  it.effect("fails a call at once whose id its socket's attachment cannot hold, never run", () =>
-    Effect.gen(function* () {
-      const socket = yield* upgradeToRpc(room("untracked"), bearer("ada"));
-      const answer = nextMessage(socket);
+  it.effect(
+    "fails a call at once whose id its socket's attachment cannot hold, never run",
+    () =>
+      Effect.gen(function* () {
+        const socket = yield* upgradeToRpc(room("untracked"), bearer("ada"));
+        const answer = nextMessage(socket);
 
-      socket.send(
-        JSON.stringify({
-          _tag: "Request",
-          id: "1".repeat(20_000),
-          tag: "spend",
-          payload: { amount: 3 },
-          headers: [],
-        }),
-      );
+        socket.send(
+          JSON.stringify({
+            _tag: "Request",
+            id: "1".repeat(20_000),
+            tag: "spend",
+            payload: { amount: 3 },
+            headers: [],
+          })
+        );
 
-      const answered = yield* answer;
-      const client = yield* scopedClientOver(socket);
+        const answered = yield* answer;
+        const client = yield* scopedClientOver(socket);
 
-      expect(answered).toMatch(/^\{"_tag":"Exit".*16 KiB/);
-      expect(yield* client.spend({ amount: 3 })).toEqual({ left: 7 });
-    }).pipe(Effect.scoped),
+        expect(answered).toMatch(/^\{"_tag":"Exit".*16 KiB/u);
+        expect(yield* client.spend({ amount: 3 })).toStrictEqual({ left: 7 });
+      }).pipe(Effect.scoped)
   );
 
-  it.effect("never gives a socket's calls a service only router middleware provides", () =>
-    Effect.gen(function* () {
-      const socket = yield* upgradeToRpc(env.ROUTER_PROVIDED.getByName("router-provided"));
-      const client = yield* scopedClientOver(socket);
-      const exit = yield* Effect.exit(client.readNote());
+  it.effect(
+    "never gives a socket's calls a service only router middleware provides",
+    () =>
+      Effect.gen(function* () {
+        const socket = yield* upgradeToRpc(
+          env.ROUTER_PROVIDED.getByName("router-provided")
+        );
 
-      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-      expect(String(Exit.isFailure(exit) && Cause.squash(exit.cause))).toContain(
-        "Internal server error",
-      );
-    }).pipe(Effect.scoped),
+        const client = yield* scopedClientOver(socket);
+        const exit = yield* Effect.exit(client.readNote());
+
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+        expect(
+          String(Exit.isFailure(exit) && Cause.squash(exit.cause))
+        ).toContain("Internal server error");
+      }).pipe(Effect.scoped)
   );
 
   it.effect("answers a request to the route that is no upgrade with 426", () =>
     Effect.gen(function* () {
-      const response = yield* Effect.promise(() => room("plain-get").fetch("https://object/rpc"));
+      const response = yield* Effect.promise(
+        async () => await room("plain-get").fetch("https://object/rpc")
+      );
 
       expect(response.status).toBe(426);
-    }),
+    })
   );
 });

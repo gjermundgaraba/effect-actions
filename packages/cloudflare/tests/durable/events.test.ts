@@ -1,16 +1,33 @@
-import { env, evictDurableObject, runInDurableObject } from "cloudflare:test";
-import { Cause, Effect, Exit, Fiber, Layer, Option, Schema, type Scope, Stream } from "effect";
 import { describe, expect, it, vi } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { RpcMessage } from "effect/rpc";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
+import {
+  Cause,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Schema,
+  Stream,
+} from "effect";
+import type { Scope } from "effect";
+import { RpcMessage } from "effect/rpc";
+
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { layerEvents } from "../../src/durable/events.js";
 import { groupTag, socketIdOf } from "../../src/durable/frames.js";
 import { keptPrefix } from "../../src/durable/subscriptions.js";
 import { Noted, Said, Statused, Watched } from "../support/events.js";
-import { protocolOver, protocolUpgrading, upgradeTo, upgradeToRpc } from "../support/socket.js";
+import {
+  protocolOver,
+  protocolUpgrading,
+  upgradeTo,
+  upgradeToRpc,
+} from "../support/socket.js";
 
 const watching = (name: string) => env.WATCHING.getByName(name);
 
@@ -18,66 +35,89 @@ const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
 const clientOver = (socket: WebSocket) =>
   Effect.flatMap(Layer.build(protocolOver(socket)), (protocol) =>
-    ActionRpc.client(Watched).pipe(Effect.provideContext(protocol)),
+    ActionRpc.client(Watched).pipe(Effect.provideContext(protocol))
   );
 
-const Resumed = Schema.Struct({ cursor: Schema.optional(Schema.NullOr(Schema.String)) });
+const Resumed = Schema.Struct({
+  cursor: Schema.optional(Schema.NullOr(Schema.String)),
+});
 
 const resumedOf = Schema.decodeUnknownOption(Resumed);
 
 const keptCursors = (stub: DurableObjectStub) =>
-  Effect.promise(() =>
-    runInDurableObject(stub, async (_, state) => [
-      ...(await state.storage.list({ prefix: `${keptPrefix}payload/` })).values(),
-    ]),
+  Effect.promise(
+    async () =>
+      await runInDurableObject(stub, async (_, state) => {
+        const kept = await state.storage.list({
+          prefix: `${keptPrefix}payload/`,
+        });
+
+        return [...kept.values()];
+      })
   ).pipe(
     Effect.map((kept) =>
       kept.map((value) =>
         Option.match(resumedOf(value), {
           onNone: () => "unreadable",
           onSome: ({ cursor }) => cursor ?? null,
-        }),
-      ),
-    ),
+        })
+      )
+    )
   );
 
 const until = (check: () => boolean) =>
-  Effect.promise(() => vi.waitUntil(check, { timeout: 5_000, interval: 10 }));
+  Effect.promise(
+    async () => await vi.waitUntil(check, { timeout: 5000, interval: 10 })
+  );
 
-const untilKept = (stub: DurableObjectStub, check: (cursors: Array<string | null>) => boolean) =>
-  Effect.promise(() =>
-    vi.waitUntil(async () => check(await Effect.runPromise(keptCursors(stub))), {
-      timeout: 5_000,
-      interval: 10,
-    }),
+const untilKept = (
+  stub: DurableObjectStub,
+  check: (cursors: Array<string | null>) => boolean
+) =>
+  Effect.promise(
+    async () =>
+      await vi.waitUntil(
+        async () => check(await Effect.runPromise(keptCursors(stub))),
+        {
+          timeout: 5000,
+          interval: 10,
+        }
+      )
   );
 
 const collected = <E>(
   stream: Stream.Stream<
-    Event.Received<typeof Noted> | Event.Received<typeof Said> | Event.Received<typeof Statused>,
+    | Event.Received<typeof Noted>
+    | Event.Received<typeof Said>
+    | Event.Received<typeof Statused>,
     E
-  >,
+  >
 ) =>
   Effect.gen(function* () {
-    const received: Array<string> = [];
+    const received: string[] = [];
 
     const fiber = yield* stream.pipe(
       Stream.runForEach((item) =>
-        Effect.sync(() => received.push(item._tag === "Gap" ? "gap" : item.data.text)),
+        Effect.sync(() =>
+          received.push(item._tag === "Gap" ? "gap" : item.data.text)
+        )
       ),
       Effect.exit,
-      Effect.forkScoped,
+      Effect.forkScoped
     );
 
     return { received, fiber };
   });
 
-const evicted = (stub: DurableObjectStub) => Effect.promise(() => evictDurableObject(stub));
+const evicted = (stub: DurableObjectStub) =>
+  Effect.promise(async () => {
+    await evictDurableObject(stub);
+  });
 
 const keptWatch = (stub: DurableObjectStub, suffix: string) =>
-  Effect.promise(() =>
-    runInDurableObject(stub, (_, state) =>
-      state.storage.put({
+  Effect.promise(async () => {
+    await runInDurableObject(stub, async (_, state) => {
+      await state.storage.put({
         [`${keptPrefix}request/${suffix}`]: {
           _tag: "Request",
           id: 1,
@@ -85,9 +125,9 @@ const keptWatch = (stub: DurableObjectStub, suffix: string) =>
           headers: [["authorization", "Bearer ada"]],
         },
         [`${keptPrefix}payload/${suffix}`]: { input: {}, cursor: "0" },
-      }),
-    ),
-  );
+      });
+    });
+  });
 
 describe("an event subscription over layerWebSocket", () => {
   it.live(
@@ -95,46 +135,74 @@ describe("an event subscription over layerWebSocket", () => {
     () =>
       Effect.gen(function* () {
         const stub = watching("check-resumes");
-        const client = yield* clientOver(yield* upgradeToRpc(stub, bearer("ada")));
-        const { received } = yield* collected(client.watch(Noted, {}, { cursor: "0" }));
+
+        const client = yield* clientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
+
+        const { received } = yield* collected(
+          client.watch(Noted, {}, { cursor: "0" })
+        );
 
         yield* untilKept(stub, (cursors) => cursors.length === 1);
-        yield* Effect.promise(() => stub.note("one"));
+        yield* Effect.promise(async () => {
+          await stub.note("one");
+        });
         yield* until(() => received.length === 1);
         yield* evicted(stub);
-        yield* Effect.promise(() => stub.note("two"));
+        yield* Effect.promise(async () => {
+          await stub.note("two");
+        });
         yield* until(() => received.length === 2);
 
-        expect(received).toEqual(["one", "two"]);
-        expect(yield* keptCursors(stub)).toEqual(["2"]);
-      }).pipe(Effect.scoped),
+        expect(received).toStrictEqual(["one", "two"]);
+        expect(yield* keptCursors(stub)).toStrictEqual(["2"]);
+      }).pipe(Effect.scoped)
   );
 
-  it.live('keeps two watches apart whose request ids are 1 and "1", through an eviction', () =>
-    Effect.gen(function* () {
-      const stub = watching("mixed-ids");
-      const ids = [RpcMessage.RequestId(1), RpcMessage.RequestId("1")];
-      const protocol = yield* Layer.build(protocolOver(yield* upgradeToRpc(stub, bearer("ada"))));
+  it.live(
+    'keeps two watches apart whose request ids are 1 and "1", through an eviction',
+    () =>
+      Effect.gen(function* () {
+        const stub = watching("mixed-ids");
+        const ids = [RpcMessage.RequestId(1), RpcMessage.RequestId("1")];
 
-      const client = yield* ActionRpc.client(Watched, {
-        generateRequestId: () => ids.shift() ?? RpcMessage.RequestId(100),
-      }).pipe(Effect.provideContext(protocol));
+        const protocol = yield* Layer.build(
+          protocolOver(yield* upgradeToRpc(stub, bearer("ada")))
+        );
 
-      const first = yield* collected(client.watch(Noted, {}, { cursor: "0" }));
-      const second = yield* collected(client.watch(Noted, {}, { cursor: "0" }));
+        const client = yield* ActionRpc.client(Watched, {
+          generateRequestId: () => ids.shift() ?? RpcMessage.RequestId(100),
+        }).pipe(Effect.provideContext(protocol));
 
-      yield* untilKept(stub, (cursors) => cursors.length === 2);
-      yield* Effect.promise(() => stub.note("one"));
-      yield* until(() => first.received.length === 1 && second.received.length === 1);
-      yield* evicted(stub);
-      yield* Effect.promise(() => stub.note("two"));
-      yield* until(() => first.received.length === 2 && second.received.length === 2);
+        const first = yield* collected(
+          client.watch(Noted, {}, { cursor: "0" })
+        );
 
-      expect([first.received, second.received]).toEqual([
-        ["one", "two"],
-        ["one", "two"],
-      ]);
-    }).pipe(Effect.scoped),
+        const second = yield* collected(
+          client.watch(Noted, {}, { cursor: "0" })
+        );
+
+        yield* untilKept(stub, (cursors) => cursors.length === 2);
+        yield* Effect.promise(async () => {
+          await stub.note("one");
+        });
+        yield* until(
+          () => first.received.length === 1 && second.received.length === 1
+        );
+        yield* evicted(stub);
+        yield* Effect.promise(async () => {
+          await stub.note("two");
+        });
+        yield* until(
+          () => first.received.length === 2 && second.received.length === 2
+        );
+
+        expect([first.received, second.received]).toStrictEqual([
+          ["one", "two"],
+          ["one", "two"],
+        ]);
+      }).pipe(Effect.scoped)
   );
 
   it.live(
@@ -142,18 +210,29 @@ describe("an event subscription over layerWebSocket", () => {
     () =>
       Effect.gen(function* () {
         const stub = watching("log-resumes");
-        const client = yield* clientOver(yield* upgradeToRpc(stub, bearer("ada")));
+
+        const client = yield* clientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
+
         const { received } = yield* collected(client.watch(Said));
 
-        yield* untilKept(stub, (cursors) => cursors.length === 1 && cursors[0] !== null);
-        yield* Effect.promise(() => stub.say("one"));
+        yield* untilKept(
+          stub,
+          (cursors) => cursors.length === 1 && cursors[0] !== null
+        );
+        yield* Effect.promise(async () => {
+          await stub.say("one");
+        });
         yield* until(() => received.length === 1);
         yield* evicted(stub);
-        yield* Effect.promise(() => stub.say("two"));
+        yield* Effect.promise(async () => {
+          await stub.say("two");
+        });
         yield* until(() => received.length === 2);
 
-        expect(received).toEqual(["one", "two"]);
-      }).pipe(Effect.scoped),
+        expect(received).toStrictEqual(["one", "two"]);
+      }).pipe(Effect.scoped)
   );
 
   it.live(
@@ -161,23 +240,34 @@ describe("an event subscription over layerWebSocket", () => {
     () =>
       Effect.gen(function* () {
         const stub = watching("current-resumes");
-        const client = yield* clientOver(yield* upgradeToRpc(stub, bearer("ada")));
+
+        const client = yield* clientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
+
         const { received } = yield* collected(client.watch(Statused));
 
         yield* until(() => received.length === 1);
-        yield* Effect.promise(() => stub.status("busy"));
+        yield* Effect.promise(async () => {
+          await stub.status("busy");
+        });
         yield* until(() => received.length === 2);
         yield* untilKept(
           stub,
-          (cursors) => cursors.length === 1 && cursors[0]?.endsWith(":1") === true,
+          (cursors) =>
+            cursors.length === 1 && cursors[0]?.endsWith(":1") === true
         );
         yield* evicted(stub);
-        yield* Effect.promise(() => stub.say("wakes it"));
-        yield* Effect.promise(() => stub.status("done"));
+        yield* Effect.promise(async () => {
+          await stub.say("wakes it");
+        });
+        yield* Effect.promise(async () => {
+          await stub.status("done");
+        });
         yield* until(() => received.length >= 3);
 
-        expect(received).toEqual(["idle", "busy", "done"]);
-      }).pipe(Effect.scoped),
+        expect(received).toStrictEqual(["idle", "busy", "done"]);
+      }).pipe(Effect.scoped)
   );
 
   it.live(
@@ -185,22 +275,32 @@ describe("an event subscription over layerWebSocket", () => {
     () =>
       Effect.gen(function* () {
         const stub = watching("revoked");
-        const client = yield* clientOver(yield* upgradeToRpc(stub, bearer("ada")));
-        const { received, fiber } = yield* collected(client.watch(Noted, {}, { cursor: "0" }));
+
+        const client = yield* clientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
+
+        const { received, fiber } = yield* collected(
+          client.watch(Noted, {}, { cursor: "0" })
+        );
 
         yield* untilKept(stub, (cursors) => cursors.length === 1);
-        yield* Effect.promise(() => stub.revoke("ada"));
+        yield* Effect.promise(async () => {
+          await stub.revoke("ada");
+        });
         yield* evicted(stub);
-        yield* Effect.promise(() => stub.note("one"));
+        yield* Effect.promise(async () => {
+          await stub.note("one");
+        });
 
         const exit = yield* Fiber.join(fiber).pipe(Effect.timeout("5 seconds"));
 
-        expect(Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit).toBeInstanceOf(
-          Action.Unauthenticated,
-        );
-        expect(received).toEqual([]);
-        expect(yield* keptCursors(stub)).toEqual([]);
-      }).pipe(Effect.scoped),
+        expect(
+          Exit.isFailure(exit) ? Cause.squash(exit.cause) : exit
+        ).toBeInstanceOf(Action.Unauthenticated);
+        expect(received).toStrictEqual([]);
+        expect(yield* keptCursors(stub)).toStrictEqual([]);
+      }).pipe(Effect.scoped)
   );
 
   it.live(
@@ -210,7 +310,10 @@ describe("an event subscription over layerWebSocket", () => {
         const stub = watching("forgets");
         const socket = yield* upgradeToRpc(stub, bearer("ada"));
         const client = yield* clientOver(socket);
-        const noted = yield* collected(client.watch(Noted, {}, { cursor: "0" }));
+
+        const noted = yield* collected(
+          client.watch(Noted, {}, { cursor: "0" })
+        );
 
         yield* collected(client.watch(Said));
         yield* untilKept(stub, (cursors) => cursors.length === 2);
@@ -220,7 +323,7 @@ describe("an event subscription over layerWebSocket", () => {
         socket.close(1000);
 
         yield* untilKept(stub, (cursors) => cursors.length === 0);
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.scoped)
   );
 
   it.live(
@@ -231,40 +334,53 @@ describe("an event subscription over layerWebSocket", () => {
 
         const client = yield* Effect.flatMap(
           Layer.build(protocolUpgrading(stub, bearer("ada"))),
-          (protocol) => ActionRpc.client(Watched).pipe(Effect.provideContext(protocol)),
+          (protocol) =>
+            ActionRpc.client(Watched).pipe(Effect.provideContext(protocol))
         );
 
-        const { received } = yield* collected(client.watch(Noted, {}, { cursor: "0" }));
+        const { received } = yield* collected(
+          client.watch(Noted, {}, { cursor: "0" })
+        );
 
         yield* untilKept(stub, (cursors) => cursors.length === 1);
 
-        yield* Effect.promise(() =>
-          runInDurableObject(stub, async (_, state) => {
-            const requests = await state.storage.list({ prefix: `${keptPrefix}request/` });
+        yield* Effect.promise(async () => {
+          await runInDurableObject(stub, async (_, state) => {
+            const requests = await state.storage.list({
+              prefix: `${keptPrefix}request/`,
+            });
 
-            for (const key of requests.keys()) await state.storage.put(key, "from another version");
-          }),
-        );
+            for (const key of requests.keys()) {
+              await state.storage.put(key, "from another version");
+            }
+          });
+        });
 
         yield* evicted(stub);
-        yield* Effect.promise(() => stub.note("one"));
+        yield* Effect.promise(async () => {
+          await stub.note("one");
+        });
         yield* until(() => received.length === 1);
 
-        expect(received).toEqual(["one"]);
-        expect(yield* keptCursors(stub)).toEqual(["1"]);
-      }).pipe(Effect.scoped),
+        expect(received).toStrictEqual(["one"]);
+        expect(yield* keptCursors(stub)).toStrictEqual(["1"]);
+      }).pipe(Effect.scoped)
   );
 
-  it.live("forgets, as it wakes, a kept subscription whose socket is gone", () =>
-    Effect.gen(function* () {
-      const stub = watching("orphaned");
+  it.live(
+    "forgets, as it wakes, a kept subscription whose socket is gone",
+    () =>
+      Effect.gen(function* () {
+        const stub = watching("orphaned");
 
-      yield* keptWatch(stub, "/rpc#999#n1");
-      yield* evicted(stub);
-      yield* Effect.promise(() => stub.note("one"));
+        yield* keptWatch(stub, "/rpc#999#n1");
+        yield* evicted(stub);
+        yield* Effect.promise(async () => {
+          await stub.note("one");
+        });
 
-      expect(yield* keptCursors(stub)).toEqual([]);
-    }),
+        expect(yield* keptCursors(stub)).toStrictEqual([]);
+      })
   );
 
   it.live(
@@ -272,73 +388,106 @@ describe("an event subscription over layerWebSocket", () => {
     () =>
       Effect.gen(function* () {
         const stub = watching("undecodable");
-        const client = yield* clientOver(yield* upgradeToRpc(stub, bearer("ada")));
+
+        const client = yield* clientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
+
         const { received } = yield* collected(client.watch(Said));
 
-        yield* untilKept(stub, (cursors) => cursors.length === 1 && cursors[0] !== null);
-        yield* Effect.promise(() => stub.say("one"));
+        yield* untilKept(
+          stub,
+          (cursors) => cursors.length === 1 && cursors[0] !== null
+        );
+        yield* Effect.promise(async () => {
+          await stub.say("one");
+        });
         yield* until(() => received.length === 1);
 
-        yield* Effect.promise(() =>
-          runInDurableObject(stub, async (_, state) => {
+        yield* Effect.promise(async () => {
+          await runInDurableObject(stub, async (_, state) => {
             const log = "effect-actions/log/thing.said/";
-            const position = await state.storage.get<{ readonly epoch: string }>(`${log}meta`);
+
+            const position = await state.storage.get<{
+              readonly epoch: string;
+            }>(`${log}meta`);
 
             await state.storage.put({
               [`${log}entry/0000000000000002`]: "from another version",
-              [`${log}entry/0000000000000003`]: { at: Date.now(), data: { text: 3 } },
+              [`${log}entry/0000000000000003`]: {
+                at: Date.now(),
+                data: { text: 3 },
+              },
               [`${log}meta`]: { epoch: position?.epoch, last: 3 },
             });
-          }),
-        );
+          });
+        });
 
-        yield* Effect.promise(() => stub.say("four"));
+        yield* Effect.promise(async () => {
+          await stub.say("four");
+        });
         yield* until(() => received.length === 4);
 
-        expect(received).toEqual(["one", "gap", "gap", "four"]);
-      }).pipe(Effect.scoped),
+        expect(received).toStrictEqual(["one", "gap", "gap", "four"]);
+      }).pipe(Effect.scoped)
   );
 });
 
-describe("layerEvents", () => {
-  const failureIn = <A, E>(name: string, effect: Effect.Effect<A, E, Event.Events | Scope.Scope>) =>
-    Effect.promise(() =>
-      runInDurableObject(watching(name), (_, state) =>
-        Effect.runPromiseExit(
-          effect.pipe(
-            Effect.scoped,
-            Effect.provide(layerEvents),
-            Effect.provideService(ActionDurableObject.State, state),
-          ),
-        ),
-      ),
-    ).pipe(Effect.map((exit) => (Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : exit)));
+const failureIn = <A, E>(
+  name: string,
+  effect: Effect.Effect<A, E, Event.Events | Scope.Scope>
+) =>
+  Effect.promise(
+    async () =>
+      await runInDurableObject(
+        watching(name),
+        async (_, state) =>
+          await Effect.runPromiseExit(
+            effect.pipe(
+              Effect.scoped,
+              Effect.provide(layerEvents),
+              Effect.provideService(ActionDurableObject.State, state)
+            )
+          )
+      )
+  ).pipe(
+    Effect.map((exit) =>
+      Exit.isFailure(exit) ? String(Cause.squash(exit.cause)) : exit
+    )
+  );
 
-  it.live("refuses a second log source whose event type shares the first's name", () =>
-    Effect.gen(function* () {
-      const namesake = () =>
-        Event.make("thing.namesake", {
-          description: "Two event types of one name.",
-          payload: { text: Schema.String },
-          caller: Action.Anyone,
-        });
+const namesake = () =>
+  Event.make("thing.namesake", {
+    description: "Two event types of one name.",
+    payload: { text: Schema.String },
+    caller: Action.Anyone,
+  });
 
-      const [first, second] = [namesake(), namesake()];
+describe("the object's Event.Events", () => {
+  it.live(
+    "refuses a second log source whose event type shares the first's name",
+    () =>
+      Effect.gen(function* () {
+        const [first, second] = [namesake(), namesake()];
 
-      const failure = yield* failureIn(
-        "namesakes",
-        Effect.gen(function* () {
-          const one = yield* Action.client([Event.implement(first, { log: {} })]);
+        const failure = yield* failureIn(
+          "namesakes",
+          Effect.gen(function* () {
+            const one = yield* Action.client([
+              Event.implement(first, { log: {} }),
+            ]);
 
-          const other = yield* Action.client([Event.implement(second, { log: {} })]);
+            const other = yield* Action.client([
+              Event.implement(second, { log: {} }),
+            ]);
 
-          yield* Stream.runDrain(Stream.take(one.watch(first), 0));
-          yield* Stream.runDrain(Stream.take(other.watch(second), 0));
-        }),
-      );
+            yield* Stream.runDrain(Stream.take(one.watch(first), 0));
+            yield* Stream.runDrain(Stream.take(other.watch(second), 0));
+          })
+        );
 
-      expect(failure).toContain('two event types are named "thing.namesake"');
-    }),
+        expect(failure).toContain('two event types are named "thing.namesake"');
+      })
   );
 
   it.live("refuses a log source fed by emit", () =>
@@ -352,25 +501,30 @@ describe("layerEvents", () => {
       const failure = yield* failureIn(
         "emitted",
         Action.client([
-          Event.implement(Emitted, { log: { emit: Stream.make({ data: { text: "one" } }) } }),
-        ]),
+          Event.implement(Emitted, {
+            log: { emit: Stream.make({ data: { text: "one" } }) },
+          }),
+        ])
       );
 
       expect(failure).toContain(
-        'Event "thing.emitted" has a log source fed by emit, which this Event.Events does not consume',
+        'Event "thing.emitted" has a log source fed by emit, which this Event.Events does not consume'
       );
-    }),
+    })
   );
 });
 
-describe("layerWebSocket's kept subscriptions", () => {
-  const alsoSockets = (stub: DurableObjectStub) =>
-    Effect.promise(() =>
-      runInDurableObject(stub, (_, state) =>
-        state.getWebSockets(groupTag("/also")).map((socket) => socketIdOf(state.getTags(socket))),
-      ),
-    );
+const alsoSockets = (stub: DurableObjectStub) =>
+  Effect.promise(
+    async () =>
+      await runInDurableObject(stub, (_, state) =>
+        state
+          .getWebSockets(groupTag("/also"))
+          .map((socket) => socketIdOf(state.getTags(socket)))
+      )
+  );
 
+describe("layerWebSocket's kept subscriptions", () => {
   it.live(
     "forgets, as it wakes, a subscription its path kept for a socket id another path's open socket has since",
     () =>
@@ -383,10 +537,12 @@ describe("layerWebSocket's kept subscriptions", () => {
 
         yield* keptWatch(stub, `/rpc#${other}#n1`);
         yield* evicted(stub);
-        yield* Effect.promise(() => stub.note("one"));
+        yield* Effect.promise(async () => {
+          await stub.note("one");
+        });
 
-        expect(yield* alsoSockets(stub)).toEqual([other]);
-        expect(yield* keptCursors(stub)).toEqual([]);
-      }),
+        expect(yield* alsoSockets(stub)).toStrictEqual([other]);
+        expect(yield* keptCursors(stub)).toStrictEqual([]);
+      })
   );
 });

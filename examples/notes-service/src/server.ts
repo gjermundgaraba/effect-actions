@@ -1,7 +1,9 @@
 import { createServer } from "node:http";
+
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
 import { ByteSize, Config, Effect, Layer } from "effect";
 import { HttpRouter, HttpServerRequest } from "effect/http";
+
 import { NoteStore } from "./notes/store.js";
 import { routes } from "./routes.js";
 
@@ -10,18 +12,23 @@ import { routes } from "./routes.js";
 const server = Layer.unwrap(
   Effect.gen(function* () {
     // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
-    const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));
+    const host = yield* Config.String("HOST").pipe(
+      Config.withDefault("127.0.0.1")
+    );
+
     const port = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
 
     return HttpRouter.serve(routes).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
       // Request bodies have no size limit unless the host sets one. This covers every route that
       // reads its body whole.
-      Layer.provide(Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))),
+      Layer.provide(
+        Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))
+      ),
       // DEMO ONLY: notes live in this process's memory; a deployment provides a store that lasts.
-      Layer.provide(NoteStore.layerMemory),
+      Layer.provide(NoteStore.layerMemory)
     );
-  }),
+  })
 );
 
-Layer.launch(server).pipe(NodeRuntime.runMain);
+Layer.launch(server).pipe(NodeRuntime.runMain());

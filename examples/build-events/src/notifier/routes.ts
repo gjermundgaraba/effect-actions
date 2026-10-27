@@ -1,8 +1,10 @@
-import { Effect, Layer, Predicate, type Redacted, Stream } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/http";
-import { KeyValueStore } from "effect/persistence";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
+import { Effect, Layer, Predicate, Stream } from "effect";
+import type { Redacted } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
+import { KeyValueStore } from "effect/persistence";
+
 import { Http } from "../Api.js";
 import { BuildFinished } from "../builds/Builds.js";
 import { Notices } from "./Notices.js";
@@ -28,7 +30,9 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
 
       const builds = yield* ActionHttp.client(Http, {
         baseUrl: buildEvents,
-        transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
+        transformClient: HttpClient.mapRequest(
+          HttpClientRequest.bearerToken(token)
+        ),
       });
 
       yield* Effect.forkScoped(
@@ -40,8 +44,11 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
               mode: Webhook.delivery({ baseUrl: publicUrl }),
               // Where it reached is kept, so a restart resumes there; failures the server no
               // longer keeps arrive as a Gap instead.
-              resume: { store: yield* KeyValueStore.KeyValueStore, key: "failed-builds" },
-            },
+              resume: {
+                store: yield* KeyValueStore.KeyValueStore,
+                key: "failed-builds",
+              },
+            }
           )
           .pipe(
             // A Gap says failures were missed, which no notice can name: it is logged, for an
@@ -49,14 +56,14 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
             Stream.runForEach((received) =>
               Predicate.isTagged(received, "Occurrence")
                 ? notices.add(received.data)
-                : Effect.logWarning("Failed builds were missed", received),
+                : Effect.logWarning("Failed builds were missed", received)
             ),
             // A failure no reconnect outlasts, such as a wrong PUBLIC_URL or a revoked token,
             // ends the watch: it is logged here, for a deployment to alert on or restart by.
-            Effect.tapCause(Effect.logError),
-          ),
+            Effect.tapCause(Effect.logError)
+          )
       );
-    }),
+    })
   );
 
 /** The notifier's routes: the receiver, and the watch reading from that same receiver. */

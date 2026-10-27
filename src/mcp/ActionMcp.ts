@@ -14,20 +14,25 @@ import {
 } from "effect";
 import type { McpProtocol } from "effect/ai";
 import { AiError, McpSchema, McpServer } from "effect/ai";
-import { type Headers, HttpRouter, HttpServerRequest, type HttpServerResponse } from "effect/http";
-import type * as Action from "../contract/Action.js";
-import type * as Event from "../contract/Event.js";
-import {
-  promote,
-  providerOf,
-  type Any as Authentication,
-  type ProviderOf,
-  type Matching,
-  type RemoteRequest,
-  type Required as RequiredAuthentication,
-  type ServerBuildServices,
+import { HttpRouter, HttpServerRequest } from "effect/http";
+import type { Headers, HttpServerResponse } from "effect/http";
+
+import { promote, providerOf } from "../authentication/provider.js";
+import type {
+  Any as Authentication,
+  ProviderOf,
+  Matching,
+  RemoteRequest,
+  Required as RequiredAuthentication,
+  ServerBuildServices,
 } from "../authentication/provider.js";
+import { recordStepUp } from "../authentication/refusal.js";
+import type * as Action from "../contract/Action.js";
+import { inputParseOptions } from "../contract/call.js";
 import { Anyone, assertAuthentication } from "../contract/caller.js";
+import type { Codec } from "../contract/codec.js";
+import { projectedErrors } from "../contract/declared.js";
+import type * as Event from "../contract/Event.js";
 import type {
   EventBuildError,
   EventBuildServices,
@@ -36,54 +41,49 @@ import type {
   EventServedRequest,
   HoldingEvents,
 } from "../contract/feed.js";
-import { provideServed, selectFrom } from "../contract/serving.js";
-import { projectedErrors } from "../contract/declared.js";
 import { hintsOf } from "../contract/hints.js";
+import { acquire, answeringWhole } from "../contract/implementation.js";
+import type {
+  Protected,
+  ActionOf,
+  AnyImplementation,
+  BuildServices,
+  BuildError,
+  ErasedValue,
+  Holding,
+  Member,
+  Known,
+  SelectedEventsOf,
+  SelectedOf,
+  Selection,
+  Served,
+  ServedRequest,
+} from "../contract/implementation.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
-import { inputParseOptions } from "../contract/call.js";
+import { provideServed, selectFrom } from "../contract/serving.js";
 import { toolSuccessOf } from "../contract/stream.js";
+import { withStderrConsole } from "../stdio/console.js";
+import {
+  eventSchemasOf,
+  refuseUnservable,
+  serveWebhooks,
+  withEvents,
+} from "./bridge.js";
+import type { Serving } from "./bridge.js";
+import { progressNotifier } from "./progress.js";
 import {
   defaultPath,
   fieldKey,
   httpProtocol,
   isMisplaced,
   isObjectSchema,
-  type Lift,
-  type Lifted,
   liftedFrom,
   liftOf,
   protocols,
   routingFormsOf,
   toolJsonSchema,
 } from "./protocol.js";
-import {
-  eventSchemasOf,
-  refuseUnservable,
-  serveWebhooks,
-  type Serving,
-  withEvents,
-} from "./bridge.js";
-import { progressNotifier } from "./progress.js";
-import { recordStepUp } from "../authentication/refusal.js";
-import { withStderrConsole } from "../stdio/console.js";
-import {
-  acquire,
-  answeringWhole,
-  type Protected,
-  type ActionOf,
-  type AnyImplementation,
-  type BuildServices,
-  type BuildError,
-  type ErasedValue,
-  type Holding,
-  type Member,
-  type Known,
-  type SelectedEventsOf,
-  type SelectedOf,
-  type Selection,
-  type Served,
-  type ServedRequest,
-} from "../contract/implementation.js";
+import type { Lift, Lifted } from "./protocol.js";
 
 export { client } from "./client.js";
 
@@ -114,7 +114,7 @@ export interface Options<
    *
    * - A list naming actions alone serves no event type: the events extension is not declared, and `events/*` answer `-32601`, until the event types are listed beside them.
    */
-  readonly actions?: ReadonlyArray<A> | undefined;
+  readonly actions?: readonly A[] | undefined;
   /**
    * Native MCP features served beside the actions' tools, such as `McpServer.resource`,
    * `McpServer.prompt` and `McpServer.toolkit` layers merged into one. They register on this
@@ -186,14 +186,22 @@ export interface LayerHttpOptions<
   readonly requestScoped?: boolean | undefined;
 }
 
-type ToolRequestContext<R> = Exclude<R, McpSchema.McpRequestContext | McpServer.McpServer>;
+type ToolRequestContext<R> = Exclude<
+  R,
+  McpSchema.McpRequestContext | McpServer.McpServer
+>;
 
-type HttpToolRequestContext<R> = Exclude<ToolRequestContext<R>, HttpRouter.Provided>;
+type HttpToolRequestContext<R> = Exclude<
+  ToolRequestContext<R>,
+  HttpRouter.Provided
+>;
 
 type Features<R> = Exclude<R, McpServer.McpServer>;
 
 /** The actions and event types an endpoint of `Apps` given the options `O` serves. */
-type Contracts<Apps extends Served, O> = SelectedOf<O, Apps> | SelectedEventsOf<O, Apps>;
+type Contracts<Apps extends Served, O> =
+  | SelectedOf<O, Apps>
+  | SelectedEventsOf<O, Apps>;
 
 /** What building an endpoint of `Apps` given the options `O` may fail with. */
 type ServerError<Apps extends Served, O> =
@@ -210,49 +218,68 @@ type EventServices<Apps extends Served, O> = EventBuildServices<
   SelectedEventsOf<O, Apps>
 >;
 
-const assertToolShapes = (lifted: ReadonlyArray<readonly [Action.Any, Lift]>): void => {
+const assertToolsServable = (
+  lifted: ReadonlyArray<readonly [Action.Any, Lift]>
+): void => {
   const actions = lifted.map(([action]) => action);
 
-  const inputs = actions
-    .filter((action) => !isObjectSchema(toolJsonSchema(Schema.toCodecJson(action.input), true)))
-    .map(({ name }) => name);
+  const inputs = actions.flatMap(({ input, name }) =>
+    isObjectSchema(toolJsonSchema(Schema.toCodecJson(input), true))
+      ? []
+      : [name]
+  );
 
   if (inputs.length > 0) {
     throw new Error(
-      `MCP tool input must be one object with keys, such as a struct: ${inputs.join(", ")} (wrap a union, an array or a scalar in a field, omit input for no arguments, or leave the action out of actions)`,
+      `MCP tool input must be one object with keys, such as a struct: ${inputs.join(", ")} (wrap a union, an array or a scalar in a field, omit input for no arguments, or leave the action out of actions)`
     );
   }
 
-  const misplaced = lifted
-    .filter(([action, lift]) => isMisplaced(action, lift))
-    .map(([{ name }]) => name);
+  const misplaced = lifted.flatMap(([action, lift]) =>
+    isMisplaced(action, lift) ? [action.name] : []
+  );
 
   if (misplaced.length > 0) {
     throw new Error(
-      `MCP media must be the success or an array of it, or a top-level field of a struct success, one, optional or a required array: ${misplaced.join(", ")} (make the image such a field, or give an optional array as a required one, empty when absent; an image in input or an error is not served over MCP, so leave that action out of actions)`,
+      `MCP media must be the success or an array of it, or a top-level field of a struct success, one, optional or a required array: ${misplaced.join(", ")} (make the image such a field, or give an optional array as a required one, empty when absent; an image in input or an error is not served over MCP, so leave that action out of actions)`
     );
   }
 };
 
-const nativeInternalErrorText = "Tool execution failed due to an internal server error.";
+const nativeInternalErrorText =
+  "Tool execution failed due to an internal server error.";
 
 const textErrorResult = (text: string) =>
-  new McpSchema.CallToolResult({ isError: true, content: [{ type: "text", text }] });
+  new McpSchema.CallToolResult({
+    isError: true,
+    content: [{ type: "text", text }],
+  });
 
-const nativeJsonTextOf = (encoded: ErasedValue): McpSchema.CallToolResult["content"] =>
-  encoded === undefined ? [] : [{ type: "text", text: JSON.stringify(encoded) }];
+const nativeJsonTextOf = (
+  encoded: ErasedValue
+): McpSchema.CallToolResult["content"] =>
+  encoded === undefined
+    ? []
+    : [{ type: "text", text: JSON.stringify(encoded) }];
 
-const contentBlockOf = ({ kind, field, value }: Lifted): McpSchema.ContentBlock => ({
+const contentBlockOf = ({
+  kind,
+  field,
+  value,
+}: Lifted): McpSchema.ContentBlock => ({
   type: kind,
   data: value.data,
   mimeType: value.mimeType,
   ...(field === undefined ? {} : { _meta: { [fieldKey]: field } }),
 });
 
-const toolOf = (action: Action.Any, outputSchema: McpSchema.Tool["outputSchema"]) =>
+const toolOf = (
+  action: Action.Any,
+  outputSchema: McpSchema.Tool["outputSchema"]
+) =>
   Effect.map(
     Schema.decodeUnknownEffect(McpSchema.ToolJson)(
-      toolJsonSchema(Schema.toCodecJson(action.input), true),
+      toolJsonSchema(Schema.toCodecJson(action.input), true)
     ),
     (inputSchema) =>
       new McpSchema.Tool({
@@ -261,32 +288,41 @@ const toolOf = (action: Action.Any, outputSchema: McpSchema.Tool["outputSchema"]
         inputSchema,
         outputSchema,
         annotations: {
-          ...(action.mcp.title === undefined ? {} : { title: action.mcp.title }),
+          ...(action.mcp.title === undefined
+            ? {}
+            : { title: action.mcp.title }),
           ...hintsOf(action),
         },
-        _meta: action.mcp._meta === undefined ? undefined : { ...action.mcp._meta },
-      }),
+        _meta:
+          action.mcp._meta === undefined ? undefined : { ...action.mcp._meta },
+      })
   );
+
+const internalError = (cause: Cause.Cause<ErasedValue>) =>
+  Effect.logError(cause).pipe(
+    Effect.andThen(ErrorReporter.report(cause)),
+    Effect.as(textErrorResult(nativeInternalErrorText))
+  );
+
+const internalErrorOnDefect = (cause: Cause.Cause<McpSchema.InvalidParams>) =>
+  Cause.hasDies(cause) ? internalError(cause) : Effect.failCause(cause);
+
+const encoder = (schema: Codec) => {
+  const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(schema));
+
+  return (value: ErasedValue) => Effect.orDie(encode(value));
+};
 
 // Why: Effect's `registerToolkit` sends every success as `structuredContent` and one JSON text
 // block and takes no option, so each action is registered here from its bound handler, through the
 // registry's public `addTool`.
 const registerTools = Effect.fnUntraced(function* (
-  apps: ReadonlyArray<AnyImplementation>,
-  authentication: Authentication | undefined,
+  apps: readonly AnyImplementation[],
+  authentication: Authentication | undefined
 ) {
   const registry = yield* McpServer.McpServer;
   const bound = yield* acquire(apps, authentication);
   const built = yield* Effect.context<unknown>();
-
-  const internalError = (cause: Cause.Cause<ErasedValue>) =>
-    Effect.logError(cause).pipe(
-      Effect.andThen(ErrorReporter.report(cause)),
-      Effect.as(textErrorResult(nativeInternalErrorText)),
-    );
-
-  const internalErrorOnDefect = (cause: Cause.Cause<McpSchema.InvalidParams>) =>
-    Cause.hasDies(cause) ? internalError(cause) : Effect.failCause(cause);
 
   for (const [action, handler] of bound) {
     const toolSuccess = toolSuccessOf(action.success);
@@ -294,28 +330,26 @@ const registerTools = Effect.fnUntraced(function* (
     const lift = liftOf(toolSuccess);
     const media = lift.fields.length === 0 ? undefined : lift;
 
+    const structuredSuccess = media === undefined ? toolSuccess : media.rest;
+
     const structured =
-      media === undefined
-        ? Schema.toCodecJson(toolSuccess)
-        : media.rest === undefined
-          ? undefined
-          : Schema.toCodecJson(media.rest);
+      structuredSuccess === undefined
+        ? undefined
+        : Schema.toCodecJson(structuredSuccess);
 
     const outputSchema =
       structured === undefined
         ? undefined
         : yield* Schema.decodeUnknownEffect(McpSchema.ToolOutputJson)(
-            toolJsonSchema(structured, false),
+            toolJsonSchema(structured, false)
           ).pipe(Effect.orDie);
 
     const tool = yield* toolOf(action, outputSchema).pipe(Effect.orDie);
-    const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(action.input), inputParseOptions);
 
-    const encoder = (schema: Schema.Top) => {
-      const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(schema));
-
-      return (value: ErasedValue) => Effect.orDie(encode(value));
-    };
+    const decode = Schema.decodeUnknownEffect(
+      Schema.toCodecJson(action.input),
+      inputParseOptions
+    );
 
     const encodeSuccess = encoder(toolSuccess);
     const encodeFailure = encoder(Schema.Union(projectedErrors(action)));
@@ -323,14 +357,16 @@ const registerTools = Effect.fnUntraced(function* (
     const reported = (input: ErasedValue) =>
       action.progress === undefined
         ? run(input)
-        : Effect.flatMap(progressNotifier(registry.notifications, action.progress), (sink) =>
-            run(input, sink),
+        : Effect.flatMap(
+            progressNotifier(registry.notifications, action.progress),
+            (sink) => run(input, sink)
           );
 
     const call =
       authentication === undefined || action.caller === Anyone
         ? reported
-        : (input: ErasedValue) => recordStepUp(promote(authentication, reported(input)));
+        : (input: ErasedValue) =>
+            recordStepUp(promote(authentication, reported(input)));
 
     const liftedFieldNames = new Set(media?.fields.map(({ name }) => name));
 
@@ -350,11 +386,18 @@ const registerTools = Effect.fnUntraced(function* (
       const blocks = liftedFrom(media, success).map(contentBlockOf);
 
       if (structured === undefined) {
-        return new McpSchema.CallToolResult({ isError: false, content: blocks });
+        return new McpSchema.CallToolResult({
+          isError: false,
+          content: blocks,
+        });
       }
 
       const encodedRestOfStruct = Predicate.isObject(encoded)
-        ? Object.fromEntries(Object.entries(encoded).filter(([key]) => !liftedFieldNames.has(key)))
+        ? Object.fromEntries(
+            Object.entries(encoded).filter(
+              ([key]) => !liftedFieldNames.has(key)
+            )
+          )
         : encoded;
 
       return new McpSchema.CallToolResult({
@@ -379,7 +422,7 @@ const registerTools = Effect.fnUntraced(function* (
                   toolName: action.name,
                   description: message,
                 }).message,
-              }),
+              })
           ),
           Effect.flatMap((input) =>
             call(input).pipe(
@@ -391,20 +434,23 @@ const registerTools = Effect.fnUntraced(function* (
                       new McpSchema.CallToolResult({
                         isError: true,
                         content: nativeJsonTextOf(encoded),
-                      }),
+                      })
                   ),
                 onSuccess: (success) =>
-                  Effect.map(encodeSuccess(success), (encoded) => resultOf(encoded, success)),
-              }),
-            ),
+                  Effect.map(encodeSuccess(success), (encoded) =>
+                    resultOf(encoded, success)
+                  ),
+              })
+            )
           ),
           Effect.catchCause(internalErrorOnDefect),
           // Why: A call runs over what the endpoint was built with, its startup services and the
           // handlers' builds, and what the request provides wins, as a native toolkit handler's
           // context does.
-          Effect.updateContext((request: Context.Context<McpSchema.McpRequestContext>) =>
-            Context.merge(built, request),
-          ),
+          Effect.updateContext(
+            (request: Context.Context<McpSchema.McpRequestContext>) =>
+              Context.merge(built, request)
+          )
         ),
     });
   }
@@ -414,7 +460,7 @@ const registerTools = Effect.fnUntraced(function* (
  * Refuses event types an endpoint cannot serve as MCP events: one named twice, one named as MCP's
  * own, or one whose input or payload is no object.
  */
-const assertEventShapes = (events: ReadonlyArray<Event.Any>): void => {
+const assertEventsServable = (events: readonly Event.Any[]): void => {
   assertOnce("MCP event", events);
 
   // Why: MCP keeps event names starting with `mcp.` for its own events, so one of an
@@ -423,42 +469,51 @@ const assertEventShapes = (events: ReadonlyArray<Event.Any>): void => {
 
   if (reserved !== undefined) {
     throw new Error(
-      `MCP event name starts with "mcp.", which MCP keeps for its own events: ${reserved.name} (rename it, or serve it on another surface)`,
+      `MCP event name starts with "mcp.", which MCP keeps for its own events: ${reserved.name} (rename it, or serve it on another surface)`
     );
   }
 
-  for (const event of events) eventSchemasOf(event);
+  for (const event of events) {
+    eventSchemasOf(event);
+  }
 };
 
 /** The revisions an endpoint speaks, the 2026-07-28 one serving `serving`'s events if any. */
-const servingEvents = <P extends ReadonlyArray<McpProtocol.AnyProtocolAdapter>>(
+const servingEvents = <P extends readonly McpProtocol.AnyProtocolAdapter[]>(
   [stateless, ...rest]: readonly [typeof httpProtocol, ...P],
-  serving: Serving,
+  serving: Serving
 ): readonly [
-  McpProtocol.ProtocolAdapter<"2026-07-28", McpProtocol.StatelessRuntimeDescriptor>,
+  McpProtocol.ProtocolAdapter<
+    "2026-07-28",
+    McpProtocol.StatelessRuntimeDescriptor
+  >,
   ...P,
 ] =>
-  serving.events.length === 0 ? [stateless, ...rest] : [withEvents(stateless, serving), ...rest];
+  serving.events.length === 0
+    ? [stateless, ...rest]
+    : [withEvents(stateless, serving), ...rest];
 
 const server = <Out, R>(
-  apps: ReadonlyArray<AnyImplementation>,
+  apps: readonly AnyImplementation[],
   serving: Serving,
   transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
-  features: Layer.Layer<never, unknown, unknown> = Layer.empty,
+  features: Layer.Layer<never, unknown, unknown> = Layer.empty
 ) => {
   const { events, authentication } = serving;
 
   assertOnce(
     "MCP tool",
     apps.flatMap((app) => app.actions),
-    heldOnce,
+    heldOnce
   );
 
   const lifted = apps.flatMap((app) =>
-    app.actions.map((action) => [action, liftOf(toolSuccessOf(action.success))] as const),
+    app.actions.map(
+      (action) => [action, liftOf(toolSuccessOf(action.success))] as const
+    )
   );
 
-  assertToolShapes(lifted);
+  assertToolsServable(lifted);
 
   const names = new Set(lifted.map(([{ name }]) => name));
 
@@ -466,14 +521,14 @@ const server = <Out, R>(
     const registry = yield* McpServer.McpServer;
 
     const namesClaimedByFeatures = registry.tools.flatMap(({ tool }) =>
-      names.has(tool.name) ? [tool.name] : [],
+      names.has(tool.name) ? [tool.name] : []
     );
 
     if (namesClaimedByFeatures.length > 0) {
       return yield* Effect.die(
         new Error(
-          `Duplicate MCP tool: ${namesClaimedByFeatures.join(", ")}, claimed by an action and a native feature (rename the native tool, or leave the action out of actions)`,
-        ),
+          `Duplicate MCP tool: ${namesClaimedByFeatures.join(", ")}, claimed by an action and a native feature (rename the native tool, or leave the action out of actions)`
+        )
       );
     }
 
@@ -490,7 +545,7 @@ const server = <Out, R>(
     Layer.provide(features),
     Layer.provide(transport),
     Layer.fresh,
-    provideServed({ apps, events }),
+    provideServed({ apps, events })
   );
 };
 
@@ -507,39 +562,51 @@ const namedMethods = new Map<string, "tool" | "event">([
   ["events/stream", "event"],
 ]);
 
-const requiresAuthentication = (
-  actions: ReadonlyArray<Action.Any>,
-  events: ReadonlyArray<Event.Any>,
-) => {
-  // Why: The runtime routes a 2026-07-28 request by its `Mcp-Name` decoded, a name as sent or
-  // base64-encoded between `=?base64?` and `?=`, so a public tool's or event's name is admitted in
-  // either form. A name is plain ASCII, whose standard encoding is one string: any other fails
-  // closed.
-  const openOf = (contracts: ReadonlyArray<Pick<Action.Any, "name" | "caller">>) =>
-    new Set(
-      contracts
-        .filter(({ caller }) => caller === Anyone)
-        .flatMap(({ name }) => routingFormsOf(name)),
-    );
+// Why: The runtime routes a 2026-07-28 request by its `Mcp-Name` decoded, a name as sent or
+// base64-encoded between `=?base64?` and `?=`, so a public tool's or event's name is admitted in
+// either form. A name is plain ASCII, whose standard encoding is one string: any other fails
+// closed.
+const openOf = (
+  contracts: ReadonlyArray<Pick<Action.Any, "name" | "caller">>
+) =>
+  new Set(
+    contracts
+      .filter(({ caller }) => caller === Anyone)
+      .flatMap(({ name }) => routingFormsOf(name))
+  );
 
+const requiresAuthentication = (
+  actions: readonly Action.Any[],
+  events: readonly Event.Any[]
+) => {
   const open = { tool: openOf(actions), event: openOf(events) };
 
   return (headers: Headers.Headers): boolean => {
-    if (open.tool.size === 0 && open.event.size === 0) return true;
+    if (open.tool.size === 0 && open.event.size === 0) {
+      return true;
+    }
 
     // Why: The runtime checks the routing headers against the body of a stateless request alone.
     // A request of a session carries none it checks, so it authenticates whatever it names.
-    if (headers["mcp-protocol-version"] !== httpProtocol.protocolVersion) return true;
+    if (headers["mcp-protocol-version"] !== httpProtocol.protocolVersion) {
+      return true;
+    }
 
     const method = headers["mcp-method"];
 
-    if (method === undefined) return true;
+    if (method === undefined) {
+      return true;
+    }
 
-    if (anonymousMethods.has(method)) return false;
+    if (anonymousMethods.has(method)) {
+      return false;
+    }
 
     const named = namedMethods.get(method);
 
-    if (named === undefined) return true;
+    if (named === undefined) {
+      return true;
+    }
 
     const name = headers["mcp-name"];
 
@@ -554,21 +621,26 @@ const namesItsMethod = (request: HttpServerRequest.HttpServerRequest) =>
   Effect.match(request.json, {
     onFailure: () => true,
     onSuccess: (body) =>
-      !Predicate.hasProperty(body, "method") || body.method === request.headers["mcp-method"],
+      !Predicate.hasProperty(body, "method") ||
+      body.method === request.headers["mcp-method"],
   });
 
 // Why: The runtime answers a body it cannot read as one that is not JSON, a `-32700` in a 200, so
 // one over `HttpServerRequest.MaxBodySize` read first fails the request as itself: Effect's 413
 // from 4.0.6, and before it the closed connection. The runtime then reads the text read here.
-const readsItsBody = <E, R>(route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
+const readsItsBody = <E, R>(
+  route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>
+) =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-    request.method === "POST" ? Effect.andThen(request.text, route) : route,
+    request.method === "POST" ? Effect.andThen(request.text, route) : route
   );
 
 // Why: Protected tools without a descriptor get `unknown`, leaving `RequiredAuthentication` to
 // demand theirs. `{ authentication?: undefined }` would intersect with that demand to `never`, and
 // the error would read as every option being wrong.
-type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [undefined]
+type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [
+  undefined,
+]
   ? [Protected<A>] extends [never]
     ? { readonly authentication?: undefined }
     : unknown
@@ -611,22 +683,30 @@ type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [undefined
  */
 export function layerHttp<
   const Apps extends Served,
-  const O extends Selection<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> = {},
+  const O extends Selection<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> =
+    {},
   E = never,
   R = never,
   const D extends Authentication | undefined = undefined,
 >(
   implementations: Apps,
-  options: LayerHttpOptions<E, R, ActionOf<Member<Apps>> | EventOf<Member<Apps>>> &
+  options: LayerHttpOptions<
+    E,
+    R,
+    ActionOf<Member<Apps>> | EventOf<Member<Apps>>
+  > &
     O &
     NoInfer<Known<O, LayerHttpOptions<E, R>>> &
     NoInfer<RequiredAuthentication<Contracts<Apps, O>>> &
     Matching<NoInfer<Contracts<Apps, O>>, NoInfer<D>> &
-    Inferring<D, NoInfer<Contracts<Apps, O>>>,
+    Inferring<D, NoInfer<Contracts<Apps, O>>>
 ): Layer.Layer<
   never,
   ServerError<Apps, O> | E,
-  | ServerBuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | ServerBuildServices<
+      Holding<Member<Apps>, SelectedOf<O, Apps>>,
+      SelectedOf<O, Apps>
+    >
   | EventServices<Apps, O>
   | HttpRouter.HttpRouter
   | HttpRouter.Request.From<
@@ -649,14 +729,14 @@ export function layerHttp(
     requestScoped,
     allowSubscriptions,
     ...options
-  }: LayerHttpOptions<unknown, unknown>,
+  }: LayerHttpOptions<unknown, unknown>
 ) {
   const { apps: selected, events } = selectFrom(apps, actions);
   const served = selected.flatMap((app) => app.actions);
   const listed = events.flatMap((app) => app.events);
   assertAuthentication(served, authentication);
   assertAuthentication(listed, authentication, "event");
-  assertEventShapes(listed);
+  assertEventsServable(listed);
 
   const serving = { events, authentication };
 
@@ -676,13 +756,16 @@ export function layerHttp(
           allowSessionTermination: true,
           // Why: Effect's server hands an adapter its notification sender only where subscriptions
           // are allowed, so an endpoint pushing events allows them, though no event list changes.
-          allowSubscriptions: allowSubscriptions ?? (features !== undefined || events.length > 0),
+          allowSubscriptions:
+            allowSubscriptions ?? (features !== undefined || events.length > 0),
         }),
-    features,
+    features
   );
 
   if (authentication === undefined) {
-    return transport.pipe(Layer.provide(HttpRouter.middleware(readsItsBody).layer));
+    return transport.pipe(
+      Layer.provide(HttpRouter.middleware(readsItsBody).layer)
+    );
   }
 
   const required = requiresAuthentication(served, listed);
@@ -695,10 +778,10 @@ export function layerHttp(
           request.method !== "POST" || required(request.headers)
             ? runtime.http(readsItsBody(route), false)
             : Effect.flatMap(namesItsMethod(request), (named) =>
-                runtime.http(readsItsBody(route), named),
-              ),
-        ),
-    ),
+                runtime.http(readsItsBody(route), named)
+              )
+        )
+    )
   );
 
   return transport.pipe(Layer.provide(middleware.layer));
@@ -720,10 +803,10 @@ const jsonLinesOnly = Layer.effect(
         Stream.splitLines,
         Stream.filter(isJsonLine),
         Stream.map((line) => `${line}\n`),
-        Stream.encodeText,
+        Stream.encodeText
       ),
-    }),
-  ),
+    })
+  )
 );
 
 /**
@@ -744,18 +827,22 @@ const jsonLinesOnly = Layer.effect(
  */
 export function runStdio<
   const Apps extends Served,
-  const O extends Selection<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> = {},
+  const O extends Selection<ActionOf<Member<Apps>> | EventOf<Member<Apps>>> =
+    {},
   E = never,
   R = never,
 >(
   implementations: Apps,
   options: Options<E, R, ActionOf<Member<Apps>> | EventOf<Member<Apps>>> &
     O &
-    NoInfer<Known<O, Options<E, R>>>,
+    NoInfer<Known<O, Options<E, R>>>
 ): Effect.Effect<
   void,
   ServerError<Apps, O> | E,
-  | BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
+  | BuildServices<
+      Holding<Member<Apps>, SelectedOf<O, Apps>>,
+      SelectedOf<O, Apps>
+    >
   | EventServices<Apps, O>
   | Stdio.Stdio
   | ToolRequestContext<
@@ -766,20 +853,21 @@ export function runStdio<
 >;
 export function runStdio(
   apps: Served,
-  { actions, features, ...options }: Options<unknown, unknown>,
+  { actions, features, ...options }: Options<unknown, unknown>
 ) {
   const { apps: selected, events } = selectFrom(apps, actions);
-  assertEventShapes(events.flatMap((app) => app.events));
+  assertEventsServable(events.flatMap((app) => app.events));
 
   const serving = { events, authentication: undefined };
 
   const transport = server(
     selected,
     serving,
-    McpServer.layerStdio({ ...options, protocols: servingEvents(protocols, serving) }).pipe(
-      Layer.provide(jsonLinesOnly),
-    ),
-    features,
+    McpServer.layerStdio({
+      ...options,
+      protocols: servingEvents(protocols, serving),
+    }).pipe(Layer.provide(jsonLinesOnly)),
+    features
   );
 
   // Why: The native transport ends by interrupting the fiber that built it, once the host closes
@@ -792,7 +880,7 @@ export function runStdio(
     Effect.flatMap((exit) =>
       Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)
         ? Effect.failCause(exit.cause)
-        : Effect.void,
-    ),
+        : Effect.void
+    )
   );
 }

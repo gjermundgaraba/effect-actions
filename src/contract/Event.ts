@@ -1,29 +1,18 @@
-import {
-  Array as Arr,
-  Data,
-  type DateTime,
-  type Duration,
-  Effect,
-  Match,
-  Predicate,
-  Schema,
-} from "effect";
-import type { Scope, Stream } from "effect";
+import { Array as Arr, Data, Effect, Match, Predicate, Schema } from "effect";
+import type { DateTime, Duration, Scope, Stream } from "effect";
+
 import type * as Action from "./Action.js";
+import { authorizerOf } from "./authorizer.js";
+import type { Authorizer, Deferred, ErasedAuthorizer } from "./authorizer.js";
 import { Anyone, assertCaller } from "./caller.js";
-import { type Codec, type CodecOf, codecOf, type Fields, type NoInput } from "./codec.js";
-import {
-  type Authorizer,
-  authorizerOf,
-  type Deferred,
-  type ErasedAuthorizer,
-} from "./authorizer.js";
+import { codecOf } from "./codec.js";
+import type { Codec, CodecOf, Fields, NoInput } from "./codec.js";
 import type { Refusal } from "./errors.js";
 import { EventImplementation, sourcesOf } from "./feed.js";
 import type { Events, KeyOptions } from "./hub.js";
 import type { ErasedValue, Protected } from "./implementation.js";
 import { assertEventName, assertOnce } from "./names.js";
-import { Gap, type OccurrenceSchema } from "./occurrence.js";
+import type { Gap, OccurrenceSchema } from "./occurrence.js";
 
 export type { EventImplementation as Implementation } from "./feed.js";
 
@@ -60,7 +49,9 @@ export interface Options {
 }
 
 type OnlyOptions<O> = {
-  readonly [K in Exclude<O extends unknown ? keyof O : never, keyof Options>]: never;
+  readonly [
+    K in Exclude<O extends unknown ? keyof O : never, keyof Options>
+  ]: never;
 };
 
 // Why: As on `Action.make`: `O` is inferred from the argument, which the compiler then never
@@ -73,7 +64,9 @@ type InputOf<O> = O extends { readonly input?: infer I }
       | ([undefined] extends [I] ? typeof NoInput : never)
   : typeof NoInput;
 
-type PayloadOf<O> = O extends { readonly payload: infer P extends Codec | Fields }
+type PayloadOf<O> = O extends {
+  readonly payload: infer P extends Codec | Fields;
+}
   ? CodecOf<P>
   : never;
 
@@ -103,7 +96,8 @@ export interface Event<
 export type Any = Event<string, Codec, Codec>;
 
 /** Whether `u` is an event type `make` defined: a binding's list tells events from actions by it. */
-export const isEvent = (u: unknown): u is Any => Predicate.hasProperty(u, TypeId);
+export const isEvent = (u: unknown): u is Any =>
+  Predicate.hasProperty(u, TypeId);
 
 /**
  * Define an event type: what a subscription takes, what each occurrence carries, and who may
@@ -117,7 +111,7 @@ export const isEvent = (u: unknown): u is Any => Predicate.hasProperty(u, TypeId
  */
 export function make<const Name extends string, const O extends Options>(
   name: Name,
-  options: O & NoInfer<Rules<O>>,
+  options: O & NoInfer<Rules<O>>
 ): Event<Name, InputOf<O>, PayloadOf<O>, O["caller"]>;
 export function make(name: string, options: Options): Any {
   assertEventName(name);
@@ -127,7 +121,9 @@ export function make(name: string, options: Options): Any {
   assertCaller(caller);
 
   if (options.payload === undefined) {
-    throw new Error(`Missing payload: event "${name}" (declare what each occurrence carries)`);
+    throw new Error(
+      `Missing payload: event "${name}" (declare what each occurrence carries)`
+    );
   }
 
   return {
@@ -191,7 +187,9 @@ interface Hooked<E extends Any, R> {
    * - A poll subscription's runs in its first poll's context, that request included, held until its lease ends, where a webhook subscription's runs without the request: read what it needs from the request in middleware, which provides it as a service.
    */
   readonly subscription?:
-    | ((input: E["input"]["Type"]) => Effect.Effect<void, never, R | Scope.Scope>)
+    | ((
+        input: E["input"]["Type"]
+      ) => Effect.Effect<void, never, R | Scope.Scope>)
     | undefined;
   /** How long a poll subscription's `subscription` lasts after its last poll; defaults to 5 minutes. */
   readonly lease?: Duration.Input | undefined;
@@ -207,7 +205,7 @@ interface Hooked<E extends Any, R> {
    */
   readonly key?:
     | ((
-        input: E["input"]["Type"],
+        input: E["input"]["Type"]
       ) => string | undefined | Effect.Effect<string | undefined, never, R>)
     | undefined;
 }
@@ -228,7 +226,7 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
    */
   readonly check: (
     input: E["input"]["Type"],
-    cursor: string | null,
+    cursor: string | null
   ) => Effect.Effect<Page<E>, Refusal, R>;
   readonly log?: never;
   readonly current?: never;
@@ -247,7 +245,9 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
  */
 export interface Current<E extends Any, R = never> extends Hooked<E, R> {
   /** The value as it is, as the subscriber's `input` selects it, run as the subscriber. */
-  readonly current: (input: E["input"]["Type"]) => Effect.Effect<E["payload"]["Type"], Refusal, R>;
+  readonly current: (
+    input: E["input"]["Type"]
+  ) => Effect.Effect<E["payload"]["Type"], Refusal, R>;
   readonly check?: never;
   readonly log?: never;
 }
@@ -270,14 +270,14 @@ export interface Log<E extends Any, R = never> extends Hooked<E, R> {
   readonly match?:
     | ((
         input: E["input"]["Type"],
-        data: E["payload"]["Type"],
+        data: E["payload"]["Type"]
       ) => boolean | Effect.Effect<boolean, never, R>)
     | undefined;
   /** The data a subscriber of `input` receives in place of `data`, such as one with fields removed. */
   readonly transform?:
     | ((
         input: E["input"]["Type"],
-        data: E["payload"]["Type"],
+        data: E["payload"]["Type"]
       ) => E["payload"]["Type"] | Effect.Effect<E["payload"]["Type"], never, R>)
     | undefined;
   readonly check?: never;
@@ -307,7 +307,10 @@ export interface LogOptions<E extends Any> {
 }
 
 /** Where an event type's occurrences come from: exactly one of `check`, `current` or `log`. */
-export type Source<E extends Any, R = never> = Check<E, R> | Current<E, R> | Log<E, R>;
+export type Source<E extends Any, R = never> =
+  | Check<E, R>
+  | Current<E, R>
+  | Log<E, R>;
 
 /**
  * One occurrence as a subscriber receives it: `eventId`, the source's id or one generated, which
@@ -316,19 +319,25 @@ export type Source<E extends Any, R = never> = Check<E, R> | Current<E, R> | Log
  */
 export type Occurrence<E extends Any> = OccurrenceSchema<E>["Type"];
 
-export { Gap };
+export { Gap } from "./occurrence.js";
 
 /** What a subscriber receives: occurrences, and gaps where it missed some. */
 export type Received<E extends Any> = Occurrence<E> | Gap;
 
 /** The server serves no event type of that name, or no longer does. */
-export class NotServed extends Schema.TaggedError<NotServed>()("NotServed", {}) {}
+export class NotServed extends Schema.TaggedError<
+  NotServed,
+  { readonly brand: unique symbol }
+>()("NotServed", {}) {}
 
 /**
  * The server serves the event type, but not as asked: `feature` names what it does not offer,
  * such as `deliveryMode`, and `value` which one, such as `push`.
  */
-export class Unsupported extends Schema.TaggedError<Unsupported>()("Unsupported", {
+export class Unsupported extends Schema.TaggedError<
+  Unsupported,
+  { readonly brand: unique symbol }
+>()("Unsupported", {
   feature: Schema.String,
   value: Schema.optional(Schema.String),
 }) {}
@@ -350,20 +359,32 @@ export const CallbackCategory = Schema.Literals([
 export type CallbackCategory = typeof CallbackCategory.Type;
 
 /** A webhook subscription's callback endpoint failed its verification, or was unreachable. */
-export class CallbackFailed extends Schema.TaggedError<CallbackFailed>()("CallbackFailed", {
+export class CallbackFailed extends Schema.TaggedError<
+  CallbackFailed,
+  { readonly brand: unique symbol }
+>()("CallbackFailed", {
   category: CallbackCategory,
 }) {}
 
 /** No webhook subscription matches the one an unsubscribe names. */
-export class NotSubscribed extends Schema.TaggedError<NotSubscribed>()("NotSubscribed", {}) {}
+export class NotSubscribed extends Schema.TaggedError<
+  NotSubscribed,
+  { readonly brand: unique symbol }
+>()("NotSubscribed", {}) {}
 
-const Reason = Schema.Union([NotServed, Unsupported, CallbackFailed, NotSubscribed]);
+const Reason = Schema.Union([
+  NotServed,
+  Unsupported,
+  CallbackFailed,
+  NotSubscribed,
+]);
 
 const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
   NotServed: () => "is not served",
   Unsupported: ({ feature, value }) =>
     `is not served with this ${feature}${value === undefined ? "" : `: ${value}`}`,
-  CallbackFailed: ({ category }) => `could not reach its webhook's callback: ${category}`,
+  CallbackFailed: ({ category }) =>
+    `could not reach its webhook's callback: ${category}`,
   NotSubscribed: () => "has no such webhook subscription",
 });
 
@@ -373,10 +394,13 @@ const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
  * the reason. A refusal is `Action.Unauthenticated` or `Action.Forbidden`, and input that does not
  * decode `Action.InvalidInput`, as for an action.
  */
-export class SubscriptionError extends Schema.TaggedError<SubscriptionError>()(
+export class SubscriptionError extends Schema.TaggedError<
+  SubscriptionError,
+  { readonly brand: unique symbol }
+>()(
   "SubscriptionError",
   { event: Schema.String, reason: Reason, message: Schema.String },
-  { httpApiStatus: 409 },
+  { httpApiStatus: 409 }
 ) {
   /** The error for `event` failing with `reason`, its message built from both. */
   static of(event: string, reason: (typeof Reason)["Type"]): SubscriptionError {
@@ -436,23 +460,31 @@ export interface WatchOptions<E = never> {
    * kept under `key`, when no `cursor` is given, and keeps each new one there. Effect's
    * `KeyValueStore` is one: `{ store: yield* KeyValueStore.KeyValueStore, key: "builds" }`.
    */
-  readonly resume?: { readonly store: CursorStore<E>; readonly key: string } | undefined;
+  readonly resume?:
+    | { readonly store: CursorStore<E>; readonly key: string }
+    | undefined;
 }
 
 /**
  * Authorization for protected event types: it refuses, and fails with nothing else. It runs for
  * every subscription of a protected event type, before its source.
  */
-export type Authorize<E extends Any, R = never> = (event: E) => Effect.Effect<void, Refusal, R>;
+export type Authorize<E extends Any, R = never> = (
+  event: E
+) => Effect.Effect<void, Refusal, R>;
 
 /** Every authenticated subscriber may subscribe to a protected event type. */
 export const allowAll: Authorize<Any> = () => Effect.void;
 
-type Target = Any | ReadonlyArray<Any>;
+type Target = Any | readonly Any[];
 
-type EventsOf<T extends Target> = T extends ReadonlyArray<Any> ? T[number] : Extract<T, Any>;
+type EventsOf<T extends Target> = T extends readonly Any[]
+  ? T[number]
+  : Extract<T, Any>;
 
-type TakesNoAuthorize<T extends Target> = [Protected<EventsOf<T>>] extends [never]
+type TakesNoAuthorize<T extends Target> = [Protected<EventsOf<T>>] extends [
+  never,
+]
   ? unknown
   : "A protected event takes { authorize }: your rule, or Event.allowAll";
 
@@ -468,17 +500,35 @@ type SourcesOf<T extends Target, R, RequestServices> = T extends Any
   : {
       readonly [K in keyof RequestServices]: K extends NamesOf<T>
         ?
-            | Check<Extract<EventsOf<T>, { readonly name: K }>, RequestServices[K]>
-            | Current<Extract<EventsOf<T>, { readonly name: K }>, RequestServices[K]>
-            | Log<Extract<EventsOf<T>, { readonly name: K }>, RequestServices[K]>
+            | Check<
+                Extract<EventsOf<T>, { readonly name: K }>,
+                RequestServices[K]
+              >
+            | Current<
+                Extract<EventsOf<T>, { readonly name: K }>,
+                RequestServices[K]
+              >
+            | Log<
+                Extract<EventsOf<T>, { readonly name: K }>,
+                RequestServices[K]
+              >
         : never;
     };
 
-type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = EventImplementation<
+type Implemented<
+  T extends Target,
+  RequestServices,
+  R,
+  EX,
+  RX,
+  RA,
+  EAX,
+  RAX,
+> = EventImplementation<
   EventsOf<T>,
   {
     readonly [K in NamesOf<T>]: Exclude<
-      T extends ReadonlyArray<Any> ? RequestServices[K & keyof RequestServices] : R,
+      T extends readonly Any[] ? RequestServices[K & keyof RequestServices] : R,
       Scope.Scope
     >;
   },
@@ -507,7 +557,7 @@ type Implemented<T extends Target, RequestServices, R, EX, RX, RA, EAX, RAX> = E
  */
 export function implement<
   const T extends Target,
-  RequestServices extends (T extends ReadonlyArray<Any>
+  RequestServices extends (T extends readonly Any[]
     ? { readonly [K in NamesOf<T>]: unknown }
     : never),
   R = never,
@@ -522,12 +572,14 @@ export function implement<
     | SourcesOf<T, R, RequestServices>
     | Effect.Effect<SourcesOf<T, R, RequestServices>, EX, RX>,
   options: [Protected<EventsOf<T>>] extends [never]
-    ? { readonly authorize?: "A public-only target takes no authorize" } | undefined
-    : { readonly authorize: Authorizer<Protected<EventsOf<T>>, RA, EAX, RAX> },
+    ?
+        | { readonly authorize?: "A public-only target takes no authorize" }
+        | undefined
+    : { readonly authorize: Authorizer<Protected<EventsOf<T>>, RA, EAX, RAX> }
 ): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
 export function implement<
   const T extends Target,
-  RequestServices extends (T extends ReadonlyArray<Any>
+  RequestServices extends (T extends readonly Any[]
     ? { readonly [K in NamesOf<T>]: unknown }
     : never),
   R = never,
@@ -537,13 +589,21 @@ export function implement<
   events: T & TakesNoAuthorize<T>,
   sources:
     | SourcesOf<T, R, RequestServices>
-    | Effect.Effect<SourcesOf<T, R, RequestServices>, EX, RX>,
+    | Effect.Effect<SourcesOf<T, R, RequestServices>, EX, RX>
 ): Implemented<T, RequestServices, R, EX, RX, never, never, never>;
 export function implement(
   events: Target,
   sources: ErasedValue,
-  options?: { readonly authorize?: ErasedAuthorizer<Any> },
-): EventImplementation<Any, unknown, unknown, unknown, unknown, unknown, unknown> {
+  options?: { readonly authorize?: ErasedAuthorizer<Any> }
+): EventImplementation<
+  Any,
+  unknown,
+  unknown,
+  unknown,
+  unknown,
+  unknown,
+  unknown
+> {
   const listed = Arr.ensure(events);
 
   assertOnce("event", listed);
@@ -551,12 +611,12 @@ export function implement(
   const authorizer = authorizerOf(
     { singular: "event", module: "Event" },
     listed.some((event) => event.caller !== Anyone),
-    options?.authorize,
+    options?.authorize
   );
 
   return new EventImplementation(
     listed,
     sourcesOf(listed, !Array.isArray(events), sources),
-    authorizer,
+    authorizer
   );
 }

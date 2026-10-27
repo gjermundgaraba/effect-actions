@@ -1,7 +1,8 @@
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { Effect, Layer } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+
 import { Rpc } from "./Rpc.js";
 
 // Entrypoint of the web app, an Effect program in a page. It imports the RPC binding and
@@ -22,11 +23,16 @@ export const board = Effect.gen(function* () {
 export const protocol = (url: string) =>
   RpcClient.layerProtocolSocket().pipe(
     Layer.provide(Socket.layerWebSocket(url)),
-    Layer.provide([RpcSerialization.layerJson, Socket.layerWebSocketConstructorGlobal]),
+    Layer.provide([
+      RpcSerialization.layerJson,
+      Socket.layerWebSocketConstructorGlobal,
+    ])
   );
 
 // `open("wss://tracker.example.com/rpc")`: one run on a socket of its own, closed when it ends.
 // A page that stays connected builds the protocol's Layer once, such as in a `ManagedRuntime`,
 // and runs its programs in it.
-export const open = (url: string) =>
-  Effect.runPromise(board.pipe(Effect.scoped, Effect.provide(protocol(url))));
+export const open = async (url: string) =>
+  await Effect.runPromise(
+    board.pipe(Effect.scoped, Effect.provide(protocol(url)))
+  );

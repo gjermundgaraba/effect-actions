@@ -1,10 +1,10 @@
 import { Schema } from "effect";
 
 /** A schema a contract holds: one with no services to decode or encode. */
-export type Codec = Schema.Codec<unknown, unknown, never, never>;
+export type Codec = Schema.Codec<unknown>;
 
 /** Struct fields, given in place of a schema. */
-export type Fields = { readonly [key: string]: Codec };
+export type Fields = Readonly<Record<string, Codec>>;
 
 /** The input of a contract declared without one: an empty object. */
 export const NoInput = Schema.Record(Schema.String, Schema.Never);
@@ -18,9 +18,10 @@ export type CodecOf<S extends Codec | Fields> = S extends Codec
       : Extract<Schema.Struct<S>, Codec>
     : never;
 
-export const codecOf = (schema: Codec | Fields): Codec =>
-  Schema.isSchema(schema)
-    ? schema
-    : Reflect.ownKeys(schema).length === 0
-      ? NoInput
-      : Schema.Struct(schema);
+export const codecOf = (schema: Codec | Fields): Codec => {
+  if (Schema.isSchema(schema)) {
+    return schema;
+  }
+
+  return Reflect.ownKeys(schema).length === 0 ? NoInput : Schema.Struct(schema);
+};

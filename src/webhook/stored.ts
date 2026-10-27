@@ -1,7 +1,9 @@
-import { Duration, Effect, Option, Queue, Schema, type Scope, Semaphore } from "effect";
+import { Duration, Effect, Option, Queue, Schema, Semaphore } from "effect";
+import type { Scope } from "effect";
 import { KeyValueStore } from "effect/persistence";
-import { reported } from "../contract/reported.js";
+
 import { CallbackUrl, WebhookSecret } from "../contract/callback.js";
+import { reported } from "../contract/reported.js";
 import { DeliveryStatus } from "../contract/subscribe.js";
 
 /**
@@ -30,8 +32,13 @@ export type Stored = typeof Stored.Type;
  */
 export interface Storage {
   readonly mark: (id: string, record: Stored | undefined) => void;
-  readonly ids: () => ReadonlyArray<string>;
-  readonly get: (id: string) => Effect.Effect<Option.Option<Stored>, unknown>;
+  readonly ids: () => readonly string[];
+  readonly get: (
+    id: string
+  ) => Effect.Effect<
+    Option.Option<Stored>,
+    KeyValueStore.KeyValueStoreError | Schema.SchemaError
+  >;
 }
 
 const prefix = "effect-actions/webhook";
@@ -51,24 +58,28 @@ const flushTimeout = Duration.seconds(5);
  * A store whose index cannot be read fails the layer as it builds.
  */
 export const makeStorage = (
-  store: KeyValueStore.KeyValueStore,
+  store: KeyValueStore.KeyValueStore
 ): Effect.Effect<Storage, never, Scope.Scope> =>
   Effect.gen(function* () {
-    const records = KeyValueStore.toSchemaStore(KeyValueStore.prefix(store, `${prefix}/`), Stored);
+    const records = KeyValueStore.toSchemaStore(
+      KeyValueStore.prefix(store, `${prefix}/`),
+      Stored
+    );
+
     const index = KeyValueStore.toSchemaStore(store, Index);
 
     let indexed: ReadonlySet<string> = new Set(
       yield* Effect.orDie(
         Effect.map(
           index.get(prefix),
-          Option.getOrElse((): ReadonlyArray<string> => []),
-        ),
-      ),
+          Option.getOrElse((): readonly string[] => [])
+        )
+      )
     );
 
     const pending = new Map<string, Stored | undefined>();
     // Why: One wake stands for every mark since the last write, which writes what each left.
-    const marked = yield* Queue.sliding<void>(1);
+    const marked = yield* Queue.sliding<undefined>(1);
     const writing = Semaphore.makeUnsafe(1);
 
     // Why: What the index lists changes once it is written, so a mark after a failed write
@@ -78,7 +89,7 @@ export const makeStorage = (
         index.set(prefix, [...next]),
         Effect.sync(() => {
           indexed = next;
-        }),
+        })
       );
 
     // Why: The index is written before a record it lists and after one it no longer lists, so an
@@ -90,14 +101,14 @@ export const makeStorage = (
             Effect.suspend(() =>
               indexed.has(id)
                 ? listed(new Set([...indexed].filter((each) => each !== id)))
-                : Effect.void,
-            ),
+                : Effect.void
+            )
           )
         : Effect.andThen(
             Effect.suspend(() =>
-              indexed.has(id) ? Effect.void : listed(new Set([...indexed, id])),
+              indexed.has(id) ? Effect.void : listed(new Set([...indexed, id]))
             ),
-            records.set(id, record),
+            records.set(id, record)
           );
 
     // Why: A pass writes what was marked as it began, each mark leaving `pending` once written
@@ -111,18 +122,24 @@ export const makeStorage = (
             written(id, record).pipe(
               Effect.andThen(
                 Effect.sync(() => {
-                  if (pending.get(id) === record) pending.delete(id);
-                }),
+                  if (pending.get(id) === record) {
+                    pending.delete(id);
+                  }
+                })
               ),
-              Effect.catchCause(reported),
+              Effect.catchCause(reported)
             ),
-          { discard: true },
-        ),
-      ),
+          { discard: true }
+        )
+      )
     );
 
-    yield* Effect.forkScoped(Effect.forever(Effect.andThen(Queue.take(marked), flushed)));
-    yield* Effect.addFinalizer(() => flushed.pipe(Effect.timeout(flushTimeout), Effect.ignore));
+    yield* Effect.forkScoped(
+      Effect.forever(Effect.andThen(Queue.take(marked), flushed))
+    );
+    yield* Effect.addFinalizer(() =>
+      flushed.pipe(Effect.timeout(flushTimeout), Effect.ignore)
+    );
 
     return {
       mark: (id, record) => {
@@ -131,6 +148,8 @@ export const makeStorage = (
       },
       ids: () => [...new Set([...indexed, ...pending.keys()])],
       get: (id) =>
-        pending.has(id) ? Effect.succeed(Option.fromUndefinedOr(pending.get(id))) : records.get(id),
+        pending.has(id)
+          ? Effect.succeed(Option.fromUndefinedOr(pending.get(id)))
+          : records.get(id),
     };
   });

@@ -10,18 +10,24 @@ import {
   Predicate,
   Schema,
 } from "effect";
+
 import type * as Action from "./Action.js";
 import { CallerKeyed, principalOf } from "./caller.js";
 import { canonicalInput } from "./canonical.js";
 import { projectedErrors } from "./declared.js";
 import { sha256Hex } from "./digest.js";
 import { InvalidInput } from "./errors.js";
-import { answered, type ErasedValue, type WrittenHandler } from "./implementation.js";
+import { answered } from "./implementation.js";
+import type { ErasedValue, WrittenHandler } from "./implementation.js";
 import { declaredStatus, isTransientStatus } from "./status.js";
 
 // Why: Declared once, as the schema a store decodes what it reads with and the time it keeps it
 // for, both statics of `Idempotency`, so a store of its own reads them where the core writes them.
-const Kept = Schema.Struct({ input: Schema.String, outcome: Schema.String, at: Schema.Finite });
+const Kept = Schema.Struct({
+  input: Schema.String,
+  outcome: Schema.String,
+  at: Schema.Finite,
+});
 
 type Kept = typeof Kept.Type;
 
@@ -63,7 +69,9 @@ export class Idempotency extends Context.Service<
  * `Idempotency` in the server's memory, each answer kept 24 hours after it was kept: lost when
  * the server stops, and kept apart from every other server's.
  */
-export const layerIdempotency: Layer.Layer<Idempotency> = Layer.sync(Idempotency)(() => {
+export const layerIdempotency: Layer.Layer<Idempotency> = Layer.sync(
+  Idempotency
+)(() => {
   const held = new Map<string, Kept>();
 
   return Idempotency.of({
@@ -76,7 +84,9 @@ export const layerIdempotency: Layer.Layer<Idempotency> = Layer.sync(Idempotency
         held.set(id, kept);
 
         for (const [oldest, { at }] of held) {
-          if (at > kept.at - keptFor) break;
+          if (at > kept.at - keptFor) {
+            break;
+          }
 
           held.delete(oldest);
         }
@@ -91,16 +101,22 @@ export const layerIdempotency: Layer.Layer<Idempotency> = Layer.sync(Idempotency
 export const keyed = (
   action: Action.Any,
   store: Idempotency["Service"],
-  handle: WrittenHandler<unknown>,
+  handle: WrittenHandler<unknown>
 ): WrittenHandler<unknown> => {
   const field = action.idempotencyKey;
 
-  if (field === undefined) return handle;
+  if (field === undefined) {
+    return handle;
+  }
 
   const Outcome = Schema.fromJsonString(
     Schema.toCodecJson(
-      Schema.Exit(action.success, Schema.Union(projectedErrors(action)), Schema.Never),
-    ),
+      Schema.Exit(
+        action.success,
+        Schema.Union(projectedErrors(action)),
+        Schema.Never
+      )
+    )
   );
 
   const encodeOutcome = Schema.encodeUnknownEffect(Outcome);
@@ -110,24 +126,28 @@ export const keyed = (
   // server's state, not the call's answer: a retry with the key runs the call again.
   const isTransientFailure = Schema.is(
     Schema.Union(
-      projectedErrors(action).filter((error) => isTransientStatus(declaredStatus(error))),
-    ),
+      projectedErrors(action).filter((error) =>
+        isTransientStatus(declaredStatus(error))
+      )
+    )
   );
 
-  const running = new Map<string, Deferred.Deferred<void>>();
+  const running = new Map<string, Deferred.Deferred<undefined>>();
 
   const run = (
     id: string,
     key: string,
     digest: string,
-    answer: Effect.Effect<ErasedValue, ErasedValue, unknown>,
+    answer: Effect.Effect<ErasedValue, ErasedValue, unknown>
   ): Effect.Effect<ErasedValue, ErasedValue, unknown> =>
     Effect.gen(function* () {
       const first = running.get(id);
 
       if (first !== undefined) {
         yield* Deferred.await(first).pipe(
-          Effect.withSpan("Idempotency.wait", { attributes: { "action.name": action.name } }),
+          Effect.withSpan("Idempotency.wait", {
+            attributes: { "action.name": action.name },
+          })
         );
 
         return yield* run(id, key, digest, answer);
@@ -135,13 +155,13 @@ export const keyed = (
 
       // Why: claimed before the store is read, with no wait between the check and the claim, so
       // of two calls with one key at once, the second waits rather than finding nothing kept.
-      const claim = Deferred.makeUnsafe<void>();
+      const claim = Deferred.makeUnsafe<undefined>();
 
       running.set(id, claim);
 
       const release = Effect.andThen(
         Effect.sync(() => running.delete(id)),
-        Deferred.succeed(claim, undefined),
+        Deferred.succeed(claim, undefined)
       );
 
       return yield* Effect.gen(function* () {
@@ -153,9 +173,12 @@ export const keyed = (
           });
         }
 
-        const replayed = kept === undefined ? Option.none() : decodeOutcome(kept.outcome);
+        const replayed =
+          kept === undefined ? Option.none() : decodeOutcome(kept.outcome);
 
-        if (Option.isSome(replayed)) return yield* replayed.value;
+        if (Option.isSome(replayed)) {
+          return yield* replayed.value;
+        }
 
         const exit = yield* Effect.exit(answer);
 
@@ -164,10 +187,13 @@ export const keyed = (
         const keeps =
           Exit.isSuccess(exit) ||
           exit.cause.reasons.every(
-            (reason) => Cause.isFailReason(reason) && !isTransientFailure(reason.error),
+            (reason) =>
+              Cause.isFailReason(reason) && !isTransientFailure(reason.error)
           );
 
-        const json = keeps ? yield* Effect.option(encodeOutcome(exit)) : Option.none();
+        const json = keeps
+          ? yield* Effect.option(encodeOutcome(exit))
+          : Option.none();
 
         if (Option.isSome(json)) {
           yield* store.set(id, {
@@ -184,7 +210,9 @@ export const keyed = (
   return (input, reporting) => {
     const key = Predicate.hasProperty(input, field) ? input[field] : undefined;
 
-    if (!Predicate.isString(key)) return handle(input, reporting);
+    if (!Predicate.isString(key)) {
+      return handle(input, reporting);
+    }
 
     const answer = Effect.suspend(() => answered(handle(input, reporting)));
 
@@ -194,11 +222,13 @@ export const keyed = (
       Effect.all([
         Effect.service(CallerKeyed).pipe(
           Effect.flatMap((named) => principalOf(action, named)),
-          Effect.flatMap((principal) => sha256Hex(JSON.stringify([principal ?? null, key]))),
+          Effect.flatMap((principal) =>
+            sha256Hex(JSON.stringify([principal ?? null, key]))
+          )
         ),
         Effect.flatMap(canonicalInput(action.input, input), sha256Hex),
       ]),
-      ([id, digest]) => run(`${action.name}/${id}`, key, digest, answer),
+      ([id, digest]) => run(`${action.name}/${id}`, key, digest, answer)
     );
   };
 };

@@ -31,13 +31,18 @@ const standardIssues = SchemaIssue.makeFormatterStandardSchemaV1();
  * - Its message and `issues` name paths and what the schema expects, never a field's value; a path names every key it passes through, a record's keys included, so never key a record by a secret such as an email or a token.
  * - A check's message, or a schema's `message` annotation, is sent as written: never put the input in one.
  */
-export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
+export class InvalidInput extends Schema.TaggedError<
+  InvalidInput,
+  { readonly brand: unique symbol }
+>()(
   "InvalidInput",
   {
     message: defaultedMessage("The input does not match the action's input."),
-    issues: Schema.Array(Issue).pipe(Schema.withConstructorDefault(Effect.succeed([]))),
+    issues: Schema.Array(Issue).pipe(
+      Schema.withConstructorDefault(Effect.succeed([]))
+    ),
   },
-  { httpApiStatus: 400 },
+  { httpApiStatus: 400 }
 ) {
   declare private readonly "~declared in the action's error, or built in": unknown;
 
@@ -49,7 +54,10 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
    * A symbol key is sent as its string form, `Symbol(name)`, as JSON has no symbols, which
    * tells it from a string key of that name.
    */
-  static readonly fromSchemaError = ({ issue, message }: Schema.SchemaError): InvalidInput =>
+  static readonly fromSchemaError = ({
+    issue,
+    message,
+  }: Schema.SchemaError): InvalidInput =>
     new InvalidInput({
       message,
       issues: standardIssues(issue).issues.map((found) => ({
@@ -74,15 +82,18 @@ export class InvalidInput extends Schema.TaggedError<InvalidInput>()(
  * - Over RPC the typed failure, never a status; on a Toolkit and in a CLI as a declared error.
  * - From another service's client, such as `ActionHttp.client`, one passed on tells a caller whose token is valid to sign in again: map it to an error the action declares, or to a defect.
  */
-export class Unauthenticated extends Schema.TaggedError<Unauthenticated>()(
+export class Unauthenticated extends Schema.TaggedError<
+  Unauthenticated,
+  { readonly brand: unique symbol }
+>()(
   "Unauthenticated",
   { message: defaultedMessage("Authentication is required.") },
-  { httpApiStatus: 401 },
+  { httpApiStatus: 401 }
 ) {
   declare private readonly "~declared in the action's error, or built in": unknown;
 }
 
-export const scopeToken = /^[\x21\x23-\x5B\x5D-\x7E]+$/;
+export const scopeToken = /^[\u0021\u0023-\u005B\u005D-\u007E]+$/;
 
 const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
 
@@ -101,13 +112,16 @@ const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
  * - Over RPC the typed failure, never a status or a challenge; on a Toolkit and in a CLI as a declared error.
  * - From another service's client, such as `ActionHttp.client`, one passed on becomes this server's own refusal: map it to an error the action declares, or to a defect.
  */
-export class Forbidden extends Schema.TaggedError<Forbidden>()(
+export class Forbidden extends Schema.TaggedError<
+  Forbidden,
+  { readonly brand: unique symbol }
+>()(
   "Forbidden",
   {
     message: defaultedMessage("Not allowed."),
     scopes: Schema.optionalKey(Schema.NonEmptyArray(ScopeToken)),
   },
-  { httpApiStatus: 403 },
+  { httpApiStatus: 403 }
 ) {
   declare private readonly "~declared in the action's error, or built in": unknown;
 }

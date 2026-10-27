@@ -1,12 +1,18 @@
 import { expect, it } from "@effect/vitest";
 import { Arbitrary, Predicate, Schema } from "effect";
+
 import { canonical } from "../../src/contract/canonical.js";
 
-const Leaf = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null]);
+const Leaf = Schema.Union([
+  Schema.String,
+  Schema.Finite,
+  Schema.Boolean,
+  Schema.Null,
+]);
 
 const Input = Schema.Record(
   Schema.String,
-  Schema.Union([Leaf, Schema.Array(Leaf), Schema.Record(Schema.String, Leaf)]),
+  Schema.Union([Leaf, Schema.Array(Leaf), Schema.Record(Schema.String, Leaf)])
 );
 
 type Input = typeof Input.Type;
@@ -23,10 +29,12 @@ it.prop(
     const reordered = Object.fromEntries(
       Object.entries(input)
         .toReversed()
-        .map(([key, value]) => [key, reversed(value)]),
+        .map(([key, value]) => [key, reversed(value)])
     );
 
     expect(canonical(reordered)).toBe(canonical(input));
-    expect(canonical(other) === canonical(input)).toBe(Schema.toEquivalence(Input)(other, input));
-  },
+    expect(canonical(other) === canonical(input)).toBe(
+      Schema.toEquivalence(Input)(other, input)
+    );
+  }
 );

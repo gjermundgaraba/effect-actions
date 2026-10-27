@@ -1,4 +1,5 @@
-import { Schema, type SchemaAST } from "effect";
+import { Schema } from "effect";
+import type { SchemaAST } from "effect";
 
 const mediaKindAnnotation = "effect-actions/media";
 
@@ -7,7 +8,10 @@ const mediaKindAnnotation = "effect-actions/media";
 // content.
 export type Kind = "image";
 
-export const Media = Schema.Struct({ data: Schema.Uint8Array, mimeType: Schema.String });
+export const Media = Schema.Struct({
+  data: Schema.Uint8Array,
+  mimeType: Schema.String,
+});
 
 /**
  * An image, a media field of a success: `{ data: Uint8Array, mimeType: string }`, `mimeType` such

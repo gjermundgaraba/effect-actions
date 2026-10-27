@@ -1,5 +1,5 @@
-import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Schema } from "effect";
 
 export const Printer = Schema.Struct({
   id: Schema.String,
@@ -8,8 +8,10 @@ export const Printer = Schema.Struct({
   job: Schema.NullOr(
     Schema.Struct({
       file: Schema.String,
-      progress: Schema.Finite.annotate({ description: "Percent done, 0 to 100." }),
-    }),
+      progress: Schema.Finite.annotate({
+        description: "Percent done, 0 to 100.",
+      }),
+    })
   ),
 });
 
@@ -18,7 +20,10 @@ export type Printer = typeof Printer.Type;
 // The one error every tool declares: the farm could not do what was asked. A model reads its
 // `message` and decides what to do next, so the message says what went wrong in plain words.
 // A handler failing with an error its action does not declare does not compile.
-export class PrintFarmError extends Schema.TaggedError<PrintFarmError>()("PrintFarmError", {
+export class PrintFarmError extends Schema.TaggedError<
+  PrintFarmError,
+  { readonly brand: unique symbol }
+>()("PrintFarmError", {
   message: Schema.String,
 }) {}
 
@@ -27,7 +32,9 @@ export class PrintFarmError extends Schema.TaggedError<PrintFarmError>()("PrintF
 // from a model. An id that does not match is refused as invalid input, on every surface,
 // before a handler runs, so `..` or `a/b` never reaches the farm. The `u` flag is what puts the
 // pattern in the tool's schema, where the model reads it.
-const PrinterId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/u)).annotate({
+const PrinterId = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9_-]+$/u)
+).annotate({
   description: "A printer's id, as list_printers gives it, such as mk4-1.",
 });
 
@@ -74,7 +81,9 @@ export const StartPrint = Action.make("start_print", {
     "named as the farm stores it. Refused when the printer is not idle.",
   input: {
     printer_id: PrinterId,
-    file: Schema.String.annotate({ description: "A G-code file's name, such as bracket.gcode." }),
+    file: Schema.String.annotate({
+      description: "A G-code file's name, such as bracket.gcode.",
+    }),
   },
   success: Printer,
   readOnly: false,
@@ -89,7 +98,9 @@ export const SetPaused = Action.make("set_paused", {
     "pausing is the safe move while deciding what to do with a print that looks wrong.",
   input: {
     printer_id: PrinterId,
-    paused: Schema.Boolean.annotate({ description: "true to pause the job, false to resume it." }),
+    paused: Schema.Boolean.annotate({
+      description: "true to pause the job, false to resume it.",
+    }),
   },
   success: Printer,
   readOnly: false,

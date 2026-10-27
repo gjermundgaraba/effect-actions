@@ -1,7 +1,8 @@
-import { Context, Schema } from "effect";
-import { HttpApiSecurity } from "effect/http-api";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { Context, Schema } from "effect";
+import { HttpApiSecurity } from "effect/http-api";
+
 import { Workspace, WorkspaceNotFound } from "../workspaces/Workspaces.js";
 
 /** What a verified operator key can name. */
@@ -20,15 +21,20 @@ export interface TrustedOperator {
  * The operators' identity, another audience than the members: its own service, its own
  * descriptor, its own port. Typed in two parts, so the trusted one cannot arrive over the wire.
  */
-export class Operator extends Context.Service<Operator, KeyOperator | TrustedOperator>()(
-  "tracker/Operator",
-) {}
+export class Operator extends Context.Service<
+  Operator,
+  KeyOperator | TrustedOperator
+>()("tracker/Operator") {}
 
 // How a remote operator proves it: an API key in a header, a native scheme named by
 // `security`. A key cannot step up, and has no OAuth discovery.
-export const OperatorKey = Authentication.make("tracker.OperatorKey", Operator, {
-  security: HttpApiSecurity.apiKey({ in: "header", key: "x-operator-key" }),
-});
+export const OperatorKey = Authentication.make(
+  "tracker.OperatorKey",
+  Operator,
+  {
+    security: HttpApiSecurity.apiKey({ in: "header", key: "x-operator-key" }),
+  }
+);
 
 // What the two actions on one workspace share, their input and success included.
 const onWorkspace = {
@@ -48,7 +54,8 @@ export const ListWorkspaces = Action.make("listWorkspaces", {
 
 export const SuspendWorkspace = Action.make("suspendWorkspace", {
   ...onWorkspace,
-  description: "Suspend a workspace: its members are refused on the public port until resumed.",
+  description:
+    "Suspend a workspace: its members are refused on the public port until resumed.",
 });
 
 export const ResumeWorkspace = Action.make("resumeWorkspace", {
@@ -56,4 +63,8 @@ export const ResumeWorkspace = Action.make("resumeWorkspace", {
   description: "Resume a suspended workspace.",
 });
 
-export const Admin = [ListWorkspaces, SuspendWorkspace, ResumeWorkspace] as const;
+export const Admin = [
+  ListWorkspaces,
+  SuspendWorkspace,
+  ResumeWorkspace,
+] as const;

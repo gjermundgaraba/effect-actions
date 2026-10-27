@@ -1,35 +1,41 @@
-import { type Context, Effect, type Layer, Schema, SchemaGetter } from "effect";
-import { type Prompt, Tool, Toolkit } from "effect/ai";
+import { Effect, Schema, SchemaGetter } from "effect";
+import type { Context, Layer } from "effect";
+import { Tool, Toolkit } from "effect/ai";
+import type { Prompt } from "effect/ai";
+
 import type * as Action from "../contract/Action.js";
-import type { BuiltIns } from "../contract/errors.js";
-import { projectedErrors } from "../contract/declared.js";
-import { hintsOf } from "../contract/hints.js";
 import type { Codec } from "../contract/codec.js";
-import { progressSink } from "../contract/progress.js";
-import { assertOnce, heldOnce } from "../contract/names.js";
-import { type ToolSuccess, toolSuccessOf } from "../contract/stream.js";
+import { projectedErrors } from "../contract/declared.js";
+import type { BuiltIns } from "../contract/errors.js";
+import { hintsOf } from "../contract/hints.js";
 import {
   acquire,
-  type ActionOf,
   answeringWhole,
-  type AnyImplementation,
-  type BuildServices,
-  type BuildError,
-  type Holding,
   Implementation,
-  type Known,
-  type Member,
-  type Offered,
-  type OptionalUnless,
   provideHandlers,
-  type RequestOf,
   select,
-  type SelectedOf,
-  type ServedActions,
-  type Serving,
   toList,
-  type ErasedValue,
 } from "../contract/implementation.js";
+import type {
+  ActionOf,
+  AnyImplementation,
+  BuildServices,
+  BuildError,
+  Holding,
+  Known,
+  Member,
+  Offered,
+  OptionalUnless,
+  RequestOf,
+  SelectedOf,
+  ServedActions,
+  Serving,
+  ErasedValue,
+} from "../contract/implementation.js";
+import { assertOnce, heldOnce } from "../contract/names.js";
+import { progressSink } from "../contract/progress.js";
+import { toolSuccessOf } from "../contract/stream.js";
+import type { ToolSuccess } from "../contract/stream.js";
 
 type NativeTool<A extends Action.Any, R> = Tool.Tool<
   A["name"],
@@ -37,7 +43,9 @@ type NativeTool<A extends Action.Any, R> = Tool.Tool<
     readonly parameters: Schema.toCodecJson<A["input"]>;
     readonly success: A["progress"] extends Codec
       ? Schema.toCodecJson<
-          Schema.Union<readonly [ProgressOf<A["progress"]>, ToolSuccess<A["success"]>]>
+          Schema.Union<
+            readonly [ProgressOf<A["progress"]>, ToolSuccess<A["success"]>]
+          >
         >
       : Schema.toCodecJson<ToolSuccess<A["success"]>>;
     readonly failure: Schema.toCodecJson<
@@ -97,7 +105,7 @@ export interface Options<A extends Action.Any> {
    * Each keeps its implementation's authorization and builder. Defaults to every action of them,
    * one added to an implementation later included.
    */
-  readonly actions?: ReadonlyArray<A> | undefined;
+  readonly actions?: readonly A[] | undefined;
   /**
    * Whether a model's call needs approval before it runs: a boolean, or an Effect of one, for
    * each call, with Effect's native approval context. `LanguageModel` asks for approval
@@ -113,21 +121,23 @@ export interface Options<A extends Action.Any> {
    */
   readonly needsApproval?: (
     call: ToolCall<A>,
-    context: Tool.NeedsApprovalContext,
+    context: Tool.NeedsApprovalContext
   ) => boolean | Effect.Effect<boolean, unknown>;
 }
 
 interface ErasedOptions {
-  readonly actions?: ReadonlyArray<Action.Any> | undefined;
-  needsApproval?(
-    this: void,
-    call: ToolCall<Action.Any>,
-    context: Tool.NeedsApprovalContext,
-  ): boolean | Effect.Effect<boolean, unknown>;
+  readonly actions?: readonly Action.Any[] | undefined;
+  readonly needsApproval?: (
+    call: ToolCall,
+    context: Tool.NeedsApprovalContext
+  ) => boolean | Effect.Effect<boolean, unknown>;
 }
 
-const annotateIfGiven = <I, S>(tool: Tool.Any, key: Context.Key<I, S>, value: S | undefined) =>
-  value === undefined ? tool : tool.annotate(key, value);
+const annotateIfGiven = <I, S>(
+  tool: Tool.Any,
+  key: Context.Key<I, S>,
+  value: S | undefined
+) => (value === undefined ? tool : tool.annotate(key, value));
 
 // Why: Every hint is annotated from the `hintsOf` MCP's listing spreads, so the two cannot
 // disagree: MCP's default where the contract leaves one out, except `destructiveHint`, which MCP
@@ -135,7 +145,9 @@ const annotateIfGiven = <I, S>(tool: Tool.Any, key: Context.Key<I, S>, value: S 
 // hint only where given and left the rest to Effect's defaults, which MCP's listing no longer
 // reads.
 const annotateFromContract = (tool: Tool.Any, action: Action.Any) => {
-  const { readOnlyHint, destructiveHint, idempotentHint, openWorldHint } = hintsOf(action);
+  const { readOnlyHint, destructiveHint, idempotentHint, openWorldHint } =
+    hintsOf(action);
+
   const { title, _meta } = action.mcp;
 
   const hinted = tool
@@ -147,7 +159,7 @@ const annotateFromContract = (tool: Tool.Any, action: Action.Any) => {
   return annotateIfGiven(
     annotateIfGiven(hinted, Tool.Title, title),
     Tool.Meta,
-    _meta === undefined ? undefined : { ..._meta },
+    _meta === undefined ? undefined : { ..._meta }
   );
 };
 
@@ -170,15 +182,17 @@ class Reported<A> {
 const ProgressOf = (progress: Codec) =>
   Schema.TaggedStruct("Progress", { value: progress }).pipe(
     Schema.decodeTo(
-      Schema.declare((input): input is Reported<unknown> => input instanceof Reported),
+      Schema.declare(
+        (input): input is Reported<unknown> => input instanceof Reported
+      ),
       {
         decode: SchemaGetter.transform(({ value }) => new Reported(value)),
         encode: SchemaGetter.transform((reported) => ({
           _tag: "Progress" as const,
           value: reported.value,
         })),
-      },
-    ),
+      }
+    )
   );
 
 type ProgressOf<P> = P extends Codec
@@ -197,7 +211,7 @@ const jsonToolOf = (action: Action.Any) => {
     success: Schema.toCodecJson(
       action.progress === undefined
         ? success
-        : Schema.Union([ProgressOf(action.progress), success]),
+        : Schema.Union([ProgressOf(action.progress), success])
     ),
     failure: Schema.toCodecJson(Schema.Union(projectedErrors(action))),
     failureMode: "return",
@@ -233,12 +247,20 @@ export function make<
   >
 ): Tools<
   {
-    readonly [T in ToolFor<Member<Apps>, Offered<O, ActionOf<Member<Apps>>>> as T["name"]]: T;
+    readonly [
+      T in ToolFor<
+        Member<Apps>,
+        Offered<O, ActionOf<Member<Apps>>>
+      > as T["name"]
+    ]: T;
   },
   BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>,
   BuildServices<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
 >;
-export function make(apps: ServedActions, options?: ErasedOptions): ErasedTools {
+export function make(
+  apps: ServedActions,
+  options?: ErasedOptions
+): ErasedTools {
   const served = select(toList(apps), options?.actions);
 
   const needsApproval = options?.needsApproval;
@@ -246,7 +268,7 @@ export function make(apps: ServedActions, options?: ErasedOptions): ErasedTools 
   assertOnce(
     "tool",
     served.flatMap((app) => app.actions),
-    heldOnce,
+    heldOnce
   );
 
   // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id carries
@@ -258,21 +280,26 @@ export function make(apps: ServedActions, options?: ErasedOptions): ErasedTools 
       needsApproval === undefined
         ? jsonToolOf(action)
         : jsonToolOf(action).setNeedsApproval((input, context) => {
-            const decided = needsApproval({ name: action.name, action, input }, context);
+            const decided = needsApproval(
+              { name: action.name, action, input },
+              context
+            );
 
             // Why: A policy that cannot be read asks, where Effect's own default on a failure runs the
             // call; a defect is a bug, left to end the turn as Effect ends it.
             return Effect.isEffect(decided)
-              ? Effect.catch(decided, () => Effect.succeed(true))
+              ? Effect.orElseSucceed(decided, () => true)
               : decided;
           }),
-      { id: `${Implementation.runKey(app)}/${action.name}` },
+      { id: `${Implementation.runKey(app)}/${action.name}` }
     );
 
   const toolkit = Toolkit.make(
     ...served.flatMap((app) =>
-      app.actions.map((action) => annotateFromContract(toolOf(action, app), action)),
-    ),
+      app.actions.map((action) =>
+        annotateFromContract(toolOf(action, app), action)
+      )
+    )
   );
 
   const layer = toolkit.toLayer(
@@ -283,15 +310,18 @@ export function make(apps: ServedActions, options?: ErasedOptions): ErasedTools 
 
           return [
             action.name,
-            (input: ErasedValue, { preliminary }: Toolkit.HandlerContext<Tool.Any>) =>
+            (
+              input: ErasedValue,
+              { preliminary }: Toolkit.HandlerContext<Tool.Any>
+            ) =>
               run(
                 input,
-                progressSink((value) => preliminary(new Reported(value))),
+                progressSink((value) => preliminary(new Reported(value)))
               ),
           ];
-        }),
-      ),
-    ),
+        })
+      )
+    )
   );
 
   return { toolkit, layer: layer.pipe(provideHandlers(served)) };
@@ -322,25 +352,38 @@ export interface Approval {
  * Guide: `docs/ActionToolkit.md` in this package; in an application:
  * `examples/kitchen-sink/src/assistant/handlers.ts`.
  */
-export const openApprovals = ({ content: messages }: Prompt.Prompt): ReadonlyArray<Approval> => {
-  const said = messages.flatMap((message) => (message.role === "assistant" ? message.content : []));
-  const told = messages.flatMap((message) => (message.role === "tool" ? message.content : []));
-
-  const answered = new Set(
-    told.flatMap((part) => (part.type === "tool-approval-response" ? [part.approvalId] : [])),
+export const openApprovals = ({
+  content: messages,
+}: Prompt.Prompt): readonly Approval[] => {
+  const said = messages.flatMap((message) =>
+    message.role === "assistant" ? message.content : []
   );
 
-  const ran = new Set(told.flatMap((part) => (part.type === "tool-result" ? [part.id] : [])));
+  const told = messages.flatMap((message) =>
+    message.role === "tool" ? message.content : []
+  );
+
+  const answered = new Set(
+    told.flatMap((part) =>
+      part.type === "tool-approval-response" ? [part.approvalId] : []
+    )
+  );
+
+  const ran = new Set(
+    told.flatMap((part) => (part.type === "tool-result" ? [part.id] : []))
+  );
 
   const calls = new Map(
-    said.flatMap((part) => (part.type === "tool-call" ? [[part.id, part] as const] : [])),
+    said.flatMap((part) =>
+      part.type === "tool-call" ? [[part.id, part] as const] : []
+    )
   );
 
   const requests = said
     .filter((part) => part.type === "tool-approval-request")
     .filter(
       ({ approvalId }, place, all) =>
-        all.findLastIndex((later) => later.approvalId === approvalId) === place,
+        all.findLastIndex((later) => later.approvalId === approvalId) === place
     );
 
   return requests.flatMap(({ approvalId, toolCallId }) => {

@@ -1,5 +1,5 @@
-import { Context, Schema } from "effect";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import { Context, Schema } from "effect";
 
 /** A member, and the pipelines whose builds it may see. */
 export const Member = Schema.Struct({
@@ -14,7 +14,7 @@ export type Member = typeof Member.Type;
  * CurrentMember`; authentication provides it per request.
  */
 export class CurrentMember extends Context.Service<CurrentMember, Member>()(
-  "build-events/CurrentMember",
+  "build-events/CurrentMember"
 ) {}
 
 // How a remote caller proves it is a member: a bearer token. Clients import this descriptor

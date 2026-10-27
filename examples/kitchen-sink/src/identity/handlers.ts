@@ -1,4 +1,5 @@
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+
 import { CurrentMember, WhoAmI } from "./Identity.js";
 
 // `Action.allowAll`: verification is the whole policy here. Any authenticated member may ask

@@ -1,4 +1,5 @@
 import { Context, Effect } from "effect";
+
 import type * as Action from "./Action.js";
 import type { Forbidden } from "./errors.js";
 import type * as Event from "./Event.js";
@@ -16,10 +17,15 @@ import type * as Event from "./Event.js";
 export const InputCheck = Context.Reference<
   (
     contract: Action.Any | Event.Any,
-    input: Action.Any["input"]["Type"],
+    input: Action.Any["input"]["Type"]
   ) => Effect.Effect<void, Forbidden>
->("effect-actions/Action/InputCheck", { defaultValue: () => () => Effect.void });
+>("effect-actions/Action/InputCheck", {
+  defaultValue: () => () => Effect.void,
+});
 
 /** `contract`'s `input`, as the provided `InputCheck` judges it. */
-export const checkInput = (contract: Action.Any | Event.Any, input: Action.Any["input"]["Type"]) =>
+export const checkInput = (
+  contract: Action.Any | Event.Any,
+  input: Action.Any["input"]["Type"]
+) =>
   Effect.flatMap(Effect.service(InputCheck), (check) => check(contract, input));

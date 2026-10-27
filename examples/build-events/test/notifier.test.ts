@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Deferred, Effect, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { KeyValueStore } from "effect/persistence";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as Testing from "@gjermundgaraba/effect-actions/Testing";
+
 import { Http } from "../src/Api.js";
 import { Notices } from "../src/notifier/Notices.js";
 import { notifier } from "../src/notifier/routes.js";
@@ -21,8 +22,10 @@ describe("the notifier, by webhook", () => {
       const handedOver = Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
-          Effect.flatMap(Deferred.await(toBuildEvents), (client) => client.execute(request)),
-        ),
+          Effect.flatMap(Deferred.await(toBuildEvents), (client) =>
+            client.execute(request)
+          )
+        )
       );
 
       const notifierRoutes = notifier({
@@ -35,7 +38,9 @@ describe("the notifier, by webhook", () => {
       // the notifier writes.
       const services = Testing.layer(routes).pipe(
         Layer.provide(inMemory(Testing.layer(notifierRoutes))),
-        Layer.provideMerge(Layer.mergeAll(Notices.layerMemory, KeyValueStore.layerMemory)),
+        Layer.provideMerge(
+          Layer.mergeAll(Notices.layerMemory, KeyValueStore.layerMemory)
+        )
       );
 
       yield* Effect.gen(function* () {
@@ -48,7 +53,9 @@ describe("the notifier, by webhook", () => {
         yield* settled(cursors.has("failed-builds"));
 
         const ada = yield* ActionHttp.client(Http, {
-          transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken("ada")),
+          transformClient: HttpClient.mapRequest(
+            HttpClientRequest.bearerToken("ada")
+          ),
         });
 
         yield* ada.finishBuild({ pipeline: "api", status: "failed" });
@@ -58,7 +65,9 @@ describe("the notifier, by webhook", () => {
         yield* settled(Effect.map(notices.all, (all) => all.length > 0));
 
         // grace sees the web pipeline alone, and the notifier asked for failures alone.
-        expect(yield* notices.all).toEqual([{ id: "build-3", pipeline: "web", status: "failed" }]);
+        expect(yield* notices.all).toStrictEqual([
+          { id: "build-3", pipeline: "web", status: "failed" },
+        ]);
 
         yield* ada.finishBuild({ pipeline: "web", status: "failed" });
         yield* settled(Effect.map(notices.all, (all) => all.length > 1));
@@ -66,6 +75,6 @@ describe("the notifier, by webhook", () => {
         // Once build-4 is read, build-3 is handled: a restart resumes after the third build.
         expect(yield* cursors.get("failed-builds")).toMatch(/:3$/u);
       }).pipe(Effect.provide(services));
-    }),
+    })
   );
 });

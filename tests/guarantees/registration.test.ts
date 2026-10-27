@@ -1,15 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Effect, Fiber, JsonPointer, Layer, Predicate, Schema } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Fiber,
+  Function,
+  JsonPointer,
+  Layer,
+  Predicate,
+  Schema,
+} from "effect";
 import { AiError, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpClient } from "effect/http";
 import { OpenApi } from "effect/http-api";
-import * as Action from "../../src/contract/Action.js";
+
 import * as ActionCli from "../../src/cli/ActionCli.js";
+import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
-import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import * as Testing from "../../src/testing/Testing.js";
-import { makeTestHttp, makeTestMcp } from "../support/server.js";
+import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import {
   endSession,
   initializeParams,
@@ -19,61 +29,193 @@ import {
   send,
   sessionRequest,
 } from "../support/requests.js";
-import { type Handler, serve } from "../support/serve.js";
+import { serve } from "../support/serve.js";
+import type { Handler } from "../support/serve.js";
+import { makeTestHttp, makeTestMcp } from "../support/server.js";
 
-it("serves MCP 2026-07-28, 2025-11-25 and 2025-06-18 over HTTP and passes the native server options through", async () => {
-  const web = serve(
-    ActionMcp.layerHttp([], {
-      name: "configured",
-      version: "0",
-      path: "/mcp",
-      description: "A configured server",
-      websiteUrl: "https://example.com",
-      icons: [{ src: "https://example.com/icon.png" }],
-      extensions: { "io.example/extension": {} },
-    }),
-  );
-
-  const discovered = await web.handler(mcpRequest({ method: "server/discover" }));
-
-  expect(discovered.status).toBe(200);
-  expect(await discovered.json()).toMatchObject({
-    result: {
-      _meta: {
-        "io.modelcontextprotocol/serverInfo": {
-          name: "configured",
-          version: "0",
-          description: "A configured server",
-          websiteUrl: "https://example.com",
-          icons: [{ src: "https://example.com/icon.png" }],
-        },
-      },
-      supportedVersions: ["2026-07-28", "2025-11-25", "2025-06-18"],
-      capabilities: { extensions: { "io.example/extension": {} } },
-    },
-  });
-
-  for (const protocolVersion of ["2025-11-25", "2025-06-18"]) {
-    const initialized = await web.handler(
-      sessionRequest({ method: "initialize", params: { ...initializeParams, protocolVersion } }),
+describe("MCP protocol revisions", () => {
+  it("serves MCP 2026-07-28, 2025-11-25 and 2025-06-18 over HTTP and passes the native server options through", async () => {
+    const web = serve(
+      ActionMcp.layerHttp([], {
+        name: "configured",
+        version: "0",
+        path: "/mcp",
+        description: "A configured server",
+        websiteUrl: "https://example.com",
+        icons: [{ src: "https://example.com/icon.png" }],
+        extensions: { "io.example/extension": {} },
+      })
     );
 
-    expect(initialized.status).toBe(200);
-    expect(initialized.headers.get("mcp-session-id")).toEqual(expect.any(String));
-    expect(await initialized.json()).toMatchObject({
-      result: { protocolVersion, serverInfo: { name: "configured", version: "0" } },
+    const discovered = await web.handler(
+      mcpRequest({ method: "server/discover" })
+    );
+
+    expect(discovered.status).toBe(200);
+    await expect(discovered.json()).resolves.toMatchObject({
+      result: {
+        _meta: {
+          "io.modelcontextprotocol/serverInfo": {
+            name: "configured",
+            version: "0",
+            description: "A configured server",
+            websiteUrl: "https://example.com",
+            icons: [{ src: "https://example.com/icon.png" }],
+          },
+        },
+        supportedVersions: ["2026-07-28", "2025-11-25", "2025-06-18"],
+        capabilities: { extensions: { "io.example/extension": {} } },
+      },
     });
-  }
 
-  const tooOld = await web.handler(
-    sessionRequest({
-      method: "initialize",
-      params: { ...initializeParams, protocolVersion: "2024-11-05" },
-    }),
+    for (const protocolVersion of ["2025-11-25", "2025-06-18"]) {
+      const initialized = await web.handler(
+        sessionRequest({
+          method: "initialize",
+          params: { ...initializeParams, protocolVersion },
+        })
+      );
+
+      expect(initialized.status).toBe(200);
+      expect(initialized.headers.get("mcp-session-id")).toStrictEqual(
+        expect.any(String)
+      );
+      await expect(initialized.json()).resolves.toMatchObject({
+        result: {
+          protocolVersion,
+          serverInfo: { name: "configured", version: "0" },
+        },
+      });
+    }
+
+    const tooOld = await web.handler(
+      sessionRequest({
+        method: "initialize",
+        params: { ...initializeParams, protocolVersion: "2024-11-05" },
+      })
+    );
+
+    await expect(tooOld.json()).resolves.toMatchObject({
+      result: { protocolVersion: "2025-11-25" },
+    });
+  });
+
+  it("keeps a session of a 2025 revision until its client ends it", async () => {
+    const web = serve(
+      ActionMcp.layerHttp([], { name: "sessions", version: "0" })
+    );
+
+    const initialized = await web.handler(
+      sessionRequest({ method: "initialize", params: initializeParams })
+    );
+
+    const session = initialized.headers.get("mcp-session-id") ?? "";
+
+    const listed = await web.handler(
+      sessionRequest({ method: "tools/list", session })
+    );
+
+    expect(listed.status).toBe(200);
+    await expect(listed.json()).resolves.toMatchObject({
+      result: { tools: [] },
+    });
+
+    const withoutSession = await web.handler(
+      sessionRequest({ method: "tools/list" })
+    );
+
+    expect(withoutSession.status).toBe(400);
+
+    const ended = await web.handler(endSession(session));
+
+    expect(ended.status).toBe(204);
+
+    const listedAfterEnd = await web.handler(
+      sessionRequest({ method: "tools/list", session })
+    );
+
+    expect(listedAfterEnd.status).toBe(404);
+
+    const endedAgain = await web.handler(endSession(session));
+
+    expect(endedAgain.status).toBe(404);
+  });
+
+  it.each([
+    ["2025-11-25", "result"],
+    ["2025-06-18", "error"],
+  ] as const)(
+    "answers a session of %s over HTTP in that revision's shapes, as stdio does",
+    async (protocolVersion, refusal) => {
+      const read = { readOnly: true, caller: Action.Anyone } as const;
+
+      const Ready = Action.make("ready", {
+        ...read,
+        description: "Ready",
+        success: { ready: Schema.Boolean },
+      });
+
+      const Count = Action.make("count", {
+        ...read,
+        description: "Count",
+        input: { from: Schema.Finite },
+        success: Schema.Finite,
+      });
+
+      const web = serve(
+        ActionMcp.layerHttp(
+          Action.implement([Ready, Count], {
+            ready: () => Effect.succeed({ ready: true }),
+            count: ({ from }) => Effect.succeed(from + 1),
+          }),
+          { name: "shapes", version: "0" }
+        )
+      );
+
+      const initialized = await web.handler(
+        sessionRequest({
+          method: "initialize",
+          params: { ...initializeParams, protocolVersion },
+        })
+      );
+
+      const session = initialized.headers.get("mcp-session-id") ?? "";
+
+      const call = async (name: string, args: Schema.JsonObject) => {
+        const response = await web.handler(
+          sessionRequest({
+            method: "tools/call",
+            params: { name, arguments: args },
+            session,
+          })
+        );
+
+        return Schema.decodeUnknownSync(
+          Schema.Record(Schema.String, Schema.Json)
+        )(await response.json());
+      };
+
+      await expect(call("ready", {})).resolves.toMatchObject({
+        result: { structuredContent: { ready: true }, isError: false },
+      });
+
+      const scalar = await call("count", { from: 41 });
+
+      expect(scalar).toMatchObject({
+        result: { content: [{ type: "text", text: "42" }] },
+      });
+      expect(scalar["result"]).not.toHaveProperty("structuredContent");
+      expect(Object.keys(await call("count", { from: "x" }))).toContain(
+        refusal
+      );
+    }
   );
-
-  expect(await tooOld.json()).toMatchObject({ result: { protocolVersion: "2025-11-25" } });
 });
+
+const discover = async (web: ReturnType<typeof serve>) =>
+  await web
+    .handler(mcpRequest({ method: "server/discover" }))
+    .then(async (response) => await response.json());
 
 describe("2026-07-28 subscriptions", () => {
   const ping = Action.implement(
@@ -84,7 +226,7 @@ describe("2026-07-28 subscriptions", () => {
       input: {},
       success: Schema.Literal("pong"),
     }),
-    () => Effect.succeed("pong" as const),
+    () => Effect.succeed("pong" as const)
   );
 
   const readme = McpServer.resource({
@@ -93,13 +235,12 @@ describe("2026-07-28 subscriptions", () => {
     content: Effect.succeed("#"),
   });
 
-  const discover = (web: ReturnType<typeof serve>) =>
-    web.handler(mcpRequest({ method: "server/discover" })).then((response) => response.json());
-
   it("are off on an endpoint of actions alone, whose tools never change", async () => {
-    const web = serve(ActionMcp.layerHttp(ping, { name: "actions", version: "0" }));
+    const web = serve(
+      ActionMcp.layerHttp(ping, { name: "actions", version: "0" })
+    );
 
-    expect(await discover(web)).toMatchObject({
+    await expect(discover(web)).resolves.toMatchObject({
       result: { capabilities: { tools: { listChanged: false } } },
     });
 
@@ -107,18 +248,22 @@ describe("2026-07-28 subscriptions", () => {
       mcpRequest({
         method: "subscriptions/listen",
         params: { notifications: { toolsListChanged: true } },
-      }),
+      })
     );
 
-    expect(await listened.text()).toContain('"error":{"code":-32601');
+    await expect(listened.text()).resolves.toContain('"error":{"code":-32601');
   });
 
   it("are on with features, whose resources may update, as Effect's default", async () => {
     const web = serve(
-      ActionMcp.layerHttp(ping, { name: "features", version: "0", features: readme }),
+      ActionMcp.layerHttp(ping, {
+        name: "features",
+        version: "0",
+        features: readme,
+      })
     );
 
-    expect(await discover(web)).toMatchObject({
+    await expect(discover(web)).resolves.toMatchObject({
       result: {
         capabilities: {
           tools: { listChanged: true },
@@ -130,33 +275,17 @@ describe("2026-07-28 subscriptions", () => {
 
   it("are on without features where allowSubscriptions is true", async () => {
     const web = serve(
-      ActionMcp.layerHttp(ping, { name: "allowed", version: "0", allowSubscriptions: true }),
+      ActionMcp.layerHttp(ping, {
+        name: "allowed",
+        version: "0",
+        allowSubscriptions: true,
+      })
     );
 
-    expect(await discover(web)).toMatchObject({
+    await expect(discover(web)).resolves.toMatchObject({
       result: { capabilities: { tools: { listChanged: true } } },
     });
   });
-});
-
-it("keeps a session of a 2025 revision until its client ends it", async () => {
-  const web = serve(ActionMcp.layerHttp([], { name: "sessions", version: "0" }));
-
-  const initialized = await web.handler(
-    sessionRequest({ method: "initialize", params: initializeParams }),
-  );
-
-  const session = initialized.headers.get("mcp-session-id") ?? "";
-
-  const listed = await web.handler(sessionRequest({ method: "tools/list", session }));
-  expect(listed.status).toBe(200);
-  expect(await listed.json()).toMatchObject({ result: { tools: [] } });
-
-  expect((await web.handler(sessionRequest({ method: "tools/list" }))).status).toBe(400);
-
-  expect((await web.handler(endSession(session))).status).toBe(204);
-  expect((await web.handler(sessionRequest({ method: "tools/list", session }))).status).toBe(404);
-  expect((await web.handler(endSession(session))).status).toBe(404);
 });
 
 describe("a request-scoped MCP endpoint", () => {
@@ -172,10 +301,13 @@ describe("a request-scoped MCP endpoint", () => {
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
 
-      yield* server.notifications["notifications/progress"]({ progressToken: "p", progress: 1 });
+      yield* server.notifications["notifications/progress"]({
+        progressToken: "p",
+        progress: 1,
+      });
 
       return from + 1;
-    }),
+    })
   );
 
   const scoped = ActionMcp.layerHttp(counting, {
@@ -187,9 +319,11 @@ describe("a request-scoped MCP endpoint", () => {
   it("speaks MCP 2026-07-28 alone: no session, no subscription, and a DELETE answered 405", async () => {
     const web = serve(scoped);
 
-    const discovered = await web.handler(mcpRequest({ method: "server/discover" }));
+    const discovered = await web.handler(
+      mcpRequest({ method: "server/discover" })
+    );
 
-    expect(await discovered.json()).toMatchObject({
+    await expect(discovered.json()).resolves.toMatchObject({
       result: {
         supportedVersions: ["2026-07-28"],
         capabilities: { tools: { listChanged: false } },
@@ -197,26 +331,32 @@ describe("a request-scoped MCP endpoint", () => {
     });
 
     const initialized = await web.handler(
-      sessionRequest({ method: "initialize", params: initializeParams }),
+      sessionRequest({ method: "initialize", params: initializeParams })
     );
 
     expect(initialized.status).toBe(400);
     expect(initialized.headers.get("mcp-session-id")).toBeNull();
-    expect(await initialized.json()).toMatchObject({
-      error: { code: -32020, message: "MCP-Protocol-Version header is required" },
+    await expect(initialized.json()).resolves.toMatchObject({
+      error: {
+        code: -32_020,
+        message: "MCP-Protocol-Version header is required",
+      },
     });
 
     const ended = await web.handler(endSession("any"));
-    expect([ended.status, ended.headers.get("allow")]).toEqual([405, "POST"]);
+    expect([ended.status, ended.headers.get("allow")]).toStrictEqual([
+      405,
+      "POST",
+    ]);
 
     const listened = await web.handler(
       mcpRequest({
         method: "subscriptions/listen",
         params: { notifications: { toolsListChanged: true } },
-      }),
+      })
     );
 
-    expect(await listened.text()).toContain('"error":{"code":-32601');
+    await expect(listened.text()).resolves.toContain('"error":{"code":-32601');
   });
 
   it("answers a call with the handler's progress notifications before its result", async () => {
@@ -225,16 +365,22 @@ describe("a request-scoped MCP endpoint", () => {
     const called = await web.handler(
       mcpRequest({
         method: "tools/call",
-        params: { name: "count", arguments: { from: 1 }, _meta: { progressToken: "p" } },
-      }),
+        params: {
+          name: "count",
+          arguments: { from: 1 },
+          _meta: { progressToken: "p" },
+        },
+      })
     );
 
     const text = await called.text();
 
     expect(called.status).toBe(200);
-    expect(text.indexOf('"method":"notifications/progress"')).toBeGreaterThan(-1);
+    expect(text.indexOf('"method":"notifications/progress"')).toBeGreaterThan(
+      -1
+    );
     expect(text.indexOf('"structuredContent":2')).toBeGreaterThan(
-      text.indexOf('"method":"notifications/progress"'),
+      text.indexOf('"method":"notifications/progress"')
     );
   });
 
@@ -243,75 +389,18 @@ describe("a request-scoped MCP endpoint", () => {
       const mcp = yield* ActionMcp.client([Count]);
 
       expect(yield* mcp.count({ from: 41 })).toBe(42);
-    }).pipe(Effect.provide(Testing.layer(scoped))),
+    }).pipe(Effect.provide(Testing.layer(scoped)))
   );
 });
-
-it.each([
-  ["2025-11-25", "result"],
-  ["2025-06-18", "error"],
-] as const)(
-  "answers a session of %s over HTTP in that revision's shapes, as stdio does",
-  async (protocolVersion, refusal) => {
-    const read = { readOnly: true, caller: Action.Anyone } as const;
-
-    const Ready = Action.make("ready", {
-      ...read,
-      description: "Ready",
-      success: { ready: Schema.Boolean },
-    });
-
-    const Count = Action.make("count", {
-      ...read,
-      description: "Count",
-      input: { from: Schema.Finite },
-      success: Schema.Finite,
-    });
-
-    const web = serve(
-      ActionMcp.layerHttp(
-        Action.implement([Ready, Count], {
-          ready: () => Effect.succeed({ ready: true }),
-          count: ({ from }) => Effect.succeed(from + 1),
-        }),
-        { name: "shapes", version: "0" },
-      ),
-    );
-
-    const initialized = await web.handler(
-      sessionRequest({ method: "initialize", params: { ...initializeParams, protocolVersion } }),
-    );
-
-    const session = initialized.headers.get("mcp-session-id") ?? "";
-
-    const call = async (name: string, args: Schema.JsonObject) => {
-      const response = await web.handler(
-        sessionRequest({ method: "tools/call", params: { name, arguments: args }, session }),
-      );
-
-      return Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(
-        await response.json(),
-      );
-    };
-
-    expect(await call("ready", {})).toMatchObject({
-      result: { structuredContent: { ready: true }, isError: false },
-    });
-
-    const scalar = await call("count", { from: 41 });
-
-    expect(scalar).toMatchObject({ result: { content: [{ type: "text", text: "42" }] } });
-    expect(scalar["result"]).not.toHaveProperty("structuredContent");
-    expect(Object.keys(await call("count", { from: "x" }))).toContain(refusal);
-  },
-);
 
 const listTools = async (handler: (request: Request) => Promise<Response>) => {
   const response = await handler(mcpRequest({ method: "tools/list" }));
   expect(response.status).toBe(200);
 
   const reply = Schema.decodeUnknownSync(
-    Schema.Struct({ result: Schema.Struct({ tools: Schema.Array(McpSchema.Tool) }) }),
+    Schema.Struct({
+      result: Schema.Struct({ tools: Schema.Array(McpSchema.Tool) }),
+    })
   )(await response.json());
 
   return reply.result.tools;
@@ -328,7 +417,10 @@ describe("descriptions", () => {
     const app = Action.implement(Describe, () => Effect.void);
     const { description } = Describe;
 
-    const operation = OpenApi.fromApi(ActionHttp.make([Describe]).api).paths["/api/describe"]?.post;
+    const operation = OpenApi.fromApi(ActionHttp.make([Describe]).api).paths[
+      "/api/describe"
+    ]?.post;
+
     const [tool] = await listTools(makeTestMcp(app).handler);
 
     expect({
@@ -336,7 +428,12 @@ describe("descriptions", () => {
       mcp: tool?.description,
       toolkit: ActionToolkit.make(app).toolkit.tools.describe.description,
       cli: ActionCli.command(app, Describe).description,
-    }).toEqual({ http: description, mcp: description, toolkit: description, cli: description });
+    }).toStrictEqual({
+      http: description,
+      mcp: description,
+      toolkit: description,
+      cli: description,
+    });
   });
 });
 
@@ -344,15 +441,20 @@ const expectReferencesResolve = (document: Schema.Json) => {
   const refs: string[] = [];
 
   const visit = (value: Schema.Json | undefined) => {
-    if (value === undefined) return;
+    if (value === undefined) {
+      return;
+    }
 
-    if (Array.isArray(value)) return value.forEach(visit);
-
-    if (!Predicate.isObjectKeyword(value)) return;
+    if (!Predicate.isObjectKeyword(value)) {
+      return;
+    }
 
     for (const [key, item] of Object.entries(value)) {
-      if (key === "$ref" && Predicate.isString(item)) refs.push(item);
-      else visit(item);
+      if (key === "$ref" && Predicate.isString(item)) {
+        refs.push(item);
+      } else {
+        visit(item);
+      }
     }
   };
 
@@ -363,17 +465,65 @@ const expectReferencesResolve = (document: Schema.Json) => {
     expect(ref.startsWith("#/$defs/")).toBe(true);
     const path = JsonPointer.parseUriFragment(ref);
 
-    if (path === undefined) throw new Error(`Invalid JSON pointer: ${ref}`);
+    if (path === undefined) {
+      throw new Error(`Invalid JSON pointer: ${ref}`);
+    }
+
     let target: unknown = document;
 
     for (const segment of path) {
-      const object = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(target);
+      const object = Schema.decodeUnknownSync(
+        Schema.Record(Schema.String, Schema.Unknown)
+      )(target);
+
       expect(Object.hasOwn(object, segment)).toBe(true);
       target = object[segment];
     }
 
     expect(target).toBeDefined();
   }
+};
+
+const implementations = (
+  inputs: Readonly<Record<string, Action.Any["input"] | undefined>>
+) =>
+  Object.entries(inputs).map(([name, input]) =>
+    Action.implement(
+      Action.make(name, {
+        description: name,
+        readOnly: true,
+        caller: Action.Anyone,
+        input,
+      }),
+      () => Effect.void
+    )
+  );
+
+const statuses = (errors: ReadonlyArray<Schema.Codec<unknown, unknown>>) =>
+  Object.keys(
+    OpenApi.fromApi(
+      ActionHttp.make([
+        Action.make("fail", {
+          description: "",
+          readOnly: false,
+          caller: Action.Anyone,
+          error: errors,
+        }),
+      ]).api
+    ).paths["/api/fail"]?.post?.responses ?? {}
+  ).toSorted();
+
+const listedFeatures = async (handler: Handler) => {
+  const resources = await handler(mcpRequest({ method: "resources/list" }));
+  const prompts = await handler(mcpRequest({ method: "prompts/list" }));
+
+  const result = await listTools(handler);
+
+  return {
+    tools: result.map(({ name }) => name).toSorted(),
+    resources: await resources.json(),
+    prompts: await prompts.json(),
+  };
 };
 
 describe("projection boundaries", () => {
@@ -392,12 +542,14 @@ describe("projection boundaries", () => {
 
     const response = await web.handler(post("/rpc/echo", "hello"));
     expect(response.status).toBe(200);
-    expect(await response.json()).toBe("hello");
+    await expect(response.json()).resolves.toBe("hello");
   });
 
   it.effect("sends a declared error without an HTTP status as 422", () =>
     Effect.gen(function* () {
-      const Failure = Schema.TaggedStruct("Failure", { message: Schema.String });
+      const Failure = Schema.TaggedStruct("Failure", {
+        message: Schema.String,
+      });
 
       const Fail = Action.make("fail", {
         description: "Declared failure",
@@ -413,24 +565,37 @@ describe("projection boundaries", () => {
 
       const Http = ActionHttp.make([Fail]);
 
-      expect(OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses).toHaveProperty("422");
+      expect(
+        OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses
+      ).toHaveProperty("422");
 
       yield* Effect.gen(function* () {
         const response = yield* send(post("/api/fail"));
         expect(response.status).toBe(422);
-        expect(yield* response.json).toEqual(Failure.make({ message: "Safe failure" }));
+        expect(yield* response.json).toStrictEqual(
+          Failure.make({ message: "Safe failure" })
+        );
 
         const client = yield* ActionHttp.client(Http);
 
-        expect(yield* Effect.flip(client.fail())).toEqual(
-          Failure.make({ message: "Safe failure" }),
+        expect(yield* Effect.flip(client.fail())).toStrictEqual(
+          Failure.make({ message: "Safe failure" })
         );
-      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(ActionHttp.make([Fail]), apps))));
-    }),
+      }).pipe(
+        Effect.provide(
+          Testing.layer(ActionHttp.layer(ActionHttp.make([Fail]), apps))
+        )
+      );
+    })
   );
 
-  const Missing = Schema.TaggedStruct("Missing", {}).annotate({ httpApiStatus: 404 });
-  const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({ httpApiStatus: 409 });
+  const Missing = Schema.TaggedStruct("Missing", {}).annotate({
+    httpApiStatus: 404,
+  });
+
+  const Conflict = Schema.TaggedStruct("Conflict", {}).annotate({
+    httpApiStatus: 409,
+  });
 
   it.effect.each([
     ["listed", [Missing, Conflict]],
@@ -439,12 +604,19 @@ describe("projection boundaries", () => {
       "suspended, as a recursive error is written",
       [Schema.suspend(() => Missing), Schema.suspend(() => Conflict)],
     ],
-    ["in a suspended union", [Schema.suspend(() => Schema.Union([Missing, Conflict]))]],
+    [
+      "in a suspended union",
+      [Schema.suspend(() => Schema.Union([Missing, Conflict]))],
+    ],
     [
       "on the suspension, winning over what it suspends",
       [
-        Schema.suspend(() => Schema.TaggedStruct("Missing", {})).annotate({ httpApiStatus: 404 }),
-        Schema.suspend(() => Conflict.annotate({ httpApiStatus: 410 })).annotate({
+        Schema.suspend(() => Schema.TaggedStruct("Missing", {})).annotate({
+          httpApiStatus: 404,
+        }),
+        Schema.suspend(() =>
+          Conflict.annotate({ httpApiStatus: 410 })
+        ).annotate({
           httpApiStatus: 409,
         }),
       ],
@@ -455,20 +627,26 @@ describe("projection boundaries", () => {
         description: "Two failures",
         readOnly: false,
         caller: Action.Anyone,
-        input: Schema.Struct({ which: Schema.Literals(["missing", "conflict"]) }),
+        input: Schema.Struct({
+          which: Schema.Literals(["missing", "conflict"]),
+        }),
         success: Schema.String,
         error: errors,
       });
 
       const apps = Action.implement([Fail], {
         fail: ({ which }) =>
-          which === "missing" ? Effect.fail(Missing.make({})) : Effect.fail(Conflict.make({})),
+          which === "missing"
+            ? Effect.fail(Missing.make({}))
+            : Effect.fail(Conflict.make({})),
       });
 
       const Http = ActionHttp.make([Fail]);
-      const responses = OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses;
 
-      expect(Object.keys(responses ?? {}).sort()).toEqual([
+      const responses = OpenApi.fromApi(Http.api).paths["/api/fail"]?.post
+        ?.responses;
+
+      expect(Object.keys(responses ?? {}).toSorted()).toStrictEqual([
         "200",
         "400",
         "401",
@@ -478,41 +656,35 @@ describe("projection boundaries", () => {
       ]);
 
       yield* Effect.gen(function* () {
-        expect((yield* send(post("/api/fail", { which: "missing" }))).status).toBe(404);
-        expect((yield* send(post("/api/fail", { which: "conflict" }))).status).toBe(409);
+        expect(
+          (yield* send(post("/api/fail", { which: "missing" }))).status
+        ).toBe(404);
+        expect(
+          (yield* send(post("/api/fail", { which: "conflict" }))).status
+        ).toBe(409);
 
         const client = yield* ActionHttp.client(Http);
 
-        expect(yield* Effect.flip(client.fail({ which: "conflict" }))).toEqual(Conflict.make({}));
-      }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(ActionHttp.make([Fail]), apps))));
-    }),
+        expect(
+          yield* Effect.flip(client.fail({ which: "conflict" }))
+        ).toStrictEqual(Conflict.make({}));
+      }).pipe(
+        Effect.provide(
+          Testing.layer(ActionHttp.layer(ActionHttp.make([Fail]), apps))
+        )
+      );
+    })
   );
 
   it("sends a union with a status of its own at that status, and a member without one as 422", () => {
     const Late = Schema.TaggedStruct("Late", {});
 
-    const statuses = (errors: ReadonlyArray<Schema.Codec<unknown, unknown>>) =>
-      Object.keys(
-        OpenApi.fromApi(
-          ActionHttp.make([
-            Action.make("fail", {
-              description: "",
-              readOnly: false,
-              caller: Action.Anyone,
-              error: errors,
-            }),
-          ]).api,
-        ).paths["/api/fail"]?.post?.responses ?? {},
-      ).sort();
-
-    expect(statuses([Schema.Union([Missing, Conflict]).annotate({ httpApiStatus: 410 })])).toEqual([
-      "200",
-      "400",
-      "401",
-      "403",
-      "410",
-    ]);
-    expect(statuses([Schema.Union([Missing, Late])])).toEqual([
+    expect(
+      statuses([
+        Schema.Union([Missing, Conflict]).annotate({ httpApiStatus: 410 }),
+      ])
+    ).toStrictEqual(["200", "400", "401", "403", "410"]);
+    expect(statuses([Schema.Union([Missing, Late])])).toStrictEqual([
       "200",
       "400",
       "401",
@@ -588,24 +760,24 @@ describe("projection boundaries", () => {
     const mcp = makeTestMcp(app);
 
     const listed = await listTools(mcp.handler);
-    expect(Object.fromEntries(listed.map((tool) => [tool.name, tool.annotations]))).toMatchObject(
-      annotations,
-    );
+    expect(
+      Object.fromEntries(listed.map((tool) => [tool.name, tool.annotations]))
+    ).toMatchObject(annotations);
 
     const { tools } = ActionToolkit.make(app).toolkit;
     expect(
       Object.fromEntries(
-        Object.entries(tools).map(([name, { annotations }]) => [
+        Object.entries(tools).map(([name, tool]) => [
           name,
           {
-            readOnlyHint: Context.get(annotations, Tool.Readonly),
-            destructiveHint: Context.get(annotations, Tool.Destructive),
-            idempotentHint: Context.get(annotations, Tool.Idempotent),
-            openWorldHint: Context.get(annotations, Tool.OpenWorld),
+            readOnlyHint: Context.get(tool.annotations, Tool.Readonly),
+            destructiveHint: Context.get(tool.annotations, Tool.Destructive),
+            idempotentHint: Context.get(tool.annotations, Tool.Idempotent),
+            openWorldHint: Context.get(tool.annotations, Tool.OpenWorld),
           },
-        ]),
-      ),
-    ).toEqual(annotations);
+        ])
+      )
+    ).toStrictEqual(annotations);
   });
 
   it("carries a title and `_meta` to its MCP and native tools, only where given", async () => {
@@ -634,13 +806,17 @@ describe("projection boundaries", () => {
     const plain = listed.find(({ name }) => name === "plain");
 
     expect(lookup?.annotations?.title).toBe("Look up a record");
-    expect(lookup?._meta).toEqual(meta);
+    expect(lookup?._meta).toStrictEqual(meta);
     expect(plain?.annotations).not.toHaveProperty("title");
     expect(plain?._meta).toBeUndefined();
 
     const { tools } = ActionToolkit.make(app).toolkit;
-    expect(Context.getOrUndefined(tools.lookup.annotations, Tool.Title)).toBe("Look up a record");
-    expect(Context.getOrUndefined(tools.lookup.annotations, Tool.Meta)).toEqual(meta);
+    expect(Context.getOrUndefined(tools.lookup.annotations, Tool.Title)).toBe(
+      "Look up a record"
+    );
+    expect(
+      Context.getOrUndefined(tools.lookup.annotations, Tool.Meta)
+    ).toStrictEqual(meta);
   });
 
   it("declares each built-in error once on every tool and endpoint", () => {
@@ -652,7 +828,7 @@ describe("projection boundaries", () => {
     });
 
     const { tools } = ActionToolkit.make(
-      Action.implement(Declared, () => Effect.succeed("ada")),
+      Action.implement(Declared, () => Effect.succeed("ada"))
     ).toolkit;
 
     for (const error of [
@@ -662,26 +838,41 @@ describe("projection boundaries", () => {
     ]) {
       const json = Schema.encodeSync(Schema.toCodecJson(Action.BuiltIn))(error);
 
-      expect(Schema.decodeUnknownSync(tools.whoAmI.failureSchema)(json)).toEqual(error);
+      expect(Schema.decodeSync(tools.whoAmI.failureSchema)(json)).toStrictEqual(
+        error
+      );
     }
 
-    const responses = OpenApi.fromApi(ActionHttp.make([Declared]).api).paths["/api/whoAmI"]?.post
-      ?.responses;
+    const responses = OpenApi.fromApi(ActionHttp.make([Declared]).api).paths[
+      "/api/whoAmI"
+    ]?.post?.responses;
 
-    expect(Object.keys(responses ?? {}).sort()).toEqual(["200", "400", "401", "403"]);
+    expect(Object.keys(responses ?? {}).toSorted()).toStrictEqual([
+      "200",
+      "400",
+      "401",
+      "403",
+    ]);
 
     for (const [status, error] of [
       ["401", "UnauthenticatedEncoded"],
       ["403", "ForbiddenEncoded"],
     ] as const) {
-      expect(responses?.[status]?.content?.["application/json"]?.schema).toEqual({
+      expect(
+        responses?.[status]?.content?.["application/json"]?.schema
+      ).toStrictEqual({
         $ref: `#/components/schemas/${error}`,
       });
     }
   });
 
   it("reports a declared error as its encoding over MCP, message field included", async () => {
-    class Denied extends Schema.TaggedError<Denied>()("Denied", { message: Schema.String }) {}
+    class Denied extends Schema.TaggedError<
+      Denied,
+      { readonly brand: unique symbol }
+    >()("Denied", {
+      message: Schema.String,
+    }) {}
 
     const Fail = Action.make("fail", {
       description: "Error with a message",
@@ -693,14 +884,22 @@ describe("projection boundaries", () => {
 
     const mcp = makeTestMcp(
       Action.implement([Fail], {
-        fail: () => Effect.fail(new Denied({ message: "Owner access required" })),
-      }),
+        fail: () =>
+          Effect.fail(new Denied({ message: "Owner access required" })),
+      })
     );
 
-    expect(await (await mcp.handler(rawToolCall("fail"))).json()).toMatchObject({
+    const failResponse = await mcp.handler(rawToolCall("fail"));
+
+    await expect(failResponse.json()).resolves.toMatchObject({
       result: {
         isError: true,
-        content: [{ type: "text", text: '{"_tag":"Denied","message":"Owner access required"}' }],
+        content: [
+          {
+            type: "text",
+            text: '{"_tag":"Denied","message":"Owner access required"}',
+          },
+        ],
       },
     });
   });
@@ -710,7 +909,7 @@ describe("projection boundaries", () => {
     async (identifier) => {
       interface Node {
         readonly name: string;
-        readonly children: ReadonlyArray<Node>;
+        readonly children: readonly Node[];
       }
 
       const Node: Schema.Codec<Node> = Schema.Struct({
@@ -726,50 +925,66 @@ describe("projection boundaries", () => {
         success: Node,
       });
 
-      const web = makeTestMcp(Action.implement([Tree], { tree: Effect.succeed }));
+      const web = makeTestMcp(
+        Action.implement([Tree], { tree: Effect.succeed })
+      );
 
       const tools = await listTools(web.handler);
       expect(tools).toHaveLength(1);
-      const tool = tools[0];
+      const [tool] = tools;
 
-      if (tool === undefined) throw new Error("Missing tree tool");
+      if (tool === undefined) {
+        throw new Error("Missing tree tool");
+      }
+
       expect(tool.inputSchema.type).toBe("object");
 
-      const definitions = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.JsonObject))(
-        tool.inputSchema["$defs"],
-      );
+      const definitions = Schema.decodeUnknownSync(
+        Schema.Record(Schema.String, Schema.JsonObject)
+      )(tool.inputSchema["$defs"]);
 
       expect(definitions[identifier]).toMatchObject({ type: "object" });
-      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.inputSchema));
-      expectReferencesResolve(Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema));
+      expectReferencesResolve(
+        Schema.decodeUnknownSync(Schema.Json)(tool.inputSchema)
+      );
+      expectReferencesResolve(
+        Schema.decodeUnknownSync(Schema.Json)(tool.outputSchema)
+      );
 
-      const value = { name: "root", children: [{ name: "leaf", children: [] }] };
+      const value = {
+        name: "root",
+        children: [{ name: "leaf", children: [] }],
+      };
+
       const response = await web.handler(rawToolCall("tree", value));
-      expect(await response.json()).toMatchObject({
+      await expect(response.json()).resolves.toMatchObject({
         result: { isError: false, structuredContent: value },
       });
-    },
+    }
   );
 
   const One = Schema.Struct({ kind: Schema.Literal("one"), id: Schema.String });
 
-  const implementations = (inputs: Readonly<Record<string, Action.Any["input"] | undefined>>) =>
-    Object.entries(inputs).map(([name, input]) =>
-      Action.implement(
-        Action.make(name, { description: name, readOnly: true, caller: Action.Anyone, input }),
-        () => Effect.void,
-      ),
-    );
-
   it("serves input whose JSON Schema is one object, a suspended or declared one included", async () => {
-    class Fields extends Schema.Class<Fields>("Fields")({ id: Schema.String }) {}
+    class Fields extends Schema.Class<
+      Fields,
+      { readonly brand: unique symbol }
+    >("Fields")({
+      id: Schema.String,
+    }) {}
 
-    const Declared = Schema.declare(Schema.is(Schema.Struct({ id: Schema.String })), {
-      toCodecJson: () => undefined,
-    }).check(
+    const Declared = Schema.declare(
+      Schema.is(Schema.Struct({ id: Schema.String })),
+      {
+        toCodecJson: Function.constUndefined,
+      }
+    ).check(
       Schema.makeFilter(() => true, {
-        toJsonSchema: () => ({ type: "object", properties: { id: { type: "string" } } }),
-      }),
+        toJsonSchema: () => ({
+          type: "object",
+          properties: { id: { type: "string" } },
+        }),
+      })
     );
 
     const inputs = {
@@ -777,7 +992,7 @@ describe("projection boundaries", () => {
       struct: One,
       identified: One.annotate({ identifier: "One" }),
       optional: Schema.Struct({ id: Schema.optionalKey(One) }),
-      record: Schema.Record(Schema.String, Schema.Number),
+      record: Schema.Record(Schema.String, Schema.Finite),
       class: Fields,
       suspended: Schema.suspend(() => One),
       declared: Declared,
@@ -785,15 +1000,21 @@ describe("projection boundaries", () => {
 
     const tools = await listTools(makeTestMcp(implementations(inputs)).handler);
 
-    expect(tools.map(({ name, inputSchema }) => [name, inputSchema.type])).toEqual(
-      Object.keys(inputs).map((name) => [name, "object"]),
-    );
+    expect(
+      tools.map(({ name, inputSchema }) => [name, inputSchema.type])
+    ).toStrictEqual(Object.keys(inputs).map((name) => [name, "object"]));
   });
 
   it("refuses input that is not one object with keys, naming every such action", () => {
-    class NoFields extends Schema.Class<NoFields>("NoFields")({}) {}
+    class NoFields extends Schema.Class<
+      NoFields,
+      { readonly brand: unique symbol }
+    >("NoFields")({}) {}
 
-    const Other = Schema.Struct({ kind: Schema.Literal("other"), code: Schema.Number });
+    const Other = Schema.Struct({
+      kind: Schema.Literal("other"),
+      code: Schema.Finite,
+    });
 
     const inputs = {
       union: Schema.Union([One, Other]),
@@ -810,14 +1031,20 @@ describe("projection boundaries", () => {
     const refused = implementations(inputs);
 
     const status = Action.implement(
-      Action.make("status", { description: "Status", readOnly: true, caller: Action.Anyone }),
-      () => Effect.void,
+      Action.make("status", {
+        description: "Status",
+        readOnly: true,
+        caller: Action.Anyone,
+      }),
+      () => Effect.void
     );
 
     const options = { name: "test", version: "0" };
     const message = `MCP tool input must be one object with keys, such as a struct: ${Object.keys(inputs).join(", ")} (wrap a union, an array or a scalar in a field, omit input for no arguments, or leave the action out of actions)`;
 
-    expect(() => ActionMcp.layerHttp([status, ...refused], options)).toThrow(message);
+    expect(() => ActionMcp.layerHttp([status, ...refused], options)).toThrow(
+      message
+    );
     expect(() => ActionMcp.runStdio(refused, options)).toThrow(message);
   });
 
@@ -831,17 +1058,17 @@ describe("projection boundaries", () => {
     const Native = Toolkit.make(Tool.make("ping", { success: Schema.String }));
 
     const native = McpServer.toolkit(Native).pipe(
-      Layer.provide(Native.toLayer({ ping: () => Effect.succeed("native") })),
+      Layer.provide(Native.toLayer({ ping: () => Effect.succeed("native") }))
     );
 
     const app = Action.implement(Ping, () => Effect.void);
 
     const served = serve(
-      ActionMcp.layerHttp(app, { name: "test", version: "0", features: native }),
+      ActionMcp.layerHttp(app, { name: "test", version: "0", features: native })
     );
 
     await expect(listTools(served.handler)).rejects.toThrow(
-      "Duplicate MCP tool: ping, claimed by an action and a native feature (rename the native tool, or leave the action out of actions)",
+      "Duplicate MCP tool: ping, claimed by an action and a native feature (rename the native tool, or leave the action out of actions)"
     );
   });
 
@@ -852,43 +1079,50 @@ describe("projection boundaries", () => {
       caller: Action.Anyone,
     });
 
-    const Native = Toolkit.make(Tool.make("native", { success: Schema.String }));
+    const Native = Toolkit.make(
+      Tool.make("native", { success: Schema.String })
+    );
 
     const native = Layer.mergeAll(
-      McpServer.resource({ uri: "docs://readme", name: "README", content: Effect.succeed("#") }),
-      McpServer.prompt({ name: "triage", content: () => Effect.succeed("Triage.") }),
+      McpServer.resource({
+        uri: "docs://readme",
+        name: "README",
+        content: Effect.succeed("#"),
+      }),
+      McpServer.prompt({
+        name: "triage",
+        content: () => Effect.succeed("Triage."),
+      }),
       McpServer.toolkit(Native).pipe(
-        Layer.provide(Native.toLayer({ native: () => Effect.succeed("native") })),
-      ),
+        Layer.provide(
+          Native.toLayer({ native: () => Effect.succeed("native") })
+        )
+      )
     );
 
     const app = Action.implement(Ping, () => Effect.void);
     const options = { name: "test", version: "0" };
 
-    const served = serve(ActionMcp.layerHttp(app, { ...options, features: native }));
-    const beside = serve(Layer.mergeAll(ActionMcp.layerHttp(app, options), native));
+    const served = serve(
+      ActionMcp.layerHttp(app, { ...options, features: native })
+    );
 
-    const listed = async (handler: Handler) => {
-      const resources = await handler(mcpRequest({ method: "resources/list" }));
-      const prompts = await handler(mcpRequest({ method: "prompts/list" }));
+    const beside = serve(
+      Layer.mergeAll(ActionMcp.layerHttp(app, options), native)
+    );
 
-      return {
-        tools: (await listTools(handler)).map(({ name }) => name).toSorted(),
-        resources: await resources.json(),
-        prompts: await prompts.json(),
-      };
-    };
-
-    expect(await listed(served.handler)).toMatchObject({
+    await expect(listedFeatures(served.handler)).resolves.toMatchObject({
       tools: ["native", "ping"],
-      resources: { result: { resources: [{ uri: "docs://readme", name: "README" }] } },
+      resources: {
+        result: { resources: [{ uri: "docs://readme", name: "README" }] },
+      },
       prompts: { result: { prompts: [{ name: "triage" }] } },
     });
 
-    expect(await listed(beside.handler)).toMatchObject({
+    await expect(listedFeatures(beside.handler)).resolves.toMatchObject({
       tools: ["ping"],
       resources: { result: { resources: [] } },
-      prompts: { error: { code: -32601 } },
+      prompts: { error: { code: -32_601 } },
     });
   });
 
@@ -896,13 +1130,19 @@ describe("projection boundaries", () => {
     "reads features with the services provided around the endpoints, built once for all",
     () =>
       Effect.gen(function* () {
-        class Docs extends Context.Service<Docs, string>()("registration/Docs") {}
+        class Docs extends Context.Service<Docs, string>()(
+          "registration/Docs"
+        ) {}
 
         let built = 0;
 
         const docs = Layer.effect(
           Docs,
-          Effect.sync(() => (built++, "# Acme")),
+          Effect.sync(() => {
+            built += 1;
+
+            return "# Acme";
+          })
         );
 
         const features = Layer.mergeAll(
@@ -913,24 +1153,46 @@ describe("projection boundaries", () => {
           }),
           McpServer.prompt({
             name: "triage",
-            content: () => Effect.map(Effect.service(Docs), (readme) => `Triage with ${readme}`),
-          }),
+            content: () =>
+              Effect.map(
+                Effect.service(Docs),
+                (readme) => `Triage with ${readme}`
+              ),
+          })
         );
 
         const app = Action.implement(
-          Action.make("ping", { description: "Ping", readOnly: true, caller: Action.Anyone }),
-          () => Effect.void,
+          Action.make("ping", {
+            description: "Ping",
+            readOnly: true,
+            caller: Action.Anyone,
+          }),
+          () => Effect.void
         );
 
         const endpoints = Layer.mergeAll(
-          ActionMcp.layerHttp(app, { name: "a", version: "0", path: "/a", features }),
-          ActionMcp.layerHttp(app, { name: "b", version: "0", path: "/b", features }),
+          ActionMcp.layerHttp(app, {
+            name: "a",
+            version: "0",
+            path: "/a",
+            features,
+          }),
+          ActionMcp.layerHttp(app, {
+            name: "b",
+            version: "0",
+            path: "/b",
+            features,
+          })
         ).pipe(Layer.provide(docs));
 
         yield* Effect.gen(function* () {
           for (const url of ["/a", "/b"]) {
             const read = yield* HttpClient.execute(
-              ActionMcp.request("resources/read", { uri: "docs://readme" }, { url }),
+              ActionMcp.request(
+                "resources/read",
+                { uri: "docs://readme" },
+                { url }
+              )
             );
 
             expect(yield* read.json).toMatchObject({
@@ -938,17 +1200,21 @@ describe("projection boundaries", () => {
             });
 
             const got = yield* HttpClient.execute(
-              ActionMcp.request("prompts/get", { name: "triage" }, { url }),
+              ActionMcp.request("prompts/get", { name: "triage" }, { url })
             );
 
             expect(yield* got.json).toMatchObject({
-              result: { messages: [{ content: { type: "text", text: "Triage with # Acme" } }] },
+              result: {
+                messages: [
+                  { content: { type: "text", text: "Triage with # Acme" } },
+                ],
+              },
             });
           }
         }).pipe(Effect.provide(Testing.layer(endpoints)));
 
         expect(built).toBe(1);
-      }),
+      })
   );
 
   it("serves scalar declared errors on both transports; MCP shows them as text", async () => {
@@ -970,8 +1236,11 @@ describe("projection boundaries", () => {
 
     const response = await web.handler(post("/api/scalar"));
     expect(response.status).toBe(422);
-    expect(await response.json()).toBe("failure");
-    expect(await (await mcp.handler(rawToolCall("scalar"))).json()).toMatchObject({
+    await expect(response.json()).resolves.toBe("failure");
+
+    const scalarResponse = await mcp.handler(rawToolCall("scalar"));
+
+    await expect(scalarResponse.json()).resolves.toMatchObject({
       result: { isError: true, content: [{ type: "text", text: '"failure"' }] },
     });
   });
@@ -991,14 +1260,20 @@ describe("projection boundaries", () => {
     });
 
     const apps = Action.implement(Leaked, () =>
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- A handler failing with an error its contract does not declare, which the types refuse.
-      Effect.fail(leakedFromAModel as never),
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: A handler failing with an error its contract does not declare, which the types refuse.
+      Effect.fail(leakedFromAModel as never)
     );
 
     const http = await makeTestHttp(apps).handler(post("/api/leaked"));
     expect(http.status).toBe(500);
-    expect(await http.text()).toBe("");
-    const reply = await (await makeTestMcp(apps).handler(rawToolCall("leaked"))).text();
+    await expect(http.text()).resolves.toBe("");
+
+    const leakedResponse = await makeTestMcp(apps).handler(
+      rawToolCall("leaked")
+    );
+
+    const reply = await leakedResponse.text();
+
     expect(reply).toContain('"isError":true');
     expect(reply).toContain("internal server error");
     expect(reply).not.toContain("secret");
@@ -1016,7 +1291,7 @@ describe("projection boundaries", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBeNull();
-    expect(await response.text()).toBe("");
+    await expect(response.text()).resolves.toBe("");
   });
 
   it("lowers declaration schemas to JSON identically on both transports", async () => {
@@ -1035,11 +1310,16 @@ describe("projection boundaries", () => {
     const mcp = makeTestMcp(apps);
 
     const tools = await listTools(mcp.handler);
-    expect(tools[0]?.inputSchema.properties).toEqual({ d: { type: "string" } });
+    expect(tools[0]?.inputSchema.properties).toStrictEqual({
+      d: { type: "string" },
+    });
     const http = await web.handler(post("/api/stamp", { d: iso }));
     expect(http.status).toBe(200);
-    expect(await http.json()).toEqual({ d: iso });
-    expect(await (await mcp.handler(rawToolCall("stamp", { d: iso }))).json()).toMatchObject({
+    await expect(http.json()).resolves.toStrictEqual({ d: iso });
+
+    const stampResponse = await mcp.handler(rawToolCall("stamp", { d: iso }));
+
+    await expect(stampResponse.json()).resolves.toMatchObject({
       result: { isError: false, structuredContent: { d: iso } },
     });
   });
@@ -1048,8 +1328,8 @@ describe("projection boundaries", () => {
     "passes %s cancellation to the running Effect and finalizes it",
     (transport) =>
       Effect.gen(function* () {
-        const started = yield* Deferred.make<void>();
-        const stopped = yield* Deferred.make<void>();
+        const started = yield* Deferred.make<undefined>();
+        const stopped = yield* Deferred.make<undefined>();
 
         const Slow = Action.make("slow", {
           description: "Wait",
@@ -1062,7 +1342,7 @@ describe("projection boundaries", () => {
           slow: () =>
             Deferred.succeed(started, undefined).pipe(
               Effect.andThen(Effect.never),
-              Effect.ensuring(Deferred.succeed(stopped, undefined)),
+              Effect.ensuring(Deferred.succeed(stopped, undefined))
             ),
         });
 
@@ -1073,16 +1353,24 @@ describe("projection boundaries", () => {
 
         yield* Effect.gen(function* () {
           const running = yield* Effect.forkChild(
-            send(transport === "HTTP" ? post("/api/slow") : rawToolCall("slow")),
+            send(transport === "HTTP" ? post("/api/slow") : rawToolCall("slow"))
           );
 
           yield* Deferred.await(started);
           yield* Fiber.interrupt(running);
           yield* Deferred.await(stopped);
         }).pipe(Effect.provide(Testing.layer(routes)));
-      }),
+      })
   );
 });
+
+const same = () =>
+  Action.make("same", {
+    description: "",
+    readOnly: false,
+    caller: Action.Anyone,
+    success: Schema.String,
+  });
 
 describe("MCP registration", () => {
   const WhoAmI = Action.make("whoAmI", {
@@ -1116,29 +1404,28 @@ describe("MCP registration", () => {
   it("serves several implementations as the tools of one endpoint", async () => {
     const web = makeTestMcp([whoAmI, billing]);
 
-    expect((await listTools(web.handler)).map(({ name }) => name).sort()).toEqual([
+    const tools = await listTools(web.handler);
+
+    expect(tools.map(({ name }) => name).toSorted()).toStrictEqual([
       "audit",
       "invoice",
       "whoAmI",
     ]);
-    expect(await (await web.handler(rawToolCall("whoAmI"))).json()).toMatchObject({
+
+    const whoAmIResponse = await web.handler(rawToolCall("whoAmI"));
+
+    await expect(whoAmIResponse.json()).resolves.toMatchObject({
       result: { structuredContent: "ada" },
     });
   });
 
   it("names each tool after its action, and checks names where tools are served", () => {
-    const same = () =>
-      Action.make("same", {
-        description: "",
-        readOnly: false,
-        caller: Action.Anyone,
-        success: Schema.String,
-      });
-
     const First = same();
     const Second = same();
 
-    expect(() => ActionHttp.make([First, Second])).toThrow("Duplicate action or event: same");
+    expect(() => ActionHttp.make([First, Second])).toThrow(
+      "Duplicate action or event: same"
+    );
 
     const apps = [
       Action.implement(First, () => Effect.succeed("a")),
@@ -1148,8 +1435,12 @@ describe("MCP registration", () => {
     const options = { name: "test", version: "0" };
     const shared = "same (pass one implementation of it, or rename one)";
 
-    expect(() => ActionMcp.layerHttp(apps, options)).toThrow(`Duplicate MCP tool: ${shared}`);
-    expect(() => ActionMcp.runStdio(apps, options)).toThrow(`Duplicate MCP tool: ${shared}`);
+    expect(() => ActionMcp.layerHttp(apps, options)).toThrow(
+      `Duplicate MCP tool: ${shared}`
+    );
+    expect(() => ActionMcp.runStdio(apps, options)).toThrow(
+      `Duplicate MCP tool: ${shared}`
+    );
     expect(() => ActionToolkit.make(apps)).toThrow(`Duplicate tool: ${shared}`);
 
     const Other = Action.make("other", {
@@ -1160,7 +1451,10 @@ describe("MCP registration", () => {
     });
 
     expect(() =>
-      ActionMcp.layerHttp([whoAmI, Action.implement(Other, () => Effect.succeed("b"))], options),
+      ActionMcp.layerHttp(
+        [whoAmI, Action.implement(Other, () => Effect.succeed("b"))],
+        options
+      )
     ).not.toThrow();
   });
 });

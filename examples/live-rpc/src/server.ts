@@ -1,9 +1,11 @@
 import { createServer } from "node:http";
+
 import { NodeHttpServer, NodeRuntime } from "@effect/platform-node";
-import { Config, Effect, Layer } from "effect";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Config, Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 import { RpcSerialization, RpcServer } from "effect/rpc";
+
 import { MessageStore } from "./chat/store.js";
 import { rpc } from "./routes.js";
 
@@ -16,13 +18,16 @@ import { rpc } from "./routes.js";
 // serialization.
 const socket = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
-  Layer.provide(RpcSerialization.layerJson),
+  Layer.provide(RpcSerialization.layerJson)
 );
 
 const server = Layer.unwrap(
   Effect.gen(function* () {
     // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
-    const host = yield* Config.String("HOST").pipe(Config.withDefault("127.0.0.1"));
+    const host = yield* Config.String("HOST").pipe(
+      Config.withDefault("127.0.0.1")
+    );
+
     const port = yield* Config.Port("PORT").pipe(Config.withDefault(3000));
 
     return HttpRouter.serve(socket).pipe(
@@ -34,7 +39,7 @@ const server = Layer.unwrap(
           // does not bound it: Node's WebSocket server reads one of up to 100 MiB whole unless
           // told otherwise. A chat message is short, and a larger one closes the socket (1009).
           websocket: { maxPayload: 64 * 1024 },
-        }),
+        })
       ),
       // DEMO ONLY: messages live in this process's memory; a deployment provides a store that
       // lasts.
@@ -42,9 +47,9 @@ const server = Layer.unwrap(
       // The pages watching a room are this process's sockets, so what wakes them lives in its
       // memory too: one for the whole server. Several processes behind a balancer would each
       // wake only their own pages, the others reading a post at their next read, 5 seconds on.
-      Layer.provide(Event.layerMemory),
+      Layer.provide(Event.layerMemory)
     );
-  }),
+  })
 );
 
-Layer.launch(server).pipe(NodeRuntime.runMain);
+Layer.launch(server).pipe(NodeRuntime.runMain());

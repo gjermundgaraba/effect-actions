@@ -1,15 +1,17 @@
+import { Context, Effect, Layer, Scope } from "effect";
+import type { FileSystem, Path, Schema, Types } from "effect";
+import type {
+  Etag,
+  HttpClient,
+  HttpClientError,
+  HttpPlatform,
+} from "effect/http";
 import {
-  Context,
-  Effect,
-  type FileSystem,
-  Layer,
-  type Path,
-  type Schema,
-  Scope,
-  type Types,
-} from "effect";
-import type { Etag, HttpClient, HttpClientError, HttpPlatform } from "effect/http";
-import { FetchHttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+  FetchHttpClient,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 import {
   HttpApi,
   HttpApiBuilder,
@@ -19,55 +21,71 @@ import {
   HttpApiSchema,
   OpenApi,
 } from "effect/http-api";
-import type * as Action from "../contract/Action.js";
-import type * as Event from "../contract/Event.js";
-import { listed, type Only } from "../contract/listed.js";
-import { offersWebhook, servedWebhooks } from "../contract/webhooks.js";
-import type { SubscriptionOf } from "../contract/push.js";
-import {
-  answering,
-  eventEndpointOf,
-  type pageOf,
-  type sentOf,
-  servedSent,
-  webhookAnswers,
-  webhookEndpointsOf,
-} from "./events.js";
-import {
-  acquireFeeds,
-  type EventBuildError,
-  type EventBuildServices,
-  type EventServedRequest,
-  type HoldingEvents,
-  type ServingEvents,
-  unkeyedHook,
-} from "../contract/feed.js";
-import {
-  type Any as Authentication,
-  type DescriptorOf,
-  type LayerIdentity,
-  type Matching,
-  providerOf,
-  type PublicOnly,
-  type ServedProvider,
-  type RemoteRequest,
-  type Required as RequiredAuthentication,
-  type ServerBuildServices,
-  type VerifierError,
+
+import { providerOf } from "../authentication/provider.js";
+import type {
+  Any as Authentication,
+  DescriptorOf,
+  LayerIdentity,
+  Matching,
+  PublicOnly,
+  ServedProvider,
+  RemoteRequest,
+  Required as RequiredAuthentication,
+  ServerBuildServices,
+  VerifierError,
 } from "../authentication/provider.js";
-import { Anyone, type Called } from "../contract/caller.js";
+import type * as Action from "../contract/Action.js";
+import { inputParseOptions } from "../contract/call.js";
+import { Anyone } from "../contract/caller.js";
+import type { Called } from "../contract/caller.js";
 import {
-  type Certain,
-  type ErrorsOf,
   projectedErrors,
   bindingErrors,
   bindingOf,
   eventErrors,
 } from "../contract/declared.js";
-import { declared } from "../contract/status.js";
-import { inputParseOptions } from "../contract/call.js";
-import { type AnyHttp, type Client, methods, type Options as ClientOptions } from "./client.js";
+import type { Certain, ErrorsOf } from "../contract/declared.js";
 import type { BuiltIn, BuiltIns } from "../contract/errors.js";
+import type * as Event from "../contract/Event.js";
+import { acquireFeeds, unkeyedHook } from "../contract/feed.js";
+import type {
+  EventBuildError,
+  EventBuildServices,
+  EventServedRequest,
+  HoldingEvents,
+  ServingEvents,
+} from "../contract/feed.js";
+import { acquire } from "../contract/implementation.js";
+import type {
+  BuildError,
+  ErasedHandler,
+  ErasedValue,
+  Known,
+  Member,
+  MiddlewareOf,
+  Served,
+  Selected,
+  SelectedEvents,
+  Holding,
+} from "../contract/implementation.js";
+import { listed } from "../contract/listed.js";
+import type { Only } from "../contract/listed.js";
+import type { SubscriptionOf } from "../contract/push.js";
+import { provideServed, servingOf } from "../contract/serving.js";
+import { declared } from "../contract/status.js";
+import { elementOf } from "../contract/stream.js";
+import { offersWebhook, servedWebhooks } from "../contract/webhooks.js";
+import { methods } from "./client.js";
+import type { AnyHttp, Client, Options as ClientOptions } from "./client.js";
+import {
+  answering,
+  eventEndpointOf,
+  servedSent,
+  webhookAnswers,
+  webhookEndpointsOf,
+} from "./events.js";
+import type { pageOf, sentOf } from "./events.js";
 import { SchemaErrors, schemaErrors } from "./schema-errors.js";
 import {
   answeredWithProgress,
@@ -75,23 +93,8 @@ import {
   answeringWithProgress,
   elementStreamOf,
   progressStreamOf,
-  type SuccessOf,
 } from "./streamed.js";
-import { elementOf } from "../contract/stream.js";
-import {
-  acquire,
-  type BuildError,
-  type ErasedHandler,
-  type ErasedValue,
-  type Known,
-  type Member,
-  type MiddlewareOf,
-  type Served,
-  type Selected,
-  type SelectedEvents,
-  type Holding,
-} from "../contract/implementation.js";
-import { provideServed, servingOf } from "../contract/serving.js";
+import type { SuccessOf } from "./streamed.js";
 
 export { placed } from "./placed.js";
 
@@ -124,7 +127,10 @@ export interface FetchClientOptions<
 
 type Middleware = ReadonlyArray<Context.Key<HttpApiMiddleware.AnyId, unknown>>;
 
-type IdOf<K> = K extends Context.Key<infer I extends HttpApiMiddleware.AnyId, unknown> ? I : never;
+type IdOf<K> =
+  K extends Context.Key<infer I extends HttpApiMiddleware.AnyId, unknown>
+    ? I
+    : never;
 
 type Through<M extends Middleware, R> = number extends M["length"]
   ? R | HttpApiMiddleware.Requires<IdOf<M[number]>>
@@ -157,7 +163,8 @@ type HttpLayer<
   E extends Event.Any = H["events"][number],
 > = Layer.Layer<
   never,
-  BuildError<Holding<Member<Apps>, A>, A> | EventBuildError<HoldingEvents<Member<Apps>, E>, E>,
+  | BuildError<Holding<Member<Apps>, A>, A>
+  | EventBuildError<HoldingEvents<Member<Apps>, E>, E>,
   | ServerBuildServices<Holding<Member<Apps>, A>, A>
   | EventBuildServices<HoldingEvents<Member<Apps>, E>, E>
   | HttpRouter.HttpRouter
@@ -176,7 +183,10 @@ type HttpLayer<
 >;
 
 /** `ActionHttp.layer`'s options. */
-export interface LayerOptions<M extends Middleware = [], C extends Action.Any | Event.Any = never> {
+export interface LayerOptions<
+  M extends Middleware = [],
+  C extends Action.Any | Event.Any = never,
+> {
   /**
    * The actions and event types it serves, among the binding's the implementations hold:
    * `[GetUser, UserRenamed]`, exactly those. Defaults to every one of them.
@@ -185,7 +195,7 @@ export interface LayerOptions<M extends Middleware = [], C extends Action.Any | 
    *
    * - A list naming actions alone serves no event type: each event route answers 404 until the event types are listed beside them; two layers of one binding given lists that overlap fail at startup with Effect's duplicate-route message.
    */
-  readonly actions?: ReadonlyArray<C> | undefined;
+  readonly actions?: readonly C[] | undefined;
   /**
    * Native endpoint middleware every served route runs, the first innermost: inside the
    * authentication of a protected route, outside its decoding, so it also sees invalid input.
@@ -198,7 +208,12 @@ export interface LayerOptions<M extends Middleware = [], C extends Action.Any | 
   readonly middleware?: M;
 }
 
-type LayerRequest<App, A extends Action.Any, E extends Event.Any, M extends Middleware> = Exclude<
+type LayerRequest<
+  App,
+  A extends Action.Any,
+  E extends Event.Any,
+  M extends Middleware,
+> = Exclude<
   Through<M, RemoteRequest<App, A> | EventServedRequest<App, E>>,
   HttpRouter.Provided | LayerIdentity<App, A, E>
 >;
@@ -233,11 +248,19 @@ export interface Options<E extends Action.Errors = Action.Errors> {
   readonly authentication?: Authentication;
 }
 
-type EndpointError<A extends Action.Any, E extends Action.Errors, D> = Schema.toCodecJson<
+type EndpointError<
+  A extends Action.Any,
+  E extends Action.Errors,
+  D,
+> = Schema.toCodecJson<
   A["error"][number] | E[number] | VerifierError<A, D> | BuiltIns
 >;
 
-type Endpoint<A extends Action.Any, E extends Action.Errors, D> = A extends Action.Any
+type Endpoint<
+  A extends Action.Any,
+  E extends Action.Errors,
+  D,
+> = A extends Action.Any
   ? HttpApiEndpoint.HttpApiEndpoint<
       A["name"],
       "POST",
@@ -247,12 +270,15 @@ type Endpoint<A extends Action.Any, E extends Action.Errors, D> = A extends Acti
       Schema.toCodecJson<A["input"]>,
       never,
       SuccessOf<A, EndpointError<A, E, D>>,
-      EndpointError<A, E, D>,
-      never
+      EndpointError<A, E, D>
     >
   : never;
 
-type EventEndpoint<V extends Event.Any, E extends Action.Errors, D> = V extends Event.Any
+type EventEndpoint<
+  V extends Event.Any,
+  E extends Action.Errors,
+  D,
+> = V extends Event.Any
   ? HttpApiEndpoint.HttpApiEndpoint<
       V["name"],
       "POST",
@@ -261,17 +287,17 @@ type EventEndpoint<V extends Event.Any, E extends Action.Errors, D> = V extends 
       never,
       Schema.toCodecJson<ReturnType<typeof SubscriptionOf<V>>>,
       never,
-      Schema.toCodecJson<ReturnType<typeof pageOf<V>>> | ReturnType<typeof sentOf<V>>,
-      Schema.toCodecJson<E[number] | VerifierError<V, D> | BuiltIns>,
-      never
+      | Schema.toCodecJson<ReturnType<typeof pageOf<V>>>
+      | ReturnType<typeof sentOf<V>>,
+      Schema.toCodecJson<E[number] | VerifierError<V, D> | BuiltIns>
     >
   : never;
 
 type Api<
-  Actions extends ReadonlyArray<Action.Any>,
+  Actions extends readonly Action.Any[],
   E extends Action.Errors,
   D,
-  Events extends ReadonlyArray<Event.Any>,
+  Events extends readonly Event.Any[],
 > = HttpApi.HttpApi<
   "actions",
   HttpApiGroup.HttpApiGroup<
@@ -287,10 +313,10 @@ type Api<
  * package, serves the same; `layer` serves it and `client` calls it.
  */
 export interface Binding<
-  Actions extends ReadonlyArray<Action.Any>,
+  Actions extends readonly Action.Any[],
   E extends Action.Errors = [],
   D extends Authentication | undefined = undefined,
-  Events extends ReadonlyArray<Event.Any> = readonly [],
+  Events extends readonly Event.Any[] = readonly [],
 > {
   /** Its protected actions' authentication descriptor, or `undefined` without one. */
   readonly authentication: D;
@@ -321,14 +347,18 @@ interface Request {
   readonly payload: ErasedValue;
 }
 
-const mountSegments = (prefix: `/${string}` | undefined): ReadonlyArray<string> =>
+const mountSegments = (prefix: `/${string}` | undefined): readonly string[] =>
   (prefix ?? "/api").split("/").filter((segment) => segment !== "");
 
-const absolutePath = (segments: ReadonlyArray<string>): `/${string}` => `/${segments.join("/")}`;
+const absolutePath = (segments: readonly string[]): `/${string}` =>
+  `/${segments.join("/")}`;
 
-const groupName = (mount: ReadonlyArray<string>): string => mount.join("/") || "/";
+const groupName = (mount: readonly string[]): string => mount.join("/") || "/";
 
-const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constraint>) => {
+const apiOf = (
+  group: string,
+  endpoints: readonly HttpApiEndpoint.Constraint[]
+) => {
   const empty = HttpApiGroup.make(group, { topLevel: true });
   const [first, ...rest] = endpoints;
 
@@ -344,7 +374,9 @@ const apiOf = (group: string, endpoints: ReadonlyArray<HttpApiEndpoint.Constrain
 const successOf = (action: Action.Any, errors: Action.Errors) => {
   const element = elementOf(action.success);
 
-  if (element !== undefined) return elementStreamOf(element, action.progress, errors);
+  if (element !== undefined) {
+    return elementStreamOf(element, action.progress, errors);
+  }
 
   return action.progress === undefined
     ? action.success
@@ -354,7 +386,11 @@ const successOf = (action: Action.Any, errors: Action.Errors) => {
       ];
 };
 
-const endpointOf = (action: Action.Any, path: `/${string}`, errors: Action.Errors) =>
+const endpointOf = (
+  action: Action.Any,
+  path: `/${string}`,
+  errors: Action.Errors
+) =>
   HttpApiEndpoint.post(action.name, path, {
     payload: action.input.pipe(HttpApiSchema.asJson()),
     success: successOf(action, errors),
@@ -364,9 +400,13 @@ const endpointOf = (action: Action.Any, path: `/${string}`, errors: Action.Error
 const answerOf = (action: Action.Any, run: ErasedHandler<unknown>) => {
   const element = elementOf(action.success);
 
-  if (element !== undefined) return answeringElements(element, run);
+  if (element !== undefined) {
+    return answeringElements(element, run);
+  }
 
-  return action.progress === undefined ? run : answeringWithProgress(action.success, run);
+  return action.progress === undefined
+    ? run
+    : answeringWithProgress(action.success, run);
 };
 
 /** A route a binding declares, of an action or an event type: a POST taking its body alone. */
@@ -382,8 +422,18 @@ type Route = HttpApiEndpoint.HttpApiEndpoint<
   Schema.Top
 >;
 
-const withinLayerMiddleware = (endpoint: HttpApiEndpoint.Top, middleware: Middleware = []) =>
-  middleware.reduce((inner, key) => inner.middleware(key), endpoint);
+const withinLayerMiddleware = (
+  endpoint: HttpApiEndpoint.Top,
+  middleware: Middleware = []
+) => {
+  let within = endpoint;
+
+  for (const key of middleware) {
+    within = within.middleware(key);
+  }
+
+  return within;
+};
 
 // Why: Two forms, actions alone or with options, not one whose options are a conditional rest
 // parameter, as `OptionalUnless` gives: through one, TypeScript infers no `const` tuple of `error`,
@@ -407,8 +457,13 @@ export function make<
     (Action.Any | Event.Any) & { readonly caller: typeof Anyone }
   >,
 >(
-  contracts: Contracts,
-): Binding<Only<Contracts, Action.Any>, [], undefined, Only<Contracts, Event.Any>>;
+  contracts: Contracts
+): Binding<
+  Only<Contracts, Action.Any>,
+  [],
+  undefined,
+  Only<Contracts, Event.Any>
+>;
 export function make<
   const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
   const O extends Options = {},
@@ -417,17 +472,29 @@ export function make<
   options: O &
     RequiredAuthentication<Contracts[number]> &
     Matching<Contracts[number], NoInfer<DescriptorOf<O>>> &
-    NoInfer<Known<O, Options>>,
-): Binding<Only<Contracts, Action.Any>, ErrorsOf<O>, DescriptorOf<O>, Only<Contracts, Event.Any>>;
+    NoInfer<Known<O, Options>>
+): Binding<
+  Only<Contracts, Action.Any>,
+  ErrorsOf<O>,
+  DescriptorOf<O>,
+  Only<Contracts, Event.Any>
+>;
 // Why: Reached only when the forms above fail. TypeScript reports a call matching no overload by
 // the last one's error, so this one tells protected actions without options to name their
 // authentication, where the first form's constraint would tell them to be public.
-export function make<const Contracts extends ReadonlyArray<Action.Any | Event.Any>>(
-  contracts: Contracts & PublicOnly<Contracts>,
-): Binding<Only<Contracts, Action.Any>, [], undefined, Only<Contracts, Event.Any>>;
+export function make<
+  const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
+>(
+  contracts: Contracts & PublicOnly<Contracts>
+): Binding<
+  Only<Contracts, Action.Any>,
+  [],
+  undefined,
+  Only<Contracts, Event.Any>
+>;
 export function make(
   contracts: ReadonlyArray<Action.Any | Event.Any>,
-  options: Options = {},
+  options: Options = {}
 ): AnyHttp {
   const { actions, events } = listed(contracts);
   const bound = bindingOf("ActionHttp binding", actions, events, options);
@@ -435,7 +502,9 @@ export function make(
   const security = bound.authentication?.["~middleware"];
 
   const secured = (endpoint: Route, { caller }: Called) =>
-    security === undefined || caller === Anyone ? endpoint : endpoint.middleware(security);
+    security === undefined || caller === Anyone
+      ? endpoint
+      : endpoint.middleware(security);
 
   const endpoints = [
     ...actions.map((action) =>
@@ -443,10 +512,10 @@ export function make(
         endpointOf(
           action,
           absolutePath([...mount, action.name]),
-          bindingErrors(action, bound),
+          bindingErrors(action, bound)
         ).annotate(OpenApi.Description, action.description),
-        action,
-      ),
+        action
+      )
     ),
     ...events.flatMap((event) => {
       const path = absolutePath([...mount, "events", event.name]);
@@ -470,9 +539,14 @@ export function make(
 // value would win over a request's own under one tag. Built in an empty context it lays nothing.
 // That relies on `group` reading nothing else there: a service it starts to read fails the build,
 // but a reference silently takes its default.
-const buildInEmptyContext = <A, E>(group: Layer.Layer<A, E>): Layer.Layer<A, E> =>
+const buildInEmptyContext = <A, E>(
+  group: Layer.Layer<A, E>
+): Layer.Layer<A, E> =>
   Layer.fromBuild((memoMap, scope) =>
-    Effect.setContext(Layer.buildWithMemoMap(group, memoMap, scope), Context.empty()),
+    Effect.setContext(
+      Layer.buildWithMemoMap(group, memoMap, scope),
+      Context.empty()
+    )
   );
 
 // Why: Puts the startup context `buildInEmptyContext` withholds beneath each request's, not over
@@ -485,19 +559,21 @@ const startupBeneathRequest = () =>
 
       return (route) =>
         Effect.updateContext(route, (current: Context.Context<never>) =>
-          Context.merge(startup, current),
+          Context.merge(startup, current)
         );
-    }),
+    })
   ).layer;
 
 // Why: A middleware of its own, just inside authentication, answers a step-up refusal. Effect's
 // security middleware sees a route's failure only wrapped in a private type, and a refusal recorded
 // in the handler, as MCP records it, would override a layer middleware that recovers from it or
 // replaces it.
-class StepUp extends HttpApiMiddleware.Service<StepUp>()("effect-actions/ActionHttp/StepUp") {}
+class StepUp extends HttpApiMiddleware.Service<StepUp>()(
+  "effect-actions/ActionHttp/StepUp"
+) {}
 
 class JsonContentType extends HttpApiMiddleware.Service<JsonContentType>()(
-  "effect-actions/ActionHttp/JsonContentType",
+  "effect-actions/ActionHttp/JsonContentType"
 ) {}
 
 // Why: Effect reads a body with no `Content-Type` as JSON, which a page on another site can send
@@ -506,9 +582,13 @@ const jsonContentType = () =>
   Layer.succeed(JsonContentType, (route) =>
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
       request.headers["content-type"] === undefined
-        ? Effect.succeed(HttpServerResponse.text("Unsupported content-type: none", { status: 415 }))
-        : route,
-    ),
+        ? Effect.succeed(
+            HttpServerResponse.text("Unsupported content-type: none", {
+              status: 415,
+            })
+          )
+        : route
+    )
   );
 
 /**
@@ -549,18 +629,21 @@ const jsonContentType = () =>
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
   binding: H,
-  implementations: Apps,
+  implementations: Apps
 ): HttpLayer<H, Apps, []>;
 export function layer<
   const H extends AnyHttp,
   const Apps extends Served,
-  const O extends LayerOptions<Middleware, H["actions"][number] | H["events"][number]>,
+  const O extends LayerOptions<
+    Middleware,
+    H["actions"][number] | H["events"][number]
+  >,
 >(
   binding: H,
   implementations: Apps,
   options: O &
     ServerOnly<MiddlewareOf<O, Middleware>, H["error"]> &
-    NoInfer<Known<O, LayerOptions<Middleware>>>,
+    NoInfer<Known<O, LayerOptions<Middleware>>>
 ): HttpLayer<
   H,
   Apps,
@@ -571,7 +654,7 @@ export function layer<
 export function layer(
   binding: AnyHttp,
   served: Served,
-  options: LayerOptions<Middleware> = {},
+  options: LayerOptions<Middleware> = {}
 ): Layer.Layer<never, unknown, unknown> {
   const selected = servingOf("HTTP binding", binding, served, options);
   const { apps, actions, events, eventTypes, authentication } = selected;
@@ -582,7 +665,7 @@ export function layer(
   const routed = (endpoint: Route, { caller }: Called) => {
     const within = withinLayerMiddleware(
       endpoint.middleware(JsonContentType).middleware(SchemaErrors),
-      options.middleware,
+      options.middleware
     );
 
     return caller === Anyone || authentication === undefined
@@ -598,10 +681,10 @@ export function layer(
         endpointOf(
           action,
           absolutePath([...mount, action.name]),
-          projectedErrors(action, binding.error),
+          projectedErrors(action, binding.error)
         ),
-        action,
-      ),
+        action
+      )
     ),
     ...eventTypes.flatMap((event) => {
       const path = absolutePath([...mount, "events", event.name]);
@@ -609,7 +692,9 @@ export function layer(
 
       return [
         eventEndpointOf(event, path, errors, servedSent),
-        ...(offersWebhook(event, authentication) ? webhookEndpointsOf(event, path, errors) : []),
+        ...(offersWebhook(event, authentication)
+          ? webhookEndpointsOf(event, path, errors)
+          : []),
       ].map((endpoint) => routed(endpoint, event));
     }),
   ]).annotate(HttpApi.PayloadParseOptions, inputParseOptions);
@@ -618,28 +703,49 @@ export function layer(
     Effect.gen(function* () {
       const bound = yield* acquire(apps, authentication);
       const feeds = yield* acquireFeeds(events);
-      const refusal = unkeyedHook("ActionHttp", feeds, authentication?.principal !== undefined);
 
-      if (refusal !== undefined) return yield* Effect.die(new Error(refusal));
+      const refusal = unkeyedHook(
+        "ActionHttp",
+        feeds,
+        authentication?.principal !== undefined
+      );
 
-      const { webhooks, offered } = yield* servedWebhooks(feeds, authentication);
+      if (refusal !== undefined) {
+        return yield* Effect.die(new Error(refusal));
+      }
+
+      const { webhooks, offered } = yield* servedWebhooks(
+        feeds,
+        authentication
+      );
 
       const security =
         authentication === undefined
           ? Layer.empty
           : yield* Effect.map(providerOf(authentication), (provider) =>
               Layer.mergeAll(
-                Layer.succeed(authentication["~middleware"], provider.middleware),
-                Layer.succeed(StepUp, provider.stepUp),
-              ),
+                Layer.succeed(
+                  authentication["~middleware"],
+                  provider.middleware
+                ),
+                Layer.succeed(StepUp, provider.stepUp)
+              )
             );
 
-      const hostProvidedMiddleware = yield* Effect.forEach(options.middleware ?? [], (key) =>
-        Effect.map(Effect.service(key), (service) => Layer.succeed(key, service)),
+      const hostProvidedMiddleware = yield* Effect.forEach(
+        options.middleware ?? [],
+        (key) =>
+          Effect.map(Effect.service(key), (service) =>
+            Layer.succeed(key, service)
+          )
       );
 
       const webhookAnswered = offered.map(
-        (feed) => [feed.event.name, webhookAnswers(feed, authentication, webhooks)] as const,
+        (feed) =>
+          [
+            feed.event.name,
+            webhookAnswers(feed, authentication, webhooks),
+          ] as const
       );
 
       const byName = {
@@ -647,37 +753,52 @@ export function layer(
           bound.map(([action, run]) => {
             const answer = answerOf(action, run);
 
-            return [action.name, (request: Request) => answer(request.payload)] as const;
-          }),
+            return [
+              action.name,
+              (request: Request) => answer(request.payload),
+            ] as const;
+          })
         ),
         ...Object.fromEntries(
-          feeds.map((feed) => [feed.event.name, answering(feed, authentication)] as const),
-        ),
-        ...Object.fromEntries(
-          webhookAnswered.map(([name, { subscribe }]) => [`${name}/subscribe`, subscribe] as const),
+          feeds.map(
+            (feed) =>
+              [feed.event.name, answering(feed, authentication)] as const
+          )
         ),
         ...Object.fromEntries(
           webhookAnswered.map(
-            ([name, { unsubscribe }]) => [`${name}/unsubscribe`, unsubscribe] as const,
-          ),
+            ([eventName, { subscribe }]) =>
+              [`${eventName}/subscribe`, subscribe] as const
+          )
+        ),
+        ...Object.fromEntries(
+          webhookAnswered.map(
+            ([eventName, { unsubscribe }]) =>
+              [`${eventName}/unsubscribe`, unsubscribe] as const
+          )
         ),
       };
 
       return HttpApiBuilder.group(api, name, (builder) =>
         builder.handleAll(
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Dynamic endpoint registration boundary: the native router selects the endpoint, and so the action, before its handler runs; `layer`'s signature restores every channel.
-          byName as never,
-        ),
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Dynamic endpoint registration boundary: the native router selects the endpoint, and so the action, before its handler runs; `layer`'s signature restores every channel.
+          byName as never
+        )
       ).pipe(
-        Layer.provide([schemaErrors(), jsonContentType(), security, ...hostProvidedMiddleware]),
-        buildInEmptyContext,
+        Layer.provide([
+          schemaErrors,
+          jsonContentType(),
+          security,
+          ...hostProvidedMiddleware,
+        ]),
+        buildInEmptyContext
       );
-    }),
+    })
   ).pipe(provideServed(selected));
 
   return HttpApiBuilder.layer(api).pipe(
     Layer.provide(handlers),
-    Layer.provide(startupBeneathRequest()),
+    Layer.provide(startupBeneathRequest())
   );
 }
 
@@ -701,17 +822,17 @@ export function layer(
  */
 export function client<const H extends AnyHttp>(
   binding: H,
-  options?: ClientOptions,
+  options?: ClientOptions
 ): Effect.Effect<Client<H>, never, HttpClient.HttpClient>;
 export function client<const H extends AnyHttp, E, R>(
   binding: H,
-  options: ClientOptions<E, R>,
+  options: ClientOptions<E, R>
 ): Effect.Effect<Client<H, E, R>, never, HttpClient.HttpClient>;
 export function client(
   binding: AnyHttp,
-  options?: ClientOptions | ClientOptions<unknown, unknown>,
+  options?: ClientOptions | ClientOptions<unknown, unknown>
 ): Effect.Effect<unknown, never, HttpClient.HttpClient> {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: the native client is invariant in what it fails with and requires, so no one type holds both overloads' options; each overload states the channels its own options give.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased implementation: the native client is invariant in what it fails with and requires, so no one type holds both overloads' options; each overload states the channels its own options give.
   return methods(binding, options as ClientOptions<unknown, unknown>);
 }
 
@@ -723,23 +844,26 @@ export function client(
  */
 export function fetchClient<const H extends AnyHttp>(
   binding: H,
-  options?: FetchClientOptions,
+  options?: FetchClientOptions
 ): Client<H>;
 export function fetchClient<const H extends AnyHttp, E, R>(
   binding: H,
-  options: FetchClientOptions<E, R>,
+  options: FetchClientOptions<E, R>
 ): Client<H, E, R>;
 export function fetchClient(
   binding: AnyHttp,
-  { fetch, ...options }: FetchClientOptions | FetchClientOptions<unknown, unknown> = {},
+  {
+    fetch,
+    ...options
+  }: FetchClientOptions | FetchClientOptions<unknown, unknown> = {}
 ): object {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Erased implementation: as `client`'s, each overload states the channels its own options give. Building runs no request, so it needs only the `HttpClient` provided here; what a transform requires, each call requires.
-  return methods(binding, options as ClientOptions<unknown, never>).pipe(
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased implementation: as `client`'s, each overload states the channels its own options give. Building runs no request, so it needs only the `HttpClient` provided here; what a transform requires, each call requires.
+  return methods(binding, options as ClientOptions<unknown>).pipe(
     Effect.provide(FetchHttpClient.layer),
     Effect.provideService(
       FetchHttpClient.Fetch,
-      fetch ?? ((input, init) => globalThis.fetch(input, init)),
+      fetch ?? (async (input, init) => await globalThis.fetch(input, init))
     ),
-    Effect.runSync,
+    Effect.runSync
   );
 }

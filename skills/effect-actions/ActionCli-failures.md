@@ -1,7 +1,6 @@
 # ActionCli failure modes
 
-What you see when something is wrong, and the fix. Search for a fragment of the message.
-The tasks are in [ActionCli.md](ActionCli.md).
+What you see when something is wrong, and the fix. Search for a fragment of the message. The tasks are in [ActionCli.md](ActionCli.md).
 
 ## Flags and input
 

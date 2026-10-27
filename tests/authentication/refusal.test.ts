@@ -1,15 +1,28 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Context, Effect, Exit, Layer, Option, Redacted, Schema } from "effect";
+import {
+  Cause,
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+} from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApiBuilder, HttpApiSecurity } from "effect/http-api";
+
+import * as Authentication from "../../src/authentication/Authentication.js";
+import {
+  answerStepUp,
+  recordStepUp,
+} from "../../src/authentication/refusal.js";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
-import * as Authentication from "../../src/authentication/Authentication.js";
-import { authenticate } from "../support/app/authentication.js";
 import { admit } from "../support/app/authentication-upgrade.js";
+import { authenticate } from "../support/app/authentication.js";
 import { authorize, CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
-import { answerStepUp, recordStepUp } from "../../src/authentication/refusal.js";
 import { post } from "../support/requests.js";
 import { serve } from "../support/serve.js";
 
@@ -24,7 +37,9 @@ const Private = Action.make("private", {
   success: Schema.String,
 });
 
-const answering = Action.implement(Private, () => Caller, { authorize: Action.allowAll });
+const answering = Action.implement(Private, () => Caller, {
+  authorize: Action.allowAll,
+});
 
 const resource = {
   resource: "https://api.example.com/mcp?tenant=alice\\",
@@ -43,25 +58,33 @@ const readAsClient = async (response: Response) => ({
   challenge: response.headers.get("www-authenticate"),
 });
 
-const answeredByProtectedRoute = (
+const answeredByProtectedRoute = async (
   error: Action.Refusal,
   authorization: string | undefined,
-  protectedResource: Authentication.ProtectedResource | undefined,
+  protectedResource: Authentication.ProtectedResource | undefined
 ) => {
-  const request = new Request("https://api.example.com/api/private", post("/api/private"));
+  const request = new Request(
+    "https://api.example.com/api/private",
+    post("/api/private")
+  );
 
-  if (authorization !== undefined) request.headers.set("authorization", authorization);
+  if (authorization !== undefined) {
+    request.headers.set("authorization", authorization);
+  }
 
-  return serve(
-    ActionHttp.layer(ActionHttp.make([Private], { authentication: CallerLogin }), answering).pipe(
+  return await serve(
+    ActionHttp.layer(
+      ActionHttp.make([Private], { authentication: CallerLogin }),
+      answering
+    ).pipe(
       Layer.provide(
         Authentication.layer(
           CallerLogin,
           () => Effect.fail(error),
-          protectedResource === undefined ? {} : { protectedResource },
-        ),
-      ),
-    ),
+          protectedResource === undefined ? {} : { protectedResource }
+        )
+      )
+    )
   ).handler(request);
 };
 
@@ -69,43 +92,71 @@ const refusedBeforeVerifier = new Action.Unauthenticated({
   message: "A bearer token is required.",
 });
 
-const scoped = new Action.Forbidden({ message: "Requires docs:write.", scopes: ["docs:write"] });
+const scoped = new Action.Forbidden({
+  message: "Requires docs:write.",
+  scopes: ["docs:write"],
+});
 
 describe("refusal", () => {
   it.for([
     ["a 401 without credentials", refusedBeforeVerifier, undefined],
-    ["a 401 to a bearer token", new Action.Unauthenticated({ message: "Expired." }), "Bearer x"],
+    [
+      "a 401 to a bearer token",
+      new Action.Unauthenticated({ message: "Expired." }),
+      "Bearer x",
+    ],
     ["a 401 to a lowercase scheme", new Action.Unauthenticated(), "bearer x"],
-    ["a 401 to a token holding a space, `a b`", new Action.Unauthenticated(), "Bearer a b"],
+    [
+      "a 401 to a token holding a space, `a b`",
+      new Action.Unauthenticated(),
+      "Bearer a b",
+    ],
     ["a 401 to another scheme", refusedBeforeVerifier, "Basic eA=="],
     ["a 403 naming scopes", scoped, "Bearer x"],
     [
       "a 403 whose message is no RFC 6750 description",
-      new Action.Forbidden({ message: 'Needs "write".', scopes: ["docs:write"] }),
+      new Action.Forbidden({
+        message: 'Needs "write".',
+        scopes: ["docs:write"],
+      }),
       "Bearer x",
     ],
-    ["a 403 naming no scopes", new Action.Forbidden({ message: "Not yours." }), "Bearer x"],
+    [
+      "a 403 naming no scopes",
+      new Action.Forbidden({ message: "Not yours." }),
+      "Bearer x",
+    ],
   ] as const)(
     "answers %s as a protected route does, with and without a resource",
     async ([, error, header]) => {
       for (const protectedResource of [undefined, resource]) {
         const outside = HttpServerResponse.toWeb(
-          Authentication.refusalResponse(error, { protectedResource, authorization: header }),
+          Authentication.refusalResponse(error, {
+            protectedResource,
+            authorization: header,
+          })
         );
 
-        expect(await readAsClient(outside)).toEqual(
-          await readAsClient(await answeredByProtectedRoute(error, header, protectedResource)),
+        await expect(readAsClient(outside)).resolves.toStrictEqual(
+          await readAsClient(
+            await answeredByProtectedRoute(error, header, protectedResource)
+          )
         );
       }
-    },
+    }
   );
 
   it("answers a 401 with its JSON, no-store and the resource's challenge, its metadata URL escaped", async () => {
-    const anonymous = Authentication.refusalResponse(new Action.Unauthenticated(), {
-      protectedResource: resource,
-    });
+    const anonymous = Authentication.refusalResponse(
+      new Action.Unauthenticated(),
+      {
+        protectedResource: resource,
+      }
+    );
 
-    expect(await readAsClient(HttpServerResponse.toWeb(anonymous))).toEqual({
+    await expect(
+      readAsClient(HttpServerResponse.toWeb(anonymous))
+    ).resolves.toStrictEqual({
       status: 401,
       body: '{"_tag":"Unauthenticated","message":"Authentication is required."}',
       contentType: "application/json",
@@ -113,26 +164,33 @@ describe("refusal", () => {
       challenge: `Bearer scope="docs:read", resource_metadata="${metadata}"`,
     });
 
-    const presented = Authentication.refusalResponse(new Action.Unauthenticated(), {
-      protectedResource: resource,
-      authorization: "Bearer x",
-    });
+    const presented = Authentication.refusalResponse(
+      new Action.Unauthenticated(),
+      {
+        protectedResource: resource,
+        authorization: "Bearer x",
+      }
+    );
 
     expect(presented.headers["www-authenticate"]).toBe(
-      `Bearer error="invalid_token", scope="docs:read", resource_metadata="${metadata}"`,
+      `Bearer error="invalid_token", scope="docs:read", resource_metadata="${metadata}"`
     );
   });
 
   it("answers a 403 naming scopes with insufficient_scope, and one naming none without a challenge", () => {
-    const stepUp = Authentication.refusalResponse(scoped, { protectedResource: resource });
+    const stepUp = Authentication.refusalResponse(scoped, {
+      protectedResource: resource,
+    });
 
     expect(stepUp.status).toBe(403);
     expect(stepUp.headers["cache-control"]).toBe("no-store");
     expect(stepUp.headers["www-authenticate"]).toBe(
-      `Bearer error="insufficient_scope", scope="docs:write", resource_metadata="${metadata}", error_description="Requires docs:write."`,
+      `Bearer error="insufficient_scope", scope="docs:write", resource_metadata="${metadata}", error_description="Requires docs:write."`
     );
 
-    const plain = Authentication.refusalResponse(new Action.Forbidden({ message: "Not yours." }));
+    const plain = Authentication.refusalResponse(
+      new Action.Forbidden({ message: "Not yours." })
+    );
 
     expect(plain.status).toBe(403);
     expect(plain.headers["www-authenticate"]).toBeUndefined();
@@ -140,7 +198,9 @@ describe("refusal", () => {
 
   it("names no resource without one: a bare Bearer challenge", () => {
     expect(
-      Authentication.refusalResponse(new Action.Unauthenticated()).headers["www-authenticate"],
+      Authentication.refusalResponse(new Action.Unauthenticated()).headers[
+        "www-authenticate"
+      ]
     ).toBe("Bearer");
   });
 
@@ -151,7 +211,9 @@ describe("refusal", () => {
     } satisfies Authentication.ProtectedResource;
 
     expect(() =>
-      Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: invalid }),
+      Authentication.refusalResponse(new Action.Unauthenticated(), {
+        protectedResource: invalid,
+      })
     ).toThrow(`Invalid scope in scopesRequired: "docs read"`);
   });
 
@@ -162,7 +224,9 @@ describe("refusal", () => {
     } satisfies Authentication.ProtectedResource;
 
     expect(() =>
-      Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: invalid }),
+      Authentication.refusalResponse(new Action.Unauthenticated(), {
+        protectedResource: invalid,
+      })
     ).toThrow(`Invalid scope in scopesSupported: "docs write"`);
   });
 
@@ -175,36 +239,43 @@ describe("refusal", () => {
     const message = `A protected resource has no fragment: ${fragment.resource}; drop the "#", which no request URL carries, so its discovery would never answer`;
 
     expect(() =>
-      Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: fragment }),
+      Authentication.refusalResponse(new Action.Unauthenticated(), {
+        protectedResource: fragment,
+      })
     ).toThrow(message);
     expect(() =>
       Authentication.layer(CallerLogin, () => Effect.succeed("alice"), {
         protectedResource: fragment,
-      }),
+      })
     ).toThrow(message);
 
     const bareHashResource = { ...resource, resource: `${resource.resource}#` };
     expect(() =>
       Authentication.refusalResponse(new Action.Unauthenticated(), {
         protectedResource: bareHashResource,
-      }),
+      })
     ).toThrow(
-      `A protected resource has no fragment: ${bareHashResource.resource}; drop the "#", which no request URL carries, so its discovery would never answer`,
+      `A protected resource has no fragment: ${bareHashResource.resource}; drop the "#", which no request URL carries, so its discovery would never answer`
     );
   });
 
   it("refuses a relative resource, which names no public URL, as Authentication.layer does", () => {
-    const relative = { ...resource, resource: "/mcp" } satisfies Authentication.ProtectedResource;
+    const relative = {
+      ...resource,
+      resource: "/mcp",
+    } satisfies Authentication.ProtectedResource;
 
     const message = `A protected resource is an absolute URL: "/mcp" is not one; give the public URL of the endpoint clients connect to, such as https://api.example.com/mcp, read from configuration`;
 
     expect(() =>
-      Authentication.refusalResponse(new Action.Unauthenticated(), { protectedResource: relative }),
+      Authentication.refusalResponse(new Action.Unauthenticated(), {
+        protectedResource: relative,
+      })
     ).toThrow(message);
     expect(() =>
       Authentication.layer(CallerLogin, () => Effect.succeed("alice"), {
         protectedResource: relative,
-      }),
+      })
     ).toThrow(message);
   });
 
@@ -217,46 +288,62 @@ describe("refusal", () => {
       Authentication.refusalResponse(new Action.Unauthenticated(), {
         authentication: Session,
         protectedResource: resource,
-      }),
+      })
     ).toThrow(
-      "A protected resource is published only for a Bearer scheme: drop `protectedResource`, or authenticate with a Bearer descriptor",
+      "A protected resource is published only for a Bearer scheme: drop `protectedResource`, or authenticate with a Bearer descriptor"
     );
   });
 });
 
 describe("a step-up refusal answering its request", () => {
-  const stepUp = recordStepUp(Effect.fail(new Action.Forbidden({ scopes: ["write"] })));
-
-  it.effect("answers an MCP request however it ended, its tool's failure being a result", () =>
-    Effect.gen(function* () {
-      const answered = yield* answerStepUp(
-        Effect.catch(stepUp, () => Effect.succeed(HttpServerResponse.empty())),
-        undefined,
-      );
-
-      expect(answered.status).toBe(403);
-      expect((yield* answerStepUp(stepUp, undefined)).status).toBe(403);
-    }),
+  const stepUp = recordStepUp(
+    Effect.fail(new Action.Forbidden({ scopes: ["write"] }))
   );
 
-  it.effect("keeps a defect or an interruption after the refusal as the request's own", () =>
-    Effect.gen(function* () {
-      const broken = yield* Effect.exit(
-        answerStepUp(Effect.ensuring(stepUp, Effect.die("finalizer")), undefined),
-      );
+  it.effect(
+    "answers an MCP request however it ended, its tool's failure being a result",
+    () =>
+      Effect.gen(function* () {
+        const answered = yield* answerStepUp(
+          Effect.orElseSucceed(stepUp, () => HttpServerResponse.empty()),
+          undefined
+        );
 
-      const interrupted = yield* Effect.exit(
-        answerStepUp(Effect.ensuring(stepUp, Effect.interrupt), undefined),
-      );
+        expect(answered.status).toBe(403);
+        expect((yield* answerStepUp(stepUp, undefined)).status).toBe(403);
+      })
+  );
 
-      expect(Exit.isFailure(broken) && Cause.hasDies(broken.cause)).toBe(true);
-      expect(Exit.isFailure(interrupted) && Cause.hasInterrupts(interrupted.cause)).toBe(true);
-    }),
+  it.effect(
+    "keeps a defect or an interruption after the refusal as the request's own",
+    () =>
+      Effect.gen(function* () {
+        const broken = yield* Effect.exit(
+          answerStepUp(
+            Effect.ensuring(stepUp, Effect.die("finalizer")),
+            undefined
+          )
+        );
+
+        const interrupted = yield* Effect.exit(
+          answerStepUp(Effect.ensuring(stepUp, Effect.interrupt), undefined)
+        );
+
+        expect(Exit.isFailure(broken) && Cause.hasDies(broken.cause)).toBe(
+          true
+        );
+        expect(
+          Exit.isFailure(interrupted) && Cause.hasInterrupts(interrupted.cause)
+        ).toBe(true);
+      })
   );
 });
 
 describe("the Refusal and BuiltIn schemas", () => {
-  class Throttled extends Schema.TaggedError<Throttled>()("Throttled", {}) {}
+  class Throttled extends Schema.TaggedError<
+    Throttled,
+    { readonly brand: unique symbol }
+  >()("Throttled", {}) {}
 
   it("tell a refusal and a built-in failure apart from an error of the application's", () => {
     const errors = [
@@ -266,8 +353,18 @@ describe("the Refusal and BuiltIn schemas", () => {
       new Throttled(),
     ];
 
-    expect(errors.map(Schema.is(Action.Refusal))).toEqual([true, true, false, false]);
-    expect(errors.map(Schema.is(Action.BuiltIn))).toEqual([true, true, true, false]);
+    expect(errors.map(Schema.is(Action.Refusal))).toStrictEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
+    expect(errors.map(Schema.is(Action.BuiltIn))).toStrictEqual([
+      true,
+      true,
+      true,
+      false,
+    ]);
   });
 });
 
@@ -303,33 +400,41 @@ describe("bearerTokenOf", () => {
     ["Basic x", undefined],
   ] as const)("reads %s", ([header, token]) => {
     expect(
-      Option.getOrUndefined(Option.map(Authentication.bearerTokenOf(header), Redacted.value)),
+      Option.getOrUndefined(
+        Option.map(Authentication.bearerTokenOf(header), Redacted.value)
+      )
     ).toBe(token);
   });
 
-  it.effect("reads a header as Effect's own Bearer scheme reads a request's", () =>
-    Effect.gen(function* () {
-      for (const header of headers) {
-        const request = new Request("http://localhost/", {
-          headers: header === undefined ? {} : { authorization: header },
-        });
+  it.effect(
+    "reads a header as Effect's own Bearer scheme reads a request's",
+    () =>
+      Effect.gen(function* () {
+        for (const header of headers) {
+          const request = new Request("http://localhost/", {
+            headers: header === undefined ? {} : { authorization: header },
+          });
 
-        const native = yield* HttpApiBuilder.securityDecode(HttpApiSecurity.bearer).pipe(
-          Effect.provideService(
-            HttpServerRequest.HttpServerRequest,
-            HttpServerRequest.fromWeb(request),
-          ),
-          Effect.provideService(HttpServerRequest.ParsedSearchParams, {}),
-        );
+          const native = yield* HttpApiBuilder.securityDecode(
+            HttpApiSecurity.bearer
+          ).pipe(
+            Effect.provideService(
+              HttpServerRequest.HttpServerRequest,
+              HttpServerRequest.fromWeb(request)
+            ),
+            Effect.provideService(HttpServerRequest.ParsedSearchParams, {})
+          );
 
-        const token = Authentication.bearerTokenOf(request.headers.get("authorization"));
+          const token = Authentication.bearerTokenOf(
+            request.headers.get("authorization")
+          );
 
-        expect([header, Option.getOrElse(Option.map(token, Redacted.value), () => "")]).toEqual([
-          header,
-          Redacted.value(native),
-        ]);
-      }
-    }),
+          expect([
+            header,
+            Option.getOrElse(Option.map(token, Redacted.value), () => ""),
+          ]).toStrictEqual([header, Redacted.value(native)]);
+        }
+      })
   );
 });
 
@@ -340,7 +445,9 @@ describe("an upgrade handler admitting outside the router", () => {
     caller: CurrentActor,
   });
 
-  const writingAuthorizedAsAdmit = Action.implement(Write, () => Effect.void, { authorize });
+  const writingAuthorizedAsAdmit = Action.implement(Write, () => Effect.void, {
+    authorize,
+  });
 
   it.for([
     undefined,
@@ -359,21 +466,23 @@ describe("an upgrade handler admitting outside the router", () => {
           challenge: response.headers.get("www-authenticate"),
         }),
         onSuccess: () => ({ status: 200, challenge: null }),
-      }),
+      })
     );
 
     const request = post("/api/write");
 
-    if (header !== undefined) request.headers.set("authorization", header);
+    if (header !== undefined) {
+      request.headers.set("authorization", header);
+    }
 
     const response = await serve(
       ActionHttp.layer(
         ActionHttp.make([Write], { authentication: Login }),
-        writingAuthorizedAsAdmit,
-      ).pipe(Layer.provide(authenticate)),
+        writingAuthorizedAsAdmit
+      ).pipe(Layer.provide(authenticate))
     ).handler(request);
 
-    expect(admitted).toEqual({
+    expect(admitted).toStrictEqual({
       status: response.status,
       challenge: response.headers.get("www-authenticate"),
     });

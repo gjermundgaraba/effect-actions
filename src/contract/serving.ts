@@ -1,19 +1,20 @@
 import type * as Action from "./Action.js";
+import { Anyone, assertAuthentication } from "./caller.js";
+import type { Proving } from "./caller.js";
 import type * as Event from "./Event.js";
-import { Anyone, assertAuthentication, type Proving } from "./caller.js";
-import { type AnyEventImplementation, eventsOf, feedBuilders, selectEvents } from "./feed.js";
+import { eventsOf, feedBuilders, selectEvents } from "./feed.js";
+import type { AnyEventImplementation } from "./feed.js";
 import {
-  type AnyImplementation,
   assertHeld,
   Implementation,
   markingOthers,
   notHeld,
   provideBuilders,
   select,
-  type Served,
   servedBy,
   toList,
 } from "./implementation.js";
+import type { AnyImplementation, Served } from "./implementation.js";
 import { selection } from "./listed.js";
 import { assertDistinct, assertOnce, heldOnce } from "./names.js";
 
@@ -23,7 +24,7 @@ import { assertDistinct, assertOnce, heldOnce } from "./names.js";
  */
 export const selectFrom = (
   served: Served,
-  actions: ReadonlyArray<Action.Any | Event.Any> | undefined,
+  actions: ReadonlyArray<Action.Any | Event.Any> | undefined
 ) => {
   const listed = selection(actions);
 
@@ -34,6 +35,58 @@ export const selectFrom = (
 };
 
 /**
+ * The event implementations among `served` a binding of `bound` serves, each holding the served
+ * event types alone: those `listed` lists, or else every bound one, refusing implementations none
+ * of whose event types it binds, as `servedBy` refuses such action implementations.
+ */
+const eventsServedBy = (
+  what: string,
+  bound: readonly Event.Any[],
+  served: Served,
+  listed: readonly Event.Any[] | undefined
+): readonly AnyEventImplementation[] => {
+  const apps = eventsOf(served);
+
+  if (listed !== undefined) {
+    assertHeld(notHeld.byBinding, listed, bound);
+  }
+
+  const unbound = apps.filter(
+    (app) => !app.events.some((event) => bound.includes(event))
+  );
+
+  if (
+    listed === undefined &&
+    unbound.length > 0 &&
+    unbound.length === apps.length
+  ) {
+    const names = new Set(bound.map(({ name }) => name));
+
+    throw new Error(
+      `No event of these implementations is in this ${what}: ${markingOthers(
+        unbound.flatMap((app) => app.events),
+        names
+      )} (pass an implementation of a bound event, or bind one of these)`
+    );
+  }
+
+  const held = new Set(apps.flatMap((app) => app.events));
+
+  const selected = selectEvents(
+    apps,
+    listed ?? bound.filter((event) => held.has(event))
+  );
+
+  assertOnce(
+    "served event",
+    selected.flatMap((app) => app.events),
+    heldOnce
+  );
+
+  return selected;
+};
+
+/**
  * What `ActionHttp.layer` and `ActionRpc.layer` serve, with the checks they share: the actions
  * and event types `options.actions` lists, or every one of the binding's the implementations
  * hold; `authentication` is the binding's where a served contract is protected.
@@ -41,15 +94,15 @@ export const selectFrom = (
 export const servingOf = <D extends Proving>(
   what: string,
   binding: {
-    readonly actions: ReadonlyArray<Action.Any>;
-    readonly events: ReadonlyArray<Event.Any>;
+    readonly actions: readonly Action.Any[];
+    readonly events: readonly Event.Any[];
     readonly authentication?: D | undefined;
   },
   served: Served,
   options: {
     readonly actions?: ReadonlyArray<Action.Any | Event.Any> | undefined;
     readonly middleware?: ReadonlyArray<{ readonly key: string }> | undefined;
-  },
+  }
 ) => {
   const listed = selection(options.actions);
   const apps = servedBy(what, binding.actions, toList(served), listed.actions);
@@ -71,7 +124,9 @@ export const servingOf = <D extends Proving>(
     actions,
     events,
     eventTypes,
-    authentication: [...actions, ...eventTypes].some((contract) => contract.caller !== Anyone)
+    authentication: [...actions, ...eventTypes].some(
+      (contract) => contract.caller !== Anyone
+    )
       ? binding.authentication
       : undefined,
   };
@@ -82,50 +137,10 @@ export const servingOf = <D extends Proving>(
  * implementations', to a surface's layer.
  */
 export const provideServed = (served: {
-  readonly apps: ReadonlyArray<AnyImplementation>;
-  readonly events: ReadonlyArray<AnyEventImplementation>;
+  readonly apps: readonly AnyImplementation[];
+  readonly events: readonly AnyEventImplementation[];
 }) =>
   provideBuilders([
     ...served.apps.map((app) => Implementation.layerOf(app)),
     ...feedBuilders(served.events),
   ]);
-
-/**
- * The event implementations among `served` a binding of `bound` serves, each holding the served
- * event types alone: those `listed` lists, or else every bound one, refusing implementations none
- * of whose event types it binds, as `servedBy` refuses such action implementations.
- */
-const eventsServedBy = (
-  what: string,
-  bound: ReadonlyArray<Event.Any>,
-  served: Served,
-  listed: ReadonlyArray<Event.Any> | undefined,
-): ReadonlyArray<AnyEventImplementation> => {
-  const apps = eventsOf(served);
-
-  if (listed !== undefined) assertHeld(notHeld.byBinding, listed, bound);
-
-  const unbound = apps.filter((app) => !app.events.some((event) => bound.includes(event)));
-
-  if (listed === undefined && unbound.length > 0 && unbound.length === apps.length) {
-    const names = new Set(bound.map(({ name }) => name));
-
-    throw new Error(
-      `No event of these implementations is in this ${what}: ${markingOthers(
-        unbound.flatMap((app) => app.events),
-        names,
-      )} (pass an implementation of a bound event, or bind one of these)`,
-    );
-  }
-
-  const held = apps.flatMap((app) => app.events);
-  const selected = selectEvents(apps, listed ?? bound.filter((event) => held.includes(event)));
-
-  assertOnce(
-    "served event",
-    selected.flatMap((app) => app.events),
-    heldOnce,
-  );
-
-  return selected;
-};

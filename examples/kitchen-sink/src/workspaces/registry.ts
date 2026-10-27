@@ -1,5 +1,7 @@
 import { Context, Effect, Layer } from "effect";
-import { type Workspace, WorkspaceNotFound } from "./Workspaces.js";
+
+import { WorkspaceNotFound } from "./Workspaces.js";
+import type { Workspace } from "./Workspaces.js";
 
 /**
  * The tenants. Operators list and suspend them on the admin port; authentication reads the
@@ -8,11 +10,11 @@ import { type Workspace, WorkspaceNotFound } from "./Workspaces.js";
 export class WorkspaceRegistry extends Context.Service<
   WorkspaceRegistry,
   {
-    readonly list: Effect.Effect<ReadonlyArray<Workspace>>;
+    readonly list: Effect.Effect<readonly Workspace[]>;
     readonly get: (slug: string) => Effect.Effect<Workspace, WorkspaceNotFound>;
     readonly setSuspended: (
       slug: string,
-      suspended: boolean,
+      suspended: boolean
     ) => Effect.Effect<Workspace, WorkspaceNotFound>;
   }
 >()("tracker/WorkspaceRegistry") {
@@ -26,21 +28,25 @@ export class WorkspaceRegistry extends Context.Service<
     const get = Effect.fn("WorkspaceRegistry.get")(function* (slug: string) {
       const workspace = workspaces.get(slug);
 
-      if (workspace === undefined) return yield* new WorkspaceNotFound({ slug });
+      if (workspace === undefined) {
+        return yield* new WorkspaceNotFound({ slug });
+      }
 
       return workspace;
     });
 
     return WorkspaceRegistry.of({
-      list: Effect.sync(() => Array.from(workspaces.values())),
+      list: Effect.sync(() => [...workspaces.values()]),
       get,
-      setSuspended: Effect.fn("WorkspaceRegistry.setSuspended")(function* (slug, suspended) {
-        const workspace = { ...(yield* get(slug)), suspended };
+      setSuspended: Effect.fn("WorkspaceRegistry.setSuspended")(
+        function* (slug, suspended) {
+          const workspace = { ...(yield* get(slug)), suspended };
 
-        workspaces.set(slug, workspace);
+          workspaces.set(slug, workspace);
 
-        return workspace;
-      }),
+          return workspace;
+        }
+      ),
     });
   });
 }

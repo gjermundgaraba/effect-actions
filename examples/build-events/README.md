@@ -1,13 +1,6 @@
 # build-events
 
-A CI service whose events are watched by its members: `build.finished`, read from a store that
-can be asked what finished since a cursor, and `deploy.requested`, published by the action that
-requests a deploy, with no store to ask. Each member sees only the pipelines they may. It serves both, with the actions that cause
-them, as an MCP endpoint, as HTTP routes and as Effect RPC, delivers them by webhook, keeping its
-subscriptions past a restart, and watches them in process, over each surface, and from a command
-line. A second service, the notifier, watches failed builds by webhook. Two actions answer more
-than one value: `startBuild` reports progress as it runs, and `tailLog` answers a stream of a
-build's log lines.
+A CI service whose events are watched by its members: `build.finished`, read from a store that can be asked what finished since a cursor, and `deploy.requested`, published by the action that requests a deploy, with no store to ask. Each member sees only the pipelines they may. It serves both, with the actions that cause them, as an MCP endpoint, as HTTP routes and as Effect RPC, delivers them by webhook, keeping its subscriptions past a restart, and watches them in process, over each surface, and from a command line. A second service, the notifier, watches failed builds by webhook. Two actions answer more than one value: `startBuild` reports progress as it runs, and `tailLog` answers a stream of a build's log lines.
 
 ## Run it
 
@@ -63,28 +56,28 @@ test/
 
 ## Where to look
 
-| To see                                                  | Read                                        |
-| ------------------------------------------------------- | ------------------------------------------- |
-| An event type beside the actions of its domain          | `src/builds/Builds.ts`                      |
-| A check source, its cursor the store's own              | `src/builds/events.ts`                      |
-| A cursor that tells a restart apart, as `truncated`     | `src/builds/store.ts`                       |
-| An action reporting progress as it runs                 | `src/builds/handlers.ts`                    |
-| An action answering a stream                            | `src/builds/log.ts`                         |
-| What a member may see, checked in the data access       | `src/builds/store.ts`                       |
-| A log source, and each subscriber's `match`             | `src/deploys/events.ts`                     |
-| Publishing to a log source from an action               | `src/deploys/handlers.ts`                   |
-| Waking a check source's subscribers after a write       | `src/builds/handlers.ts`                    |
-| Something set up upstream while a subscription lasts    | `src/deploys/events.ts`                     |
-| Watching events in process, with an action causing them | `test/builds/events.test.ts`                |
-| Serving events over MCP, and what it needs of `Login`   | `src/routes.ts`                             |
-| Watching over MCP, by stream and by poll                | `test/routes.test.ts`                       |
-| Binding events to HTTP routes beside the actions        | `src/Api.ts`                                |
-| Watching over HTTP, by SSE and by JSON pages            | `test/http.test.ts`                         |
-| Serving events as stream rpcs, and their serialization  | `src/routes.ts`                             |
-| Watching over RPC                                       | `test/rpc.test.ts`                          |
-| Watching from a command line, as lines of JSON          | `src/commands.ts`                           |
-| Delivering events by webhook, and what it needs         | `src/routes.ts`, `src/server.ts`            |
-| Keeping webhook subscriptions past a restart            | `src/server.ts`, `src/identity/Identity.ts` |
-| Subscribing a callback, and checking each signature     | `test/webhooks.test.ts`                     |
-| Watching by webhook from a second service               | `src/notifier/routes.ts`                    |
-| Two services in memory, each calling the other          | `test/notifier.test.ts`                     |
+| To see | Read |
+| --- | --- |
+| An event type beside the actions of its domain | `src/builds/Builds.ts` |
+| A check source, its cursor the store's own | `src/builds/events.ts` |
+| A cursor that tells a restart apart, as `truncated` | `src/builds/store.ts` |
+| An action reporting progress as it runs | `src/builds/handlers.ts` |
+| An action answering a stream | `src/builds/log.ts` |
+| What a member may see, checked in the data access | `src/builds/store.ts` |
+| A log source, and each subscriber's `match` | `src/deploys/events.ts` |
+| Publishing to a log source from an action | `src/deploys/handlers.ts` |
+| Waking a check source's subscribers after a write | `src/builds/handlers.ts` |
+| Something set up upstream while a subscription lasts | `src/deploys/events.ts` |
+| Watching events in process, with an action causing them | `test/builds/events.test.ts` |
+| Serving events over MCP, and what it needs of `Login` | `src/routes.ts` |
+| Watching over MCP, by stream and by poll | `test/routes.test.ts` |
+| Binding events to HTTP routes beside the actions | `src/Api.ts` |
+| Watching over HTTP, by SSE and by JSON pages | `test/http.test.ts` |
+| Serving events as stream rpcs, and their serialization | `src/routes.ts` |
+| Watching over RPC | `test/rpc.test.ts` |
+| Watching from a command line, as lines of JSON | `src/commands.ts` |
+| Delivering events by webhook, and what it needs | `src/routes.ts`, `src/server.ts` |
+| Keeping webhook subscriptions past a restart | `src/server.ts`, `src/identity/Identity.ts` |
+| Subscribing a callback, and checking each signature | `test/webhooks.test.ts` |
+| Watching by webhook from a second service | `src/notifier/routes.ts` |
+| Two services in memory, each calling the other | `test/notifier.test.ts` |

@@ -1,5 +1,6 @@
-import { Layer } from "effect";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { Layer } from "effect";
+
 import { messageEvents } from "./chat/events.js";
 import { messages, rooms } from "./chat/handlers.js";
 import { ResolveRoom, resolveRoom } from "./chat/room.js";

@@ -1,10 +1,17 @@
-import { NodeHttpClient, NodeRuntime, NodeServices } from "@effect/platform-node";
+import {
+  NodeHttpClient,
+  NodeRuntime,
+  NodeServices,
+} from "@effect/platform-node";
+import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { Config, Effect, flow, Option } from "effect";
 import { Command } from "effect/cli";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+
 import { Http } from "./Api.js";
+
+const unchanged = (request: HttpClientRequest.HttpClientRequest) => request;
 
 // Entrypoint: `node --import tsx examples/kitchen-sink/src/cli.ts list-issues`.
 // The members' CLI: a command per action of the binding, a flag per input field, each calling
@@ -20,10 +27,13 @@ const tracker = ActionCli.remote(Http, {
     // the JSON back). Its help says so: the action's description, which HTTP and MCP keep, says
     // what the JSON holds.
     listIssues: {
-      description: "List your workspace's issues, newest first, one line each: id, status, title.",
+      description:
+        "List your workspace's issues, newest first, one line each: id, status, title.",
       aliases: { limit: "n", status: "s" },
       render: ({ issues }) =>
-        issues.map(({ id, status, title }) => `${id}  ${status}  ${title}`).join("\n"),
+        issues
+          .map(({ id, status, title }) => `${id}  ${status}  ${title}`)
+          .join("\n"),
     },
     // `tracker get-issue ACME-1`: the id is an argument, not a flag.
     getIssue: {
@@ -42,7 +52,9 @@ const tracker = ActionCli.remote(Http, {
     // An action answering a stream: `render` takes each issue, printed as it arrives, one line
     // each; `--json` prints each as a line of JSON instead, so `tracker export-issues --json >
     // issues.jsonl` writes JSON Lines.
-    exportIssues: { render: ({ id, status, title }) => `${id}  ${status}  ${title}` },
+    exportIssues: {
+      render: ({ id, status, title }) => `${id}  ${status}  ${title}`,
+    },
     // `render` receives the decoded success, the image's bytes a `Uint8Array`.
     getAttachment: {
       positional: ["id"],
@@ -55,13 +67,11 @@ const tracker = ActionCli.remote(Http, {
   // a workspace its 403.
   client: Effect.gen(function* () {
     const baseUrl = yield* Config.String("TRACKER_URL").pipe(
-      Config.withDefault("http://127.0.0.1:3000"),
+      Config.withDefault("http://127.0.0.1:3000")
     );
 
     const token = yield* Config.option(Config.Redacted("TRACKER_TOKEN"));
     const workspace = yield* Config.option(Config.String("TRACKER_WORKSPACE"));
-
-    const unchanged = (request: HttpClientRequest.HttpClientRequest) => request;
 
     return yield* ActionHttp.client(Http, {
       baseUrl,
@@ -74,8 +84,8 @@ const tracker = ActionCli.remote(Http, {
           Option.match(workspace, {
             onNone: () => unchanged,
             onSome: (slug) => HttpClientRequest.setHeader("x-workspace", slug),
-          }),
-        ),
+          })
+        )
       ),
     });
   }),
@@ -84,5 +94,5 @@ const tracker = ActionCli.remote(Http, {
 Command.run(tracker, { version: "1.0.0" }).pipe(
   Effect.provide([NodeHttpClient.layerUndici, NodeServices.layer]),
   ActionCli.logToStderr,
-  NodeRuntime.runMain,
+  NodeRuntime.runMain()
 );

@@ -1,14 +1,10 @@
 # quickstart
 
-The smallest complete program: one action, served as a JSON route and as an MCP tool, called
-with its typed client. It is the skeleton of [notes-service](../notes-service/), which adds
-authentication, authorization, declared errors, a store, a CLI and a browser client to the same
-layout.
+The smallest complete program: one action, served as a JSON route and as an MCP tool, called with its typed client. It is the skeleton of [notes-service](../notes-service/), which adds authentication, authorization, declared errors, a store, a CLI and a browser client to the same layout.
 
 ## Run it
 
-From the repository root, after `vp install` (from an installed package, see
-[Run one](../README.md#run-one)):
+From the repository root, after `vp install` (from an installed package, see [Run one](../README.md#run-one)):
 
 ```sh
 node --import tsx examples/quickstart/src/server.ts     # 127.0.0.1:3000

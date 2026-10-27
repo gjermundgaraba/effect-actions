@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Predicate } from "effect";
+
 import { withEvents } from "../../src/mcp/bridge.js";
 import { httpProtocol } from "../../src/mcp/protocol.js";
 
@@ -7,10 +8,16 @@ const serving = { events: [], authentication: undefined };
 
 const groups = ["clientRpcs", "handlerRpcs", "serverNotificationRpcs"] as const;
 
-const requestsOf = (adapter: typeof httpProtocol, key: string): ReadonlyArray<string> => {
-  const group: unknown = Predicate.hasProperty(adapter, key) ? adapter[key] : undefined;
+const requestsOf = (
+  adapter: typeof httpProtocol,
+  key: string
+): readonly string[] => {
+  const group: unknown = Predicate.hasProperty(adapter, key)
+    ? adapter[key]
+    : undefined;
 
-  return Predicate.hasProperty(group, "requests") && group.requests instanceof Map
+  return Predicate.hasProperty(group, "requests") &&
+    group.requests instanceof Map
     ? [...group.requests.keys()].filter(Predicate.isString)
     : [];
 };
@@ -24,26 +31,33 @@ describe("the MCP events bridge, over Effect's 2026-07-28 adapter", () => {
     const extended = withEvents(httpProtocol, serving);
     const methods = ["events/list", "events/poll", "events/stream"];
 
-    expect(requestsOf(extended, "handlerRpcs")).toEqual(
-      expect.arrayContaining([...requestsOf(httpProtocol, "handlerRpcs"), ...methods]),
+    expect(requestsOf(extended, "handlerRpcs")).toStrictEqual(
+      expect.arrayContaining([
+        ...requestsOf(httpProtocol, "handlerRpcs"),
+        ...methods,
+      ])
     );
-    expect(requestsOf(extended, "clientRpcs")).toEqual(expect.arrayContaining(methods));
-    expect(requestsOf(extended, "serverNotificationRpcs")).toEqual(
+    expect(requestsOf(extended, "clientRpcs")).toStrictEqual(
+      expect.arrayContaining(methods)
+    );
+    expect(requestsOf(extended, "serverNotificationRpcs")).toStrictEqual(
       expect.arrayContaining([
         "notifications/events/active",
         "notifications/events/event",
         "notifications/events/heartbeat",
         "notifications/events/error",
         "notifications/events/terminated",
-      ]),
+      ])
     );
   });
 
   it("names the effect line it supports where the adapter's groups moved", () => {
-    const moved = Object.defineProperty({ ...httpProtocol }, "handlerRpcs", { value: undefined });
+    const moved = Object.defineProperty({ ...httpProtocol }, "handlerRpcs", {
+      value: undefined,
+    });
 
     expect(() => withEvents(moved, serving)).toThrow(
-      "Effect's MCP 2026-07-28 adapter holds no handlerRpcs group: effect-actions supports MCP events on effect 4.0.x (install the effect version its peer range names)",
+      "Effect's MCP 2026-07-28 adapter holds no handlerRpcs group: effect-actions supports MCP events on effect 4.0.x (install the effect version its peer range names)"
     );
   });
 });

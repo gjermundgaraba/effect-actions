@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+
 import { CurrentMember } from "../../src/identity/Identity.js";
 import { members } from "../../src/identity/members.js";
 

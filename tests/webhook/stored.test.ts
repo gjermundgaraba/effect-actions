@@ -1,8 +1,10 @@
 import { expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Option, Schema, Scope } from "effect";
 import { KeyValueStore } from "effect/persistence";
+
 import { WebhookSecret } from "../../src/contract/callback.js";
-import { makeStorage, type Stored } from "../../src/webhook/stored.js";
+import { makeStorage } from "../../src/webhook/stored.js";
+import type { Stored } from "../../src/webhook/stored.js";
 import { secretOf, settled } from "../support/webhook.js";
 
 const record: Stored = {
@@ -16,21 +18,25 @@ const record: Stored = {
   status: { active: true, lastDeliveryAt: null, lastError: null },
 };
 
-it.effect("writes what is marked as the layer closes, before its writer has run", () =>
-  Effect.gen(function* () {
-    const store = yield* KeyValueStore.KeyValueStore;
-    const scope = yield* Scope.make();
-    const storage = yield* makeStorage(store).pipe(Scope.provide(scope));
+it.effect(
+  "writes what is marked as the layer closes, before its writer has run",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* KeyValueStore.KeyValueStore;
+      const scope = yield* Scope.make();
+      const storage = yield* makeStorage(store).pipe(Scope.provide(scope));
 
-    storage.mark("sub_alice", record);
+      storage.mark("sub_alice", record);
 
-    yield* Scope.close(scope, Exit.void);
+      yield* Scope.close(scope, Exit.void);
 
-    const reopened = yield* makeStorage(store);
+      const reopened = yield* makeStorage(store);
 
-    expect(reopened.ids()).toEqual(["sub_alice"]);
-    expect(yield* reopened.get("sub_alice")).toEqual(Option.some(record));
-  }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory)),
+      expect(reopened.ids()).toStrictEqual(["sub_alice"]);
+      expect(yield* reopened.get("sub_alice")).toStrictEqual(
+        Option.some(record)
+      );
+    }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory))
 );
 
 const key = "effect-actions/webhook/sub_alice";
@@ -39,10 +45,14 @@ const failingWhileDown = (store: KeyValueStore.KeyValueStore) => {
   const state = {
     down: false,
     writes: 0,
-    held: undefined as Deferred.Deferred<void> | undefined,
+    // SAFETY: a widening, not a narrowing: the field starts empty and may later hold a gate.
+    held: undefined as Deferred.Deferred<undefined> | undefined,
   };
 
-  const write = <A>(written: Effect.Effect<A, KeyValueStore.KeyValueStoreError>, at: string) =>
+  const write = <A>(
+    written: Effect.Effect<A, KeyValueStore.KeyValueStoreError>,
+    at: string
+  ) =>
     Effect.suspend(() => {
       state.writes += 1;
 
@@ -54,7 +64,7 @@ const failingWhileDown = (store: KeyValueStore.KeyValueStore) => {
 
       return Effect.andThen(
         state.held === undefined ? Effect.void : Deferred.await(state.held),
-        state.down ? Effect.fail(failed) : written,
+        state.down ? Effect.fail(failed) : written
       );
     });
 
@@ -71,41 +81,43 @@ const failingWhileDown = (store: KeyValueStore.KeyValueStore) => {
   };
 };
 
-it.effect("writes a removal again whose write failed, once a later mark or the close comes", () =>
-  Effect.gen(function* () {
-    const memory = yield* KeyValueStore.KeyValueStore;
-    const { state, store } = failingWhileDown(memory);
-    const scope = yield* Scope.make();
-    const storage = yield* makeStorage(store).pipe(Scope.provide(scope));
+it.effect(
+  "writes a removal again whose write failed, once a later mark or the close comes",
+  () =>
+    Effect.gen(function* () {
+      const memory = yield* KeyValueStore.KeyValueStore;
+      const { state, store } = failingWhileDown(memory);
+      const scope = yield* Scope.make();
+      const storage = yield* makeStorage(store).pipe(Scope.provide(scope));
 
-    storage.mark("sub_alice", record);
+      storage.mark("sub_alice", record);
 
-    yield* settled(() => state.writes === 2);
+      yield* settled(() => state.writes === 2);
 
-    state.down = true;
-    storage.mark("sub_alice", undefined);
+      state.down = true;
+      storage.mark("sub_alice", undefined);
 
-    yield* settled(() => state.writes === 3);
-    yield* settled();
+      yield* settled(() => state.writes === 3);
+      yield* settled();
 
-    const once = state.writes;
+      const once = state.writes;
 
-    storage.mark("sub_bob", undefined);
+      storage.mark("sub_bob", undefined);
 
-    yield* settled(() => state.writes > once);
+      yield* settled(() => state.writes > once);
 
-    const again = state.writes;
+      const again = state.writes;
 
-    state.down = false;
+      state.down = false;
 
-    yield* Scope.close(scope, Exit.void);
+      yield* Scope.close(scope, Exit.void);
 
-    const reopened = yield* makeStorage(memory);
+      const reopened = yield* makeStorage(memory);
 
-    expect([once, again]).toEqual([3, 5]);
-    expect(reopened.ids()).toEqual([]);
-    expect(yield* memory.has(key)).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory)),
+      expect([once, again]).toStrictEqual([3, 5]);
+      expect(reopened.ids()).toStrictEqual([]);
+      expect(yield* memory.has(key)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory))
 );
 
 it.effect("keeps a mark made as an earlier one of its id is written", () =>
@@ -114,7 +126,7 @@ it.effect("keeps a mark made as an earlier one of its id is written", () =>
     const { state, store } = failingWhileDown(memory);
     const scope = yield* Scope.make();
     const storage = yield* makeStorage(store).pipe(Scope.provide(scope));
-    const held = yield* Deferred.make<void>();
+    const held = yield* Deferred.make<undefined>();
 
     state.held = held;
     storage.mark("sub_alice", record);
@@ -129,7 +141,7 @@ it.effect("keeps a mark made as an earlier one of its id is written", () =>
 
     const reopened = yield* makeStorage(memory);
 
-    expect(reopened.ids()).toEqual([]);
+    expect(reopened.ids()).toStrictEqual([]);
     expect(yield* memory.has(key)).toBe(false);
-  }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory)),
+  }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory))
 );

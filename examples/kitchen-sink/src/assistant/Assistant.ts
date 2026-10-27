@@ -1,5 +1,6 @@
-import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
+import { Schema } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 
 // The assistant behind a route: a model working on the issues with the tools of
@@ -16,31 +17,35 @@ import { CurrentMember } from "../identity/Identity.js";
 export const Turn = Schema.Struct({
   conversation: Schema.String,
   text: Schema.String,
-  ran: Schema.Array(Schema.Struct({ tool: Schema.String, failed: Schema.Boolean })),
+  ran: Schema.Array(
+    Schema.Struct({ tool: Schema.String, failed: Schema.Boolean })
+  ),
   waiting: Schema.Array(
     Schema.Struct({
       approvalId: Schema.String,
       tool: Schema.String,
       // The arguments the model gave the call, as JSON text: what the member approves.
       arguments: Schema.String,
-    }),
+    })
   ),
 });
 
 // Another member's conversation is not found either: an id tells nothing of who holds it.
-export class ConversationNotFound extends Schema.TaggedError<ConversationNotFound>()(
+export class ConversationNotFound extends Schema.TaggedError<
+  ConversationNotFound,
+  { readonly brand: unique symbol }
+>()(
   "ConversationNotFound",
   { conversation: Schema.String },
-  { httpApiStatus: 404 },
+  { httpApiStatus: 404 }
 ) {}
 
 // The model failed in the middle of a turn. The conversation is over: its history holds
 // nothing of that turn, so it no longer says which calls ran.
-export class AssistantFailed extends Schema.TaggedError<AssistantFailed>()(
-  "AssistantFailed",
-  { message: Schema.String },
-  { httpApiStatus: 502 },
-) {}
+export class AssistantFailed extends Schema.TaggedError<
+  AssistantFailed,
+  { readonly brand: unique symbol }
+>()("AssistantFailed", { message: Schema.String }, { httpApiStatus: 502 }) {}
 
 export const AskAssistant = Action.make("askAssistant", {
   description:
@@ -58,19 +63,20 @@ export const AskAssistant = Action.make("askAssistant", {
 });
 
 export const AnswerAssistant = Action.make("answerAssistant", {
-  description: "Approve or deny the calls a turn of your conversation waits for.",
+  description:
+    "Approve or deny the calls a turn of your conversation waits for.",
   input: {
     conversation: Schema.String,
     // Each request once. Effect acts on every answer it is given: an `approvalId` approved
     // twice in one request would run its call twice.
     answers: Schema.Array(
-      Schema.Struct({ approvalId: Schema.String, approved: Schema.Boolean }),
+      Schema.Struct({ approvalId: Schema.String, approved: Schema.Boolean })
     ).check(
       Schema.makeFilter(
         (answers) =>
-          new Set(answers.map(({ approvalId }) => approvalId)).size === answers.length ||
-          "Answer each approvalId once",
-      ),
+          new Set(answers.map(({ approvalId }) => approvalId)).size ===
+            answers.length || "Answer each approvalId once"
+      )
     ),
   },
   success: Turn,

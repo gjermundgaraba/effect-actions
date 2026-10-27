@@ -1,7 +1,8 @@
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+
 import { MemberActions } from "./Actions.js";
-import { IssueChanged } from "./issues/Issues.js";
 import { QuotaExceeded, Session } from "./identity/Identity.js";
+import { IssueChanged } from "./issues/Issues.js";
 
 // The web app's binding: the members' actions as Effect RPC, one native rpc per action, and
 // `issue.changed` as a stream rpc, over one WebSocket. Browser-safe, as the HTTP binding is. It

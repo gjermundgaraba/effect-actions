@@ -1,6 +1,7 @@
-import { Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Schema } from "effect";
+
 import { CurrentMember } from "../identity/Identity.js";
 
 // A message's `id` counts up within its room, so a client asks for what came after the last
@@ -16,19 +17,17 @@ export type Message = typeof Message.Type;
 // A declared error is part of the contract: every client decodes it as this class. Its status
 // is for a JSON binding, should these actions be served as one too: an rpc carries no status,
 // and an error without one answers 422 over HTTP.
-export class MessageNotFound extends Schema.TaggedError<MessageNotFound>()(
-  "MessageNotFound",
-  { id: Schema.Int },
-  { httpApiStatus: 404 },
-) {}
+export class MessageNotFound extends Schema.TaggedError<
+  MessageNotFound,
+  { readonly brand: unique symbol }
+>()("MessageNotFound", { id: Schema.Int }, { httpApiStatus: 404 }) {}
 
 // A refusal carries what the caller sent and no more: who wrote the message is for the actions
 // that read it, under their own rule.
-export class NotAuthor extends Schema.TaggedError<NotAuthor>()(
-  "NotAuthor",
-  { id: Schema.Int },
-  { httpApiStatus: 403 },
-) {}
+export class NotAuthor extends Schema.TaggedError<
+  NotAuthor,
+  { readonly brand: unique symbol }
+>()("NotAuthor", { id: Schema.Int }, { httpApiStatus: 403 }) {}
 
 // Which room a call is about is not an input of any action: it travels beside the call, in
 // this header, as the token does, because `authorize` sees the action and not its input, and
@@ -45,9 +44,12 @@ export const defaultRoom = "lobby";
 // tells a signed-out caller every room's name and how many messages it holds, a room appearing
 // once someone posts: decide whether yours may.
 export const ListRooms = Action.make("listRooms", {
-  description: "List the rooms someone has posted in, and how many messages each holds.",
+  description:
+    "List the rooms someone has posted in, and how many messages each holds.",
   success: {
-    rooms: Schema.Array(Schema.Struct({ name: Schema.String, messages: Schema.Int })),
+    rooms: Schema.Array(
+      Schema.Struct({ name: Schema.String, messages: Schema.Int })
+    ),
   },
   readOnly: true,
   caller: Action.Anyone,
@@ -68,7 +70,9 @@ export const ReadMessages = Action.make("readMessages", {
 export const PostMessage = Action.make("postMessage", {
   ...signedIn,
   description: "Post a message to the room.",
-  input: { text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)) },
+  input: {
+    text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  },
   success: Message,
   readOnly: false,
 });

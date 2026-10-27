@@ -1,8 +1,9 @@
-import { Effect, Layer, Option, Redacted, Schema } from "effect";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import { Effect, Layer, Option, Redacted, Schema } from "effect";
+
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { CurrentUser, Login } from "./app.js";
 import { appended, textsSince } from "./texts.js";
@@ -25,7 +26,9 @@ export const Statused = Event.make("status.set", {
   caller: CurrentUser,
 });
 
-export const Watched = ActionRpc.make([Noted, Said, Statused], { authentication: Login });
+export const Watched = ActionRpc.make([Noted, Said, Statused], {
+  authentication: Login,
+});
 
 const statusKey = "status";
 
@@ -41,13 +44,13 @@ const noted = Event.implement(
     check: (_input: typeof Noted.input.Type, cursor: string | null) =>
       textsSince(storage, notesKey, "n", cursor),
   })),
-  { authorize: Event.allowAll },
+  { authorize: Event.allowAll }
 );
 
 const said = Event.implement(
   Said,
   { log: {}, match: (_input, data) => data.text.length > 0 },
-  { authorize: Event.allowAll },
+  { authorize: Event.allowAll }
 );
 
 const statused = Event.implement(
@@ -55,18 +58,20 @@ const statused = Event.implement(
   Effect.map(ActionDurableObject.State, ({ storage }) => ({
     current: () =>
       Effect.map(
-        Effect.promise(() => storage.get(statusKey)),
-        (stored) => ({ text: Option.getOrElse(statusOf(stored), () => "idle") }),
+        Effect.promise(async () => await storage.get(statusKey)),
+        (stored) => ({ text: Option.getOrElse(statusOf(stored), () => "idle") })
       ),
   })),
-  { authorize: Event.allowAll },
+  { authorize: Event.allowAll }
 );
 
 export const setStatus = (text: string) =>
   Effect.gen(function* () {
     const { storage } = yield* ActionDurableObject.State;
 
-    yield* Effect.promise(() => storage.put(statusKey, text));
+    yield* Effect.promise(async () => {
+      await storage.put(statusKey, text);
+    });
     yield* Event.Events.use((events) => events.notify(Statused));
   });
 
@@ -80,24 +85,28 @@ const revocable = Authentication.layer(
   Effect.map(
     ActionDurableObject.State,
     ({ storage }) =>
-      (token: Redacted.Redacted<string>) =>
+      (token: Redacted.Redacted) =>
         Effect.flatMap(
-          Effect.promise(() => storage.get(revokedKey(Redacted.value(token)))),
+          Effect.promise(
+            async () => await storage.get(revokedKey(Redacted.value(token)))
+          ),
           (revoked) =>
             revoked === true
-              ? Effect.fail(new Action.Unauthenticated({ message: "Revoked test token." }))
-              : Effect.succeed(Redacted.value(token)),
-        ),
-  ),
+              ? Effect.fail(
+                  new Action.Unauthenticated({ message: "Revoked test token." })
+                )
+              : Effect.succeed(Redacted.value(token))
+        )
+  )
 );
 
 const sources = [noted, said, statused];
 
 export const watchedRoutes = Layer.mergeAll(
   ActionRpc.layer(Watched, sources).pipe(
-    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" }))
   ),
   ActionRpc.layer(Watched, sources).pipe(
-    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/also" })),
-  ),
+    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/also" }))
+  )
 ).pipe(Layer.provide(revocable));
