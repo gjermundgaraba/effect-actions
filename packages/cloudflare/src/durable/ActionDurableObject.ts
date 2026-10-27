@@ -215,7 +215,7 @@ export interface Options<
    *
    * - A failure is logged and retried 2 seconds later, doubling, six times, as the runtime retries a plain object's alarm, then hourly until a run succeeds, never dropped: the object's `alarm` resolves, so the runtime records no failure.
    * - A run an eviction, a deploy or a crash cuts off runs again at its retry's time, counted in `retryCount` as a failure, so a run may repeat: make what it sends idempotent.
-   * - It runs once per `Alarm.set`: setting a time again replaces it, so a store setting it for its next expiry sets the earliest, and the option sets its next one itself.
+   * - It runs once for every time `Alarm.set` gave before its run, at the earliest: the option sets its next one itself.
    */
   readonly alarm?:
     | ((info: AlarmInvocationInfo) => Effect.Effect<void, AE, AR>)

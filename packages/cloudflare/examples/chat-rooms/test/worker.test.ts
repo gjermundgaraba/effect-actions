@@ -7,7 +7,7 @@ import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import type { Schema } from "effect";
-import { Effect, Schedule, Stream } from "effect";
+import { DateTime, Effect, Schedule, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { TestClock } from "effect/testing";
 
@@ -536,21 +536,28 @@ describe("the Worker and its rooms", () => {
           text: "From yesterday.",
         });
 
+        const recent = yield* json.postMessage({
+          room: "design",
+          text: "From today.",
+        });
+
+        // A day passes for the first message alone: it is backdated, and the alarm set for its
+        // expiry, as its post would have set it a day ago. That time is past, so the runtime runs
+        // it at once: the test waits until it has set the next, for the recent one's.
         yield* Effect.promise(async () => {
-          await runInDurableObject(stub, (_, state) => {
+          await runInDurableObject(stub, async (room, state) => {
             state.storage.sql.exec(
               "UPDATE messages SET at = at - ? WHERE id = ?",
               day,
               old.id
             );
-          });
-        });
 
-        // The next post sets the alarm for the day-old message's expiry, already past, so the
-        // runtime runs it at once: the test waits until it has set the next, for the recent one's.
-        const recent = yield* json.postMessage({
-          room: "design",
-          text: "From today.",
+            await room.run(
+              ActionDurableObject.Alarm.use((alarm) =>
+                alarm.set(DateTime.makeUnsafe(old.at))
+              )
+            );
+          });
         });
 
         yield* eventually(

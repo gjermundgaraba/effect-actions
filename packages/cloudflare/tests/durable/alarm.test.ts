@@ -1,10 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { Clock, Effect, Exit, Fiber } from "effect";
+import { Clock, DateTime, Effect, Exit, Fiber, Schema } from "effect";
 import { TestClock } from "effect/testing";
 
-import { alarmPrefix, makeSchedule } from "../../src/durable/alarm.js";
+import {
+  alarmOf,
+  alarmPrefix,
+  applicationOwner,
+  makeSchedule,
+} from "../../src/durable/alarm.js";
 
 const hour = 60 * 60 * 1000;
 
@@ -48,6 +53,21 @@ const recording = (ran: string[], name: string) => () =>
   Effect.sync(() => {
     ran.push(name);
   });
+
+const Seconds = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 4 }));
+
+const Step = Schema.Union([
+  Schema.TaggedStruct("Set", { seconds: Seconds }),
+  Schema.TaggedStruct("Clear", {}),
+  Schema.TaggedStruct("Run", {
+    sets: Schema.Array(Seconds).check(Schema.isBetweenLength(0, 3)),
+    fails: Schema.Boolean,
+  }),
+]);
+
+const documentedBackoff = [2000, 4000, 8000, 16_000, 32_000, 64_000];
+
+const retryAfter = (attempt: number) => documentedBackoff[attempt - 1] ?? hour;
 
 describe("the alarm schedule", () => {
   it.effect(
@@ -315,7 +335,7 @@ describe("the alarm schedule", () => {
   );
 
   it.effect(
-    "keeps a time set or cleared as a failing owner ran, in place of its retry",
+    "cancels a failing owner's retry when cleared as it ran with no time set afterwards, and keeps the earlier of its retry and a time set as it ran, a clear before it included",
     () =>
       Effect.gen(function* () {
         const {
@@ -325,7 +345,9 @@ describe("the alarm schedule", () => {
         } = yield* inObject((schedule, start, state) =>
           Effect.gen(function* () {
             yield* schedule.set("cleared", start + hour);
-            yield* schedule.set("moved", start + hour);
+            yield* schedule.set("later", start + hour);
+            yield* schedule.set("postponed", start + hour);
+            yield* schedule.set("sooner", start + hour);
             yield* TestClock.setTime(start + hour);
             yield* schedule.runDue({
               cleared: () =>
@@ -333,9 +355,20 @@ describe("the alarm schedule", () => {
                   schedule.clear("cleared"),
                   Effect.fail("unreachable")
                 ),
-              moved: () =>
+              later: () =>
                 Effect.andThen(
-                  schedule.set("moved", start + 5 * hour),
+                  schedule.set("later", start + 5 * hour),
+                  Effect.fail("unreachable")
+                ),
+              postponed: () =>
+                Effect.all([
+                  schedule.clear("postponed"),
+                  schedule.set("postponed", start + 5 * hour),
+                  Effect.fail("unreachable"),
+                ]),
+              sooner: () =>
+                Effect.andThen(
+                  schedule.set("sooner", start + hour + 1000),
                   Effect.fail("unreachable")
                 ),
             });
@@ -350,10 +383,52 @@ describe("the alarm schedule", () => {
 
         expect(result).toStrictEqual(
           Exit.succeed([
-            [`${alarmPrefix}moved`, { at: startedAt + 5 * hour, failures: 0 }],
+            [
+              `${alarmPrefix}later`,
+              { at: startedAt + hour + 2000, failures: 1 },
+            ],
+            [
+              `${alarmPrefix}postponed`,
+              { at: startedAt + hour + 2000, failures: 1 },
+            ],
+            [
+              `${alarmPrefix}sooner`,
+              { at: startedAt + hour + 1000, failures: 0 },
+            ],
           ])
         );
-        expect(alarm).toBe(startedAt + 5 * hour);
+        expect(alarm).toBe(startedAt + hour + 1000);
+      })
+  );
+
+  it.effect(
+    "reads the time 0.21.0 kept, marked running, for a run cut off as that run's retry",
+    () =>
+      Effect.gen(function* () {
+        const { result } = yield* inObject((schedule, start, state) =>
+          Effect.gen(function* () {
+            const retries: number[] = [];
+
+            yield* Effect.promise(async () => {
+              await state.storage.put(`${alarmPrefix}cut`, {
+                at: start + hour,
+                failures: 1,
+                running: true,
+              });
+            });
+            yield* TestClock.setTime(start + hour);
+            yield* schedule.runDue({
+              cut: (info) =>
+                Effect.sync(() => {
+                  retries.push(info.retryCount);
+                }),
+            });
+
+            return retries;
+          })
+        );
+
+        expect(result).toStrictEqual(Exit.succeed([1]));
       })
   );
 
@@ -457,6 +532,217 @@ describe("the alarm schedule", () => {
         yield* Effect.sleep("3 seconds");
 
         expect(yield* Effect.promise(async () => await failing.runs())).toBe(2);
+      })
+  );
+});
+
+describe("the application's alarm", () => {
+  it.effect.prop(
+    "runs the option no later than the earliest time set since it last ran or was cleared, or a failed run's retry if earlier",
+    { steps: Schema.Array(Step).check(Schema.isBetweenLength(8, 24)) },
+    ({ steps }) =>
+      Effect.gen(function* () {
+        const { result } = yield* inObject((schedule, start, state) =>
+          Effect.gen(function* () {
+            const alarm = alarmOf(schedule);
+
+            const aheadOfTheRuntimesClock = start + hour;
+
+            yield* TestClock.setTime(aheadOfTheRuntimesClock);
+
+            const actual: Array<{ alarm: number | null; retryCount?: number }> =
+              [];
+
+            const expected: Array<{
+              alarm: number | null;
+              retryCount?: number;
+            }> = [];
+
+            let due: number | null = null;
+            let failures = 0;
+
+            for (const step of steps) {
+              const now = yield* Clock.currentTimeMillis;
+
+              if (step._tag === "Set") {
+                const at = now + step.seconds * 1000;
+
+                yield* alarm.set(DateTime.makeUnsafe(at));
+
+                if (due === null || at < due) {
+                  due = at;
+                  failures = 0;
+                }
+
+                actual.push({
+                  alarm: yield* Effect.promise(
+                    async () => await state.storage.getAlarm()
+                  ),
+                });
+                expected.push({ alarm: due });
+              } else if (step._tag === "Clear") {
+                yield* alarm.clear;
+                due = null;
+                failures = 0;
+                actual.push({
+                  alarm: yield* Effect.promise(
+                    async () => await state.storage.getAlarm()
+                  ),
+                });
+                expected.push({ alarm: due });
+              } else if (due !== null) {
+                const ranAt: number = due;
+                let retryCount: number | undefined;
+
+                yield* TestClock.setTime(ranAt);
+                yield* schedule.runDue({
+                  [applicationOwner]: (info) =>
+                    Effect.andThen(
+                      Effect.forEach(
+                        step.sets,
+                        (seconds) =>
+                          alarm.set(
+                            DateTime.makeUnsafe(ranAt + seconds * 1000)
+                          ),
+                        { discard: true }
+                      ),
+                      Effect.suspend(() => {
+                        ({ retryCount } = info);
+
+                        return step.fails
+                          ? Effect.fail("unreachable")
+                          : Effect.void;
+                      })
+                    ),
+                });
+
+                const ranWith = failures;
+
+                const setAsItRan =
+                  step.sets.length === 0
+                    ? null
+                    : ranAt + Math.min(...step.sets) * 1000;
+
+                const retry = ranAt + retryAfter(failures + 1);
+
+                if (step.fails && (setAsItRan === null || retry < setAsItRan)) {
+                  due = retry;
+                  failures += 1;
+                } else {
+                  due = setAsItRan;
+                  failures = 0;
+                }
+
+                actual.push({
+                  alarm: yield* Effect.promise(
+                    async () => await state.storage.getAlarm()
+                  ),
+                  ...(retryCount === undefined ? {} : { retryCount }),
+                });
+                expected.push({ alarm: due, retryCount: ranWith });
+              }
+            }
+
+            return { actual, expected };
+          })
+        );
+
+        const { actual, expected } = yield* result;
+
+        expect(actual).toStrictEqual(expected);
+      }),
+    { timeout: 30_000, arbitrary: { runs: 100 } }
+  );
+
+  it.effect(
+    "keeps a failed run's retry before a later time, and an earlier time in its place, which runs as no retry",
+    () =>
+      Effect.gen(function* () {
+        const { result, start: startedAt } = yield* inObject(
+          (schedule, start, state) =>
+            Effect.gen(function* () {
+              const alarm = alarmOf(schedule);
+
+              const runtimeAlarm = Effect.promise(
+                async () => await state.storage.getAlarm()
+              );
+
+              yield* alarm.set(DateTime.makeUnsafe(start + hour));
+              yield* TestClock.setTime(start + hour);
+              yield* schedule.runDue({
+                [applicationOwner]: () => Effect.fail("unreachable"),
+              });
+
+              const retry = yield* runtimeAlarm;
+
+              yield* alarm.set(DateTime.makeUnsafe(start + 2 * hour));
+
+              const later = yield* runtimeAlarm;
+
+              yield* alarm.set(DateTime.makeUnsafe(start + hour + 1000));
+
+              const earlier = yield* runtimeAlarm;
+              const retryCounts: number[] = [];
+
+              yield* TestClock.setTime(start + hour + 1000);
+              yield* schedule.runDue({
+                [applicationOwner]: ({ retryCount }) =>
+                  Effect.sync(() => {
+                    retryCounts.push(retryCount);
+                  }),
+              });
+
+              return [retry, later, earlier, retryCounts];
+            })
+        );
+
+        expect(result).toStrictEqual(
+          Exit.succeed([
+            startedAt + hour + 2000,
+            startedAt + hour + 2000,
+            startedAt + hour + 1000,
+            [0],
+          ])
+        );
+      })
+  );
+
+  it.effect(
+    "keeps the retry of a run cut off before a later time set by the next instance, and an earlier time in its place",
+    () =>
+      Effect.gen(function* () {
+        const { result, start: startedAt } = yield* inObject(
+          (schedule, start, state) =>
+            Effect.gen(function* () {
+              const runtimeAlarm = Effect.promise(
+                async () => await state.storage.getAlarm()
+              );
+
+              yield* alarmOf(schedule).set(DateTime.makeUnsafe(start + hour));
+              yield* TestClock.setTime(start + hour);
+
+              const cut = yield* Effect.forkChild(
+                schedule.runDue({ [applicationOwner]: () => Effect.never })
+              );
+
+              yield* TestClock.adjust("0 millis");
+              yield* Fiber.interrupt(cut);
+
+              const next = alarmOf(makeSchedule(state));
+
+              yield* next.set(DateTime.makeUnsafe(start + 2 * hour));
+
+              const later = yield* runtimeAlarm;
+
+              yield* next.set(DateTime.makeUnsafe(start + hour + 1000));
+
+              return [later, yield* runtimeAlarm];
+            })
+        );
+
+        expect(result).toStrictEqual(
+          Exit.succeed([startedAt + hour + 2000, startedAt + hour + 1000])
+        );
       })
   );
 });

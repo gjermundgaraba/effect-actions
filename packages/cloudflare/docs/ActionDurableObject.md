@@ -224,7 +224,7 @@ Give each of a binding's contracts a key of its input, `rooms` in `routes.ts` ab
 
 ## Run an alarm
 
-Give `make` an `alarm`, and set when it runs from a handler or a store with the `Alarm` service: the room's store sets it for the oldest message's expiry and, each run, for the next ([chat-rooms/src/platform/sql-store.ts](../examples/chat-rooms/src/platform/sql-store.ts)), and `worker.ts` above gives the alarm the store the routes read. How it runs, and how a failure is retried, are on `ActionDurableObject.Options`' `alarm`; why `State`'s `storage.setAlarm` is not the way, on `ActionDurableObject.Alarm`.
+Give `make` an `alarm`, and set when it runs from a handler or a store with the `Alarm` service, which keeps the earliest time it is given: the room's store sets it for each message's expiry as it is posted and, each run, for the oldest left ([chat-rooms/src/platform/sql-store.ts](../examples/chat-rooms/src/platform/sql-store.ts)), and `worker.ts` above gives the alarm the store the routes read. How it runs, and how a failure is retried, are on `ActionDurableObject.Options`' `alarm`; how to postpone it, and why `State`'s `storage.setAlarm` is not the way, on `ActionDurableObject.Alarm`.
 
 ## Call an object from a Worker
 

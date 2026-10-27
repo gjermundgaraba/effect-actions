@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**`ActionDurableObject.Alarm.set` keeps the earliest time it is given**, so the object's `alarm` runs no later than each time set, where `set` replaced the time set before. A failed run's retry stays unless it was cleared as it ran with no time set afterwards, or a time set as it ran is earlier: a time set as a failing run ran replaced its retry. A time 0.21.0 kept for a run cut off is read as that run's retry.
+
+- Migrate: postpone a time with `clear`, then `set`; a `set` alone leaves an earlier time in place, and the `alarm` runs then.
+
 ## 0.21.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.6`. The `effect` peer is now `~4.0.5`.
