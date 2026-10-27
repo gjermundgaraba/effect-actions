@@ -132,6 +132,7 @@ Actions under another rule go in another `Action.implement` with its own `author
 
 A handler fails with the errors its action lists in `error`, and with the three built-in errors, `InvalidInput`, `Unauthenticated` and `Forbidden`. What a refusal answers on each surface is on `Action.Unauthenticated` and `Action.Forbidden`; what a declared error and bad input answer, on each surface's `layer`, `layerHttp`, `runStdio`, `make` or `command`; when to fail with `InvalidInput` yourself, on that class, as [kitchen-sink/src/attachments/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/attachments/handlers.ts) does.
 
+- **Add the errors a module adds to every action it serves, a proxy's or a store's, to contracts written elsewhere with `Action.withErrors`**, `pipe(action, Action.withErrors([Unavailable]))`, rather than restating each contract. It returns a new contract, which the module then implements and lists; its rules are on `Action.withErrors`.
 - **Map a client's `HttpClientError` and `SchemaError` to one declared error a caller can act on** ([mcp-tools/src/platform/print-farm.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/platform/print-farm.ts)). As defects, a model reads only a generic text.
 - **Internal failures are never sent** over HTTP, MCP and RPC: what reaches the log and the call's `ErrorReporter`s is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `ActionRpc.layer`; a Toolkit and a CLI make a defect the call's.
 

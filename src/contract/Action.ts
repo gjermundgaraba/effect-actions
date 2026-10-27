@@ -2,6 +2,7 @@ import {
   Array as Arr,
   Cause,
   Effect,
+  Function,
   Layer,
   Predicate,
   Schema,
@@ -438,6 +439,125 @@ export function make(name: string, options: Options): Any {
 
   return action;
 }
+
+const appendErrors = <
+  Name extends string,
+  Input extends Codec,
+  Success extends Codec,
+  ErrorSchemas extends Errors,
+  ReadOnly extends boolean,
+  Caller extends Options["caller"],
+  Progress extends Codec | undefined,
+  Key extends string | undefined,
+  const More extends Errors,
+>(
+  action: Action<
+    Name,
+    Input,
+    Success,
+    ErrorSchemas,
+    ReadOnly,
+    Caller,
+    Progress,
+    Key
+  >,
+  more: More
+): Action<
+  Name,
+  Input,
+  Success,
+  readonly [...ErrorSchemas, ...More],
+  ReadOnly,
+  Caller,
+  Progress,
+  Key
+> => {
+  const error: readonly [...ErrorSchemas, ...More] = [...action.error, ...more];
+  const appended = { ...action, error };
+
+  assertDistinctTags(`Action "${action.name}"`, projectedErrors(appended));
+
+  return appended;
+};
+
+/**
+ * `action` with the errors `more` declared after its own, as if `make` had been given them in
+ * `error`: its handler may fail with them, and every surface answers and every client decodes
+ * them. For errors a module adds to the actions it serves, such as a proxy's or a store's,
+ * whose contracts are written elsewhere: `pipe(action, Action.withErrors([Unavailable]))`, or
+ * `Action.withErrors(action, [Unavailable])`.
+ *
+ * **Gotchas**
+ *
+ * - It returns a new contract with the same name: implement, bind and list the value it returns, since surfaces match a contract by identity; the original and the copy in one surface are one name held twice.
+ * - A `_tag` that `more` shares with the action's own errors or a built-in one throws as `make` throws for one `error` list: reuse the one schema value, which is declared once.
+ */
+export const withErrors: {
+  <const More extends Errors>(
+    more: More
+  ): <
+    Name extends string,
+    Input extends Codec,
+    Success extends Codec,
+    ErrorSchemas extends Errors,
+    ReadOnly extends boolean,
+    Caller extends Options["caller"],
+    Progress extends Codec | undefined,
+    Key extends string | undefined,
+  >(
+    action: Action<
+      Name,
+      Input,
+      Success,
+      ErrorSchemas,
+      ReadOnly,
+      Caller,
+      Progress,
+      Key
+    >
+  ) => Action<
+    Name,
+    Input,
+    Success,
+    readonly [...ErrorSchemas, ...More],
+    ReadOnly,
+    Caller,
+    Progress,
+    Key
+  >;
+  <
+    Name extends string,
+    Input extends Codec,
+    Success extends Codec,
+    ErrorSchemas extends Errors,
+    ReadOnly extends boolean,
+    Caller extends Options["caller"],
+    Progress extends Codec | undefined,
+    Key extends string | undefined,
+    const More extends Errors,
+  >(
+    action: Action<
+      Name,
+      Input,
+      Success,
+      ErrorSchemas,
+      ReadOnly,
+      Caller,
+      Progress,
+      Key
+    >,
+    more: More
+  ): Action<
+    Name,
+    Input,
+    Success,
+    readonly [...ErrorSchemas, ...More],
+    ReadOnly,
+    Caller,
+    Progress,
+    Key
+  >;
+} = Function.dual(2, appendErrors);
 
 // Why: No signature refuses a list narrowed at run time, which is typed as holding members it may
 // not. Rejected: keying a list of unknown length by `string`, which holds only under
