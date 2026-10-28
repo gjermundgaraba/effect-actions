@@ -7,17 +7,12 @@ const Texts = Schema.Array(Schema.String);
 
 const textsOf = Schema.decodeUnknownOption(Texts);
 
-/** The texts kept under `key`, none where nothing is. */
 export const textsIn = (storage: DurableObjectStorage, key: string) =>
   Effect.map(
     Effect.promise(async () => await storage.get(key)),
     (stored) => Option.getOrElse(textsOf(stored), (): readonly string[] => [])
   );
 
-/**
- * A check source's page of the texts under `key` past `cursor`, each numbered from 1, `n`, its
- * event id `prefix` then `n`.
- */
 export const textsSince = (
   storage: DurableObjectStorage,
   key: string,
@@ -36,7 +31,6 @@ export const textsSince = (
     };
   });
 
-/** Appends `text` to the texts under `key`, then notifies `event`, whose check source reads them. */
 export const appended = (key: string, event: Event.Any, text: string) =>
   Effect.gen(function* () {
     const { storage } = yield* ActionDurableObject.State;

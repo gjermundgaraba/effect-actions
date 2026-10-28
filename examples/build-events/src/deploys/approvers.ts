@@ -3,11 +3,9 @@ import type { Scope } from "effect";
 
 import type { Environment } from "./Deploys.js";
 
-/** Who stands by to approve deploys, and to which environment. */
 export class Approvers extends Context.Service<
   Approvers,
   {
-    /** Stands `member` by to approve deploys to `environment`, every one where undefined, until the scope closes. */
     readonly standBy: (
       environment: Environment | undefined,
       member: string
@@ -17,7 +15,6 @@ export class Approvers extends Context.Service<
     ) => Effect.Effect<readonly string[]>;
   }
 >()("build-events/Approvers") {
-  // DEMO ONLY: approvers live in this process's memory, where a real one is a rota in a store.
   static readonly layerMemory = Layer.sync(Approvers, () => {
     const approvers: Array<{
       readonly environment: Environment | undefined;

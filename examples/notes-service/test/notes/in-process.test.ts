@@ -3,16 +3,13 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { Effect } from "effect";
 
 import { CurrentUser } from "../../src/identity/Identity.js";
-import { users } from "../../src/identity/users.js";
+import { demoUsers } from "../../src/identity/users.js";
 import { notes } from "../../src/notes/handlers.js";
 import { NoteNotFound } from "../../src/notes/Notes.js";
 import { NoteStore } from "../../src/notes/store.js";
 
-// What the implementation does, with no transport: `Action.client` runs the same decoding,
-// `authorize` and handler a server runs. The caller is provided around each call, as a server
-// provides it per request.
-const as = (user: keyof typeof users) =>
-  Effect.provideService(CurrentUser, users[user]);
+const as = (user: keyof typeof demoUsers) =>
+  Effect.provideService(CurrentUser, demoUsers[user]);
 
 describe("notes, in process", () => {
   it.effect("keeps each user's notes their own", () =>

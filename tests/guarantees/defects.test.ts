@@ -115,7 +115,7 @@ const served = [...failing, Status] as const;
 
 const app = Action.implement(served, {
   crash: () => Effect.die(defect),
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The failure under test: the contract broken, as plain JavaScript could.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   leak: () => Effect.fail(new Leaked({ id: "secret-id" }) as never),
   count: () => Effect.succeed(Infinity),
   brittle: () =>

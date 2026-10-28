@@ -4,23 +4,17 @@ import { Chat, Tool } from "effect/ai";
 import type { LanguageModel, Prompt } from "effect/ai";
 
 import type { Member } from "./identity/Identity.js";
-import { members } from "./identity/members.js";
+import { demoMembers } from "./identity/members.js";
 import { Permissions } from "./identity/permissions.js";
-import { tasksFile } from "./platform/tasks-file.js";
+import { demoTasksFile } from "./platform/tasks-file.js";
 import { scripted } from "./scripted.js";
 import { actingFor, layer, toolkit } from "./toolkit.js";
 
-// Entrypoint: `node --import tsx examples/assistant/src/agent.ts`.
-// A model working on the team's tasks with tools that run in this process: no server and no
-// port. Every tool call passes through the same `authorize` and handlers as the commands.
-
-// What a turn answers with: its text, the calls the model made and what they returned.
 type Response = LanguageModel.GenerateTextResponse<
   typeof toolkit.tools,
   "opaque"
 >;
 
-// Printing only.
 const report = (member: Member) => (response: Response) => {
   const waiting = new Set(
     response.content.flatMap((part) =>
@@ -51,33 +45,21 @@ const report = (member: Member) => (response: Response) => {
   );
 };
 
-// One turn of a conversation: the model reads the prompt and may call tools. The member is
-// provided around the whole turn, so the approval rule, `authorize` and the handlers of every
-// call in it see that member.
 const turn = (chat: Chat.Chat, member: Member, prompt: Prompt.RawInput) =>
   chat
     .generateText({ prompt, toolkit })
     .pipe(actingFor(member), Effect.tap(report(member)));
 
 const conversations = Effect.gen(function* () {
-  // A `Chat` keeps the conversation's history, and approval depends on it: an answer is matched
-  // to its request by `approvalId` in the prompt. The answer alone, sent through a bare
-  // `LanguageModel.generateText`, runs nothing. Without a `Chat`, send again the assistant
-  // message holding the call and its request, before the answer.
   const withAda = yield* Chat.empty;
 
-  // Ada's own task is added at once. The task for Grace is not run: the turn ends with a
-  // request for approval in place of that call's result.
   const asked = yield* turn(
     withAda,
-    members.ada,
+    demoMembers.ada,
     "Add the venue for me, invitations for Grace."
   );
 
-  // A real host shows each request to the person and waits. Their answers start the next turn,
-  // in which an approved call runs before the model is asked again. It runs as whoever that
-  // turn runs as, so the host provides the member who was asked: Ada still.
-  yield* turn(withAda, members.ada, [
+  yield* turn(withAda, demoMembers.ada, [
     {
       role: "tool",
       content: asked.content.flatMap((part) =>
@@ -94,10 +76,9 @@ const conversations = Effect.gen(function* () {
     },
   ]);
 
-  // The same toolkit, another member. The guest may read, so the write comes back refused.
   yield* turn(
     yield* Chat.empty,
-    members.guest,
+    demoMembers.guest,
     "What is there to do? Add lunch for me."
   );
 });
@@ -110,8 +91,7 @@ const adding = (id: string, title: string, assignee: string) =>
     params: { title, assignee },
   }) as const;
 
-// DEMO ONLY: what the model answers, request by request, so this runs without an API key.
-const model = scripted(
+const demoModel = scripted(
   [
     adding("1", "Book the venue", "ada"),
     adding("2", "Send invitations", "grace"),
@@ -126,11 +106,8 @@ const model = scripted(
 conversations.pipe(
   Effect.provide(
     Layer.mergeAll(
-      // A real `LanguageModel` plugs in here: the layer of a provider's model, with the layer
-      // of that provider's client, in place of the scripted one. Nothing else changes.
-      model,
-      // Startup services only: where tasks and permissions are kept.
-      layer.pipe(Layer.provide([tasksFile, Permissions.layerMemory]))
+      demoModel,
+      layer.pipe(Layer.provide([demoTasksFile, Permissions.layerMemory]))
     ).pipe(Layer.provideMerge(NodeServices.layer))
   ),
   NodeRuntime.runMain()

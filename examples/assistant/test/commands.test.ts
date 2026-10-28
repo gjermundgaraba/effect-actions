@@ -10,15 +10,10 @@ import type { Operator } from "../src/identity/Identity.js";
 import { Permissions } from "../src/identity/permissions.js";
 import { TaskStore } from "../src/tasks/store.js";
 
-// What the commands add to the implementations: their syntax and what they print. The services
-// are provided around a test, not on the command as cli.ts does, so the commands of one test
-// share one store in memory.
 const services = Layer.mergeAll(TaskStore.layerMemory, Permissions.layerMemory);
 
 const operator: Operator = { kind: "operator", id: "root" };
 
-// Effect's own runner, given arguments instead of the process's, and stdin the text given here.
-// The console of `it.effect` keeps every line printed, so a run returns the lines it added.
 const run = (args: readonly string[], stdin = "") =>
   Effect.gen(function* () {
     const before = (yield* TestConsole.logLines).length;

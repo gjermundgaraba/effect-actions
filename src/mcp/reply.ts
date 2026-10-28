@@ -122,13 +122,6 @@ export const isEventStream = (
   response: HttpClientResponse.HttpClientResponse
 ) => (response.headers["content-type"] ?? "").startsWith("text/event-stream");
 
-// Why: The parser fed by hand, not `Sse.decode`, which fails with `Retry` once it reads a
-// `retry:` directive and stops reading: one sent before a reply would lose the reply, and a watch,
-// which sets its own reconnect delay, would reconnect to it in a loop.
-/**
- * The data of each frame of the event stream `response` is, as it arrives: more than the parser
- * holds with no frame ending fails `method` on `name` with `FrameTooLarge`.
- */
 export const framesOf = (
   method: string,
   name: string,
@@ -161,12 +154,6 @@ export const framesOf = (
     );
   });
 
-/**
- * The messages of `response`, read as it arrives: the data of each frame of an event stream, or
- * the body itself as one. Each `notifications/progress` frame hands its value to `sink` and is
- * left out, so a long call holds the frames its reply is read from, not every value it reported.
- * A stateless request's notifications are its own.
- */
 export const bodyOf = (
   method: string,
   name: string,
@@ -190,7 +177,6 @@ export const bodyOf = (
       )
     : Effect.map(response.text, (text) => [text]);
 
-/** Fails with the error of `errors` that `text` decodes as, or with `otherwise`. */
 export const failWith = (
   errors: Action.Errors,
   text: string,

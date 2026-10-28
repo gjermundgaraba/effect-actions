@@ -12,7 +12,6 @@ export const Anyone: unique symbol = Symbol.for(
   "@gjermundgaraba/effect-actions/Anyone"
 );
 
-/** An authentication descriptor, as the checks read it: the identity it proves. */
 export interface Proving {
   readonly identity: { readonly key: string };
 }
@@ -31,10 +30,6 @@ export interface Named extends Keyed {
   readonly principal: (identity: Action.Any["input"]["Type"]) => string;
 }
 
-/**
- * The authentication of the surface the running call came through, which names its caller where
- * it has a `principal`: none in process, as `Action.client` calls.
- */
 export const CallerKeyed = Context.Reference<Keyed | undefined>(
   "effect-actions/CallerKeyed",
   {
@@ -42,15 +37,9 @@ export const CallerKeyed = Context.Reference<Keyed | undefined>(
   }
 );
 
-/** Whether `keyed` names each caller, its `principal` given. */
 export const isNamed = (keyed: Keyed | undefined): keyed is Named =>
   keyed?.principal !== undefined;
 
-/**
- * The principal of the caller of `called`, as `keyed` names it: a poll's subscriber, for its
- * `subscription` hook, and whose idempotency keys a call's are. None where `called` is public or
- * `keyed` has no `principal`: every caller is then one.
- */
 export const principalOf = (
   called: Pick<Called, "caller">,
   keyed: Keyed | undefined
@@ -79,7 +68,6 @@ export const assertAuthentication = (
   }
 };
 
-/** Refuses a declared `caller` that is neither `Anyone` nor an identity service. */
 export const assertCaller = (caller: Action.Options["caller"]): void => {
   if (caller !== Anyone && !Context.isKey(caller)) {
     throw new Error(

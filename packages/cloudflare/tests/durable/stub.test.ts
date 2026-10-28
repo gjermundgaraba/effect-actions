@@ -32,7 +32,11 @@ const rawOver = (
   stub: ActionDurableObject.Stub | (() => ActionDurableObject.Stub)
 ) =>
   RpcClient.make(PluginRpcs).pipe(
-    Effect.provide(ActionDurableObject.layerStubClient(stub))
+    Effect.provide(
+      ActionDurableObject.layerStubClient(
+        Predicate.isFunction(stub) ? stub : () => stub
+      )
+    )
   );
 
 const defectOf = <A, E>(exit: Exit.Exit<A, E>) =>
@@ -321,7 +325,7 @@ describe("layerStubClient", () => {
       Effect.gen(function* () {
         const client = yield* RpcClient.make(StreamRpcs).pipe(
           Effect.provide(
-            ActionDurableObject.layerStubClient(
+            ActionDurableObject.layerStubClient(() =>
               env.STREAMED.getByName("streams")
             )
           )
@@ -427,7 +431,9 @@ describe("layerStubClient", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          ActionDurableObject.layerStubClient(env.STUBBED.getByName("contract"))
+          ActionDurableObject.layerStubClient(() =>
+            env.STUBBED.getByName("contract")
+          )
         )
       )
   );
@@ -579,7 +585,9 @@ describe("client", () => {
 
       const pane = yield* RpcClient.make(PaneRpcs).pipe(
         Effect.provide(
-          ActionDurableObject.layerStubClient(env.PANE_HOST.getByName("pane"))
+          ActionDurableObject.layerStubClient(() =>
+            env.PANE_HOST.getByName("pane")
+          )
         )
       );
 

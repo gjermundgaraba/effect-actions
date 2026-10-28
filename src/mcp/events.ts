@@ -10,14 +10,10 @@ import {
   WebhookTarget,
 } from "../contract/subscribe.js";
 
-/** The extension's identifier, its key in `capabilities.extensions`. */
 export const extension = "io.modelcontextprotocol/events";
 
-/** The `_meta` key a push stream's notifications carry its request id under. */
 export const subscriptionIdKey = "io.modelcontextprotocol/subscriptionId";
 
-// Why: Beside SEP-3415's codes, `eventCodes`, provisional until it is accepted, core MCP's and
-// JSON-RPC's. tests/mcp/events.test.ts asserts them as sent.
 export const codes = {
   headerMismatch: -32_020,
   ...eventCodes,
@@ -29,10 +25,8 @@ const Meta = Schema.optional(Schema.Record(Schema.String, Schema.Json));
 
 const Arguments = Schema.optional(Schema.Record(Schema.String, Schema.Json));
 
-// Why: An absent cursor is `null`, in a request and in an answer, as SEP-3415 says.
 const Cursor = Schema.optional(Schema.NullOr(Schema.String));
 
-/** A JSON-RPC error as an `events/*` request fails with, and a termination carries. */
 export const WireError = Schema.Struct({
   code: Schema.Int,
   message: Schema.String,
@@ -41,17 +35,13 @@ export const WireError = Schema.Struct({
 
 export type WireError = typeof WireError.Type;
 
-/** What an `events/*` handler fails with: the JSON-RPC error it answers. */
 export class EventsError extends Schema.Error<
   EventsError,
   { readonly brand: unique symbol }
 >("effect-actions/McpEventsError")(WireError.fields) {
-  // Why: Each is the subscriber's answer, a refusal or a request it got wrong, as a tool call's
-  // is, and goes to no reporter; an internal failure's cause is reported where it is answered.
   override readonly [ErrorReporter.ignore] = true;
 }
 
-/** One event type as `events/list` lists it. */
 export const EventDescriptor = Schema.Struct({
   name: Schema.String,
   description: Schema.String,
@@ -62,7 +52,6 @@ export const EventDescriptor = Schema.Struct({
 
 export type EventDescriptor = typeof EventDescriptor.Type;
 
-/** An occurrence on the wire: in a poll's `events`, and the params of an event notification. */
 export const WireOccurrence = Schema.Struct({
   eventId: Schema.String,
   name: Schema.String,

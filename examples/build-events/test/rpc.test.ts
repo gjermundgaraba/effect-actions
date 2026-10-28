@@ -11,15 +11,12 @@ import { routes } from "../src/routes.js";
 import { Rpc } from "../src/Rpc.js";
 import { inMemory } from "./support/memory.js";
 
-// Effect's RPC client over HTTP to the real routes in memory, with the serialization the
-// server frames streams with.
 const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerNdjson),
   Layer.provide(Testing.layer(routes)),
   Layer.provide(inMemory())
 );
 
-// An rpc's credential is its own headers: each call or watch says who is calling.
 const as = (token: string) =>
   RpcClient.withHeaders({ authorization: `Bearer ${token}` });
 
@@ -32,7 +29,6 @@ describe("the service, over RPC", () => {
         .watch(BuildFinished)
         .pipe(Stream.take(1), Stream.runCollect, as("grace"), Effect.forkChild);
 
-      // The watch starts from now: let it take its first position before builds finish.
       yield* TestClock.adjust("0 millis");
       yield* client
         .finishBuild({ pipeline: "api", status: "passed" })

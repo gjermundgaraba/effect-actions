@@ -12,8 +12,6 @@ export const Note = Schema.Struct({
 
 export type Note = typeof Note.Type;
 
-// A declared error is part of the contract: every client decodes it as this class, and its
-// status is what HTTP answers with.
 export class NoteNotFound extends Schema.TaggedError<
   NoteNotFound,
   { readonly brand: unique symbol }
@@ -33,15 +31,10 @@ export class RequestConflict extends Schema.TaggedError<
   { readonly brand: unique symbol }
 >()("RequestConflict", { requestId: Schema.String }, { httpApiStatus: 409 }) {}
 
-// A description on an input field is that field's help on every surface: beside its flag or
-// argument in a command's `--help`, and in the input schema a model reads from the MCP tool
-// listing and the OpenAPI document. A field without one has a flag with no help.
 const Id = Schema.String.annotate({
   description: "The note's id, as the list of your notes shows it.",
 });
 
-// A check's `message` is what a caller reads when the value fails it, in place of the
-// generic "Expected a value with a length of at least 1". A model and a CLI user read it too.
 const Title = Schema.String.check(
   Schema.isMinLength(1, { message: "A note needs a title." }),
   Schema.isPattern(/^[^\r\n\u2028\u2029]*$/u, {
@@ -89,7 +82,6 @@ export const CreateNote = Action.make("createNote", {
   error: RequestConflict,
   readOnly: false,
   caller: CurrentUser,
-  // No `idempotentHint: true`: a call without a `requestId` creates a note each time.
   mcp: { destructiveHint: false },
 });
 
@@ -110,8 +102,6 @@ export const UpdateNote = Action.make("updateNote", {
   error: [NoteNotFound, NoteChanged],
   readOnly: false,
   caller: CurrentUser,
-  // No `destructiveHint`: an update replaces the body, so it is destructive, MCP's default for
-  // a write. `createNote` and `importNotes`, which only add, say `false`.
 });
 
 export const DeleteNote = Action.make("deleteNote", {
@@ -122,8 +112,6 @@ export const DeleteNote = Action.make("deleteNote", {
   caller: CurrentUser,
 });
 
-// Imports share note content with `createNote`, but exclude request keys because bulk creation
-// does not deduplicate.
 export const ImportNotes = Action.make("importNotes", {
   description:
     "Create several notes at once, such as those `notes export` wrote. Every note is checked " +

@@ -4,9 +4,6 @@ import type { Response } from "effect/ai";
 
 type Reply = readonly Response.PartEncoded[];
 
-// A model for a test: it answers its first request with the first reply it was given, its
-// second with the second, whatever the prompt says. A reply is the parts a provider sends, or
-// an Effect that makes them: `down` to fail as a provider that is down does, or one that waits.
 export const scripted = (
   ...replies: ReadonlyArray<Reply | Effect.Effect<Reply, AiError.AiError>>
 ) =>

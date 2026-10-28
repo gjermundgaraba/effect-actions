@@ -12,11 +12,6 @@ import { Rpc, RpcGroup } from "effect/rpc";
 
 import { RoomPreview } from "./Lobby.js";
 
-// The lobby's own API, over its stub: a room tells it its latest activity, and the Worker reads
-// the previews. A plain Effect `RpcGroup`, not actions: no page calls it, so it needs no contract
-// checks, no authentication and no JSON route, and nothing authenticates a stub call anyway, as
-// only a binding reaches it. Why a report heard late never overwrites a later one is at
-// `tellLobby`, in lobby-stubs.ts, which sends it.
 export const LobbyCalls = RpcGroup.make(
   Rpc.make("roomChanged", { payload: RoomPreview }),
   Rpc.make("previews", { success: Schema.Array(RoomPreview) })
@@ -25,7 +20,7 @@ export const LobbyCalls = RpcGroup.make(
 
 Its handlers read the store the instance built ([chat-rooms/src/lobby/handlers.ts](../examples/chat-rooms/src/lobby/handlers.ts)), and `RpcServer.layer(LobbyCalls)` over them is the object's `calls`, beside its routes ([chat-rooms/src/routes.ts](../examples/chat-rooms/src/routes.ts)), given to `make` in [chat-rooms/src/worker.ts](../examples/chat-rooms/src/worker.ts). `make` gives the calls their protocol; what crosses it, as values and not JSON, what it refuses and what the calls may require are on `ActionDurableObject.Options`' `calls`.
 
-A plain group suits an object's own API, which no page calls. Actions served on other surfaces too are served the same way, `calls: ActionRpc.layer(RoomRpc, room)`, and called with `ActionRpc.client(RoomRpc)` over `layerStubClient(env.CHAT_ROOM.getByName(room))`: their values cross as JSON, and a protected action authenticates each call from its headers, so the caller forwards the user's credential with `RpcClient.withHeaders`.
+A plain group suits an object's own API, which no page calls. Actions served on other surfaces too are served the same way, `calls: ActionRpc.layer(RoomRpc, room)`, and called with `ActionRpc.client(RoomRpc)` over `layerStubClient(() => env.CHAT_ROOM.getByName(room))`: their values cross as JSON, and a protected action authenticates each call from its headers, so the caller forwards the user's credential with `RpcClient.withHeaders`.
 
 ## Call it from a Worker or another object
 
@@ -42,25 +37,14 @@ import { MessageStore } from "../chat/store.js";
 import { LobbyCalls } from "../lobby/Calls.js";
 import { LobbyHost } from "../lobby/host.js";
 
-// The lobby is one object, named `lobby`: a new stub for each call, read from `env` as the call
-// is sent, never as the module loads.
 const lobbyStub = () => env.CHAT_LOBBY.getByName("lobby");
 
-// The lobby's object as the Worker reaches it, for the previews: a lobby that cannot be reached
-// is the deployment's failure, not the caller's, so it is a defect, the Worker answers 500, and
-// the cause is in its logs.
 export const layerLobbyHost = Layer.effect(LobbyHost)(
   Effect.map(ActionDurableObject.client(LobbyCalls), (lobby) =>
     LobbyHost.of({ previews: Effect.orDie(lobby(lobbyStub).previews()) })
   )
 );
 
-// The room's task, worker.ts's `lobby`: telling the lobby the room's latest activity. The room's
-// alarm runs its tasks one run at a time, each waiting for the lobby's answer, and each run reads
-// the activity as it is then: the lobby hears a room's reports in the order the room made them,
-// so a report heard late never overwrites a later one, and the last it hears is the room's
-// latest. A run repeated after a lost answer sends what the lobby holds, which `record` finds
-// unchanged, notifying no page.
 export const tellLobby = Effect.gen(function* () {
   const room = yield* Room;
   const latest = yield* MessageStore.use((store) => store.latest);
@@ -69,10 +53,6 @@ export const tellLobby = Effect.gen(function* () {
   yield* lobby(lobbyStub).roomChanged({ room, latestAt: latest?.at ?? null });
 });
 
-// A room's activity, a startup service of the room's: each change runs the `lobby` task after it,
-// on the room's alarm once the call has answered, and again until the lobby hears it, so a lobby
-// that cannot be reached fails no post and misses no change. `runAfter` marks the task before the
-// change and again after it, so a crash at any point leaves the task to the alarm.
 export const layerActivity = Layer.effect(Activity)(
   Effect.map(ActionDurableObject.Tasks, (tasks) =>
     Activity.of({ changing: (change) => tasks.runAfter("lobby", change) })
@@ -88,21 +68,13 @@ A Worker's entrypoint that is no Effect program, such as a `WorkerEntrypoint` me
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { Effect, Schema } from "effect";
 
-import { RoomName } from "./chat/Chat.js";
+import { DemoRoomName } from "./chat/Chat.js";
 import { LobbyHost } from "./lobby/host.js";
 import { layerLobbyHost } from "./platform/lobby-stubs.js";
 
-const decodeRoom = Schema.decodeUnknownEffect(RoomName);
+const decodeRoom = Schema.decodeUnknownEffect(DemoRoomName);
 
-// The rooms' activity for another Worker, over a service binding to this one's `RoomsEntrypoint`,
-// which worker.ts exports, as the lobby keeps it. A method of a `WorkerEntrypoint` is no Effect
-// program, so each call runs as one, given the lobby's Layer: its client is built in the request
-// that uses it and closed with it, which costs no I/O. Why a client kept across requests strands
-// is on `ActionDurableObject.layerStubClient`.
 export class RoomsEntrypoint extends WorkerEntrypoint {
-  // The calling Worker is another deployment, so its room is checked as any input is: an unknown
-  // room rejects the call with the schema's error, as a lobby that cannot be reached rejects it
-  // with the defect lobby-stubs.ts makes of it.
   async latestAt(room: string) {
     return await Effect.runPromise(
       Effect.flatMap(decodeRoom(room), (name) =>

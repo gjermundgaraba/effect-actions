@@ -3,14 +3,9 @@ import { Context, Effect, Layer } from "effect";
 import { MessageNotFound, NotAuthor } from "./Chat.js";
 import type { Message } from "./Chat.js";
 
-/**
- * Where messages live, by room. That only its author deletes a message is checked here, in the
- * data access, so no surface and no handler can skip it.
- */
 export class MessageStore extends Context.Service<
   MessageStore,
   {
-    /** The store's epoch: a message's id is unique within it, and a restarted memory store starts another. */
     readonly epoch: string;
     readonly rooms: Effect.Effect<
       ReadonlyArray<{ name: string; messages: number }>
@@ -19,7 +14,6 @@ export class MessageStore extends Context.Service<
       room: string,
       after: number
     ) => Effect.Effect<readonly Message[]>;
-    /** The id of the room's last message posted, kept or deleted: 0 for an empty room. */
     readonly last: (room: string) => Effect.Effect<number>;
     readonly post: (
       room: string,
@@ -33,9 +27,6 @@ export class MessageStore extends Context.Service<
     ) => Effect.Effect<void, MessageNotFound | NotAuthor>;
   }
 >()("live-rpc/MessageStore") {
-  // DEMO ONLY: memory, lost when the process stops, its ids then counting from 1 again, so each
-  // start is another epoch. A real store is another Layer of this service, chosen by the
-  // entrypoint, whose ids never repeat.
   static readonly layerMemory = Layer.sync(MessageStore, () => {
     const epoch = crypto.randomUUID();
 

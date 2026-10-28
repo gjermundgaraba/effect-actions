@@ -66,7 +66,6 @@ export const bodyOf = (delivery: Delivery) =>
 export const secretOf = (seed: number) =>
   `whsec_${Buffer.from(Array.from({ length: 32 }, (_, index) => (seed + index) % 256)).toString("base64")}`;
 
-/** Standard Webhooks' `v1,` signature of `id.timestamp.body` under `secret`, written apart. */
 export const signatureOf = async (
   secret: string,
   id: string | null,
@@ -110,19 +109,14 @@ interface Change {
   readonly onlyTenant?: string | undefined;
 }
 
-/** How a world serves its event, beside `Webhook.layer`'s options. */
 export interface WorldOptions extends Webhook.Options {
   readonly persist?: false | undefined;
-  /** A log source fed from this queue, in place of the check source. */
   readonly emitted?: Queue.Queue<Change> | undefined;
-  /** The store `persist` keeps subscriptions in, where they are kept. */
   readonly kept?: KeyValueStore.KeyValueStore | undefined;
   readonly over?: "HTTP" | "MCP" | "both" | undefined;
-  /** What answers each POST to a callback, in place of the world's recording receiver. */
   readonly callbacks?:
     | Layer.Layer<never, never, HttpRouter.HttpRouter>
     | undefined;
-  /** Whether the surfaces are given `Webhook.layer`; `true` by default. */
   readonly delivering?: boolean | undefined;
 }
 
@@ -399,12 +393,6 @@ const quietTurns = 3;
 
 const maxTurns = 10_000;
 
-/**
- * Waits, in real time, until `done` holds once no signing or in-process POST has been in flight
- * for three scheduler turns, dying with `done` named where it never does within 10,000 turns:
- * the test clock cannot see that work, and moved during it would let an attempt's 5-second
- * timeout or a retry's wait elapse in time the work never took.
- */
 export const settled = (
   done: () => boolean = () => true
 ): Effect.Effect<void> => {
@@ -423,10 +411,6 @@ export const settled = (
   return waited(0, 0);
 };
 
-/**
- * Steps the clock a second at a time, each step once `settled`, until `done`, dying with `done`
- * named where it does not within `seconds`, by default 3 hours.
- */
 export const until = (
   done: () => boolean,
   seconds = 3 * 60 * 60
@@ -443,7 +427,6 @@ export const until = (
       : Effect.andThen(TestClock.adjust("1 second"), until(done, seconds - 1));
   });
 
-/** Lets `seconds` pass, a second at a time, each step once `settled`, and settles once more. */
 export const passed = (seconds = 60): Effect.Effect<void> =>
   seconds <= 0
     ? settled()

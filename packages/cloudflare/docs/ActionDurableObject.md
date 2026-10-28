@@ -14,7 +14,7 @@ import { Effect, Layer, Schema } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import { Activity } from "./chat/activity.js";
-import { RoomName } from "./chat/Chat.js";
+import { DemoRoomName } from "./chat/Chat.js";
 import { Room } from "./chat/room.js";
 import { MessageStore } from "./chat/store.js";
 import { layerKvPreviews } from "./platform/kv-previews.js";
@@ -32,22 +32,10 @@ import {
   workerRoutes,
 } from "./routes.js";
 
-// The rooms for another Worker, over a service binding: a named entrypoint of this one.
 export { RoomsEntrypoint } from "./rooms-entrypoint.js";
 
-// Entrypoint, Wrangler's `main`: the composition root of the Worker and of every object. It
-// chooses the stores, the room and the stubs, and routes each request.
+const decodeRoom = Schema.decodeUnknownEffect(DemoRoomName);
 
-const decodeRoom = Schema.decodeUnknownEffect(RoomName);
-
-// A room's Durable Object, bound as CHAT_ROOM in wrangler.jsonc under this export's name. Each
-// instance builds its services, the store, the room and its activity, then its routes, as it is
-// constructed, again after every eviction. The room is the name the Worker reached the object by,
-// `getByName(room)`, decoded once there: `ActionDurableObject.name` dies for an object reached by
-// an id, and the build fails for a name `RoomName` does not list, each a bug in the Worker. Given
-// `rooms`, it refuses a call or a watch whose input names another room. Its `lobby` task tells
-// the lobby of each change, on the alarm until the lobby hears. The alarm expires old messages
-// and tells the lobby, as an expired message can be the room's latest.
 export class ChatRoom extends ActionDurableObject.make({
   placed: rooms,
   services: () =>
@@ -64,18 +52,12 @@ export class ChatRoom extends ActionDurableObject.make({
     ),
 }) {}
 
-// The lobby's Durable Object, bound as CHAT_LOBBY: one for the Worker, named `lobby`, keeping
-// every room's preview, which each room tells it of and its pages follow.
 export class ChatLobby extends ActionDurableObject.make({
   services: () => layerKvPreviews,
   routes: lobbyRoutes,
   calls: lobbyCalls,
 }) {}
 
-// The Worker's own handler, built once, when the module loads, which keeps the lobby's client
-// from stranding as `ActionDurableObject.layerStubClient`'s gotchas say: building it does no I/O,
-// which a Worker refuses outside a request. `toWebHandler` reads no `MaxBodySize`, so the
-// platform limits request bodies.
 const served = HttpRouter.toWebHandler(
   workerRoutes.pipe(
     Layer.provide(layerLobbyHost),
@@ -83,11 +65,8 @@ const served = HttpRouter.toWebHandler(
   )
 );
 
-const isRoomName = Schema.is(RoomName);
+const isRoomName = Schema.is(DemoRoomName);
 
-// A page's socket, `/rooms/<room>/rpc` or `/lobby/rpc`, is its object's `/rpc`: forwarding the
-// request forwards its upgrade, and the object answers it. Everything else is the Worker's own,
-// the rooms' calls among them, which it sends on to each room's object itself.
 export default {
   async fetch(request: Request, env: Cloudflare.Env) {
     const url = new URL(request.url);
@@ -148,9 +127,6 @@ const room = [messages, messageEvents];
 
 const byRoom = (input: { readonly room: string }) => input.room;
 
-// Where each room's calls and watches are served: in the room's object, the one each contract's
-// key names. worker.ts gives it to the room's class, which then refuses an input naming another
-// room, on its socket too; the Worker serves it below.
 export const rooms = ActionDurableObject.placed(RoomHttp, {
   readMessages: byRoom,
   postMessage: byRoom,
@@ -158,48 +134,26 @@ export const rooms = ActionDurableObject.placed(RoomHttp, {
   "message.posted": byRoom,
 });
 
-// One socket route for each object's pages, refusing a page of another version.
 const pageSocket = ActionDurableObject.layerWebSocket({
   path: "/rpc",
   protocol: { version: protocolVersion, code: unsupportedProtocol },
 });
 
-// What a room's object serves. Its rpcs on WebSockets the runtime holds while the object
-// hibernates: a socket keeps the token its upgrade request carried, and each message is
-// authenticated with it, or with the message's own. The socket's route refuses a page naming
-// another version in its URL, `?protocol=<n>` as browser.ts sends it, with a close code the page's
-// client reads as `SocketCloseError` and stops connecting again at, not a 403, which a browser
-// reports as a bare 1006 its page connects again after. Its JSON routes, where the Worker sends
-// each call and watch on, the token with it: the object authenticates it again, and authorizes.
-// It requires `MessageStore`, `Room` and `Activity` at startup: worker.ts chooses them.
 export const roomRoutes = Layer.mergeAll(
   ActionRpc.layer(RoomRpc, room).pipe(Layer.provide(pageSocket)),
   ActionHttp.layer(RoomHttp, room)
 ).pipe(Layer.provide(authenticate));
 
-// What the lobby's object serves: `PreviewsChanged` on its pages' sockets, a socket a page
-// signed out opens too, as nothing on it is protected. It requires `PreviewStore` at startup.
 export const lobbyRoutes = ActionRpc.layer(LobbyRpc, [previewEvents]).pipe(
   Layer.provide(pageSocket)
 );
 
-// What the lobby's object serves over its stub: its own calls, on Effect's own RpcServer, for
-// the rooms and the Worker, which call them with Cloudflare's own RPC. It requires `PreviewStore`
-// at startup.
 export const lobbyCalls = RpcServer.layer(LobbyCalls).pipe(
   Layer.provide(lobbyHandlers)
 );
 
-// The rooms as the Worker serves them, each call sent on to its room's object. The room is read
-// from `env` as each call is sent.
 const inRooms = ActionDurableObject.reaching(rooms, () => env.CHAT_ROOM);
 
-// What the Worker serves: the rooms' JSON routes and `previews`, which it asks the lobby's object
-// for, at `/api`, and all of them at `/mcp`, the actions as tools and `MessagePosted` as an MCP
-// event, so one agent's connection reaches every room. Nothing in a Worker outlives a request, so
-// the endpoint is request scoped: MCP 2026-07-28 alone, and events by `events/poll`, a poll every
-// 30 seconds as events.ts asks. The Worker authenticates each call, and the room's object again.
-// It requires `LobbyHost`.
 export const workerRoutes = Layer.mergeAll(
   ActionHttp.layer(LobbyHttp, lobby),
   ActionHttp.layer(RoomHttp, inRooms),

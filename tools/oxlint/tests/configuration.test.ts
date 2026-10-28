@@ -42,13 +42,13 @@ const cases = [
     name: "reports an unused disable directive as an error",
     files: {
       "used.ts": [
-        "// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Probe of a justified directive.",
-        "export const describe = (error: unknown): string => `Failed: ${String(error)}`;",
+        "// oxlint-disable-next-line eqeqeq -- Probe of a justified directive.",
+        "export const same = (a: number, b: number): boolean => a == b;",
         "",
       ].join("\n"),
       "unused.ts": [
-        "// oxlint-disable-next-line anti-slop/no-unknown-parameters -- Probe of a stale directive.",
-        "export const describe = (error: Error): string => error.message;",
+        "// oxlint-disable-next-line eqeqeq -- Probe of a stale directive.",
+        "export const same = (a: number, b: number): boolean => a === b;",
         "",
       ].join("\n"),
     },

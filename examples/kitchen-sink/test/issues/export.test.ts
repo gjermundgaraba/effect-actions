@@ -13,8 +13,6 @@ import { publicRoutes, rpc } from "../../src/routes.js";
 import { Rpc } from "../../src/Rpc.js";
 import { services } from "../support/services.js";
 
-// The public port's routes and the web app's rpcs under one `Testing.layer`, as server.ts
-// serves them under one router.
 const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerJson),
   Layer.provideMerge(
@@ -69,7 +67,6 @@ describe("exportIssues", () => {
           )
         );
 
-        // The web app's call carries its session cookie, as a browser attaches it.
         const overRpc = yield* Stream.runCollect(
           web.exportIssues({ status: "open" })
         ).pipe(

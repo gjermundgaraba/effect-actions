@@ -3,9 +3,6 @@ import type { SchemaAST } from "effect";
 
 const mediaKindAnnotation = "effect-actions/media";
 
-// Why: Text is no kind. A host given `structuredContent` shows its model that and drops the text
-// blocks beside it, so a lifted string reaches a model only from a tool that sends no structured
-// content.
 export type Kind = "image";
 
 export const Media = Schema.Struct({

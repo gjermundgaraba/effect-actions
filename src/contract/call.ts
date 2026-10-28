@@ -17,13 +17,10 @@ export type Call<A extends Action.Any, R> = {} extends A["input"]["Encoded"]
   ? (...input: [] | [input: A["input"]["Type"], ...ProgressArgs<A>]) => R
   : (input: A["input"]["Type"], ...options: ProgressArgs<A>) => R;
 
-// Why: A method's arguments are erased at the client's boundary, typed there by `Call`, so the
-// options after the input are read by their shape.
 const isCallOptions = (options: ErasedValue): options is CallOptions<unknown> =>
   Predicate.hasProperty(options, "onProgress") &&
   Predicate.isFunction(options.onProgress);
 
-/** The `onProgress` a call's arguments give after its input, where they give one. */
 export const onProgressOf = (
   args: readonly ErasedValue[]
 ): CallOptions<unknown>["onProgress"] => {
@@ -32,16 +29,11 @@ export const onProgressOf = (
   return isCallOptions(options) ? options.onProgress : undefined;
 };
 
-/**
- * How HTTP, RPC, MCP and a command decode a request's input: reporting every issue, and refusing a
- * field the input does not declare.
- */
 export const inputParseOptions = {
   errors: "all",
   onExcessProperty: "error",
 } as const;
 
-/** Decode `action`'s input from its JSON form by `inputParseOptions`, or fail with `InvalidInput`. */
 export const decodeInput = (
   action: Pick<Action.Any, "input">
 ): ((encoded: ErasedValue) => Effect.Effect<ErasedValue, InvalidInput>) => {
@@ -62,11 +54,6 @@ export const inputOf = (
     ? Schema.decodeEffect(Schema.toCodecJson(action.input))({})
     : Effect.succeed(args[0]);
 
-/**
- * Values of `schema` as they cross a network: each encoded to its JSON, then decoded back from
- * that JSON's text, which carries `-0` as `0`, every issue reported, answering the JSON sent and
- * the value received.
- */
 export const jsonRoundTrip = <S extends Codec>(schema: S) => {
   const codec = Schema.toCodecJson(schema);
   const encode = Schema.encodeUnknownEffect(codec, { errors: "all" });
@@ -89,10 +76,6 @@ export const jsonRoundTrip = <S extends Codec>(schema: S) => {
     );
 };
 
-/**
- * A watch's input as every client sends it: read as `inputOf` reads an action's, then through
- * its JSON, dropping undeclared fields, or `InvalidInput` reporting every issue.
- */
 export const watchInput = (
   event: Pick<Action.Any, "input">,
   input: ErasedValue
@@ -109,32 +92,21 @@ export type ErasedMethod<R = never> = (
   ...input: readonly ErasedValue[]
 ) => Effect.Effect<ErasedValue, unknown, R>;
 
-/**
- * How a client checks a call's input before sending it, chosen once per client: what it sends of
- * an input whose JSON encodes by `action`'s schema, or the `SchemaError` of one that does not.
- */
 export type CheckedInput<S> = (
   action: Pick<Action.Any, "input">
 ) => (input: ErasedValue) => Effect.Effect<S, Schema.SchemaError>;
 
-/** Send the input's JSON, for a client handing it to its protocol as it is. */
 export const sendingJson: CheckedInput<Schema.Json> = (action) =>
   Schema.encodeUnknownEffect(Schema.toCodecJson(action.input), {
     errors: "all",
   });
 
-/** Send the input itself once its JSON encodes, for a client encoding it by the action's schema. */
 export const sendingValue: CheckedInput<ErasedValue> = (action) => {
   const encode = sendingJson(action);
 
   return (input) => Effect.as(encode(input), input);
 };
 
-/**
- * A client's method of `action`, its input checked by `check` before `send` sends what the check
- * answers, with the call's `onProgress` where it gave one, taking decoded values, for `send` to
- * use where the action declares `progress`.
- */
 export const checked = <S, R, A = ErasedValue>(
   action: Action.Any,
   check: CheckedInput<S>,
@@ -157,7 +129,6 @@ export type ErasedStreamMethod<R = never> = (
   ...input: readonly ErasedValue[]
 ) => Stream.Stream<ErasedValue, unknown, R>;
 
-/** A client's method of `action` answering a stream, its input checked as `checked` checks it. */
 export const checkedStream = <S, R>(
   action: Action.Any,
   check: CheckedInput<S>,

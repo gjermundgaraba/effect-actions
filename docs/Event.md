@@ -31,8 +31,6 @@ export const Build = Schema.Struct({
 
 export type Build = typeof Build.Type;
 
-// DEMO ONLY: a CI runner reports finished builds; here a member does, so the example can
-// cause the event it watches.
 export const FinishBuild = Action.make("finishBuild", {
   description: "Record that a build of a pipeline finished.",
   input: { pipeline: Pipeline, status: Status },
@@ -41,10 +39,6 @@ export const FinishBuild = Action.make("finishBuild", {
   caller: CurrentMember,
 });
 
-// A build run here, which reports each step as it starts, before it answers how the build ended.
-// A caller reads the steps only if it asks, with `onProgress`; each surface carries them its
-// own way. They are a snapshot to show: a caller falling behind misses some, never the answer.
-// What a caller must see every time is the answer, or `build.finished`, which this build causes.
 export const StartBuild = Action.make("startBuild", {
   description:
     "Run a build of a pipeline, reporting each step, and record how it ended.",
@@ -65,16 +59,11 @@ export const StartBuild = Action.make("startBuild", {
   caller: CurrentMember,
 });
 
-// A build this member may not see is not found, as one that never ran: its id tells nothing.
 export class BuildNotFound extends Schema.TaggedError<
   BuildNotFound,
   { readonly brand: unique symbol }
 >()("BuildNotFound", { buildId: Schema.String }, { httpApiStatus: 404 }) {}
 
-// An action answering a stream: its handler returns a `Stream` of lines, and every client's
-// call returns one, each line arriving as the server sends it. HTTP, RPC and a command carry a
-// stream; an MCP tool answers one result, the lines collected once the stream ends, so the MCP
-// endpoint in `routes.ts` leaves it out rather than put a whole log in a model's context.
 export const TailLog = Action.make("tailLog", {
   description: "Stream a build's log, line by line.",
   input: {
@@ -88,8 +77,6 @@ export const TailLog = Action.make("tailLog", {
   caller: CurrentMember,
 });
 
-// An event type: what a subscription takes, what each occurrence carries, and who may
-// subscribe. Like an action's contract, it imports no server code.
 export const BuildFinished = Event.make("build.finished", {
   description: "A build of a pipeline you may see finished.",
   input: {
@@ -104,8 +91,6 @@ export const BuildFinished = Event.make("build.finished", {
   caller: CurrentMember,
 });
 
-// An event whose occurrence is the whole value: how a pipeline's last build ended, `null` before
-// its first. A subscriber is sent it as it is, then again each time a build of it finishes.
 export const PipelineStatus = Event.make("pipeline.status", {
   description:
     "How a pipeline's last build ended: first as it is, then each time one finishes.",
@@ -133,9 +118,6 @@ import { CurrentMember } from "../identity/Identity.js";
 import { BuildFinished } from "./Builds.js";
 import { BuildStore } from "./store.js";
 
-// A check source: one function answers "what finished since this cursor?" for every
-// subscriber, whether it polls or holds a stream open, on every surface. The builder runs once,
-// at startup; the check runs per subscriber, as that subscriber.
 export const buildEvents = Event.implement(
   BuildFinished,
   Effect.gen(function* () {
@@ -146,8 +128,6 @@ export const buildEvents = Event.implement(
         Effect.gen(function* () {
           const member = yield* CurrentMember;
 
-          // A first subscription asks with `null`: the store answers the current position, so
-          // the subscriber starts from now.
           const page = yield* store.finishedSince(
             member.pipelines,
             cursor,
@@ -157,7 +137,6 @@ export const buildEvents = Event.implement(
           return {
             cursor: page.cursor,
             hasMore: page.hasMore,
-            // A cursor the store cannot resume from: the subscriber is sent a gap first.
             truncated: page.truncated,
             events: page.builds
               .filter(
@@ -166,9 +145,6 @@ export const buildEvents = Event.implement(
               .filter(
                 (build) => status === undefined || build.status === status
               )
-              // The store's own id, within its epoch: a subscriber that sees a build twice,
-              // after a reconnect, drops the second, and never drops a build of a restarted store
-              // as one it saw before.
               .map((build) => ({
                 eventId: `${page.epoch}/${build.id}`,
                 data: build,
@@ -177,7 +153,6 @@ export const buildEvents = Event.implement(
         }),
     };
   }),
-  // Every member may watch; which builds each sees is the store's check, by pipeline.
   { authorize: Event.allowAll }
 );
 ```
@@ -200,9 +175,6 @@ import { CurrentMember } from "../identity/Identity.js";
 import { PipelineStatus } from "./Builds.js";
 import { BuildStore } from "./store.js";
 
-// A current source: the value as it is, which the library sends first and again after each
-// notify reaching the subscriber's key, keeping the revision that tells them apart, so the store
-// keeps no cursor for it. The key is the pipeline: a build of another wakes no one here.
 export const statusEvents = Event.implement(
   PipelineStatus,
   Effect.gen(function* () {
@@ -218,7 +190,6 @@ export const statusEvents = Event.implement(
       key: ({ pipeline }) => pipeline,
     };
   }),
-  // Every member may watch; which pipelines each sees is the store's check.
   { authorize: Event.allowAll }
 );
 ```
@@ -237,11 +208,6 @@ import { CurrentMember } from "../identity/Identity.js";
 import { Approvers } from "./approvers.js";
 import { DeployRequested } from "./Deploys.js";
 
-// A log source, for occurrences nothing else keeps: the library keeps each one `requestDeploy`
-// publishes, for 10 minutes and at most 10,000 of them by default, and gives each subscriber
-// what its `match` accepts. A subscriber resuming from a cursor gets what the log still holds:
-// after a restart, or once its occurrences are dropped, a gap first. An upstream you can ask
-// "what since?", such as a table, is a check source.
 export const deployEvents = Event.implement(
   DeployRequested,
   Effect.gen(function* () {
@@ -251,9 +217,6 @@ export const deployEvents = Event.implement(
       log: {},
       match: ({ environment }, deploy) =>
         environment === undefined || deploy.environment === environment,
-      // Set up while each subscription lasts, as the subscriber: a stream's as long as it is
-      // read, a poll's until 5 minutes after its last poll. It may run again for one
-      // subscription, after a restart, so standing by twice must be harmless.
       subscription: ({ environment }) =>
         Effect.flatMap(CurrentMember, (member) =>
           approvers.standBy(environment, member.id)

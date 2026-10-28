@@ -11,7 +11,6 @@ export type Only<T extends readonly unknown[], U> = [
     ? readonly []
     : ReadonlyArray<Extract<T[number], U>>;
 
-/** A list split into its actions and its event types. */
 export const split = (contracts: ReadonlyArray<Action.Any | Event.Any>) => ({
   actions: contracts.flatMap((contract) =>
     Event.isEvent(contract) ? [] : [contract]
@@ -19,18 +18,12 @@ export const split = (contracts: ReadonlyArray<Action.Any | Event.Any>) => ({
   events: contracts.filter(Event.isEvent),
 });
 
-// Why: An action and an event type share a binding's client, one method each by name.
-/** A binding's list split into its actions and its event types, each name used once. */
 export const listed = (contracts: ReadonlyArray<Action.Any | Event.Any>) => {
   assertOnce("action or event", contracts);
 
   return split(contracts);
 };
 
-/**
- * A surface's `actions` option split into the actions and the event types it lists, both absent
- * where it is: a surface given the option serves exactly what it lists.
- */
 export const selection = (
   contracts: ReadonlyArray<Action.Any | Event.Any> | undefined
 ): {

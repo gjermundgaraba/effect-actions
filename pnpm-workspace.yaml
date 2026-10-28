@@ -1,6 +1,7 @@
 packages:
   - packages/*
 catalog:
+  "@clanker-stuff/oxlint-config": 0.1.0
   "@cloudflare/vitest-plugin": 1.4.7
   "@cloudflare/workers-types": 5.20261025.1
   "@effect/platform-node": 4.0.6
@@ -31,6 +32,7 @@ catalogMode: prefer
 saveExact: true
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
+  - "@clanker-stuff/*"
   - vite-plus
   - "@voidzero-dev/*"
   - oxlint

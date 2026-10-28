@@ -72,11 +72,6 @@ const schemasOf = (ast: SchemaAST.AST): readonly SchemaAST.AST[] => {
   return SchemaAST.isUnion(ast) ? ast.types.flatMap(schemasOf) : [ast];
 };
 
-// Why: A union or `Schema.suspend` without a status, checks or a transformation of its own decodes
-// as what it holds, and HTTP gives each member its own status; one with any of them is one schema.
-// Listed apart, each schema is declared once however often it is reached, through a union, a
-// `Schema.suspend` or several sources, so an endpoint and its OpenAPI document name it once.
-/** `errors` as the schemas a call decodes a failure with, in order, each once. */
 export const errorSchemas = (errors: Action.Errors): Action.Errors => {
   const schemas = new Map<SchemaAST.AST, Action.Errors[number]>();
 
@@ -105,13 +100,6 @@ export interface Declaring {
   readonly authentication?: { readonly error: Action.Errors } | undefined;
 }
 
-// Why: A surface adds a verifier's errors to its protected actions itself, as it adds its own,
-// so they take the status rule, the projected order and the client types of every other error.
-// Rejected: the HTTP security middleware's native `error`, which `HttpApiEndpoint` merges in.
-/**
- * Every error a binding's call of `action` declares: the built-in ones, the action's, the
- * binding's and, where `action` is protected, its authentication's.
- */
 export const bindingErrors = (
   action: Pick<Action.Any, "error" | "caller">,
   binding: Declaring
@@ -123,10 +111,6 @@ export const bindingErrors = (
       : [...binding.error, ...binding.authentication.error]
   );
 
-/**
- * Every error a binding's subscription to `event` declares: the built-in ones, the binding's and,
- * where `event` is protected, its authentication's. An event type declares none of its own.
- */
 export const eventErrors = (
   event: Pick<Called, "caller">,
   binding: Declaring
@@ -148,11 +132,6 @@ const builtInTags = new Set(
   builtIns.flatMap((schema) => encodedTags(schema.ast))
 );
 
-// Why: The library joins one call's errors, the built-in ones, the action's, the binding's and the
-// authentication's, and a client decodes a failure as the first schema that accepts it, so two
-// schemas sharing a `_tag` misdecode wherever one accepts the other's values. Effect's `catchTag`
-// cannot tell them apart either. A schema's own variants, behind a transformation, are its own.
-/** Throws where two of the schemas in `errors` encode with one `_tag`. */
 export const assertDistinctTags = (
   what: string,
   errors: Action.Errors
@@ -176,11 +155,6 @@ export const assertDistinctTags = (
   }
 };
 
-/**
- * The checks `ActionHttp.make` and `ActionRpc.make` share: the descriptor every protected action
- * and event type names, and each call's and each subscription's errors distinct by `_tag`.
- * Returns the binding's `error`, as a list, and `authentication`.
- */
 export const bindingOf = <
   D extends Proving & { readonly error: Action.Errors },
 >(

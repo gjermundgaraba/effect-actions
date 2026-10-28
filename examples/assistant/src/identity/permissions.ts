@@ -2,10 +2,6 @@ import { Context, Effect, Layer } from "effect";
 
 export type Permission = "tasks:read" | "tasks:write";
 
-/**
- * What each member may do. Permissions are kept here, not in the identity, so changing one
- * takes effect on the member's next call.
- */
 export class Permissions extends Context.Service<
   Permissions,
   {
@@ -14,7 +10,6 @@ export class Permissions extends Context.Service<
     ) => Effect.Effect<readonly Permission[]>;
   }
 >()("assistant/Permissions") {
-  // DEMO ONLY: a fixed table. A real application reads its database or its directory.
   static readonly layerMemory = Layer.sync(Permissions, () => {
     const table = new Map<string, readonly Permission[]>([
       ["ada", ["tasks:read", "tasks:write"]],

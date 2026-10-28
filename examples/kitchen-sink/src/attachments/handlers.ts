@@ -11,14 +11,11 @@ export const attachments = Action.implement(
   Attachments,
   Effect.gen(function* () {
     const store = yield* AttachmentStore;
-    // The issues' write limit: an attachment counts against the same ten writes a minute.
     const limited = yield* writeLimit;
 
     return {
       attachImage: ({ issue, name, image }) =>
         Effect.gen(function* () {
-          // Input that decodes but cannot be served is `InvalidInput`; its `issues` name the
-          // field, as the library's own do for input that does not decode.
           if (!image.mimeType.startsWith("image/")) {
             const message = "Expected an image MIME type.";
 

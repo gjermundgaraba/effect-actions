@@ -773,7 +773,7 @@ describe("serving a binding", () => {
   });
 
   it("refuses an object that only looks like an implementation", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Fabrication fixture: what a second installed copy of the package would make.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const fake = { actions: [identity] } as never;
 
     expect(() => ActionHttp.layer(ActionHttp.make([identity]), fake)).toThrow(

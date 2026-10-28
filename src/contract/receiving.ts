@@ -14,7 +14,6 @@ export interface Delivered {
   readonly [key: string]: Schema.Json;
 }
 
-/** The query parameter of a watch's delivery URL naming its place at the receiver. */
 export const watchParameter = "watch";
 
 /**
@@ -58,12 +57,6 @@ const decodeGap = Schema.decodeUnknownEffect(
 
 const ended = new Forbidden({ message: "The subscription was ended." });
 
-/**
- * What a watch of `event` reads from one delivered body: its occurrence, or the gap an envelope
- * reports; a `terminated` envelope fails with the reason its error's code names, its refusal for
- * any other, an envelope of another type is skipped, and a body that does not decode fails with a
- * `SchemaError`.
- */
 export const webhookFed = (event: Event.Any) => {
   const occurrenceOf = untaggedOccurrenceOf(event);
 

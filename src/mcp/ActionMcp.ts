@@ -198,12 +198,10 @@ type HttpToolRequestContext<R> = Exclude<
 
 type Features<R> = Exclude<R, McpServer.McpServer>;
 
-/** The actions and event types an endpoint of `Apps` given the options `O` serves. */
 type Contracts<Apps extends Served, O> =
   | SelectedOf<O, Apps>
   | SelectedEventsOf<O, Apps>;
 
-/** What building an endpoint of `Apps` given the options `O` may fail with. */
 type ServerError<Apps extends Served, O> =
   | BuildError<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>
   | EventBuildError<
@@ -212,7 +210,6 @@ type ServerError<Apps extends Served, O> =
     >
   | Cause.IllegalArgumentError;
 
-/** What building the event sources of an endpoint of `Apps` given the options `O` needs. */
 type EventServices<Apps extends Served, O> = EventBuildServices<
   HoldingEvents<Member<Apps>, SelectedEventsOf<O, Apps>>,
   SelectedEventsOf<O, Apps>
@@ -313,9 +310,6 @@ const encoder = (schema: Codec) => {
   return (value: ErasedValue) => Effect.orDie(encode(value));
 };
 
-// Why: Effect's `registerToolkit` sends every success as `structuredContent` and one JSON text
-// block and takes no option, so each action is registered here from its bound handler, through the
-// registry's public `addTool`.
 const registerTools = Effect.fnUntraced(function* (
   apps: readonly AnyImplementation[],
   authentication: Authentication | undefined
@@ -372,10 +366,6 @@ const registerTools = Effect.fnUntraced(function* (
 
     const resultOf = (encoded: ErasedValue, success: ErasedValue) => {
       if (media === undefined) {
-        // Why: A success is sent as it encodes, a number, a string, an array or `null` included,
-        // never wrapped in an object and never left out. A Python SDK release before the fix
-        // of python-sdk#3345 reads a `null` `structuredContent` as missing, which is the SDK's
-        // bug.
         return new McpSchema.CallToolResult({
           isError: false,
           structuredContent: encoded,
@@ -411,8 +401,6 @@ const registerTools = Effect.fnUntraced(function* (
       tool,
       annotations: Context.empty(),
       handle: (payload: ErasedValue) =>
-        // Why: a tool's arguments stay off its span, as HTTP keeps a body off its own: they
-        // may hold a credential or a `Schema.Redacted` value, which a trace exports as it is.
         Effect.annotateCurrentSpan({ tool: action.name }).pipe(
           Effect.andThen(() => decode(payload ?? {})),
           Effect.mapError(
@@ -444,9 +432,6 @@ const registerTools = Effect.fnUntraced(function* (
             )
           ),
           Effect.catchCause(internalErrorOnDefect),
-          // Why: A call runs over what the endpoint was built with, its startup services and the
-          // handlers' builds, and what the request provides wins, as a native toolkit handler's
-          // context does.
           Effect.updateContext(
             (request: Context.Context<McpSchema.McpRequestContext>) =>
               Context.merge(built, request)
@@ -456,15 +441,9 @@ const registerTools = Effect.fnUntraced(function* (
   }
 });
 
-/**
- * Refuses event types an endpoint cannot serve as MCP events: one named twice, one named as MCP's
- * own, or one whose input or payload is no object.
- */
 const assertEventsServable = (events: readonly Event.Any[]): void => {
   assertOnce("MCP event", events);
 
-  // Why: MCP keeps event names starting with `mcp.` for its own events, so one of an
-  // application's would be read as the protocol's.
   const reserved = events.find(({ name }) => name.startsWith("mcp."));
 
   if (reserved !== undefined) {
@@ -478,7 +457,6 @@ const assertEventsServable = (events: readonly Event.Any[]): void => {
   }
 };
 
-/** The revisions an endpoint speaks, the 2026-07-28 one serving `serving`'s events if any. */
 const servingEvents = <P extends readonly McpProtocol.AnyProtocolAdapter[]>(
   [stateless, ...rest]: readonly [typeof httpProtocol, ...P],
   serving: Serving
@@ -537,10 +515,6 @@ const server = <Out, R>(
     yield* registerTools(apps, authentication);
   });
 
-  // Why: Effect's registry is one layer, shared by a whole layer graph, so `Layer.fresh` gives each
-  // endpoint its own, and the features are provided inside it, as each native helper provides that
-  // layer itself. The builders, the handlers' and the event sources', are provided outside it, so
-  // they stay shared with the graph's other surfaces.
   return Layer.effectDiscard(register).pipe(
     Layer.provide(features),
     Layer.provide(transport),
@@ -562,10 +536,6 @@ const namedMethods = new Map<string, "tool" | "event">([
   ["events/stream", "event"],
 ]);
 
-// Why: The runtime routes a 2026-07-28 request by its `Mcp-Name` decoded, a name as sent or
-// base64-encoded between `=?base64?` and `?=`, so a public tool's or event's name is admitted in
-// either form. A name is plain ASCII, whose standard encoding is one string: any other fails
-// closed.
 const openOf = (
   contracts: ReadonlyArray<Pick<Action.Any, "name" | "caller">>
 ) =>
@@ -586,8 +556,6 @@ const requiresAuthentication = (
       return true;
     }
 
-    // Why: The runtime checks the routing headers against the body of a stateless request alone.
-    // A request of a session carries none it checks, so it authenticates whatever it names.
     if (headers["mcp-protocol-version"] !== httpProtocol.protocolVersion) {
       return true;
     }
@@ -614,9 +582,6 @@ const requiresAuthentication = (
   };
 };
 
-// Why: The runtime takes an `initialize` as the opening of a session whatever its headers say, the
-// one request whose routing headers it does not check. So a request admitted signed out names its
-// header's method in its body too. One that does not parse is the runtime's to refuse.
 const namesItsMethod = (request: HttpServerRequest.HttpServerRequest) =>
   Effect.match(request.json, {
     onFailure: () => true,
@@ -625,9 +590,6 @@ const namesItsMethod = (request: HttpServerRequest.HttpServerRequest) =>
       body.method === request.headers["mcp-method"],
   });
 
-// Why: The runtime answers a body it cannot read as one that is not JSON, a `-32700` in a 200, so
-// one over `HttpServerRequest.MaxBodySize` read first fails the request as itself: Effect's 413
-// from 4.0.6, and before it the closed connection. The runtime then reads the text read here.
 const readsItsBody = <E, R>(
   route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>
 ) =>
@@ -635,9 +597,6 @@ const readsItsBody = <E, R>(
     request.method === "POST" ? Effect.andThen(request.text, route) : route
   );
 
-// Why: Protected tools without a descriptor get `unknown`, leaving `RequiredAuthentication` to
-// demand theirs. `{ authentication?: undefined }` would intersect with that demand to `never`, and
-// the error would read as every option being wrong.
 type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [
   undefined,
 ]
@@ -754,8 +713,6 @@ export function layerHttp(
           path,
           protocols: servingEvents(protocols, serving),
           allowSessionTermination: true,
-          // Why: Effect's server hands an adapter its notification sender only where subscriptions
-          // are allowed, so an endpoint pushing events allows them, though no event list changes.
           allowSubscriptions:
             allowSubscriptions ?? (features !== undefined || events.length > 0),
         }),
@@ -790,9 +747,6 @@ export function layerHttp(
 const isJsonLine = (line: string): boolean =>
   Option.isSome(Schema.decodeOption(Schema.fromJsonString(Schema.Json))(line));
 
-// Why: From Effect 4.0.6 the stdio transport's parser fails on a line that is not JSON, and its
-// retry drops what else that read held, so a request after the line went unanswered. Such a
-// line, and a blank one, never reaches it: the lines after it are answered on every 4.0 patch.
 const jsonLinesOnly = Layer.effect(
   Stdio.Stdio,
   Effect.map(Stdio.Stdio, (stdio) =>
@@ -870,9 +824,6 @@ export function runStdio(
     features
   );
 
-  // Why: The native transport ends by interrupting the fiber that built it, once the host closes
-  // its side and the answers in flight are written. Built in a child, that end is a success, and an
-  // interruption of the program itself, such as a signal, stays an interruption.
   return Layer.launch(transport).pipe(
     withStderrConsole,
     Effect.forkChild,

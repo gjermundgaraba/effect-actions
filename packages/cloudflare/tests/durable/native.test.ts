@@ -8,7 +8,7 @@ import { Expired, Instant, NativeRpcs } from "../support/native.js";
 
 const native = RpcClient.make(NativeRpcs).pipe(
   Effect.provide(
-    ActionDurableObject.layerStubClient(env.NATIVE.getByName("native"))
+    ActionDurableObject.layerStubClient(() => env.NATIVE.getByName("native"))
   )
 );
 
@@ -63,7 +63,7 @@ describe("values over the stub", () => {
         };
 
         const client = yield* RpcClient.make(NativeRpcs).pipe(
-          Effect.provide(ActionDurableObject.layerStubClient(recording))
+          Effect.provide(ActionDurableObject.layerStubClient(() => recording))
         );
 
         yield* client.echo({ values });
@@ -135,7 +135,7 @@ describe("values over the stub", () => {
         const stub = env.NATIVE.getByName("crashed");
 
         const client = yield* RpcClient.make(NativeRpcs).pipe(
-          Effect.provide(ActionDurableObject.layerStubClient(stub))
+          Effect.provide(ActionDurableObject.layerStubClient(() => stub))
         );
 
         const calls = (yield* ActionDurableObject.client(NativeRpcs))(
@@ -152,7 +152,7 @@ describe("values over the stub", () => {
         }
 
         const fresh = yield* RpcClient.make(NativeRpcs).pipe(
-          Effect.provide(ActionDurableObject.layerStubClient(stub))
+          Effect.provide(ActionDurableObject.layerStubClient(() => stub))
         );
 
         expect(yield* fresh.maybe({ value: "fresh" })).toBe("fresh");
@@ -184,7 +184,7 @@ describe("values over the stub", () => {
         };
 
         const client = yield* RpcClient.make(NativeRpcs).pipe(
-          Effect.provide(ActionDurableObject.layerStubClient(recording))
+          Effect.provide(ActionDurableObject.layerStubClient(() => recording))
         );
 
         yield* Effect.exit(client.crash({ message: "boom" }));

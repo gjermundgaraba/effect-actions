@@ -139,11 +139,6 @@ const annotateIfGiven = <I, S>(
   value: S | undefined
 ) => (value === undefined ? tool : tool.annotate(key, value));
 
-// Why: Every hint is annotated from the `hintsOf` MCP's listing spreads, so the two cannot
-// disagree: MCP's default where the contract leaves one out, except `destructiveHint`, which MCP
-// defaults to `true` for every tool and the library to `false` for a read. 0.10.0 annotated a
-// hint only where given and left the rest to Effect's defaults, which MCP's listing no longer
-// reads.
 const annotateFromContract = (tool: Tool.Any, action: Action.Any) => {
   const { readOnlyHint, destructiveHint, idempotentHint, openWorldHint } =
     hintsOf(action);
@@ -163,7 +158,6 @@ const annotateFromContract = (tool: Tool.Any, action: Action.Any) => {
   );
 };
 
-/** A value an action reported, as a toolkit's preliminary result holds it. */
 class Reported<A> {
   readonly _tag = "Progress";
   readonly value: A;
@@ -173,12 +167,6 @@ class Reported<A> {
   }
 }
 
-// Why: Progress tagged, and tried first: a preliminary result is encoded with the tool's one
-// success schema, where an untagged value the success also accepts would be encoded as a success,
-// cut to its fields, or as `null` against a `Void` one. Its member accepts only a `Reported`, so
-// a success shaped `{ _tag: "Progress", value }` itself is encoded as the success, however its
-// fields overlap a progress value's.
-/** A preliminary result of a tool whose action declares `progress`: one value it reported. */
 const ProgressOf = (progress: Codec) =>
   Schema.TaggedStruct("Progress", { value: progress }).pipe(
     Schema.decodeTo(
@@ -271,10 +259,6 @@ export function make(
     heldOnce
   );
 
-  // Why: Effect finds a tool's handler by the tool's `id`, which no type states, so the id carries
-  // its implementation's key. A key per `make` call separates nothing its implementation does not,
-  // and a toolkit and a layer from two calls then type-check, as `Tool.HandlersFor` is keyed by
-  // name, and die on the first call.
   const toolOf = (action: Action.Any, app: AnyImplementation) =>
     Object.assign(
       needsApproval === undefined
@@ -285,8 +269,6 @@ export function make(
               context
             );
 
-            // Why: A policy that cannot be read asks, where Effect's own default on a failure runs the
-            // call; a defect is a bug, left to end the turn as Effect ends it.
             return Effect.isEffect(decided)
               ? Effect.orElseSucceed(decided, () => true)
               : decided;

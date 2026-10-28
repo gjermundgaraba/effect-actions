@@ -18,10 +18,10 @@ In a project that installs the package, copy this directory out of `node_modules
 
 ## When you copy this
 
-Each trap is a comment in the file named.
+Each trap below is shown in the code of the files it names.
 
 - **A page sends its token on each message**, as a browser WebSocket sets no header on its upgrade: `src/browser.ts`; `test/worker.test.ts` connects both ways.
-- **The room is the object's name**, and only a room `RoomName` lists is reached: `src/chat/Chat.ts`, `src/worker.ts`.
+- **The room is the object's name**, and only a room `DemoRoomName` lists is reached: `src/chat/Chat.ts`, `src/worker.ts`.
 - **The Worker serves every room, each room answers**, through the placement `rooms`: `src/routes.ts`.
 - **A page reads, then watches from the last message it holds**: `src/browser.ts`, `src/chat/events.ts`.
 - **`postMessage` notifies `MessagePosted`**: `src/chat/handlers.ts`, `src/chat/events.ts`.

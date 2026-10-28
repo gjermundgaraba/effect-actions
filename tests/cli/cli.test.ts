@@ -2287,7 +2287,7 @@ describe("positional arguments", () => {
     );
     expect(() =>
       ActionCli.command(pair, Pair, {
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Untyped caller fixture: a plain-JavaScript caller, whom the types do not stop.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
         positional: ["third"] as never,
       })
     ).toThrow(
@@ -2295,7 +2295,7 @@ describe("positional arguments", () => {
     );
     expect(() =>
       ActionCli.command(scalar, Scalar, {
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Untyped caller fixture, for an input without named fields.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
         positional: ["length"] as never,
       })
     ).toThrow(

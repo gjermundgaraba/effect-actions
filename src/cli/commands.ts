@@ -40,8 +40,6 @@ type Field<A extends Action.Any> = A["input"]["Encoded"] extends infer E
         : never
   : never;
 
-// Why: Required fields only. An empty stdin for an optional field would have to mean either an
-// empty value or the field left out.
 type StdinField<A extends Action.Any> = A["input"]["Encoded"] extends infer E
   ? Exclude<
       Field<A>,
@@ -64,8 +62,6 @@ export interface Options<A extends Action.Any> {
    * Human output: the decoded success to text for a person, or of an action answering a stream
    * each element to its line. Adds a `--json` flag to the command that selects JSON instead.
    */
-  // Why: A method, so a command of one action is an `Options<Action.Any>`, as a record of
-  // commands keyed by action needs; its parameter is then checked bivariantly.
   render?(this: void, output: Each<A["success"]>): string;
   /**
    * Input fields taken as positional arguments instead of flags, in this order: `["id"]` takes
@@ -269,9 +265,6 @@ const repeatedElementOf = (
   return { element, min: encoded.elements.length };
 };
 
-// Why: An occurrence of `[]` adding no element is how a repeated flag sends an empty list.
-// Rejected: an occurrence holding a whole JSON array, which a choice's flag cannot take, since
-// `Param.variadic` repeats one parameter and `Param.orElse` makes two.
 const noElementOccurrence = "[]";
 
 const namedFieldsOf = (
@@ -311,10 +304,6 @@ const elementFieldsOf = (
       );
 };
 
-// Why: The help of Effect CLI shows a flag's name and the kind of its value, which say neither that
-// a flag repeats, nor that `--no-<flag>` is a switch's `false`, nor that a value is JSON. A switch
-// of a required field is `false` when left out, which its help says; an optional one is left
-// out when left out, so its help says how to send `false`.
 const jsonHintOf = (encoded: SchemaAST.AST): string | undefined => {
   const value = unsuspended(encoded);
   const kinds = new Set(acceptedJsonKindsOf(value));
@@ -435,14 +424,6 @@ const describedBeforeLastCheck = (ast: SchemaAST.AST): string | undefined =>
     .map((annotations) => annotations?.["description"])
     .findLast(Predicate.isString);
 
-// Why: Effect resolves a description from the last check alone, once a schema has checks. One
-// annotated before a check is on the schema or on an earlier check, where a tool's listing reads
-// it for a model: a flag's help reads it there too, so one description serves both. A field
-// decoded from another type is read on its decoded side, then on the encoded one, which is the
-// side a tool lists. Where both a schema and a later check are described, help shows the later;
-// a description of the field's key, written with `annotateKey`, comes before both, and a
-// repeated flag with none of its own shows its element's, which each value given is: read on
-// either side whatever the element decodes to, since the encoded side alone says it repeats.
 const ownOrSuspendedDescriptionOf = (ast: SchemaAST.AST): string | undefined =>
   ast.context?.annotations?.description ??
   SchemaAST.resolveDescription(ast) ??
@@ -656,9 +637,6 @@ const userErrorOf = (errors: Action.Errors) => {
     Schema.fromJsonString(Schema.toCodecJson(Schema.Union(errors)))
   );
 
-  // Why: The schema that holds every field of the failure, before the first that accepts it. A
-  // command of your own prints the failure of any action it calls, and one action's error may
-  // accept another's while dropping the fields it does not declare.
   return <E>(error: E) =>
     encode(error, { onExcessProperty: "error" }).pipe(
       Effect.catch(() => encode(error)),
@@ -669,9 +647,6 @@ const userErrorOf = (errors: Action.Errors) => {
     );
 };
 
-// Why: An Effect CLI error, a `CliError.UserError` of your own included, passes through as it is,
-// in a derived command as in one of your own: described again, it would print its cause beside
-// its `userMessage`.
 export const failingAsDerived = (errors: Action.Errors) => {
   const failure = userErrorOf(errorSchemas(errors));
 
@@ -699,9 +674,6 @@ const fieldValueFromText = (
 
 const stdinTextOf = (field: string) =>
   Effect.gen(function* () {
-    // Why: Read as an option, not required. `Stdio` is in the environment `Command.run` requires of
-    // its host, so every run has it, and requiring it here would add it to the type of every
-    // derived command, with `stdin` or without.
     const stdio = yield* Effect.serviceOption(Stdio.Stdio);
 
     if (Option.isNone(stdio)) {
@@ -856,12 +828,9 @@ const inputConfig = <A extends Pick<Action.Any, "input">>(
   };
 };
 
-// Why: Effect CLI keys a field's flag and an alias alike, by bare name, and prints a
-// one-character alias as `-n`, every other flag as `--name`.
 const aliasFlag = (alias: string) =>
   alias.length === 1 ? `-${alias}` : `--${alias}`;
 
-// Why: On stderr, so stdout holds the answer alone, as a pipe reads it.
 const progressLinesOf = (
   progress: Action.Any["progress"]
 ): CallOptions<unknown>["onProgress"] => {
@@ -876,10 +845,6 @@ const progressLinesOf = (
   return (value) => Effect.flatMap(Effect.orDie(encode(value)), Console.log);
 };
 
-// Why: A stream's elements are printed as they arrive, one compact line each, as JSON Lines, so
-// a pipe reads each before the stream ends; an answer is printed once, indented.
-// Each element is encoded whether or not `render` prints it, so one breaking its schema is the
-// call's defect, as an answer is.
 const printedOf = (action: Action.Any) => {
   const element = elementOf(action.success);
 
@@ -1017,11 +982,6 @@ export const command = <A extends Action.Any, E, R>(
       );
 };
 
-/**
- * The command watching `event`, named after it, with one flag per field of its input as an
- * action's command has, and `--cursor` to resume from: it prints each occurrence and gap `watch`
- * yields as one line of compact JSON on stdout, until it is interrupted or the watch fails.
- */
 export const watchCommand = <E, R>(
   event: Event.Any,
   watch: (

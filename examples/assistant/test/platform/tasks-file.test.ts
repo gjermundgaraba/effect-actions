@@ -2,12 +2,9 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from "effect";
 
-import { tasksFile } from "../../src/platform/tasks-file.js";
+import { demoTasksFile } from "../../src/platform/tasks-file.js";
 import { TaskStore } from "../../src/tasks/store.js";
 
-// The file store, on a file of the test's own: `ASSISTANT_TASKS` is set through a
-// `ConfigProvider`, as the environment sets it for an entrypoint. The directory is removed
-// with the test's scope.
 const fileStore = Effect.gen(function* () {
   const files = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -15,7 +12,7 @@ const fileStore = Effect.gen(function* () {
   const tasks = path.join(directory, "tasks.json");
   const config = ConfigProvider.fromUnknown({ ASSISTANT_TASKS: tasks });
 
-  return tasksFile.pipe(Layer.provide(ConfigProvider.layer(config)));
+  return demoTasksFile.pipe(Layer.provide(ConfigProvider.layer(config)));
 });
 
 describe("the file store", () => {
@@ -54,7 +51,6 @@ describe("the file store", () => {
           tasks.list(undefined)
         );
 
-        // `local` builds the layer anew for each, as each run of the agent or of a command does.
         const task = yield* add.pipe(Effect.provide(store, { local: true }));
 
         expect(

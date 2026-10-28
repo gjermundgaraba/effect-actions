@@ -4,19 +4,13 @@ import { CallbackUrl, WebhookSecret } from "./callback.js";
 import * as Event from "./Event.js";
 import { SubscriptionOf } from "./push.js";
 
-/** Where a webhook subscription delivers: its callback, and the secret signing each POST. */
 export const WebhookCallback = Schema.Struct({
   url: CallbackUrl,
   secret: WebhookSecret,
 });
 
-/** The callback a webhook unsubscribe names: its URL alone. */
 export const WebhookTarget = WebhookCallback.mapFields(Struct.pick(["url"]));
 
-/**
- * What a webhook subscribe asks beside the subscription it names: its callback, and the lifetime
- * it suggests in milliseconds, `null` asking for none.
- */
 export const webhookFields = {
   delivery: WebhookCallback,
   ttlMs: Schema.optional(Schema.NullOr(Schema.Finite)).annotate({
@@ -25,7 +19,6 @@ export const webhookFields = {
   }),
 };
 
-/** What a webhook subscribe to `event` takes: a subscription's input and cursor, and its fields. */
 export const WebhookSubscriptionOf = <E extends Event.Any>(event: E) =>
   SubscriptionOf(event).pipe(Schema.fieldsAssign(webhookFields));
 
@@ -34,7 +27,6 @@ export type AnyWebhookSubscription = ReturnType<
   typeof WebhookSubscriptionOf<Event.Any>
 >["Type"];
 
-/** What a webhook unsubscribe from `event` takes: the input and callback it subscribed with. */
 export const WebhookCancellationOf = <E extends Event.Any>(event: E) =>
   Schema.Struct({ input: event.input, delivery: WebhookTarget });
 

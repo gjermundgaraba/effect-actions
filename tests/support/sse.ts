@@ -21,7 +21,6 @@ export const call = (
     )
   );
 
-/** A response's SSE frames, each `data` decoded as JSON: every one, or the first `count`. */
 export const framesOf = (
   response: HttpClientResponse.HttpClientResponse,
   count = Number.POSITIVE_INFINITY

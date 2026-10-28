@@ -4,11 +4,6 @@ import type { Effect } from "effect";
 
 import type { Printer, PrintFarmError } from "./Printers.js";
 
-/**
- * The print farm, the one upstream of this server. Its methods require nothing and fail only
- * with the error the tools declare: its layer, `printFarm` in src/platform/print-farm.ts, has
- * captured the HTTP client, the farm's URL and the session.
- */
 export class PrintFarm extends Context.Service<
   PrintFarm,
   {

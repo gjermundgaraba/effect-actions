@@ -18,13 +18,8 @@ import type { Schedule } from "./alarm.js";
 import { batches } from "./batches.js";
 import { State } from "./state.js";
 
-/** The owner of the object's alarm times that end its long waits. */
 export const clockOwner = "webhooks";
 
-/**
- * Where `layerWebhooks` keeps its subscriptions in the object's storage: every key of its store,
- * whatever layout `Webhook.layer`'s `persist` gives them, is under it.
- */
 export const webhookPrefix = "effect-actions/webhooks/";
 
 type Webhooks = Layer.Success<ReturnType<typeof Webhook.layer>>;
@@ -44,20 +39,11 @@ interface Wait {
   readonly woken: Deferred.Deferred<void>;
 }
 
-/**
- * The instance's `Waits`, their time set on `schedule`, the one its `alarm` handler runs, and
- * `wakeDue`, which that handler runs at their time.
- */
 export const makeWaits = (schedule: Schedule) => {
   const held = new Set<Wait>();
   const arming = Semaphore.makeUnsafe(1);
 
-  // Why: the time is read from the waits as it is written, one write at a time, so the alarm is
-  // set for the earliest wait held then, whichever order the writes of several waits are run in:
-  // the schedule's own lock serializes the writes, not the reads before them. With none held, the
-  // time is cleared, so a wait ended early, as a refresh ends its subscription's expiry, leaves no
-  // wake for nothing.
-  const armed = arming.withPermits(1)(
+  const armForEarliestWait = arming.withPermits(1)(
     Effect.suspend(() =>
       held.size === 0
         ? schedule.clear(clockOwner)
@@ -73,14 +59,18 @@ export const makeWaits = (schedule: Schedule) => {
 
           held.add(wait);
 
-          return Effect.andThen(armed, Deferred.await(wait.woken)).pipe(
+          return Effect.andThen(
+            armForEarliestWait,
+            Deferred.await(wait.woken)
+          ).pipe(
             Effect.ensuring(
-              Effect.suspend(() => (held.delete(wait) ? armed : Effect.void))
+              Effect.suspend(() =>
+                held.delete(wait) ? armForEarliestWait : Effect.void
+              )
             )
           );
         }),
     }),
-    /** Ends each wait that is due, and sets the alarm for the next. */
     wakeDue: Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
 
@@ -91,24 +81,13 @@ export const makeWaits = (schedule: Schedule) => {
         }
       }
 
-      yield* armed;
+      yield* armForEarliestWait;
     }),
   };
 };
 
-// Why: a wait under 10 seconds, such as a POST's timeout, keeps its timer, which holds the object
-// awake no longer than the work it bounds; a longer one, a retry's backoff or a subscription's
-// expiry, holds none, which would keep the object from hibernating, or from eviction, for as long
-// as it lasts, and is ended by the object's alarm instead. One without end has no time to wake at.
-const timed = Duration.seconds(10);
+const alarmWaitThreshold = Duration.seconds(10);
 
-// Why: Effect derives no Clock from another, and the ones it makes keep their methods on a class
-// or in a closure, which a spread would drop, so each is passed through.
-/**
- * The Clock the webhook layer runs on: a wait of 10 seconds or more waits on the object's alarm
- * and holds no timer, so the object may hibernate meanwhile; if the instance is evicted, the
- * alarm builds the next, which restores the subscriptions from storage.
- */
 const alarmClock = (
   base: Clock.Clock,
   { until }: Waits["Service"]
@@ -120,12 +99,12 @@ const alarmClock = (
   monotonicTimeNanosUnsafe: () => base.monotonicTimeNanosUnsafe(),
   monotonicTimeNanos: base.monotonicTimeNanos,
   sleep: (duration) =>
-    Duration.isLessThan(duration, timed) || !Duration.isFinite(duration)
+    Duration.isLessThan(duration, alarmWaitThreshold) ||
+    !Duration.isFinite(duration)
       ? base.sleep(duration)
       : until(base.currentTimeMillisUnsafe() + Duration.toMillis(duration)),
 });
 
-// Why: a value under these keys is one the webhook layer wrote, a string; any other reads as none.
 const stringOf = Schema.decodeUnknownOption(Schema.String);
 
 const attempted = <A>(
@@ -146,7 +125,6 @@ const attempted = <A>(
 
 const keyOf = (key: string) => `${webhookPrefix}${key}`;
 
-/** A `KeyValueStore` over the object's storage under `webhookPrefix`, every key of it there. */
 const storageStore = (storage: DurableObjectStorage) => {
   const listed = attempted(
     "list",

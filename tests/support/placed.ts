@@ -43,7 +43,6 @@ export const Fill = Action.make("fill", {
   caller: Action.Anyone,
 });
 
-/** The contracts a test serves where another server serves them. */
 export const Placed = ActionHttp.make(
   [GetUser, RenameUser, Double, Bump, Counted, Countdown, Fill],
   {
@@ -99,11 +98,6 @@ const counter = (serving: { readonly counted: boolean }) => {
   ];
 };
 
-/**
- * The server a placed contract reaches, serving `Placed` but `Double` where `withoutDouble` and
- * `Counted` where `withoutCounted`, and the client reaching it, which records each request it
- * sends.
- */
 export const target = (
   options: {
     readonly withoutDouble?: boolean;

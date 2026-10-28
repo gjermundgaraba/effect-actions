@@ -7,9 +7,6 @@ import { NoteChanged, NoteNotFound } from "../../src/notes/Notes.js";
 import { NoteStore } from "../../src/notes/store.js";
 import { as } from "./as.js";
 
-// The store's rules, with no transport, as in-process.test.ts calls the implementation: a
-// revision check, and a race two fibers run under every interleaving.
-
 describe("notes, in process", () => {
   it.effect("deletes a note for its owner", () =>
     Effect.gen(function* () {
@@ -52,9 +49,6 @@ describe("notes, in process", () => {
       Effect.gen(function* () {
         const client = yield* Action.client(notes);
 
-        // A fiber is set aside after every `steps` steps, and two that run at once then take
-        // turns. Each count sets the first update aside at another point of its work; under
-        // three, the two do not finish.
         const succeeded = yield* Effect.forEach(Array.range(3, 60), (steps) =>
           Effect.gen(function* () {
             const note = yield* client

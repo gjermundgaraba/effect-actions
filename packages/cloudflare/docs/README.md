@@ -9,7 +9,7 @@ These pages cover what this package adds. Everything else, contracts, implementa
 **Arriving with an error?** A message the library throws says its fix; for any other, step 4.
 
 1. **Open one page per tool call, with your file-reading tool.** Pages are kept small to reduce truncation; if an output says it was truncated, read that page again alone.
-2. **Start from [chat-rooms](../examples/chat-rooms/)**, the one example: its README has a layout tree and a "Where to look" table naming the file for each thing, and its comments carry the traps it shows.
+2. **Start from [chat-rooms](../examples/chat-rooms/)**, the one example: its README has a layout tree and a "Where to look" table naming the file for each thing, and its code and README carry the traps it shows.
 3. **Read [ActionDurableObject.md](ActionDurableObject.md) completely**, then the page of each task you have ([Pages](#pages)), and the example files their sections link.
 4. **For workerd's, a compiler diagnostic or Effect's own error, search [ActionDurableObject-failures.md](ActionDurableObject-failures.md)** for a fragment of the message without quotes, then the core's `*-failures.md` pages.
 

@@ -44,8 +44,6 @@ export const racedCalls = RpcServer.layer(RacedRpcs).pipe(
     RacedRpcs.toLayer({
       bump: () =>
         Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
-          // Why: the write must start in the read's own promise reaction; an extra hop between
-          // them lets workerd deliver the next call in between, which reads the same count.
           Effect.promise(async () => {
             const count = await storage.get<number>("count");
 

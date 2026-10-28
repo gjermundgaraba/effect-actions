@@ -12,23 +12,14 @@ import {
 
 import { State } from "./state.js";
 
-/** Where the object's alarm times are kept, one key per owner. */
 export const alarmPrefix = "effect-actions/alarm/";
 
 const keyOf = (owner: string) => `${alarmPrefix}${owner}`;
 
-// Why: a time set is kept with `failures` 0. A run under way keeps its retry's time, counting
-// itself as failed, so a run cut off is retried as a failed one: a time kept with `failures`
-// above 0 is that mark, or a retry due.
 const Kept = Schema.Struct({ at: Schema.Finite, failures: Schema.Int });
 
 const keptOf = Schema.decodeUnknownOption(Kept);
 
-// Why: a failed owner is retried as the runtime retries a plain object's failed alarm, 2 seconds
-// later, doubling, six times. The runtime cannot do it for one owner among several, and a
-// handler that re-arms the alarm as it fails replaces the runtime's retry with its own time.
-// Past those six, the runtime drops a plain object's alarm; an owner's time is kept instead,
-// retried hourly, as the work it stands for, a webhook's delivery among them, is lost with it.
 const backoffRetries = 6;
 
 const hour = 60 * 60 * 1000;
@@ -36,27 +27,14 @@ const hour = 60 * 60 * 1000;
 const retryDelay = (failures: number) =>
   failures > backoffRetries ? hour : 2000 * 2 ** (failures - 1);
 
-/**
- * What runs at the object's one alarm, by owner, given its retry count: the application's
- * `alarm` option, and the package's own work, each when its time has come.
- */
 type Owners<E, R> = Readonly<
   Record<string, (info: AlarmInvocationInfo) => Effect.Effect<void, E, R>>
 >;
 
-/**
- * The object's alarm times, one per owner, kept in its storage: the runtime's one alarm is set
- * for the earliest, and `runDue` runs each owner whose time has come. `handlers` and `make` make
- * one per instance, which its `Alarm` and its `alarm` handler share.
- */
 export const makeSchedule = (state: DurableObjectState) => {
   const { storage } = state;
-  // Why: a set and a run's end each read an owner's time and then write it, so they take turns:
-  // the end of a run never deletes a time set as it ended.
   const lock = Semaphore.makeUnsafe(1);
-  // Why: an owner is running only while this instance runs it, never in storage, so the mark of
-  // a run an eviction, a deploy or a crash cut off reads as the retry it is.
-  const running = new Set<string>();
+  const runningInThisInstance = new Set<string>();
 
   const read = (owner: string) =>
     Effect.map(
@@ -77,8 +55,6 @@ export const makeSchedule = (state: DurableObjectState) => {
     )
   );
 
-  // Why: the runtime keeps one alarm per object, so it is set for the earliest owner's time,
-  // and deleted once none is left, every time an owner's changes.
   const rearm = Effect.flatMap(times, (kept) => {
     const earliest = Math.min(...kept.map(({ at }) => at));
 
@@ -96,8 +72,6 @@ export const makeSchedule = (state: DurableObjectState) => {
 
   return {
     rearm,
-    // Why: the runtime gives up on an alarm whose handler crashes, past its own retries, which
-    // leaves the times kept with no alarm to run them: an instance's build sets it again.
     restore: lock.withPermits(1)(
       Effect.flatMap(
         Effect.promise(async () => await storage.getAlarm()),
@@ -109,12 +83,6 @@ export const makeSchedule = (state: DurableObjectState) => {
             : Effect.void
       )
     ),
-    // Why: an owner setting its time again unchanged, as `layerWebhooks` does its earliest wait
-    // whenever its waits change, costs one read, not a write, a list and the alarm's.
-    /**
-     * Keeps `at` as the owner's time, in place of any: set as the owner's run fails, it gives way
-     * to that run's retry where the retry is earlier.
-     */
     set: (owner: string, at: number) =>
       lock.withPermits(1)(
         Effect.flatMap(read(owner), (kept) =>
@@ -123,19 +91,14 @@ export const makeSchedule = (state: DurableObjectState) => {
             : Effect.andThen(keep(owner, { at, failures: 0 }), rearm)
         )
       ),
-    // Why: a store setting a time on every write, as chat-rooms' does on each post, costs one
-    // read, not a write, a list and the alarm's, while an earlier time is kept.
-    /**
-     * Keeps `at` as the owner's time unless an earlier one is kept, a retry due included: the
-     * mark of the owner's run under way is no time, so a time set from the run is kept.
-     */
     setBy: (owner: string, at: number) =>
       lock.withPermits(1)(
         Effect.flatMap(read(owner), (kept) =>
           Option.exists(
             kept,
             (held) =>
-              held.at <= at && (held.failures === 0 || !running.has(owner))
+              held.at <= at &&
+              (held.failures === 0 || !runningInThisInstance.has(owner))
           )
             ? Effect.void
             : Effect.andThen(keep(owner, { at, failures: 0 }), rearm)
@@ -148,12 +111,6 @@ export const makeSchedule = (state: DurableObjectState) => {
           rearm
         )
       ),
-    /**
-     * Runs each owner whose time has come as its turn comes, removing its time once its run
-     * succeeds unless one was set or cleared as it ran: one that fails is logged and retried, 2
-     * seconds later, doubling, six times, then hourly, unless cleared as it ran or a time set as
-     * it ran is earlier.
-     */
     runDue: <E, R>(owners: Owners<E, R>) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
@@ -171,13 +128,6 @@ export const makeSchedule = (state: DurableObjectState) => {
                 async () => await storage.delete(keyOf(owner))
               );
 
-              // Why: an earlier owner's run lets a request in, which may clear or postpone this
-              // owner's time, so its turn reads the time storage holds now, not the one listed.
-              // A run an eviction, a deploy or a crash cuts off is retried, so its time stays
-              // kept, as its mark counted as failed, until its run ends, at its retry's time, the
-              // alarm set for it and the write made durable before the run: one deleted first
-              // would leave the retry nothing to run, and a retry the runtime gives up on would
-              // leave it no alarm.
               const due = yield* lock.withPermits(1)(
                 Effect.gen(function* () {
                   const current = yield* stored;
@@ -206,7 +156,7 @@ export const makeSchedule = (state: DurableObjectState) => {
                     )
                   );
 
-                  running.add(owner);
+                  runningInThisInstance.add(owner);
 
                   return { ...current, mark, run };
                 })
@@ -234,20 +184,11 @@ export const makeSchedule = (state: DurableObjectState) => {
                 );
               }
 
-              // Why: the retry is timed from the failure, so an owner that runs long before it fails
-              // still waits its whole backoff, not what is left of it after its run.
               const endedAt = yield* Clock.currentTimeMillis;
 
-              // Why: a succeeded run drops its owner's time only while it is still the run's mark,
-              // so a time set as it ran is kept: a time set is kept with `failures` 0, never the
-              // mark's count. A failed run's retry gives way only to a clear as it ran, or to an
-              // earlier time set as it ran, as `Options.alarm` retries every failure: when any
-              // time set as it ran replaced the retry, a request's later time dropped it. The
-              // owner stops running under the lock, so a set waiting on it reads what this end
-              // keeps.
               yield* lock.withPermits(1)(
                 Effect.gen(function* () {
-                  running.delete(owner);
+                  runningInThisInstance.delete(owner);
 
                   const current = yield* stored;
 
@@ -278,19 +219,15 @@ export const makeSchedule = (state: DurableObjectState) => {
                 })
               );
             }).pipe(
-              // Why: a run interrupted before its end leaves the owner running no longer, so the
-              // mark it kept reads as the retry it is.
               Effect.ensuring(
                 Effect.sync(() => {
-                  running.delete(owner);
+                  runningInThisInstance.delete(owner);
                 })
               )
             ),
           { discard: true }
         );
 
-        // Why: a rearm lists the times, then sets the alarm for the earliest, so a set between
-        // the two, outside the lock, would be overwritten with the times listed before it.
         yield* lock.withPermits(1)(rearm);
       }),
   };
@@ -298,10 +235,8 @@ export const makeSchedule = (state: DurableObjectState) => {
 
 export type Schedule = ReturnType<typeof makeSchedule>;
 
-/** The owner the application's `alarm` option runs as. */
 export const applicationOwner = "application";
 
-/** The application's alarm over `schedule`, the instance's. */
 export const alarmOf = (schedule: Schedule) =>
   Alarm.of({
     set: (at) => schedule.setBy(applicationOwner, DateTime.toEpochMillis(at)),

@@ -3,7 +3,7 @@ import { Deferred, Effect, Exit, Option, Schema, Scope } from "effect";
 import { KeyValueStore } from "effect/persistence";
 
 import { WebhookSecret } from "../../src/contract/callback.js";
-import { makeStorage } from "../../src/webhook/stored.js";
+import { makeWriteBehindStorage } from "../../src/webhook/stored.js";
 import type { Stored } from "../../src/webhook/stored.js";
 import { secretOf, settled } from "../support/webhook.js";
 
@@ -24,13 +24,16 @@ it.effect(
     Effect.gen(function* () {
       const store = yield* KeyValueStore.KeyValueStore;
       const scope = yield* Scope.make();
-      const storage = yield* makeStorage(store).pipe(Scope.provide(scope));
+
+      const storage = yield* makeWriteBehindStorage(store).pipe(
+        Scope.provide(scope)
+      );
 
       storage.mark("sub_alice", record);
 
       yield* Scope.close(scope, Exit.void);
 
-      const reopened = yield* makeStorage(store);
+      const reopened = yield* makeWriteBehindStorage(store);
 
       expect(reopened.ids()).toStrictEqual(["sub_alice"]);
       expect(yield* reopened.get("sub_alice")).toStrictEqual(
@@ -41,13 +44,14 @@ it.effect(
 
 const key = "effect-actions/webhook/sub_alice";
 
+interface Outage {
+  down: boolean;
+  writes: number;
+  held: Deferred.Deferred<undefined> | undefined;
+}
+
 const failingWhileDown = (store: KeyValueStore.KeyValueStore) => {
-  const state = {
-    down: false,
-    writes: 0,
-    // SAFETY: a widening, not a narrowing: the field starts empty and may later hold a gate.
-    held: undefined as Deferred.Deferred<undefined> | undefined,
-  };
+  const state: Outage = { down: false, writes: 0, held: undefined };
 
   const write = <A>(
     written: Effect.Effect<A, KeyValueStore.KeyValueStoreError>,
@@ -88,7 +92,10 @@ it.effect(
       const memory = yield* KeyValueStore.KeyValueStore;
       const { state, store } = failingWhileDown(memory);
       const scope = yield* Scope.make();
-      const storage = yield* makeStorage(store).pipe(Scope.provide(scope));
+
+      const storage = yield* makeWriteBehindStorage(store).pipe(
+        Scope.provide(scope)
+      );
 
       storage.mark("sub_alice", record);
 
@@ -112,7 +119,7 @@ it.effect(
 
       yield* Scope.close(scope, Exit.void);
 
-      const reopened = yield* makeStorage(memory);
+      const reopened = yield* makeWriteBehindStorage(memory);
 
       expect([once, again]).toStrictEqual([3, 5]);
       expect(reopened.ids()).toStrictEqual([]);
@@ -125,7 +132,11 @@ it.effect("keeps a mark made as an earlier one of its id is written", () =>
     const memory = yield* KeyValueStore.KeyValueStore;
     const { state, store } = failingWhileDown(memory);
     const scope = yield* Scope.make();
-    const storage = yield* makeStorage(store).pipe(Scope.provide(scope));
+
+    const storage = yield* makeWriteBehindStorage(store).pipe(
+      Scope.provide(scope)
+    );
+
     const held = yield* Deferred.make<undefined>();
 
     state.held = held;
@@ -139,7 +150,7 @@ it.effect("keeps a mark made as an earlier one of its id is written", () =>
     yield* Deferred.succeed(held, undefined);
     yield* Scope.close(scope, Exit.void);
 
-    const reopened = yield* makeStorage(memory);
+    const reopened = yield* makeWriteBehindStorage(memory);
 
     expect(reopened.ids()).toStrictEqual([]);
     expect(yield* memory.has(key)).toBe(false);

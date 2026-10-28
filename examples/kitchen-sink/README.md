@@ -31,7 +31,7 @@ node --import tsx examples/kitchen-sink/src/agent.ts                 # the assis
 vp test examples/kitchen-sink
 ```
 
-`HOST`, `PORT`, `ADMIN_PORT`, `PUBLIC_URL` and `MCP_ORIGIN` configure the server; `TRACKER_URL` points the CLI and the seed at it. `stdio.ts` is an MCP server for a local agent to start as a subprocess. `sdk.ts` and `browser.ts` are imported by client code, not run. The OpenAPI document is at `/api/v1/openapi.json`, Swagger UI at `/docs`, the MCP endpoint at `/mcp`, the socket at `/rpc`.
+`HOST`, `PORT`, `ADMIN_PORT`, `PUBLIC_URL` and `MCP_ORIGIN` configure the server; `TRACKER_URL` points the CLI and the seed at it. `stdio.ts` is an MCP server for a local agent to start as a subprocess: from the repository root, register it with `claude mcp add tracker -- "$PWD/node_modules/.bin/tsx" "$PWD/examples/kitchen-sink/src/stdio.ts"`, full paths since the host starts it in a directory of its choosing. `sdk.ts` and `browser.ts` are imported by client code, not run. The OpenAPI document is at `/api/v1/openapi.json`, Swagger UI at `/docs`, the MCP endpoint at `/mcp`, the socket at `/rpc`.
 
 | Credential | Who | May |
 | --- | --- | --- |

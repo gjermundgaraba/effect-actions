@@ -6,7 +6,6 @@ export type Codec = Schema.Codec<unknown>;
 /** Struct fields, given in place of a schema. */
 export type Fields = Readonly<Record<string, Codec>>;
 
-/** The input of a contract declared without one: an empty object. */
 export const NoInput = Schema.Record(Schema.String, Schema.Never);
 
 /** The schema a contract holds for `S`, given as a schema or as struct fields. */

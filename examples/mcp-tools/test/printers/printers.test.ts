@@ -10,11 +10,6 @@ import { printFarm } from "../../src/platform/print-farm.js";
 import { printers } from "../../src/printers/handlers.js";
 import { PrintFarmError } from "../../src/printers/Printers.js";
 
-// What the tools do, with no transport: `Action.client` runs the same decoding and the same
-// handlers a server runs. A public action has no caller, so a call needs none provided.
-
-// The real `PrintFarm` over an upstream of the test's: its requests, its sign-in and its error
-// mapping all run, and only the network is replaced. Its settings come from a Layer too.
 const farmOver = (upstream: Layer.Layer<HttpClient.HttpClient>) =>
   printFarm.pipe(
     Layer.provide(upstream),
@@ -29,8 +24,6 @@ const farmOver = (upstream: Layer.Layer<HttpClient.HttpClient>) =>
     )
   );
 
-// The fake farm, noting each request the service sends it. A request is noted as the service
-// wrote it, before its client prepends FARM_URL, so the paths are relative.
 const noting = (sent: string[]) =>
   Layer.effect(
     HttpClient.HttpClient,
@@ -42,7 +35,6 @@ const noting = (sent: string[]) =>
     )
   ).pipe(Layer.provide(fakeFarm));
 
-// A farm that lets the service sign in, then answers every other request with `answer`.
 const farmThat = (
   answer: (
     request: HttpClientRequest.HttpClientRequest
@@ -142,7 +134,6 @@ describe("printers, in process", () => {
     }
   );
 
-  // The message is all a model gets of a failure, so each test asserts it.
   it.effect(
     "fails with the declared error, carrying the farm's own reason",
     () =>
@@ -214,7 +205,6 @@ describe("printers, in process", () => {
       )
   );
 
-  // `it.effect` runs on a test clock, so the thirty seconds pass when the test says so.
   it.effect("gives up on a farm that does not answer", () =>
     Effect.gen(function* () {
       const client = yield* Action.client(printers);

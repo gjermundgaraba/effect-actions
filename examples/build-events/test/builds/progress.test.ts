@@ -41,7 +41,6 @@ describe("a build started by a member", () => {
         const onProgress = (step: (typeof steps)[number]) =>
           Effect.sync(() => seen.push(step));
 
-        // A caller asks for the steps by giving `onProgress`; without it, the call answers alone.
         const answers = [
           yield* http.startBuild({ pipeline: "api" }, { onProgress }),
           yield* mcp.startBuild({ pipeline: "api" }, { onProgress }),

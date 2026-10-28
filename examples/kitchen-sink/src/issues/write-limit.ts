@@ -33,7 +33,6 @@ const limitedBy = Effect.gen(function* () {
                   retryAfterSeconds: Duration.toSeconds(retryAfter),
                 })
               ),
-            // Any other reason is the limiter's store failing: a defect, not the caller's.
             Effect.die
           )
         );
@@ -42,15 +41,6 @@ const limitedBy = Effect.gen(function* () {
     });
 });
 
-// The write limit: ten writes a minute per member. It is the handlers', not a surface's, so it
-// holds wherever they run: HTTP, MCP, RPC, stdio and the assistant's tools all count against
-// the one limiter. A builder yields this once and wraps each limited handler in the function
-// it gets, which fails with an error those actions' contracts declare; every surface sends it
-// as any declared error. The limiter is a service, so its counts are shared wherever it is
-// provided: memory.ts provides Effect's own, `RateLimiter.layer` over a store. `consume` counts
-// in a fixed window unless given `algorithm: "token-bucket"`: ten writes in each minute, so
-// twenty may pass across the boundary between two. A strict limit, ten in any sixty seconds,
-// is a service of your own of the same shape, yielded here, never part of the issue store.
 export const writeLimit = Effect.gen(function* () {
   const limited = yield* limitedBy;
 
@@ -58,8 +48,6 @@ export const writeLimit = Effect.gen(function* () {
     limited("writes", 10, write);
 });
 
-// The export limit: two exports a minute per member, on the same limiter under a key of its
-// own, so exporting spends no write.
 export const exportLimit = Effect.gen(function* () {
   const limited = yield* limitedBy;
 

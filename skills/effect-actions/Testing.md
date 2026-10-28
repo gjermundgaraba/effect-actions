@@ -14,16 +14,13 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { Effect } from "effect";
 
 import { CurrentUser } from "../../src/identity/Identity.js";
-import { users } from "../../src/identity/users.js";
+import { demoUsers } from "../../src/identity/users.js";
 import { notes } from "../../src/notes/handlers.js";
 import { NoteNotFound } from "../../src/notes/Notes.js";
 import { NoteStore } from "../../src/notes/store.js";
 
-// What the implementation does, with no transport: `Action.client` runs the same decoding,
-// `authorize` and handler a server runs. The caller is provided around each call, as a server
-// provides it per request.
-const as = (user: keyof typeof users) =>
-  Effect.provideService(CurrentUser, users[user]);
+const as = (user: keyof typeof demoUsers) =>
+  Effect.provideService(CurrentUser, demoUsers[user]);
 
 describe("notes, in process", () => {
   it.effect("keeps each user's notes their own", () =>
@@ -94,7 +91,6 @@ import { Http } from "../src/Api.js";
 import { Greet } from "../src/greeting/Greeting.js";
 import { routes } from "../src/routes.js";
 
-// The routes answer in memory: no port, and the same code the server runs.
 it.effect("greets over HTTP and as an MCP tool", () =>
   Effect.gen(function* () {
     const http = yield* ActionHttp.client(Http);
@@ -152,14 +148,12 @@ it.effect(
   "delivers each build a member may see as it finishes, as the subscription selects",
   () =>
     Effect.gen(function* () {
-      // One client holds both: the action that finishes builds and the event that reports them.
       const client = yield* Action.client([builds, buildEvents]);
 
       const failed = yield* client
         .watch(BuildFinished, { status: "failed" })
         .pipe(Stream.take(1), Stream.runCollect, as("grace"), Effect.forkChild);
 
-      // The watch starts from now: let it take its first position before builds finish.
       yield* TestClock.adjust("0 millis");
       yield* client
         .finishBuild({ pipeline: "api", status: "failed" })
@@ -167,12 +161,10 @@ it.effect(
       yield* client
         .finishBuild({ pipeline: "web", status: "passed" })
         .pipe(as("ada"));
-      // Each build finished notifies: the watch reads at once, with no wait for its next poll.
       yield* client
         .finishBuild({ pipeline: "web", status: "failed" })
         .pipe(as("ada"));
 
-      // grace sees only the web pipeline, and asked only for failures.
       expect(yield* Fiber.join(failed)).toMatchObject([
         {
           _tag: "Occurrence",
@@ -192,8 +184,6 @@ it.effect(
         .finishBuild({ pipeline: "web", status: "passed" })
         .pipe(as("ada"));
 
-      // A cursor of the store before a restart, its offset one this store has too: what it named
-      // is gone, so the watch is told.
       const resumed = yield* client
         .watch(BuildFinished, {}, { cursor: "an-earlier-epoch:0" })
         .pipe(Stream.take(2), Stream.runCollect, as("grace"));

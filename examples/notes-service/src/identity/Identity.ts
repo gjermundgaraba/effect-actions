@@ -19,8 +19,6 @@ export class CurrentUser extends Context.Service<CurrentUser, User>()(
   "notes-service/CurrentUser"
 ) {}
 
-// How a remote caller proves it is CurrentUser: a bearer token, the default scheme. Clients
-// import this descriptor with the binding; its verifier, in verifier.ts, stays on the server.
 export const Login = Authentication.make("notes-service.Login", CurrentUser);
 
 export const WhoAmI = Action.make("whoAmI", {

@@ -25,7 +25,6 @@ export const Login = Authentication.make("events-types.Login", Caller, {
   principal: (caller) => caller,
 });
 
-/** A protected event type, with input. */
 export const Watched = Event.make("account.watched", {
   description: "",
   input: { id: Schema.String },
@@ -33,7 +32,6 @@ export const Watched = Event.make("account.watched", {
   caller: Caller,
 });
 
-/** A public event type, without input. */
 export const Ticked = Event.make("clock.ticked", {
   description: "",
   payload: { at: Schema.Finite },
@@ -46,7 +44,6 @@ export const Open = Action.make("open", {
   caller: Action.Anyone,
 });
 
-/** `Watched` from a source built with `Store` that reads `Region` per subscription. */
 export const watched = Event.implement(
   Watched,
   Effect.as(Store, {
@@ -55,7 +52,6 @@ export const watched = Event.implement(
   { authorize: Event.allowAll }
 );
 
-/** `Watched` from a source reading the identity and `Region` per subscription. */
 export const readingBoth = Event.implement(
   Watched,
   {
@@ -68,7 +64,6 @@ export const readingBoth = Event.implement(
   { authorize: Event.allowAll }
 );
 
-/** `Watched` from a source reading nothing per subscription. */
 export const watchedPlainly = Event.implement(
   Watched,
   { check: () => Effect.succeed({ cursor: "0", events: [] }) },

@@ -10,8 +10,6 @@ import { Directory } from "./directory.js";
 import { Login, scopes, Session } from "./Identity.js";
 import type { Member } from "./Identity.js";
 
-// What both verifiers check once a credential has named a member: an operator may have
-// suspended the workspace. Checked here, it holds on every remote surface.
 const inService = Effect.gen(function* () {
   const registry = yield* WorkspaceRegistry;
 
@@ -21,8 +19,6 @@ const inService = Effect.gen(function* () {
       Effect.orElseSucceed(() => true)
     );
 
-    // No scopes named: signing in again grants nothing, so this is a plain 403, never a
-    // challenge sending an OAuth client back to its authorization server.
     if (suspended) {
       return yield* new Action.Forbidden({
         message: "This workspace is suspended.",
@@ -33,24 +29,20 @@ const inService = Effect.gen(function* () {
   });
 });
 
-// The OAuth protected resource whose discovery the provider publishes, so an MCP client that
-// gets a 401 finds where to sign in, asking for the read scope first.
+const demoAuthorizationServer = "https://auth.example.com";
+
 const protectedResource = Effect.map(
   publicUrl,
   (url) =>
     ({
       resource: `${url}/mcp`,
-      // DEMO ONLY: no server is there. Yours is your authorization server's issuer.
-      authorizationServers: ["https://auth.example.com"],
+      authorizationServers: [demoAuthorizationServer],
       scopesSupported: [scopes.read, scopes.write],
       scopesRequired: [scopes.read],
       resourceName: "Tracker",
     }) satisfies Authentication.ProtectedResource
 );
 
-// Server only: `Login`'s provider. The Effect is a builder, as `Action.implement` takes one:
-// it yields the startup services once, and returns the verifier, which runs per request and
-// may read request services, here the `Tenant` router middleware provides.
 export const authenticateBearer = Authentication.layer(
   Login,
   Effect.gen(function* () {
@@ -78,9 +70,6 @@ export const authenticateBearer = Authentication.layer(
   { protectedResource }
 );
 
-// `Session`'s provider: the same identity from another credential. Its verifier receives what
-// its scheme decodes, the cookie's value. A session belongs to one workspace, so it reads no
-// `Tenant`.
 export const authenticateSession = Authentication.layer(
   Session,
   Effect.gen(function* () {

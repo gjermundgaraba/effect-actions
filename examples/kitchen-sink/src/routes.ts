@@ -34,8 +34,6 @@ import { status } from "./workspaces/handlers.js";
 import { resolveTenant } from "./workspaces/tenant.js";
 import { GetStatus } from "./workspaces/Workspaces.js";
 
-// Every domain's implementation of the public port's actions and events, once. Each surface
-// below takes this one list and serves what its binding or its `actions` names.
 const implementations = [
   status,
   identity,
@@ -46,9 +44,6 @@ const implementations = [
   assistant,
 ];
 
-// JSON routes at `/api/v1/<action>`, in two layers of one binding, each naming its `actions`,
-// an event among them: a layer given `actions` serves exactly what it names. The quota requires
-// the caller, and a public route has none, so `getStatus` is served by a layer without it.
 const api = Layer.mergeAll(
   ActionHttp.layer(Http, implementations, { actions: [GetStatus] }),
   ActionHttp.layer(Http, implementations, {
@@ -57,9 +52,6 @@ const api = Layer.mergeAll(
   })
 );
 
-// The same actions as MCP tools at `/mcp`: a mixed endpoint, serving the public `getStatus`
-// beside the members' tools, and `issue.changed` as an MCP event, polled, streamed or
-// delivered by webhook.
 const mcp = Layer.unwrap(
   Effect.map(allowedOrigins, (origins) =>
     ActionMcp.layerHttp(implementations, {
@@ -69,25 +61,15 @@ const mcp = Layer.unwrap(
       authentication: Login,
       actions: [...Tools, IssueChanged],
       features,
-      // The endpoint's own Origin allowlist, narrower than the request policy, which has
-      // already refused a foreign Origin: that policy also lets through a page of any name
-      // this host answers to, such as http://127.0.0.1:3000. Not listed here, such a page gets
-      // a 403 from the endpoint.
       allowedOrigins: origins,
     })
   )
 );
 
-// The members' actions as Effect RPC, for the web app, behind its session cookie and the same
-// quota as native RPC middleware. It still requires its protocol and serialization, chosen by
-// whoever serves it: server.ts gives it a WebSocket, and a test Effect's HTTP protocol, which
-// answers in memory.
 export const rpc = ActionRpc.layer(Rpc, implementations, {
   middleware: [RpcQuota],
 }).pipe(Layer.provide([authenticateSession, quota, assistantTools]));
 
-// Effect's own tools read the binding's native `HttpApi`: the OpenAPI document and a Swagger
-// UI, each showing the bearer scheme on every route but `getStatus`.
 const documentation = Layer.mergeAll(
   HttpRouter.add(
     "GET",
@@ -99,27 +81,6 @@ const documentation = Layer.mergeAll(
 
 const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 
-// The public port's HTTP routes: what members reach, but for the rpcs, which server.ts serves
-// beside these. Each `Layer.provide` gives what the layers before it still owe, and is built
-// before them. Two things follow from that order.
-//
-// - `resolveTenant`, in a `Layer.provide` of its own after the authentication, gives the
-//   `Tenant` the Bearer verifier reads per request; tenant.ts says why not in one array.
-// - Global middleware runs in the order it registers, and it registers when its layer is
-//   built. The request policy, provided last, is built first, so it runs before everything:
-//   before CORS, and before the OAuth discovery the Bearer provider registers when it is
-//   built. Merged beside the routes instead, it would register after that provider, and a
-//   foreign Host could read the discovery document.
-//
-// The assistant's builder yields its tools, so their handlers are provided to the layers
-// serving it, here and on `rpc`: one Layer, built once in the layer graph serving both, where
-// the tools run the issue implementation the routes serve, with no second build of it.
-//
-// Webhook delivery serves MCP's `events/subscribe` and HTTP's
-// `POST /api/v1/events/issue.changed/subscribe`: a member names a callback URL and a secret,
-// and each change it may see is POSTed there, signed. One layer holds the subscriptions of
-// both. It POSTs with an `HttpClient` and checks where each callback resolves with `Dns`, which
-// server.ts provides.
 export const publicRoutes = Layer.mergeAll(
   api,
   mcp,
@@ -135,20 +96,11 @@ export const publicRoutes = Layer.mergeAll(
   Layer.provide(requestPolicy)
 );
 
-// The admin port: what operators reach, and nothing else. It is a router of its own, with its
-// own binding, descriptor and provider, so no member's token is even understood here. It
-// serves one implementation the public port serves too, `status`.
 export const adminRoutes = Layer.mergeAll(
   ActionHttp.layer(AdminHttp, [status, admin]),
   health
 ).pipe(Layer.provide(authenticateOperator), Layer.provide(requestPolicy));
 
-// Every builder as one layer. The two ports are two layer graphs, and each would run the
-// builder of an implementation it serves: `status`, which both serve, twice, each port then
-// reporting an `instance` of its own. Provided above both, with the services, each builder
-// runs once for every surface of both ports. The assistant's, the export's and the event's are
-// left out: the public port alone serves them, and builds each once for its routes and its
-// rpcs.
 export const builders = Action.layer([
   status,
   identity,

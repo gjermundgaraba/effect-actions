@@ -143,11 +143,12 @@ export const checkCallsTypes = () =>
 
 export const toHost = (
   stub: DurableObjectStub<Host>
-): Layer.Layer<RpcClient.Protocol> => ActionDurableObject.layerStubClient(stub);
+): Layer.Layer<RpcClient.Protocol> =>
+  ActionDurableObject.layerStubClient(() => stub);
 
 export const checkStubTypes = (stub: DurableObjectStub<Hosted>) =>
   // @ts-expect-error -- Published declarations must refuse a stub of a class without the method.
-  ActionDurableObject.layerStubClient(stub);
+  ActionDurableObject.layerStubClient(() => stub);
 
 export const start = (
   stub: DurableObjectStub<Host>,

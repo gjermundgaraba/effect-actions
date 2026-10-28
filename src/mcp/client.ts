@@ -86,7 +86,6 @@ type CallError<A extends Action.Any, D> =
   | HttpClientError.HttpClientError
   | McpCallError;
 
-/** What a watch of `W` may fail with, under the endpoint's descriptor `D`. */
 type WatchError<W extends Event.Any, D> =
   | Event.SubscriptionError
   | BuiltIn
@@ -146,7 +145,6 @@ const decodeReply = Schema.decodeUnknownOption(
   Schema.fromJsonString(ToolCallReply)
 );
 
-/** `onProgress` given each `notifications/progress` value decoded, one that does not logged and dropped. */
 const decodedSink = (
   progress: Action.Any["progress"],
   onProgress: CallOptions<unknown>["onProgress"]
@@ -169,8 +167,6 @@ const decodedSink = (
   };
 };
 
-// Why: `execute` alone, since the native client is invariant in what it fails with and requires:
-// no one client type holds both a plain client and a transformed one, but each one's `execute` fits.
 const callTool = <S extends Action.Any["success"]>(
   client: Pick<HttpClient.HttpClient.With<unknown, unknown>, "execute">,
   url: string,
@@ -191,7 +187,6 @@ const callTool = <S extends Action.Any["success"]>(
         {
           name,
           arguments: input,
-          // Why: Any token will do, since a stateless request's notifications are its own.
           ...(sink === undefined
             ? {}
             : { _meta: { progressToken: "progress" } }),
@@ -362,8 +357,6 @@ export function client(
 
             const element = elementOf(action.success);
 
-            // Why: A tool answers one result, so a stream's tool answers its elements collected;
-            // the method streams them again, so every client's call of the action has one type.
             if (element !== undefined) {
               const elements = Schema.Array(element);
 

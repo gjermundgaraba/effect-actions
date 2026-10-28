@@ -21,8 +21,6 @@ import { answered } from "./implementation.js";
 import type { ErasedValue, WrittenHandler } from "./implementation.js";
 import { declaredStatus, isTransientStatus } from "./status.js";
 
-// Why: Declared once, as the schema a store decodes what it reads with and the time it keeps it
-// for, both statics of `Idempotency`, so a store of its own reads them where the core writes them.
 const Kept = Schema.Struct({
   input: Schema.String,
   outcome: Schema.String,
@@ -78,8 +76,6 @@ export const layerIdempotency: Layer.Layer<Idempotency> = Layer.sync(
     get: (id) => Effect.sync(() => held.get(id)),
     set: (id, kept) =>
       Effect.sync(() => {
-        // Why: deleted first, a key kept again moves last, so the map is in the order its answers
-        // were kept and the expired ones are at its front.
         held.delete(id);
         held.set(id, kept);
 
@@ -94,10 +90,6 @@ export const layerIdempotency: Layer.Layer<Idempotency> = Layer.sync(
   });
 });
 
-/**
- * `handle`, answering a call given `action`'s idempotency key as the first call with it and the
- * same input was answered: from `store`, or, while that call runs, once it has.
- */
 export const keyed = (
   action: Action.Any,
   store: Idempotency["Service"],
@@ -122,8 +114,6 @@ export const keyed = (
   const encodeOutcome = Schema.encodeUnknownEffect(Outcome);
   const decodeOutcome = Schema.decodeUnknownOption(Outcome);
 
-  // Why: a declared failure whose status a server sends while it recovers, as a 503, is the
-  // server's state, not the call's answer: a retry with the key runs the call again.
   const isTransientFailure = Schema.is(
     Schema.Union(
       projectedErrors(action).filter((error) =>
@@ -153,8 +143,6 @@ export const keyed = (
         return yield* run(id, key, digest, answer);
       }
 
-      // Why: claimed before the store is read, with no wait between the check and the claim, so
-      // of two calls with one key at once, the second waits rather than finding nothing kept.
       const claim = Deferred.makeUnsafe<undefined>();
 
       running.set(id, claim);
@@ -182,8 +170,6 @@ export const keyed = (
 
         const exit = yield* Effect.exit(answer);
 
-        // Why: an answer and the action's own failures alone are kept: after a defect or an
-        // interruption the call may not have done its work, so a retry runs it again.
         const keeps =
           Exit.isSuccess(exit) ||
           exit.cause.reasons.every(
@@ -216,8 +202,6 @@ export const keyed = (
 
     const answer = Effect.suspend(() => answered(handle(input, reporting)));
 
-    // Why: one caller's key is never another's, so a key a model fills in, or one guessed,
-    // answers no one else's call; a record's keys, in whatever order they arrive, are one input.
     return Effect.flatMap(
       Effect.all([
         Effect.service(CallerKeyed).pipe(

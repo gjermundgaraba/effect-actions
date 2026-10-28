@@ -435,7 +435,7 @@ describe("ActionRpc internal errors", () => {
           Authentication.layer(Login, (token: Redacted.Redacted) =>
             Redacted.value(token) === "broken"
               ? Effect.fail(
-                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The failure under test: the descriptor broken, as plain JavaScript could.
+                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
                   new UserNotFound({ id: "verifier secret" }) as never
                 )
               : verify(token)

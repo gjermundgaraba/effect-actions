@@ -3,7 +3,6 @@ import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { Effect, Match, Schema } from "effect";
 import { TestClock } from "effect/testing";
 
-/** Runs every forked watch up to its next wait, such as one that takes its first position. */
 export const settle = TestClock.adjust("0 millis");
 
 export const Posted = Event.make("message.posted", {
@@ -21,7 +20,6 @@ export type Message = typeof Posted.payload.Type;
 
 export type Received = Event.Received<typeof Posted>;
 
-/** Each message's text, and `gap` for a gap. */
 export const texts = (received: readonly Received[]) =>
   received.map((item) =>
     Match.valueTags(item, {
@@ -30,10 +28,6 @@ export const texts = (received: readonly Received[]) =>
     })
   );
 
-/**
- * Messages read by a check source asked what was posted since a cursor, the count of posted
- * messages, keyed by channel, counting its reads in all and by the channel each asks for.
- */
 export const makeMessages = () => {
   const messages: Message[] = [];
   const reads = new Map<string, number>();

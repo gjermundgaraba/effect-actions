@@ -22,8 +22,6 @@ export const Issue = Schema.Struct({
 
 export type Issue = typeof Issue.Type;
 
-// A declared error is part of the contract: every client decodes it as this class, and its
-// status is what HTTP answers with. Without `httpApiStatus` it would be a 422.
 export class IssueNotFound extends Schema.TaggedError<
   IssueNotFound,
   { readonly brand: unique symbol }
@@ -38,20 +36,11 @@ export class RateLimited extends Schema.TaggedError<
   { httpApiStatus: 429 }
 ) {}
 
-// A shared error list: what any write to an existing issue may fail with. Each such action
-// names this one array as its `error`, here and in attachments/Attachments.ts, so an error
-// added to the list is declared by all of them.
 export const IssueWriteErrors = [IssueNotFound, RateLimited] as const;
 
-// An option bundle. What the two actions changing an issue share is one constant object spread
-// into `Action.make`, typed as if written inline. `readOnly` and `description` stay on each
-// action.
 const change = {
   caller: CurrentMember,
   error: IssueWriteErrors,
-  // MCP hints, in MCP's names. They tell a model what a tool does and enforce nothing; the
-  // read-only hint is `readOnly` itself. A write is destructive unless it only adds, as a
-  // comment does: closing is not stated `false`.
   mcp: { openWorldHint: false },
 } as const;
 
@@ -61,10 +50,7 @@ export const ListIssues = Action.make("listIssues", {
   description:
     "List your workspace's issues, newest first, without bodies or comments.",
   input: {
-    // Optional: left out, issues of every status are listed.
     status: Schema.optional(Status),
-    // Defaulted: left out, the handler receives 20. A field description is also the help text
-    // of its CLI flag and the description in the tool's schema.
     limit: Schema.Int.check(
       Schema.isBetween({ minimum: 1, maximum: 100 })
     ).pipe(
@@ -130,11 +116,6 @@ export const Issues = [
   CloseIssue,
 ] as const;
 
-// An action answering a stream: its handler returns a `Stream` of issues, and every client's
-// call returns one, each issue read as the server sends it. It reports how far it is, too.
-// `Issues` leaves it out, so MCP's `Tools` and the assistant's tools do: a tool answers one
-// result, so it would collect the whole export before answering, every issue at once in a
-// model's context. HTTP, RPC and the CLI serve it.
 export const ExportIssues = Action.make("exportIssues", {
   description:
     "Stream every issue of your workspace, oldest first, with bodies and comments.",
@@ -152,25 +133,20 @@ export const ExportIssues = Action.make("exportIssues", {
       description: "How many the export holds.",
     }),
   },
-  // An export is costly, so it is limited too: refused before its first issue, a 429.
   error: RateLimited,
   readOnly: true,
   caller: CurrentMember,
 });
 
-/** What changed about an issue, as `issue.changed` carries it. */
 export const IssueChange = Schema.Struct({
   workspace: Schema.String,
   id: Schema.String,
   title: Schema.String,
   status: Status,
   change: Schema.Literals(["filed", "commented", "closed"]),
-  // The comment a change added; a subscriber asking `comments: false` receives none.
   comment: Schema.optional(Comment),
 });
 
-// An event type: what a subscription takes, what each occurrence carries, and who may
-// subscribe. `input` both filters the occurrences, by `status`, and shapes them, by `comments`.
 export const IssueChanged = Event.make("issue.changed", {
   description: "An issue in your workspace was filed, commented on or closed.",
   input: {

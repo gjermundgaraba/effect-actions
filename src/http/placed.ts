@@ -23,8 +23,6 @@ import { isNotFound } from "./watch.js";
 
 type Contract<H extends AnyHttp> = H["actions"][number] | H["events"][number];
 
-/** A call's or a subscription's decoded input, beside its contract, one of `C`. */
-/** What the contracts `C` require per request, by name: nothing. */
 type Nothing<C extends Action.Any | Event.Any> = {
   readonly [K in C["name"]]: never;
 };
@@ -48,9 +46,6 @@ export type Placed<H extends AnyHttp> = ReadonlyArray<
     >
 >;
 
-// Why: each family belongs to the request the server received, not to the one sent on: its
-// connection's, a socket's upgrade's among them, its body's, what it accepts, which the client
-// sets for the answer it reads, and an MCP request's routing.
 const ownedByTheRequest = (name: string) =>
   [
     "host",
@@ -76,8 +71,6 @@ const forwarded = Effect.map(
   })
 );
 
-// Why: The binding's native clients are built once, over `dispatching`, which sends each request
-// with the client a call's input and contract chose, as this holds it for the call.
 class Sending extends Context.Service<Sending, HttpClient.HttpClient>()(
   "effect-actions/ActionHttp/placed/Sending"
 ) {}
@@ -133,8 +126,6 @@ export const placed = <const H extends AnyHttp>(
     contract: Contract<H>
   ) => HttpClient.HttpClient
 ): Placed<H> => {
-  // Why: Read as the erased signature the surfaces call it by: a surface hands each contract its
-  // own decoded input.
   const route: (
     input: ErasedValue,
     contract: Action.Any | Event.Any

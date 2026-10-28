@@ -3,21 +3,18 @@ import { Effect, Layer, Stream } from "effect";
 import { Chat, LanguageModel } from "effect/ai";
 
 import type { Member } from "../src/identity/Identity.js";
-import { members } from "../src/identity/members.js";
+import { demoMembers } from "../src/identity/members.js";
 import { Permissions } from "../src/identity/permissions.js";
 import { scripted } from "../src/scripted.js";
 import { TaskStore } from "../src/tasks/store.js";
 import { actingFor, layer, toolkit } from "../src/toolkit.js";
 
-// What the toolkit adds to the implementations: a caller per call, and a model's approvals.
-// The handlers run in this process, on a store in memory the tests can read too.
 const tools = layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(TaskStore.layerMemory, Permissions.layerMemory)
   )
 );
 
-// A model's call of `addTask`, as a provider sends it.
 const adding = (id: string, assignee: string) =>
   ({
     type: "tool-call",
@@ -26,7 +23,6 @@ const adding = (id: string, assignee: string) =>
     params: { title: "Order lunch", assignee },
   }) as const;
 
-// Which calls of a turn ran, and which wait for a person.
 const outcome = (
   response: LanguageModel.GenerateTextResponse<typeof toolkit.tools, "opaque">
 ) => ({
@@ -36,7 +32,6 @@ const outcome = (
   ),
 });
 
-// The model answers each member with the same two calls.
 const plan = (member: Member) =>
   LanguageModel.generateText({
     prompt: "Plan the launch.",
@@ -54,18 +49,15 @@ describe("the toolkit", () => {
     Effect.gen(function* () {
       const { handle } = yield* toolkit;
 
-      // A call by hand, with the JSON arguments a model sends. The member goes around the whole
-      // call, the collecting of its results included.
       const add = handle("addTask", {
         title: "Order lunch",
         assignee: "guest",
       }).pipe(Effect.flatMap(Stream.runCollect));
 
-      // A refusal is not raised: it is a result the model reads, as a declared error is.
-      expect(yield* add.pipe(actingFor(members.guest))).toMatchObject([
+      expect(yield* add.pipe(actingFor(demoMembers.guest))).toMatchObject([
         { isFailure: true, result: { message: "Requires tasks:write." } },
       ]);
-      expect(yield* add.pipe(actingFor(members.ada))).toMatchObject([
+      expect(yield* add.pipe(actingFor(demoMembers.ada))).toMatchObject([
         { isFailure: false, result: { id: "1", addedBy: "ada" } },
       ]);
     }).pipe(Effect.provide(tools))
@@ -75,16 +67,15 @@ describe("the toolkit", () => {
     "asks for approval before a model adds to a list that is not its caller's",
     () =>
       Effect.gen(function* () {
-        expect(yield* plan(members.ada)).toStrictEqual({
+        expect(yield* plan(demoMembers.ada)).toStrictEqual({
           ran: ["for ada"],
           waiting: ["for grace"],
         });
-        expect(yield* plan(members.grace)).toStrictEqual({
+        expect(yield* plan(demoMembers.grace)).toStrictEqual({
           ran: ["for grace"],
           waiting: ["for ada"],
         });
 
-        // A call that waits has not run.
         const store = yield* TaskStore;
 
         expect(
@@ -97,16 +88,14 @@ describe("the toolkit", () => {
     "authorizes an approved call too: approval lets no one do what they may not",
     () =>
       Effect.gen(function* () {
-        // The `Chat` keeps the request in its history, which the answer is matched against.
         const chat = yield* Chat.empty;
 
         const asked = yield* chat
           .generateText({ prompt: "Add lunch to Ada's list.", toolkit })
-          .pipe(actingFor(members.guest));
+          .pipe(actingFor(demoMembers.guest));
 
         expect(outcome(asked)).toStrictEqual({ ran: [], waiting: ["for ada"] });
 
-        // The approved call runs in the turn that carries the answer, as that turn's caller.
         const answered = yield* chat
           .generateText({
             prompt: [
@@ -127,7 +116,7 @@ describe("the toolkit", () => {
             ],
             toolkit,
           })
-          .pipe(actingFor(members.guest));
+          .pipe(actingFor(demoMembers.guest));
 
         expect(answered.toolResults).toMatchObject([
           {

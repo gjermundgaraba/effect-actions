@@ -7,11 +7,8 @@ import { HttpRouter, HttpServerRequest } from "effect/http";
 import { NoteStore } from "./notes/store.js";
 import { routes } from "./routes.js";
 
-// Entrypoint: `node --import tsx examples/notes-service/src/server.ts`.
-// It chooses the store, reads the configuration and starts Node's HTTP server.
 const server = Layer.unwrap(
   Effect.gen(function* () {
-    // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
     const host = yield* Config.String("HOST").pipe(
       Config.withDefault("127.0.0.1")
     );
@@ -20,12 +17,9 @@ const server = Layer.unwrap(
 
     return HttpRouter.serve(routes).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
-      // Request bodies have no size limit unless the host sets one. This covers every route that
-      // reads its body whole.
       Layer.provide(
         Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))
       ),
-      // DEMO ONLY: notes live in this process's memory; a deployment provides a store that lasts.
       Layer.provide(NoteStore.layerMemory)
     );
   })

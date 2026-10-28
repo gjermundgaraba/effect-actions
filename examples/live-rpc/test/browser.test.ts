@@ -11,9 +11,6 @@ import { MessageStore } from "../src/chat/store.js";
 import { chatOver } from "../src/page.js";
 import { rpc } from "../src/routes.js";
 
-// The page's client against the real rpcs, in memory, served as in routes.test.ts, NDJSON
-// included. `openChat` needs a client protocol and does not care which: a page gives it
-// `connection(url)`, a WebSocket, and this test Effect's HTTP protocol.
 const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerNdjson),
   Layer.provide(
@@ -108,8 +105,6 @@ describe("the page's client", () => {
 
         const { messages } = yield* lobby.read(0);
 
-        // Posted after the page read and before it watches: the watch from the last id read
-        // still sends it.
         yield* chat.room("lobby", "ada").post("Done.");
 
         const watched = yield* lobby
@@ -128,7 +123,6 @@ describe("the page's client", () => {
       Effect.gen(function* () {
         const chat = yield* openChat;
 
-        // As after a restart emptied the demo's memory store: the page holds id 7.
         const watching = yield* chat
           .room("lobby", "grace")
           .messages(7)
@@ -144,8 +138,6 @@ describe("the page's client", () => {
       }).pipe(Effect.provide(served))
   );
 
-  // `connect(url)` is this with a WebSocket. Each test's runtime builds its own layer, and so
-  // its own store.
   it("answers a page that is not an Effect program with promises, until it closes", async () => {
     const chat = chatOver(served);
 
@@ -171,7 +163,6 @@ describe("the page's client", () => {
       { name: "lobby", messages: 1 },
     ]);
 
-    // A failure `openChat` does not handle rejects: here, a text the contract refuses.
     await expect(chat.room("lobby", "ada").post("")).rejects.toBeInstanceOf(
       Action.InvalidInput
     );

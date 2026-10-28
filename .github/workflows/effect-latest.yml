@@ -1,8 +1,5 @@
 name: Latest Effect 4
 
-# The `effect` peer admits only 4.0.x patches, since the modules the surfaces build on are
-# unstable in Effect and a minor release may change them. This runs the full check against the
-# newest 4.x, so a minor that passes can be admitted (AGENTS.md#release).
 on:
   schedule:
     - cron: "17 6 * * 1"
@@ -26,8 +23,6 @@ jobs:
           cache-toolchain: true
           run-install: false
       - run: vp install --frozen-lockfile
-      # Every Effect package on the same newest 4.x release, in every package of the workspace, as
-      # setup-failures.md requires.
       - run: vp update -r effect@^4 @effect/platform-node@^4 @effect/vitest@^4
       - name: Show the Effect releases under test
         run: >-

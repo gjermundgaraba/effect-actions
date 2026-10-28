@@ -3,7 +3,6 @@ import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as Testing from "../../src/testing/Testing.js";
 
-/** `rpcs` served over Effect's HTTP protocol at `/rpc`, as routes. */
 export const rpcRoutes = <E, R>(
   rpcs: Layer.Layer<never, E, R>,
   serialization: Layer.Layer<RpcSerialization.RpcSerialization> = RpcSerialization.layerNdjson

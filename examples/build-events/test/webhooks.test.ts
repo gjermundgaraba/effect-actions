@@ -8,12 +8,8 @@ import { Http } from "../src/Api.js";
 import { routes } from "../src/routes.js";
 import { inMemory } from "./support/memory.js";
 
-// The subscriber's secret: `whsec_` and 24 to 64 random bytes in base64. The server signs each
-// POST with it, and the subscriber checks each POST it receives against it.
 const secret = `whsec_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64")}`;
 
-// A subscriber's check, as Standard Webhooks defines it: an HMAC-SHA256 of the id, the
-// timestamp and the body exactly as received, among the space-separated `v1,` signatures.
 const signed = async (request: Request, body: string) => {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -51,8 +47,6 @@ interface Received {
   readonly signed: boolean;
 }
 
-// grace's server: it answers the verification POST by echoing its challenge, which proves it
-// asked for these deliveries, and acknowledges each delivery with a 2xx.
 const subscriber =
   (received: Queue.Enqueue<Received>) => async (request: Request) => {
     const text = await request.text();
@@ -106,20 +100,14 @@ describe("the service, by webhook", () => {
           ),
         });
 
-        // The answer names the subscription, which each POST's `x-mcp-subscription-id`
-        // carries, and when to subscribe again to keep it: one not refreshed by then ends.
         const subscription = yield* subscribe;
         const verification = yield* Queue.take(received);
 
         yield* ada.finishBuild({ pipeline: "api", status: "passed" });
-        // Each build finished notifies `build.finished`: the server asks the store at once, and
-        // POSTs what it answers.
         yield* ada.finishBuild({ pipeline: "web", status: "passed" });
 
-        // grace sees only the web pipeline.
         const delivery = yield* Queue.take(received);
 
-        // The same request again refreshes the subscription, and answers how it is going.
         const refreshed = yield* subscribe;
 
         expect(verification).toMatchObject({

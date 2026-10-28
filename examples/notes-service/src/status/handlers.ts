@@ -4,7 +4,6 @@ import { Effect } from "effect";
 import { NoteStore } from "../notes/store.js";
 import { GetStatus } from "./Status.js";
 
-// A public action takes no `authorize`: nothing would run it.
 export const status = Action.implement(
   GetStatus,
   Effect.gen(function* () {

@@ -63,19 +63,11 @@ export class Webhooks extends Context.Service<
 const isProtected = (event: Event.Any): event is Protected =>
   event.caller !== Anyone;
 
-// Why: SEP-3415 keys a webhook subscription by its subscriber's principal, so one signed out, or
-// one no principal names, could be unsubscribed or have its secret replaced by anyone.
-/** Whether a surface offers `event` by webhook: a protected event, its subscribers `keyed`. */
 export const offersWebhook = (
   event: Event.Any,
   keyed: Keyed | undefined
 ): event is Protected => isProtected(event) && isNamed(keyed);
 
-/**
- * Serves the feeds among `feeds` a surface offers by webhook, its subscribers `keyed`, to the
- * `Webhooks` it is given, as it builds: restoring their kept subscriptions, and dying where they
- * cannot be kept. Answers the service, where given, and those feeds.
- */
 export const servedWebhooks = (
   feeds: readonly Feed[],
   keyed: Keyed | undefined
@@ -101,7 +93,6 @@ export const servedWebhooks = (
     return { webhooks, offered };
   });
 
-/** The calling subscriber of a webhook request, its feed and authentication, and the service. */
 export interface Subscriber extends Pick<
   Subscribing,
   "feed" | "keyed" | "principal"
@@ -109,11 +100,6 @@ export interface Subscriber extends Pick<
   readonly webhooks: Webhooks["Service"];
 }
 
-/**
- * The webhook subscriber calling a subscribe or unsubscribe of `feed`'s event on a surface given
- * `webhooks`, its subscribers `keyed`; `Unsupported` where the surface does not offer it by
- * webhook.
- */
 export const webhookSubscriber = (
   feed: Feed,
   keyed: Keyed | undefined,

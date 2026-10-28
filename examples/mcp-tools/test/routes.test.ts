@@ -9,17 +9,12 @@ import { printFarm } from "../src/platform/print-farm.js";
 import { PrintFarmError, Printers } from "../src/printers/Printers.js";
 import { routes } from "../src/routes.js";
 
-// What the MCP surface adds: the tools as listed, their results as sent, the origin check.
-// The real routes answer in memory, and no port is opened.
-
-// What the entrypoint reads from the environment, given to the test as a Layer.
 const farm = {
   FARM_URL: "https://farm.example.test",
   FARM_USER: "agent",
   FARM_PASSWORD: "secret",
 };
 
-// The fake farm goes to `printFarm` alone, so the test's own requests still reach the routes.
 const servedWith = (environment: Record<string, string>) =>
   Testing.layer(routes).pipe(
     Layer.provide(printFarm.pipe(Layer.provide(fakeFarm))),
@@ -33,7 +28,6 @@ const served = servedWith({
   ALLOWED_ORIGINS: "https://console.example.test,https://wall.example.test",
 });
 
-// A browser's preflight: what it asks before a cross-origin `POST` with an MCP client's headers.
 const preflight = (origin: string) =>
   HttpClient.execute(
     HttpClientRequest.make("OPTIONS")("/mcp", {
@@ -45,7 +39,6 @@ const preflight = (origin: string) =>
     })
   );
 
-// One tool of a `tools/list` answer, as far as this test reads it.
 const Listed = Schema.Struct({
   result: Schema.Struct({
     tools: Schema.Array(
@@ -80,7 +73,6 @@ const from = (origin: string) =>
 describe("the tools, over MCP", () => {
   it.effect("lists every tool with its title and hints as sent", () =>
     Effect.gen(function* () {
-      // A raw request, for what no typed client shows: here, the listing itself.
       const response = yield* HttpClient.execute(
         ActionMcp.request("tools/list")
       );
@@ -121,8 +113,6 @@ describe("the tools, over MCP", () => {
 
   it.effect("answers a camera's picture as an image beside the printer", () =>
     Effect.gen(function* () {
-      // A client method per tool: it sends `tools/call` and decodes the result, the image
-      // from its image block, as the handler returned it.
       const mcp = yield* ActionMcp.client(Printers);
 
       expect(
@@ -200,7 +190,6 @@ describe("the tools, over MCP", () => {
           "Mcp-Session-Id"
         );
 
-        // Two origins are configured, so each request's own is compared with the list.
         expect(
           (yield* preflight("https://elsewhere.example.test")).headers
         ).not.toHaveProperty("access-control-allow-origin");
@@ -211,9 +200,6 @@ describe("the tools, over MCP", () => {
     "names its one configured origin to every preflight, and still refuses any other",
     () =>
       Effect.gen(function* () {
-        // With exactly one origin, Effect's CORS compares nothing: the header is that origin
-        // whoever asks. A page elsewhere is still refused, twice: its browser reads an origin
-        // that is not its own, and the endpoint answers its request 403.
         const asked = yield* preflight("https://elsewhere.example.test");
 
         expect(asked.status).toBe(204);

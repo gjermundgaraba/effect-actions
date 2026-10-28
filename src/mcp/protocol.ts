@@ -9,19 +9,8 @@ import type { ErasedValue } from "../contract/implementation.js";
 import { isMarked, kindOf, Media } from "../contract/media.js";
 import type { Kind } from "../contract/media.js";
 
-// Why: The stateless revision is the one a request written without a handshake speaks, as
-// `request` writes it, and the one whose routing headers the runtime checks against the
-// body, which a mixed endpoint's gate relies on.
 export const httpProtocol = McpProtocol.v2026_07_28;
 
-// Why: Hosts such as Claude Code and Codex open stdio with `initialize`, and Codex opens HTTP with
-// it too, which only the two stateful revisions answer. HTTP served the stateless one alone, as a
-// session lasts until its client ends it and Effect's runtime expires none; that left such a host
-// no way to a hosted endpoint, so it is reversed. A session holds its client's `initialize`
-// payload and no identity: every request authenticates as before, and where an endpoint serves a
-// protected tool, only a signed-in caller opens one. The revisions before these stay out: Effect's
-// adapters for them list an input's `type`, `properties` and `required` alone, so a `$ref` to its
-// definitions resolves nowhere.
 export const protocols = [
   McpProtocol.v2026_07_28,
   McpProtocol.v2025_11_25,
@@ -61,10 +50,6 @@ const definitionsReferenced = (value: Schema.Json): readonly string[] => {
   });
 };
 
-// Why: MCP requires an object root, so a top-level `$ref` is inlined, and the inlined root's
-// definition is dropped unless something still refers to it (a recursive root, or one used again
-// inside itself), as Effect's private `toolJsonSchema` does for `registerToolkit` from 4.0.6;
-// tests/mcp/media.test.ts compares the listings.
 export const toolJsonSchema = (
   schema: Schema.Top,
   strict: boolean
@@ -105,7 +90,6 @@ export const toolJsonSchema = (
     : { ...root, $defs: definitions };
 };
 
-/** The forms an MCP routing header may carry `name` in: as sent, or base64-encoded in its sentinel. */
 export const routingFormsOf = (name: string): readonly string[] => [
   name,
   `=?base64?${Base64.encode(name)}?=`,
@@ -295,11 +279,6 @@ const mediaOf = (
   return many || values.length > 1 ? values : values[0];
 };
 
-/**
- * The encoded success a tool result carries, `liftedFrom` undone: its structured content, each
- * lifted field from the blocks whose `_meta` names it, and a success that is media from its
- * blocks alone.
- */
 export const unliftedFrom = (lift: Lift, result: McpSchema.CallToolResult) => {
   const [whole] = lift.fields;
 

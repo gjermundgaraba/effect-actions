@@ -16,7 +16,6 @@ import { Layer } from "effect";
 import { Http } from "./Api.js";
 import { greeting } from "./greeting/handlers.js";
 
-// One implementation, two surfaces: a JSON route and an MCP tool at `/mcp`.
 export const routes = Layer.mergeAll(
   ActionHttp.layer(Http, greeting),
   ActionMcp.layerHttp(greeting, { name: "greetings", version: "1.0.0" })
@@ -42,27 +41,17 @@ import { Effect } from "effect";
 
 import { identity } from "./identity/handlers.js";
 import { CurrentUser } from "./identity/Identity.js";
-import { users } from "./identity/users.js";
+import { demoUsers } from "./identity/users.js";
 import { notes } from "./notes/handlers.js";
 import { NoteStore } from "./notes/store.js";
 import { status } from "./status/handlers.js";
 
-// Entrypoint: an MCP server a local agent starts as a subprocess, such as
-// `claude mcp add notes -- "$PWD/node_modules/.bin/tsx" "$PWD/examples/notes-service/src/stdio.ts"`
-// from the repository root. The host starts the process in a directory it chooses, so `tsx`
-// and the file are named by full path.
-// The same implementations as the HTTP server, and the same `authorize`. No token arrives
-// over stdio, so this host names the caller itself. It is a process of its own with services
-// of its own. DEMO ONLY: this in-memory store holds its notes, not the running server's. To
-// share them, both provide a store they both reach, such as a database.
 ActionMcp.runStdio([status, notes, identity], {
   name: "notes-service",
   version: "1.0.0",
 }).pipe(
-  // DEMO ONLY: a real host reads who started it, from its own login or configuration.
-  Effect.provideService(CurrentUser, users.ada),
+  Effect.provideService(CurrentUser, demoUsers.ada),
   Effect.provide([NodeStdio.layer, NoteStore.layerMemory]),
-  // stdout carries the protocol alone, so logs and failures go to stderr.
   ActionCli.logToStderr,
   NodeRuntime.runMain()
 );
@@ -114,7 +103,6 @@ import { Login } from "./identity/Identity.js";
 import { authenticate } from "./identity/verifier.js";
 import { Rpc } from "./Rpc.js";
 
-// Every domain's implementation, once: the events beside the actions, in one list.
 const implementations = [
   builds,
   logs,
@@ -124,17 +112,6 @@ const implementations = [
   deployEvents,
 ];
 
-// The actions as MCP tools and the events as MCP events, at `/mcp`. A client polls with
-// `events/poll`, or holds `events/stream` open and is pushed each occurrence. Both events are
-// protected, so each request needs a member's token, and each subscriber sees what its token
-// lets it. This long-lived process holds the deploy event's `subscription` hook between polls and
-// its log in memory, and pushes each occurrence: a `requestScoped` endpoint would serve the events
-// by poll and webhook alone, and a serverless host, where no process lasts, check sources alone,
-// without `Webhook.layer`.
-//
-// A tool answers one result, so `tailLog` would collect a whole log before answering, all of it
-// in a model's context: its implementation, `logs`, is left out, and the endpoint serves every
-// other action and every event.
 const mcp = ActionMcp.layerHttp(
   [builds, buildEvents, statusEvents, deploys, deployEvents],
   {
@@ -144,25 +121,13 @@ const mcp = ActionMcp.layerHttp(
   }
 );
 
-// The same implementations as routes under `/api`, for a client that speaks HTTP rather than
-// MCP: one implementation of each event serves every surface.
 const api = ActionHttp.layer(Http, implementations);
 
-// And as Effect RPC at `/rpc`, over HTTP. A watch is a stream rpc that never ends, so the
-// serialization frames each element as it is sent: `layerNdjson` does, where `layerJson` would
-// answer once every stream of the request ended, which a watch never does.
 const rpc = ActionRpc.layer(Rpc, implementations).pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
   Layer.provide(RpcSerialization.layerNdjson)
 );
 
-// Webhook delivery for MCP and HTTP alike: a member names a callback URL and a secret, with
-// MCP's `events/subscribe` or `POST /api/events/<name>/subscribe`, and each occurrence it may see
-// is POSTed there, signed. One layer holds the subscriptions of both, so either surface refreshes
-// one made over the other. `persist` keeps each in a `KeyValueStore`, so a restart goes on
-// delivering from where it reached, as the subscriber `Login`'s `schema` keeps. It needs an
-// `HttpClient` to POST, `Dns` to check where each callback resolves, and the store, which
-// `server.ts` provides.
 export const routes = Layer.mergeAll(mcp, api, rpc).pipe(
   Layer.provide(authenticate),
   Layer.provide(Webhook.layer({ persist: true }))

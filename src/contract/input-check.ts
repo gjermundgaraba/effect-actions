@@ -23,7 +23,6 @@ export const InputCheck = Context.Reference<
   defaultValue: () => () => Effect.void,
 });
 
-/** `contract`'s `input`, as the provided `InputCheck` judges it. */
 export const checkInput = (
   contract: Action.Any | Event.Any,
   input: Action.Any["input"]["Type"]

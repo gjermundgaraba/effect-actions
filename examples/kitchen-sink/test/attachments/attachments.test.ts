@@ -26,7 +26,6 @@ const as = (token: string, workspace: string) => ({
   transformClient: HttpClient.mapRequest(signedIn(token, workspace)),
 });
 
-// A one-pixel PNG stands in for a screenshot.
 const screenshot = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
   "base64"
@@ -58,15 +57,12 @@ describe("attachments, over HTTP and MCP", () => {
           size: 68,
         });
 
-        // Both clients decode the same success, the bytes a `Uint8Array` again.
         const overHttp = yield* http.getAttachment({ id: attachment.id });
         const overMcp = yield* mcp.getAttachment({ id: attachment.id });
 
         expect(Buffer.from(overHttp.image.data).equals(screenshot)).toBe(true);
         expect(overMcp).toStrictEqual(overHttp);
 
-        // As sent: the tool's result holds the rest of the success as JSON, and the image as a
-        // content block of its own, which a model receives as an image.
         const call = yield* HttpClient.execute(
           ActionMcp.request(
             "tools/call",
@@ -112,7 +108,6 @@ describe("attachments, over HTTP and MCP", () => {
       const attachment = yield* attached;
       const ada = yield* ActionHttp.client(Http, as("ada", "acme"));
 
-      // `attached` spent two writes, an issue and its image. Eight comments spend the rest.
       yield* Effect.forEach(Array.range(1, 8), (n) =>
         ada.commentOnIssue({ id: attachment.issue, text: `Comment ${n}` })
       );
@@ -155,7 +150,6 @@ describe("attachments, over HTTP and MCP", () => {
         expect(mine.headers["cache-control"]).toBe(
           "private, max-age=31536000, immutable"
         );
-        // An uploaded image opened by its URL is a document on this origin: it gets no scripts.
         expect([
           mine.headers["content-security-policy"],
           mine.headers["x-content-type-options"],
@@ -184,15 +178,12 @@ describe("attachments, over HTTP and MCP", () => {
 
         const withoutScope = yield* HttpClient.execute(withCookie(download));
 
-        // A cookie scheme has no challenge. A token is no credential on this route.
         expect([
           signedOut.status,
           signedOut.headers["cache-control"],
         ]).toStrictEqual([401, "no-store"]);
         expect(signedOut.headers["www-authenticate"]).toBeUndefined();
         expect(withToken.status).toBe(401);
-        // kay is signed in, in the right workspace, without the read scope: the route's own
-        // `authorize` refuses.
         expect(withoutScope.status).toBe(403);
         expect(yield* withoutScope.json).toMatchObject({
           message: "Requires issues:read.",

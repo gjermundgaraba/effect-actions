@@ -15,9 +15,6 @@ import { publicRoutes } from "../../src/routes.js";
 import { down, scripted } from "../support/scripted.js";
 import { services } from "../support/services.js";
 
-// The assistant as its callers reach it: over HTTP, a request per turn, on the real routes in
-// memory. Each test gives the routes the model it is about, in place of the demo one: the
-// first `Layer.provide` is what the routes get.
 const served = (model: Layer.Layer<LanguageModel.LanguageModel>) =>
   Effect.provide(
     Testing.layer(publicRoutes).pipe(
@@ -35,7 +32,6 @@ const signedIn = (token: string) => ({
   ),
 });
 
-// Ada may write in acme. Linus, in the same workspace, may only read.
 const asAda = ActionHttp.client(Http, signedIn("ada"));
 
 const asLinus = ActionHttp.client(Http, signedIn("linus"));
@@ -63,7 +59,6 @@ describe("the assistant, behind a route", () => {
           body: "On save.",
         });
 
-        // One request, two requests to the model: the second lets it read its tool's result.
         const read = yield* ada.askAssistant({ prompt: "What is open?" });
 
         expect(read).toMatchObject({
@@ -72,7 +67,6 @@ describe("the assistant, behind a route", () => {
           waiting: [],
         });
 
-        // The same conversation, a request later. The write has not run: the turn ended on it.
         const asked = yield* ada.askAssistant({
           conversation: read.conversation,
           prompt: "Close it.",
@@ -153,8 +147,6 @@ describe("the assistant, behind a route", () => {
           body: "On save.",
         });
 
-        // Anyone signed in may ask. The tool's own `authorize` then refuses the reader's write,
-        // as a result the model reads.
         const asked = yield* linus.askAssistant({ prompt: "Close it." });
 
         const answered = yield* linus.answerAssistant({
@@ -195,13 +187,11 @@ describe("the assistant, behind a route", () => {
           answers: approving(asked.waiting),
         });
 
-        // The approved call ran, then the model failed: the error says so.
         expect(yield* Effect.flip(answer)).toBeInstanceOf(AssistantFailed);
         expect((yield* ada.getIssue({ id })).comments).toStrictEqual([
           { author: "ada", text: "Fixed." },
         ]);
 
-        // The same answer, sent again, runs nothing: its conversation is gone.
         expect(yield* Effect.flip(answer)).toStrictEqual(
           new ConversationNotFound({ conversation: asked.conversation })
         );
@@ -310,7 +300,6 @@ describe("the assistant, behind a route", () => {
           answers: first === undefined ? [] : [first],
         });
 
-        // The call left open is listed again, in every turn until it is answered.
         expect(answered).toMatchObject({ ran: [{ tool: "commentOnIssue" }] });
         expect(answered.waiting).toStrictEqual([
           {
@@ -373,7 +362,6 @@ describe("the assistant, behind a route", () => {
           answers: close === undefined ? [] : [close],
         });
 
-        // Each answer runs its own call: the close ran, the comment still waits.
         expect(closed.ran).toStrictEqual([
           { tool: "closeIssue", failed: false },
         ]);
@@ -393,8 +381,6 @@ describe("the assistant, behind a route", () => {
       )
   );
 
-  // A provider gives each call an id of its own. Where a model does not, Effect runs the last
-  // call with the id an approval names: the list shows that call, not the one first asked.
   it.effect(
     "lists, for a call id a model used twice, the call an approval would run",
     () =>
@@ -541,8 +527,6 @@ describe("the assistant, behind a route", () => {
           })
         );
 
-        // A double click, or a client's retry. One turn runs at a time, and the one that waited
-        // finds its conversation ended by the one that failed.
         const refusals = yield* Effect.all([answer, answer], {
           concurrency: 2,
         });
@@ -566,7 +550,6 @@ describe("the assistant, behind a route", () => {
   it.effect(
     "ends the conversation of a turn that is interrupted after its approved call ran",
     () => {
-      // Completed when the model is asked what to say about the approved call's result.
       const thinking = Deferred.makeUnsafe<undefined>();
 
       return Effect.gen(function* () {
@@ -584,7 +567,6 @@ describe("the assistant, behind a route", () => {
           answers: approving(asked.waiting),
         });
 
-        // The client goes away while the model is thinking, after the approved call ran.
         const leaving = yield* Effect.forkChild(answer);
 
         yield* Deferred.await(thinking);

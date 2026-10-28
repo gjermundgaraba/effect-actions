@@ -53,8 +53,6 @@ One action, served as a JSON route and as an MCP tool: four declarations, each i
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { Schema } from "effect";
 
-// A contract: what the action takes and answers, whether it changes anything, and who may
-// call it. It imports no server code, so any client can import it, a browser page included.
 export const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: { name: Schema.String },
@@ -70,7 +68,6 @@ import { Effect } from "effect";
 
 import { Greet } from "./Greeting.js";
 
-// The implementation: the contract bound to its handler. Every surface takes this one value.
 export const greeting = Action.implement(Greet, ({ name }) =>
   Effect.succeed(`Hello, ${name}!`)
 );
@@ -81,7 +78,6 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 
 import { Greet } from "./greeting/Greeting.js";
 
-// The HTTP binding: `POST /api/greet`. The server serves it and the client calls it.
 export const Http = ActionHttp.make([Greet]);
 ```
 
@@ -93,7 +89,6 @@ import { Layer } from "effect";
 import { Http } from "./Api.js";
 import { greeting } from "./greeting/handlers.js";
 
-// One implementation, two surfaces: a JSON route and an MCP tool at `/mcp`.
 export const routes = Layer.mergeAll(
   ActionHttp.layer(Http, greeting),
   ActionMcp.layerHttp(greeting, { name: "greetings", version: "1.0.0" })

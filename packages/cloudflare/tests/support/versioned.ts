@@ -53,7 +53,6 @@ const versioned = (options: ActionDurableObject.LayerWebSocketOptions) =>
     Layer.provide(ActionDurableObject.layerWebSocket(options))
   );
 
-/** The longest version the default reason names within a close frame's 123 bytes. */
 export const longestVersion = "é".repeat(39);
 
 export const versionedRoutes = Layer.mergeAll(

@@ -25,7 +25,6 @@ const responseOf = (schema: Declared, error: Declared["Type"]) =>
     }
   );
 
-/** `error` answered as an endpoint declaring `errors` answers it, if one of them declares it. */
 export const declaredResponse = (
   errors: readonly Declared[],
   error: Declared["Type"]

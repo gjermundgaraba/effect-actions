@@ -7,7 +7,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import { RateLimiter } from "effect/persistence";
 import { TestClock } from "effect/testing";
 
-import type { members } from "../../src/identity/members.js";
+import type { demoMembers } from "../../src/identity/members.js";
 import { issueEvents } from "../../src/issues/events.js";
 import { issues } from "../../src/issues/handlers.js";
 import { IssueChanged } from "../../src/issues/Issues.js";
@@ -22,9 +22,8 @@ const inProcess = Layer.mergeAll(
   Event.layerMemory
 );
 
-// The changes a member's watch receives, as data, while `act` changes issues.
 const watched = <E, R>(
-  member: keyof typeof members,
+  member: keyof typeof demoMembers,
   input: typeof IssueChanged.input.Type,
   count: number,
   act: (
@@ -43,8 +42,6 @@ const watched = <E, R>(
       Effect.forkChild
     );
 
-    // Lets the forked watch run up to its subscription first: started after `act`, it would wait
-    // for changes already made.
     yield* TestClock.adjust("0 millis");
     yield* act(client);
 
@@ -107,7 +104,6 @@ describe("issue.changed", () => {
               .commentOnIssue({ id: filed.id, text: "Seen it." })
               .pipe(as("ada"));
             yield* client.closeIssue({ id: filed.id }).pipe(as("ada"));
-            // Closing it again changes nothing, and nothing is sent.
             yield* client.closeIssue({ id: filed.id }).pipe(as("ada"));
             yield* client
               .commentOnIssue({ id: filed.id, text: "Fixed." })
@@ -152,15 +148,12 @@ describe("issue.changed", () => {
   );
 });
 
-// The subscriber's secret: `whsec_` and 24 to 64 random bytes in base64.
 const secret = `whsec_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64")}`;
 
 const Delivered = Schema.fromJsonString(
   Schema.Record(Schema.String, Schema.Json)
 );
 
-// linus's server: it echoes the verification's challenge, which proves it asked for these
-// deliveries, and acknowledges each delivery with a 2xx.
 const subscriber =
   (received: Queue.Enqueue<typeof Delivered.Type>) =>
   async (request: Request) => {

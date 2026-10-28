@@ -382,8 +382,6 @@ const expectedBuilds = (
     case "routesBelowToolkit": {
       return viaRoutes + viaToolkit + fresh;
     }
-
-    // no default
   }
 };
 
@@ -499,8 +497,6 @@ const viaRemote = (call: ResolvedCall, kind: RemoteKind) => {
     case "rpc": {
       return viaRpc(call);
     }
-
-    // no default
   }
 };
 
@@ -568,8 +564,6 @@ const runScenario = (scenario: Scenario) =>
             Layer.provide(RpcSerialization.layerJson)
           );
         }
-
-        // no default
       }
     };
 

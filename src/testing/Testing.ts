@@ -16,18 +16,19 @@ import type { HttpClient, HttpServerRequest } from "effect/http";
 import { clientOf } from "./memory.js";
 import type { Served } from "./memory.js";
 
-// Why: A server's request logger shows the cause of an empty 500, and a test runs none: the
-// cause is logged here, or a test sees a status and nothing else. Only a failure that reaches
-// the router unhandled, so a 404 or a refusal stays silent, as every request that succeeds
-// does. Rejected: Effect's request logger, a line for every request of every test. The log is
-// given the process console: `it.effect` provides a `TestConsole`, which would keep it from
-// the test's output.
-const isReported = (cause: Cause.Cause<unknown>): boolean =>
+const reachedRouterUnhandled = (cause: Cause.Cause<unknown>): boolean =>
   cause.reasons.some(
     (reason) =>
       (Cause.isFailReason(reason) && !ErrorReporter.isIgnored(reason.error)) ||
       (Cause.isDieReason(reason) && !ErrorReporter.isIgnored(reason.defect))
   );
+
+const logUnhandledToProcessConsole = (cause: Cause.Cause<unknown>) =>
+  reachedRouterUnhandled(cause)
+    ? Effect.logError(cause).pipe(
+        Effect.provideService(Console.Console, globalThis.console)
+      )
+    : Effect.void;
 
 /**
  * The native `HttpClient`, answered by `handler` instead of the network: a web handler the test
@@ -38,8 +39,6 @@ const isReported = (cause: Cause.Cause<unknown>): boolean =>
 export function layer(
   handler: (request: Request) => Promise<Response>
 ): Layer.Layer<HttpClient.HttpClient>;
-// Why: The routes overload stays last, since TypeScript reports an argument of neither form against
-// the last overload alone.
 /**
  * The native `HttpClient`, answered in memory by `routes` instead of the network, for
  * `ActionHttp.client`, `ActionMcp.client` and `HttpClient.execute`. The routes are built with this
@@ -106,15 +105,7 @@ export function layer(
         HttpEffect.toWebHandlerWith<
           never,
           HttpServerRequest.HttpServerRequest | Scope.Scope
-        >(context)(
-          Effect.tapCause(app, (cause) =>
-            isReported(cause)
-              ? Effect.logError(cause).pipe(
-                  Effect.provideService(Console.Console, globalThis.console)
-                )
-              : Effect.void
-          )
-        )
+        >(context)(Effect.tapCause(app, logUnhandledToProcessConsole))
       );
     })
   );

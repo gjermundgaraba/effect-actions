@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.23.0
+
+Built and tested against `effect` and `@effect/platform-node` `4.0.6`. The `effect` peer stays `~4.0.5`.
+
+### Breaking changes
+
+**`ActionDurableObject.layerStubClient` takes only a function returning the stub**, called as each call is sent, where it also took a stub, which it held: an exception that broke a held stub failed every later call through it.
+
+- Migrate: `layerStubClient(() => env.ROOM.getByName(name))` where you passed `layerStubClient(env.ROOM.getByName(name))`.
+
+**A SEP-3415 `-32023` error is `Event.SubscriptionError`, reason `NotServed`, only when its `data` is `{ "kind": "event" }`**, as this library sends it, where any `data` but `{ "kind": "subscription" }` was. Over MCP another is an `ActionMcp.McpCallError` whose reason is `ProtocolError`, and a webhook delivery's `terminated` carrying one fails as `Action.Forbidden`.
+
+- Migrate: a server of your own answering an unserved event sends `data: { "kind": "event" }`.
+
+### Changes
+
+- `ActionHttp.make(contracts, { prefix })` type-checks where `contracts` is a generic list of public actions and event types: binding them under a prefix takes no options type of its own.
+- `ActionRpc.ReconnectReason` names what `reconnectUntil`'s schedule reads of each failure to connect.
+
 ## 0.22.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.6`. The `effect` peer stays `~4.0.5`.

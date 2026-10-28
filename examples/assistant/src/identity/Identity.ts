@@ -1,26 +1,16 @@
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { Context, Schema } from "effect";
 
-/** A teammate: what a sign-in can name. The assistant acts for one in each turn. */
 export interface Member {
   readonly kind: "member";
   readonly id: string;
 }
 
-/**
- * Whoever runs the machine. Only a host builds one, in its own code: nothing that turns a
- * credential into a caller is typed to return it, so no token can claim to be the operator.
- */
 export interface Operator {
   readonly kind: "operator";
   readonly id: string;
 }
 
-/**
- * Who is calling. A protected action declares it, `caller: CurrentCaller`. Nothing here
- * authenticates anyone: the host provides it around each call, as the member a model acts for
- * or as the operator at the terminal.
- */
 export class CurrentCaller extends Context.Service<
   CurrentCaller,
   Member | Operator

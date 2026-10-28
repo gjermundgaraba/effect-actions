@@ -12,8 +12,6 @@ import { Login } from "../src/identity/Identity.js";
 import { routes } from "../src/routes.js";
 import { inMemory } from "./support/memory.js";
 
-// What the wire adds: the real routes, behind their real authentication, answering in memory.
-// No port is opened. The subscriber is the token each client sends, as in production.
 const served = Testing.layer(routes).pipe(Layer.provide(inMemory()));
 
 const as = (token: string) => ({
@@ -26,7 +24,6 @@ describe("the service, over MCP", () => {
     "pushes each build a member may see, as a tool call finishes it",
     () =>
       Effect.gen(function* () {
-        // A client lists the contracts it uses: the action it calls, the event it watches.
         const ada = yield* ActionMcp.client([FinishBuild], as("ada"));
         const grace = yield* ActionMcp.client([BuildFinished], as("grace"));
 
@@ -34,11 +31,8 @@ describe("the service, over MCP", () => {
           .watch(BuildFinished)
           .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
-        // The watch starts from now: let it take its first position before builds finish.
         yield* TestClock.adjust("0 millis");
         yield* ada.finishBuild({ pipeline: "api", status: "passed" });
-        // Each build finished notifies `build.finished`: the server asks the store at once, and
-        // pushes what it answers.
         yield* ada.finishBuild({ pipeline: "web", status: "passed" });
 
         expect(yield* Fiber.join(watched)).toMatchObject([
@@ -54,7 +48,6 @@ describe("the service, over MCP", () => {
         const ada = yield* ActionMcp.client([RequestDeploy], as("ada"));
         const grace = yield* ActionMcp.client([DeployRequested], as("grace"));
 
-        // `mode: "poll"` asks with `events/poll`, as a client that cannot hold a stream does.
         const polled = yield* grace
           .watch(
             DeployRequested,
@@ -72,8 +65,6 @@ describe("the service, over MCP", () => {
 
         yield* TestClock.adjust("5 seconds");
 
-        // Between polls, grace stands by: the server holds the subscription hook for 5 minutes
-        // after each poll, keyed by grace's principal.
         expect(deploy.approvers).toStrictEqual(["grace"]);
         expect(yield* Fiber.join(polled)).toMatchObject([
           {

@@ -5,8 +5,6 @@ import { WorkspaceRegistry } from "../workspaces/registry.js";
 import { Admin } from "./Admin.js";
 import { authorize } from "./authorize.js";
 
-// The operators' actions. `authorize` is an Effect that builds the rule, so this
-// implementation owes `Grants` at startup, beside the registry its builder yields.
 export const admin = Action.implement(
   Admin,
   Effect.gen(function* () {

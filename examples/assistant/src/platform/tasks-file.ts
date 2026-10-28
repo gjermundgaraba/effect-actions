@@ -8,11 +8,7 @@ import { Task } from "../tasks/Tasks.js";
 
 const TasksFile = Schema.fromJsonString(Schema.Array(Task));
 
-// DEMO ONLY: one JSON file, rewritten on every change. Changes are serialized within a
-// process, by the store's lock, but nothing locks the file across processes: the agent and a
-// command writing at once lose a task. A real application uses a database. The agent and the
-// commands are separate processes: this file is what lets one see what the other wrote.
-export const tasksFile = Layer.effect(
+export const demoTasksFile = Layer.effect(
   TaskStore,
   Effect.gen(function* () {
     const files = yield* FileSystem.FileSystem;
@@ -32,7 +28,6 @@ export const tasksFile = Layer.effect(
     const save = (tasks: readonly Task[]) =>
       Schema.encodeEffect(TasksFile)(tasks).pipe(
         Effect.flatMap((json) => files.writeFileString(file, json)),
-        // A log, not a result: a command sends its handler's logs to stderr.
         Effect.tap(() => Effect.log(`Saved ${tasks.length} tasks to ${file}.`)),
         Effect.orDie
       );

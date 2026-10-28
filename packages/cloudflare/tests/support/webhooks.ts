@@ -104,11 +104,6 @@ export const hookedRoutes = ActionHttp.layer(HookHttp, [hooked]).pipe(
   )
 );
 
-/**
- * A `TestClock` at the time the instance builds, standing still: a test moves it past a webhook
- * wait's end, `TestClock.setTime` through `run`, before it runs the object's alarm, which ends
- * the waits due then, as it would once their time came.
- */
 export const heldTime = Layer.effectContext(
   Effect.gen(function* () {
     const clock = yield* TestClock.make();

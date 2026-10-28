@@ -6,13 +6,10 @@ import { HttpRouter } from "effect/http";
 
 import { routes } from "./routes.js";
 
-// Entrypoint: `node --import tsx examples/quickstart/src/server.ts`.
-// DEMO ONLY: a deployed server reads its host and port from config and limits request bodies,
-// as notes-service/src/server.ts does; `127.0.0.1` serves this machine alone.
+const demoListen = { host: "127.0.0.1", port: 3000 };
+
 HttpRouter.serve(routes).pipe(
-  Layer.provide(
-    NodeHttpServer.layer(createServer, { host: "127.0.0.1", port: 3000 })
-  ),
+  Layer.provide(NodeHttpServer.layer(createServer, demoListen)),
   Layer.launch,
   NodeRuntime.runMain()
 );

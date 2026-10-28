@@ -8,9 +8,6 @@ import { authorize } from "./authorize.js";
 import { MessagePosted, Messages } from "./Chat.js";
 import { MessageStore } from "./store.js";
 
-// The builder runs once per instance, when the object is constructed, and again on the
-// instance the runtime constructs after evicting one: it is where a handler gets its startup
-// services. The caller is read per call, because every message has its own.
 export const messages = Action.implement(
   Messages,
   Effect.gen(function* () {
@@ -21,9 +18,6 @@ export const messages = Action.implement(
     return {
       readMessages: ({ after }) =>
         Effect.map(store.read(after), (read) => ({ messages: read })),
-      // The message is in the store, which `MessagePosted`'s check reads: notifying wakes the
-      // pages watching the room to read it now. The lobby is another object, whose event this
-      // one cannot notify: the room tells it over its stub instead, and the lobby notifies.
       postMessage: ({ text }) =>
         Effect.flatMap(CurrentMember, (member) =>
           store.post(member.id, text)

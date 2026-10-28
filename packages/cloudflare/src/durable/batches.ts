@@ -7,7 +7,6 @@ import { Array as Arr, Effect } from "effect";
 export const batches = <A>(keys: readonly A[]): ReadonlyArray<readonly A[]> =>
   Arr.chunksOf(keys, 128);
 
-/** Deletes `keys` from `storage`, one batch per call. */
 export const deleted = (
   storage: DurableObjectStorage,
   keys: readonly string[]

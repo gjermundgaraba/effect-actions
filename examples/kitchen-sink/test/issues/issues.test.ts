@@ -3,14 +3,13 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { Array, Effect, Layer, References } from "effect";
 import { RateLimiter } from "effect/persistence";
 
-import { members } from "../../src/identity/members.js";
+import { demoMembers } from "../../src/identity/members.js";
 import { issues } from "../../src/issues/handlers.js";
 import { IssueNotFound, Issues, RateLimited } from "../../src/issues/Issues.js";
 import { IssueStore } from "../../src/issues/store.js";
 import { status } from "../../src/workspaces/handlers.js";
 import { as } from "../support/as.js";
 
-// The two startup services the issues' builder yields, and nothing else of the application.
 const services = Layer.mergeAll(
   IssueStore.layerMemory,
   RateLimiter.layer.pipe(Layer.provide(RateLimiter.layerStoreMemory))
@@ -45,9 +44,11 @@ describe("issues, in process", () => {
         const client = yield* Action.client(issues);
         const store = yield* IssueStore;
 
-        // Written to the store, not through `createIssue`: twenty-one are over its write limit.
         yield* Effect.forEach(Array.range(1, 21), (n) =>
-          store.create(members.ada.workspace, { title: `Issue ${n}`, body: "" })
+          store.create(demoMembers.ada.workspace, {
+            title: `Issue ${n}`,
+            body: "",
+          })
         );
         yield* client.closeIssue({ id: "ACME-2" }).pipe(as("ada"));
 
@@ -86,12 +87,8 @@ describe("issues, in process", () => {
   it.effect("keeps both of two comments made at once", () =>
     Effect.gen(function* () {
       const store = yield* IssueStore;
-      const { workspace } = members.ada;
+      const { workspace } = demoMembers.ada;
 
-      // Asked of the store, not through `commentOnIssue`, whose write limit this would spend.
-      // A fiber is set aside after every `steps` steps, and two that run at once then take
-      // turns. Each count sets the first comment aside at another point of its work; under
-      // three, the two do not finish.
       const kept = yield* Effect.forEach(Array.range(3, 60), (steps) =>
         Effect.gen(function* () {
           const { id } = yield* store.create(workspace, {
@@ -126,7 +123,6 @@ describe("issues, in process", () => {
             .pipe(as("ada"))
         );
 
-        // Ten writes are spent, by two actions: the eleventh, of a third, is refused.
         expect(
           yield* Effect.flip(
             client.closeIssue({ id: "ACME-1" }).pipe(as("ada"))
@@ -149,8 +145,6 @@ describe("issues, in process", () => {
     "builds only the implementations whose actions a client lists",
     () =>
       Effect.gen(function* () {
-        // Two implementations are passed, and `actions` selects the issues': `status` is left
-        // out, unbuilt, so `services` need not hold the registry its builder yields.
         const client = yield* Action.client([status, issues], {
           actions: Issues,
         });

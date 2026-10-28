@@ -68,8 +68,6 @@ export {
 
 type ServedPerRequest = Scope.Scope | HttpServerRequest.HttpServerRequest;
 
-// Why: each request is served in the context the routes are built in, so a handler reads the
-// object's own services as the routes' Layers do.
 type ObjectServices =
   | State
   | Alarm
@@ -92,8 +90,6 @@ type Allowed<A, S> =
   | HttpRouter.Request<"Error", unknown>
   | HttpRouter.Request<"GlobalError", unknown>;
 
-// Why: the signatures consumers call write these unions out, since a diagnostic prints an
-// alias by its name, which tells no one what the option may require.
 type ServicesRequire =
   | State
   | Alarm
@@ -324,12 +320,6 @@ export interface Handlers<S = never> {
   ): Promise<A>;
 }
 
-// Why: Effect's default scheduler starts a forked fiber, such as each call an rpc server
-// handles, and yields a long one, on a timer, and a timer lets the runtime deliver the object's
-// next event: two calls reading then writing storage, with nothing between, each lost a write
-// to the other. Effect's own advice on Workers is its microtask scheduler, under which an
-// object's Effects interleave only where its plain JavaScript methods would. Reversing it brings
-// the lost writes back; its cost is that CPU-heavy work no longer lets other events in.
 const scheduler = new Scheduler.MixedScheduler("sync");
 
 const handlersOf = <S>(
@@ -338,14 +328,14 @@ const handlersOf = <S>(
     readonly routes?: Layer.Any | undefined;
   }
 ): Handlers<S> => {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Omitted services: `S` is then inferred as `never`, which the empty Layer provides.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const services = (options.services ?? Layer.empty) as Layer.Layer<
     S,
     unknown,
     ServicesRequire
   >;
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased routes: the signature checked every requirement against `Allowed<A, S>`, the built services supply `S`, merged in, and the router gives each request the services the routes provide, `A`, and its request markers, as `HttpRouter.toWebHandler`'s types say; only those subtractions, which a generic `A` and `S` keep unresolved, are erased.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const routes = options.routes as
     | Layer.Layer<
         never,
@@ -373,16 +363,10 @@ const handlersOf = <S>(
   const tasks = makeTasks(schedule, options.tasks ?? {});
 
   const build = Effect.gen(function* () {
-    // Why: an implementation of the core is shared through the memo map of the graph it is
-    // built in, so services, calls and routes build in this one map: an implementation the
-    // services build is the one the calls and routes serve.
-    const memoMap = yield* Layer.makeMemoMap;
+    const sharedMemoMap = yield* Layer.makeMemoMap;
     const scope = yield* Scope.make();
 
     const built = Effect.gen(function* () {
-      // Why: built once, here, into the context the calls, the routes and every `run` are
-      // given; their scope is closed only when the build fails, so nothing is finalized while
-      // the instance lives, and a failed build leaves no fiber of its own running.
       const context = yield* Layer.buildWithMemoMap(
         services.pipe(
           Layer.provideMerge(
@@ -404,7 +388,7 @@ const handlersOf = <S>(
             )
           )
         ),
-        memoMap,
+        sharedMemoMap,
         scope
       );
 
@@ -432,7 +416,7 @@ const handlersOf = <S>(
                   ),
                   Layer.provide(given)
                 ),
-                memoMap,
+                sharedMemoMap,
                 scope
               );
 
@@ -444,7 +428,7 @@ const handlersOf = <S>(
 
       const sockets = yield* Layer.buildWithMemoMap(
         Sockets.layer.pipe(Layer.provide(given)),
-        memoMap,
+        sharedMemoMap,
         scope
       );
 
@@ -462,15 +446,11 @@ const handlersOf = <S>(
                   Layer.provide(HttpServer.layerServices),
                   Layer.provideMerge(HttpRouter.layer)
                 ),
-                memoMap,
+                sharedMemoMap,
                 scope
               );
 
-              // Why: the handler is made here, as `HttpRouter.toWebHandler` makes it once its
-              // Layer is built, so a defect making it, such as global middleware throwing, fails
-              // this build, which closes its scope and is made again by the next event, where
-              // `toWebHandler` would hold the failed handler for every event of the instance.
-              return yield* Effect.sync(() =>
+              const buildWebHandler = Effect.sync(() =>
                 HttpEffect.toWebHandlerWith<
                   never,
                   HttpServerRequest.HttpServerRequest | Scope.Scope
@@ -481,6 +461,8 @@ const handlersOf = <S>(
                     : HttpMiddleware.logger
                 )
               );
+
+              return yield* buildWebHandler;
             });
 
       return { context, call, sockets: Context.get(sockets, Sockets), serve };
@@ -502,18 +484,6 @@ const handlersOf = <S>(
   let building = false;
   const waiting: Waiting[] = [];
 
-  // Why: built as the instance is constructed, under `blockConcurrencyWhile`, so the runtime holds
-  // every event, the first included, until the build ends, and each then finds `instance` set
-  // and starts at once, as on a built instance. An event arriving while a build runs, the one
-  // building again after a failure or one the runtime let in that same turn, waits in line and
-  // runs once the gate opens, one after another: resumed together from one promise, calls
-  // reading then writing storage each read before any wrote, a write lost. They run outside the
-  // gate, as one calling another object that calls this one back would wait under it on its own
-  // callback until the runtime reset the object. A failed build's Layer would stay failed in a
-  // memo map whose scope stays open, and its protocols registered with its `Sockets`, so a
-  // failure closes its scope and drops it, rejects the events in line with it, and the next
-  // event builds from nothing; the gate's callback resolves either way, as a rejection under it
-  // would reset the object.
   const start = () => {
     building = true;
 
@@ -583,11 +553,7 @@ const handlersOf = <S>(
     return await promise;
   };
 
-  // Why: the services' context carries the instance's memo map, which `run` gave every effect
-  // before, so a Layer it provided itself was shared when the services or routes had built that
-  // very value, and rebuilt per call otherwise, without a word. A map of its own makes the rule
-  // one: the services are shared, and what a `run` or a task provides is per call.
-  const provided = <A, E>(
+  const providedPerCall = <A, E>(
     { context }: Built,
     effect: Effect.Effect<A, E, RunRequires<S>>
   ) =>
@@ -601,13 +567,11 @@ const handlersOf = <S>(
       )
     );
 
-  // Why: the services' context carries the object's scheduler, which `provided` gives `run`, as
-  // the calls' and the protocols' own context gives each call and socket event.
   const run = async <A, E>(
     effect: Effect.Effect<A, E, RunRequires<S>>
   ): Promise<A> =>
     await withBuilt(
-      async (built) => await Effect.runPromise(provided(built, effect))
+      async (built) => await Effect.runPromise(providedPerCall(built, effect))
     );
 
   const dispatch = async (
@@ -717,8 +681,12 @@ export const handlers = <
  * declares them, returning a promise, and reaches `make`'s through `super`, its `env` the one its
  * `services` function takes.
  */
-// Why: `Handlers` comes first, so `super.alarm(info)` and the other handlers resolve to the
-// delegated signatures, which always exist, rather than Cloudflare's optional ones.
+/**
+ * An instance of a class `make` returns: a Durable Object with the handlers it defines, each
+ * taking the runtime's own arguments, so a class extending it overrides them as `Handlers`
+ * declares them, returning a promise, and reaches `make`'s through `super`, its `env` the one its
+ * `services` function takes.
+ */
 export type Instance<S = never, Env = Cloudflare.Env> = Handlers<S> &
   DurableObject<Env>;
 
@@ -766,10 +734,6 @@ export function make<
     readonly services: (env: Env) => Layer.Layer<S, SE, SR>;
   }
 ): new (ctx: DurableObjectState, env: Env) => Instance<S, Env>;
-// Why: a `services` function of `env` has its parameter inferred, which fixes the type
-// parameters a default gives before the function's return gives `S`, so its signature has none
-// for the services. The other stays last, since TypeScript reports an argument matching neither
-// against the last alone.
 /**
  * A Durable Object class delegating every handler, and `run`, to `handlers` over its own `ctx`,
  * with the services `services` returns for its `env`: it serves `routes` on `fetch`, the
@@ -867,8 +831,6 @@ export function make<S>(
       return await this.#handlers.effectActionsRpc(request);
     }
 
-    // Why: always defined, as the object's one alarm is the package's: workerd refuses
-    // `storage.setAlarm`, which `Alarm.set` calls, on a class without an `alarm` handler.
     override async alarm(info?: AlarmInvocationInfo) {
       await this.#handlers.alarm(info);
     }

@@ -2,11 +2,6 @@ import { Effect, Function, Result } from "effect";
 import type { Dns } from "effect/net";
 import { Host, IpNetwork, NetAddress } from "effect/net";
 
-// Why: The ranges of IANA's IPv4 and IPv6 special-purpose registries that are not globally
-// reachable, as SEP-3415 asks a server to refuse: private, loopback, link-local, shared (CGNAT),
-// benchmarking, documentation, reserved, multicast, and IPv6's mapped form of IPv4. NAT64's
-// `64:ff9b::/96` is refused too, since the IPv4 address it embeds may be private: an IPv6-only
-// server behind NAT64 cannot deliver to an IPv4-only callback, a gotcha on `Webhook.layer`.
 const notGlobal = [
   "0.0.0.0/8",
   "10.0.0.0/8",
@@ -38,15 +33,9 @@ const notGlobal = [
   "ff00::/8",
 ].map(IpNetwork.fromStringUnsafe);
 
-/** Whether `address` is globally reachable, in no special-purpose range. */
 const isGlobal = (address: NetAddress.IpAddress): boolean =>
   !notGlobal.some((network) => IpNetwork.contains(network, address));
 
-/**
- * Checks the host of `url`, failing unless every address it names is globally reachable: a
- * literal address is checked as it is, a name through `dns`, or passed where there is none, and a
- * scoped IPv6 literal refused.
- */
 export const checkedHost = (
   url: URL,
   dns: Dns.Dns["Service"] | undefined
@@ -57,19 +46,20 @@ export const checkedHost = (
     )
   );
 
-  if (!NetAddress.isIpAddress(host) && !Host.isDomainName(host)) {
+  if (NetAddress.isIpAddress(host)) {
+    return isGlobal(host) ? Effect.void : Effect.fail(undefined);
+  }
+
+  if (!Host.isDomainName(host)) {
     return Effect.fail(undefined);
   }
 
-  const addresses: Effect.Effect<
-    readonly NetAddress.IpAddress[],
-    Dns.DnsError
-  > = NetAddress.isIpAddress(host)
-    ? Effect.succeed([host])
-    : (dns?.lookup(host) ?? Effect.succeed([]));
+  if (dns === undefined) {
+    return Effect.void;
+  }
 
   return Effect.flatMap(
-    Effect.mapError(addresses, Function.constUndefined),
+    Effect.mapError(dns.lookup(host), Function.constUndefined),
     (resolved) =>
       resolved.every(isGlobal) ? Effect.void : Effect.fail(undefined)
   );

@@ -13,9 +13,6 @@ export class SchemaErrors extends HttpApiMiddleware.Service<SchemaErrors>()(
   { error: [InvalidInput] }
 ) {}
 
-// Why: A result that does not encode stays the native failure, an empty 500, under no policy
-// mapping it to a declared error: the handler has run, so any write it made has happened, which a
-// declared error would misreport.
 export const schemaErrors = HttpApiMiddleware.layerSchemaErrorTransform(
   SchemaErrors,
   (failure) =>

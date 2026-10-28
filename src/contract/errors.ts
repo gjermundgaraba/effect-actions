@@ -137,10 +137,6 @@ export const Refusal = Schema.Union(refusals);
 /** A refusal: `Unauthenticated | Forbidden`. */
 export type Refusal = (typeof Refusal)["Type"];
 
-/**
- * The failures every endpoint and tool declares beyond its action's own, and any handler may
- * fail with: bad input, and every refusal. An action or a binding need not declare them; one listed is accepted.
- */
 export const builtIns = [InvalidInput, ...refusals] as const;
 
 /** The built-in failures' schemas. */

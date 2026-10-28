@@ -89,8 +89,8 @@ import type {
 import { listed } from "../contract/listed.js";
 import type { Only } from "../contract/listed.js";
 import { reservedList, reservedNames } from "../contract/names.js";
-import { answerFrom, elementsFrom, Progressed } from "../contract/progress.js";
-import type { Reporting } from "../contract/progress.js";
+import { answerFrom, elementsFrom } from "../contract/progress.js";
+import type { Reporting, Progressed } from "../contract/progress.js";
 import {
   PushedOf,
   queuedPush,
@@ -112,10 +112,6 @@ type ErrorOf<A extends Action.Any, E extends Action.Errors, D> = Schema.Union<
   ReadonlyArray<A["error"][number] | E[number] | VerifierError<A, D> | BuiltIns>
 >;
 
-/**
- * What the stream rpc of an action declaring `progress` sends: a `Progress` for each value its
- * handler reports, then a `Final` with its answer.
- */
 const ProgressedOf = <P extends Codec, S extends Codec>(
   progress: P,
   success: S
@@ -125,10 +121,6 @@ const ProgressedOf = <P extends Codec, S extends Codec>(
     Schema.TaggedStruct("Final", { value: success }),
   ]);
 
-/**
- * What the stream rpc of an action answering a stream sends: an `Element` for each element, and a
- * `Progress` for each value its handler reports where it declares `progress`.
- */
 type ElementedOf<Element extends Schema.Constraint, P> = Schema.Union<
   readonly [
     Schema.TaggedStruct<"Element", { readonly value: Element }>,
@@ -146,12 +138,12 @@ const elementedOf = (element: Codec, progress: Codec | undefined) =>
       : [Schema.TaggedStruct("Progress", { value: progress })]),
   ]);
 
-/** Whether `action`'s rpc is a stream rpc: it answers a stream, or declares `progress`. */
 const streams = (action: Action.Any) =>
   action.progress !== undefined || elementOf(action.success) !== undefined;
 
-/** What `action`'s rpc answers, or each element it streams where it is a stream rpc. */
-const sentOf = (action: Action.Any): Codec => {
+const streamedOf = (
+  action: Action.Any
+): Schema.Codec<Progressed> | undefined => {
   const element = elementOf(action.success);
 
   if (element !== undefined) {
@@ -159,9 +151,12 @@ const sentOf = (action: Action.Any): Codec => {
   }
 
   return action.progress === undefined
-    ? action.success
+    ? undefined
     : ProgressedOf(action.progress, action.success);
 };
+
+const sentOf = (action: Action.Any): Codec =>
+  streamedOf(action) ?? action.success;
 
 type RpcOf<
   A extends Action.Any,
@@ -209,13 +204,7 @@ type RefusalOf<E extends Action.Errors> = Schema.Union<
 
 declare const authenticatedBrand: unique symbol;
 
-/**
- * The middleware authenticating a binding's native rpcs, as Effect's server reads it: what it
- * provides their handlers, and what it fails with.
- */
 interface Authenticated<I, E extends Action.Errors = Action.Errors> {
-  // Why: the brand is this middleware's alone, so `NativeServer` excluding it from a layer's
-  // requirements never excludes a host's middleware of the same shape, which stays owed.
   readonly [authenticatedBrand]: typeof authenticatedBrand;
   readonly [RpcMiddleware.TypeId]: {
     readonly provides: I;
@@ -329,17 +318,13 @@ export interface Options<E extends Action.Errors = Action.Errors> {
 }
 
 const nativeOf = (group: RpcGroup.Any) =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Native group boundary: every native group is a `RpcGroup` of native rpcs, each carrying its schemas and middleware; only its invariant static rpcs are dropped.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   group as RpcGroup.RpcGroup<Rpc.AnyWithProps>;
 
 type RpcsOf<O> = O extends { readonly rpcs: infer G }
   ? RpcGroup.Rpcs<G>
   : never;
 
-// Why: a native rpc's refusal is its own call's typed failure, as an action's is: the
-// middleware's error joins the rpc's in the exit both sides encode, so its client decodes
-// `Unauthenticated` and the verifier's errors without declaring them. `make` builds it once per
-// binding, and `layer` provides its implementation under the one its native rpcs carry.
 const authenticatedOf = (authentication: Authentication) =>
   RpcMiddleware.Service<Authenticated<unknown>, { provides: unknown }>()(
     authenticatedKey,
@@ -348,11 +333,9 @@ const authenticatedOf = (authentication: Authentication) =>
     }
   );
 
-/** The middleware authenticating `rpc`, wherever among its middleware it runs. */
 const authenticatedIn = (rpc: Rpc.AnyWithProps) =>
   [...rpc.middlewares].find(({ key }) => key === authenticatedKey);
 
-// Why: The same three overloads as `ActionHttp.make`, for the reasons stated there.
 /**
  * Bind actions once, for servers and clients alike, each as an rpc named after it, taking
  * its action's input and answering its success, and event types, each a stream rpc named after
@@ -491,11 +474,6 @@ type ServerOnly<M extends Middleware, E extends Action.Errors> = [
       readonly "Layer middleware fails only with the binding's errors and needs no client": never;
     };
 
-// Why: every call of an action or an event type runs with the request `withRequestOf` makes of
-// its message's headers, on every protocol, so the request and its search params are never owed;
-// a route's `RouteContext` exists only over a router-mounted protocol, where `HttpRouter.serve`
-// provides it, so unlike `ActionHttp`'s, this keeps it owed, and a handler reading one leaves it
-// owed on stdio, a socket or a worker.
 type LayerRequest<
   App,
   A extends Action.Any,
@@ -535,9 +513,6 @@ type RpcLayer<
     >
 >;
 
-// Why: the native rpcs' handlers are the host's, provided as Effect's own `toLayer` provides
-// them, so a layer without them is refused where the server is launched; the middleware
-// authenticating them is the layer's own, never owed.
 type NativeServer<N extends Rpc.Any, D> = [N] extends [never]
   ? never
   :
@@ -577,12 +552,7 @@ export interface LayerOptions<
   readonly middleware?: M;
 }
 
-// Why: a message carries headers alone, and no transport gives a call its request: a server
-// on a socket runs in a fiber of its own, and a hibernated object's message arrives with none. A
-// verifier is typed as reading the request, as over HTTP, so it reads one holding the message's
-// headers, which a socket's upgrade headers precede, where the credential is decoded from too;
-// every call runs with it, so a placed action sends those headers on.
-const withRequestOf =
+const withSyntheticRequestFromHeaders =
   (headers: Headers.Headers) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
@@ -604,16 +574,12 @@ type Step = (
   options: CallOptions
 ) => Effect.Effect<unknown, unknown, unknown>;
 
-// Why: The steps run here, each suspended, and none as native rpc middleware. Effect applies
-// native middleware as it sets a call up, outside any Effect, so one that throws fails the whole
-// connection; suspended, a throw is its own call's defect.
-/** `call` inside `steps`, the first innermost, each given the call's options. */
-const throughSteps = (
+const throughSteps = <A, R>(
   steps: readonly Step[],
-  call: Effect.Effect<unknown, unknown, unknown>,
+  call: Effect.Effect<A, unknown, R>,
   options: CallOptions
 ) => {
-  let wrapped = call;
+  let wrapped: Effect.Effect<unknown, unknown, unknown> = call;
 
   for (const step of steps) {
     const inner = wrapped;
@@ -621,13 +587,10 @@ const throughSteps = (
     wrapped = Effect.suspend(() => step(inner, options));
   }
 
-  return wrapped;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return wrapped as Effect.Effect<A, unknown, R>;
 };
 
-/**
- * The step authenticating a call with `authentication`'s provider: the identity its verification
- * answers is provided to the call, the verification run as `verifying` runs it.
- */
 const authenticatingOf = (authentication: Authentication) =>
   Effect.map(providerOf(authentication), (provider) => {
     const verify = Effect.flatMap(
@@ -646,10 +609,6 @@ const authenticatingOf = (authentication: Authentication) =>
 
 type Verification = Effect.Effect<unknown, unknown, unknown>;
 
-// Why: A declared failure is the caller's answer, which no error reporter is given. The mark
-// that says so is on this wrapper, which both ends' groups carry as the JSON it holds, and
-// never on the JSON: a mark on the failure touches a value the handler made, and a primitive
-// takes none. It prints as its JSON, which is what a trace of the server's span shows.
 class DeclaredFailure {
   readonly [ErrorReporter.ignore] = true;
   readonly json: Schema.Json;
@@ -674,8 +633,6 @@ const asJson = () =>
     })
   );
 
-// Why: every codec a protocol derives hands the wrapper over as its JSON: one passing values
-// would otherwise pass the wrapper itself, which structured cloning refuses.
 const Declared = Schema.instanceOf(DeclaredFailure, {
   toCodecJson: asJson,
   toCodecIso: asJson,
@@ -689,11 +646,6 @@ const streamOf = (name: string) =>
     stream: true,
   });
 
-// Why: an action and an event type are JSON contracts on every surface, so both ends hand the
-// protocol an action's input, answer and declared failure, and a subscription's input, what it
-// sends and its declared failure, as JSON, encoding and decoding them by the contract's schemas
-// themselves: the protocol's codec never sees a contract's own schema, and a native rpc sharing
-// one keeps its own codec.
 const erasedOf = (
   actions: readonly Action.Any[],
   events: readonly Event.Any[]
@@ -716,7 +668,7 @@ const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
 
   return <A, R>(
     effect: Effect.Effect<A, unknown, R>
-  ): Effect.Effect<A, unknown, R> =>
+  ): Effect.Effect<A, DeclaredFailure, R> =>
     Effect.catchCause(effect, (cause) => {
       if (Cause.hasDies(cause)) {
         return concealed(cause);
@@ -732,7 +684,7 @@ const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
               onSuccess: (encoded) => Effect.fail(new DeclaredFailure(encoded)),
             })
           )
-        : Effect.failCause(cause);
+        : Effect.failCause(failure.failure);
     });
 };
 
@@ -755,28 +707,21 @@ const handlerOf = (
 
     const wrapped = throughSteps(steps, call, { ...options, payload });
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased call boundary: the steps pass the call's encoded success through, or fail; the boundary fails with a declared failure in its wrapper alone, or an interruption.
-    return boundary(wrapped) as Effect.Effect<
-      Schema.Json,
-      DeclaredFailure,
-      unknown
-    >;
+    return boundary(wrapped);
   };
 };
 
-/** What the stream rpc of an action sends for one call, what its handler reports included. */
+interface Sent extends Schema.JsonObject {
+  readonly _tag: Progressed["_tag"];
+  readonly value: Schema.Json;
+}
+
 type Sending = (
   input: ErasedValue,
   reporting: Reporting,
-  send: (sent: Progressed) => Effect.Effect<void>
+  send: (sent: Sent) => Effect.Effect<void>
 ) => Effect.Effect<void, unknown, unknown>;
 
-/**
- * The handler of the stream rpc of an action declaring `progress` or answering a stream: its call
- * authenticates before its stream starts, then runs in the call's scope, what `sending` sends sent
- * one at a time, so a caller reading slowly holds up the call, whose progress then drops the
- * oldest values. A failure ends the stream as a call's ends it.
- */
 const streamingHandlerOf = (
   action: Action.Any,
   sending: Sending,
@@ -793,15 +738,20 @@ const streamingHandlerOf = (
   return (payload: Schema.Json, options: Omit<CallOptions, "payload">) => {
     const call = Effect.gen(function* () {
       const input = yield* decode(payload);
-      const sent = yield* Queue.bounded<Progressed, unknown>(1);
-      const send = (each: Progressed) => Effect.asVoid(Queue.offer(sent, each));
+
+      const sent = yield* Queue.bounded<
+        Schema.Json,
+        DeclaredFailure | Cause.Done
+      >(1);
+
+      const send = (each: Sent) => Effect.asVoid(Queue.offer(sent, each));
 
       yield* sending(
         input,
         {
           progress: (value) =>
             Effect.flatMap(Effect.orDie(encodeProgress(value)), (json) =>
-              send(Progressed.Progress({ value: json }))
+              send({ _tag: "Progress", value: json })
             ),
         },
         send
@@ -816,16 +766,10 @@ const streamingHandlerOf = (
 
     const wrapped = throughSteps(steps, call, { ...options, payload });
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased call boundary: the steps pass the call's queue through, or fail; the boundary fails with a declared failure in its wrapper alone, or an interruption.
-    return boundary(wrapped) as Effect.Effect<
-      Queue.Dequeue<Schema.Json, DeclaredFailure | Cause.Done>,
-      DeclaredFailure,
-      Scope.Scope
-    >;
+    return boundary(wrapped);
   };
 };
 
-/** Each value `run` reports sent as a `Progress`, then its answer as a `Final`. */
 const sendingAnswer = (
   success: Codec,
   run: ErasedHandler<unknown>
@@ -835,11 +779,10 @@ const sendingAnswer = (
   return (input, reporting, send) =>
     run(input, reporting).pipe(
       Effect.flatMap(encode),
-      Effect.flatMap((value) => send(Progressed.Final({ value })))
+      Effect.flatMap((value) => send({ _tag: "Final", value }))
     );
 };
 
-/** Each element of the stream `run` answers sent as an `Element`, beside its progress. */
 const sendingElements = (
   element: Codec,
   run: ErasedHandler<unknown>
@@ -848,9 +791,7 @@ const sendingElements = (
 
   return (input, reporting, send) =>
     Stream.runForEach(elementsOf(run(input, reporting)), (each) =>
-      Effect.flatMap(encode(each), (value) =>
-        send(Progressed.Element({ value }))
-      )
+      Effect.flatMap(encode(each), (value) => send({ _tag: "Element", value }))
     );
 };
 
@@ -890,6 +831,9 @@ export const subscriptionKeeper: unique symbol = Symbol.for(
   "effect-actions/ActionRpc/subscriptionKeeper"
 );
 
+const isSubscriptionKeeper = (kept: unknown): kept is SubscriptionKeeper =>
+  Predicate.hasProperty(kept, "keep") && Predicate.isFunction(kept.keep);
+
 const keeperOf = (
   protocol: RpcServer.Protocol["Service"]
 ): SubscriptionKeeper | undefined => {
@@ -897,17 +841,9 @@ const keeperOf = (
     ? protocol[subscriptionKeeper]
     : undefined;
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: A protocol's own declaration under the library's own key, which only a `SubscriptionKeeper` is set to.
-  return kept as SubscriptionKeeper | undefined;
+  return isSubscriptionKeeper(kept) ? kept : undefined;
 };
 
-/**
- * The handler of one event type's stream rpc: the subscription's request authenticates and is
- * admitted before its stream starts, so a refusal fails the call; the feed is then read from the
- * call, in its scope, into a bounded queue, each element encoded, and read on through a source's
- * failure, before its first `Checked` too. A later refusal ends the stream as a declared failure.
- * Over a protocol with a `keeper`, the admitted subscription is kept, and every position sent.
- */
 const subscriptionHandlerOf = (
   feed: Feed,
   steps: readonly Step[],
@@ -964,12 +900,7 @@ const subscriptionHandlerOf = (
 
     const wrapped = throughSteps(steps, call, { ...options, payload });
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased call boundary: the steps pass the subscription's queue through, or fail; the boundary fails with a declared failure in its wrapper alone, or an interruption.
-    return boundary(wrapped) as Effect.Effect<
-      Queue.Dequeue<Schema.Json, DeclaredFailure | Cause.Done>,
-      DeclaredFailure,
-      Scope.Scope
-    >;
+    return boundary(wrapped);
   };
 };
 
@@ -984,17 +915,13 @@ export const unaryProtocol: unique symbol = Symbol.for(
   "effect-actions/ActionRpc/unary"
 );
 
-// Why: a verifier's defect is masked as on an action, `Internal server error` with its
-// cause reported: Effect's server would answer a native rpc's defect with its message and
-// cause, and the authentication step is the library's, not the host's handler. Only the
-// verification reads the request made of the message's headers: the native handler reads
-// what Effect's server gives it.
 const verifyingNative = (verify: Verification, { headers }: CallOptions) =>
-  withRequestOf(headers)(verify).pipe(
+  withSyntheticRequestFromHeaders(headers)(verify).pipe(
     Effect.catchCauseIf(Cause.hasDies, concealed)
   );
 
-const requested: Step = (effect, { headers }) => withRequestOf(headers)(effect);
+const requested: Step = (effect, { headers }) =>
+  withSyntheticRequestFromHeaders(headers)(effect);
 
 const isUnary = (protocol: RpcServer.Protocol["Service"]) =>
   Predicate.hasProperty(protocol, unaryProtocol) &&
@@ -1066,8 +993,6 @@ export function layer(
 
   const natives = [...nativeOf(binding.rpcs).requests.values()];
 
-  // Why: every native rpc is served whatever `actions` selects, so a binding holding one needs
-  // its authentication as a served protected action does.
   const authentication =
     natives.length === 0 ? selected.authentication : binding.authentication;
 
@@ -1189,8 +1114,6 @@ export function layer(
 
       const servedActions = jsonGroup.toLayer(byName);
 
-      // Why: its implementation is always this layer's own, provided beneath the server, so no
-      // Layer of the host's under its key reaches it.
       const authenticated = natives
         .map(authenticatedIn)
         .find(Predicate.isNotUndefined);
@@ -1199,7 +1122,7 @@ export function layer(
         return servedActions;
       }
 
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased middleware: the step passes the call's success through, or fails with a refusal or the verifier's error, which the middleware declares, and provides the identity it declares.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
       const authenticate = authenticating(
         verifyingNative
       ) as RpcMiddleware.RpcMiddleware<unknown, unknown, never>;
@@ -1288,7 +1211,6 @@ type JsonStreamMethod = (
 const isDeclared = (failure: Failed): failure is DeclaredFailure =>
   failure instanceof DeclaredFailure;
 
-/** Fail with the declared failure a wrapper holds, decoded by `error`, or die where it does not. */
 const failedOf = (error: Schema.Union<Action.Errors>) => {
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(error));
 
@@ -1296,41 +1218,42 @@ const failedOf = (error: Schema.Union<Action.Errors>) => {
     Effect.flatMap(Effect.orDie(decode(failure.json)), Effect.fail);
 };
 
-/**
- * A client's method of `action`, calling `method`, its rpc of `erasedOf`, with its input's JSON:
- * what the server sends, its answer or each element it streams, and its declared failure, decoded
- * by the action's schemas; one that does not decode is a defect, as the native client makes it.
- */
 const actionMethodOf = (
   action: Action.Any,
   binding: Any,
   method: JsonMethod | JsonStreamMethod
 ): ErasedMethod | ErasedStreamMethod => {
-  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(sentOf(action)));
   const failed = failedOf(Schema.Union(bindingErrors(action, binding)));
+  const streamed = streamedOf(action);
 
-  const sent = (json: Schema.Json) => Effect.orDie(decode(json));
+  if (streamed === undefined) {
+    const decode = Schema.decodeUnknownEffect(
+      Schema.toCodecJson(action.success)
+    );
 
-  if (!streams(action)) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The native client's method of an rpc of `erasedOf` that does not stream: it takes and answers JSON, failing with the declared failure's wrapper.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const call = method as JsonMethod;
 
     return checked(action, sendingJson, (json) =>
-      call(json).pipe(Effect.catchIf(isDeclared, failed), Effect.flatMap(sent))
+      call(json).pipe(
+        Effect.catchIf(isDeclared, failed),
+        Effect.flatMap((sent) => Effect.orDie(decode(sent)))
+      )
     );
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The native client's method of a stream rpc of `erasedOf`: it streams JSON, failing with the declared failure's wrapper.
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(streamed));
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const call = method as JsonStreamMethod;
 
   const progressed = (json: Schema.Json) =>
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: What a stream rpc sends decodes by `sentOf` to a `Progress`, `Final` or `Element` holding its value.
     call(json).pipe(
       Stream.catchIf(isDeclared, (failure) =>
         Stream.fromEffect(failed(failure))
       ),
-      Stream.mapEffect(sent)
-    ) as Stream.Stream<Progressed, unknown>;
+      Stream.mapEffect((sent) => Effect.orDie(decode(sent)))
+    );
 
   return elementOf(action.success) === undefined
     ? checked(action, sendingJson, (json, onProgress) =>
@@ -1341,14 +1264,8 @@ const actionMethodOf = (
       );
 };
 
-/** A subscription's stream of an event type, from its input's JSON. */
 type EventMethod = (input: Schema.Json) => StreamMethod;
 
-/**
- * A client's subscription to `event`, calling `method`, its stream rpc of `erasedOf`, with its
- * input's JSON and the cursor it resumes from: what the server sends, and its declared failure,
- * decoded by the event's schemas; one that does not decode is a defect, as for an action.
- */
 const eventMethodOf = (
   event: Event.Any,
   binding: Any,
@@ -1360,7 +1277,7 @@ const eventMethodOf = (
 
   const failed = failedOf(Schema.Union(eventErrors(event, binding)));
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The native client's method of an event type's stream rpc of `erasedOf`: it streams JSON, failing with the declared failure's wrapper.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const call = method as JsonStreamMethod;
 
   return (input) => (cursor) =>
@@ -1414,12 +1331,6 @@ export function client(
       erasedOf(binding.actions, binding.events).merge(nativeOf(binding.rpcs)),
       options
     ),
-    // Why: a protocol acknowledging chunks, such as Effect's socket protocol, holds a connection
-    // whose liveness it checks itself, by ping; of the protocols that serve a watch, Effect's HTTP
-    // one alone does not, and it reads a response a proxy may hold open without passing frames
-    // on, which only a watch's silence rule tells apart (a stub's protocol serves no watch). Over
-    // a socket the rule would end every quiet watch, and a Durable Object, which sends no
-    // heartbeat, would be woken by its reconnects every minute.
     Effect.map(
       Effect.service(RpcClient.Protocol),
       ({ supportsAck }) => !supportsAck
@@ -1485,6 +1396,14 @@ export function client(
 }
 
 /**
+ * What `reconnectUntil`'s schedule reads of each failure to connect: the `reason` of the
+ * `Socket.SocketError` Effect's socket protocol retries after.
+ */
+export interface ReconnectReason {
+  readonly reason: unknown;
+}
+
+/**
  * A socket client's `retryPolicy`, for `RpcClient.layerProtocolSocket`, that stops connecting
  * again once the server closes the socket with one of `codes`, such as a refusal of its upgrade:
  * until then it is Effect's own default, `Schedule.min([Schedule.exponential(500, 1.5),
@@ -1498,14 +1417,8 @@ export function client(
  * - Any other socket error, a drop included, is retried as Effect's default retries it.
  */
 export const reconnectUntil = (...codes: readonly number[]) =>
-  // Why: a copy of `defaultRetryPolicy` in effect 4.0.6's `src/rpc/RpcClient.ts`, lines 1415-1418,
-  // which Effect does not export: on an Effect upgrade, compare it there, as a change of
-  // Effect's default leaves this one behind.
   Schedule.min([Schedule.exponential(500, 1.5), Schedule.spaced(5000)]).pipe(
-    // Why: the input is typed by the shape it reads, not `Socket.SocketError`, so a page
-    // importing this module needs no `effect/socket` in its import map unless it opens a
-    // socket itself; `tests/browser.test.ts` holds the barrels it may need.
-    Schedule.setInputType<{ readonly reason: unknown }>(),
+    Schedule.setInputType<ReconnectReason>(),
     Schedule.while(
       ({ input: { reason } }) =>
         !(

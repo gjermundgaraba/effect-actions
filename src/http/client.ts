@@ -71,7 +71,6 @@ export interface Options<E = HttpClientError.HttpClientError, R = never> {
 
 type BindingError = Action.Errors[number];
 
-// Why: Named through the native client's stream, so the browser's client imports no encoding module.
 type SseFailure = Extract<
   Stream.Error<HttpApiClient.SuccessType<ReturnType<typeof sentOf<Event.Any>>>>,
   { readonly _tag: "SseError" | "Retry" }
@@ -177,7 +176,6 @@ type ErasedWatch<R> = (
   options?: Event.WatchOptions<unknown>
 ) => Stream.Stream<Event.Received<Event.Any>, unknown, R | Receiving>;
 
-/** A client's methods by name, and `watch` where its binding lists event types. */
 export interface Methods<R> {
   readonly [name: string]:
     | ErasedMethod<R>
@@ -201,9 +199,6 @@ const methodOf = <M>(
   return method;
 };
 
-// Why: Every request accepts an event stream, so the route of an action declaring `progress`
-// always answers its stream to this client, and a call reads its answer one way, from the
-// `final` event; every other route answers as it would.
 const acceptingStreams = HttpClient.mapRequest(
   HttpClientRequest.setHeader("accept", "application/json, text/event-stream")
 );
@@ -213,7 +208,7 @@ const nativeOf = <E, R>(
   httpClient: HttpClient.HttpClient.With<E, R>,
   baseUrl: Options["baseUrl"]
 ) =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Native API boundary: every binding API is one top-level group whose endpoints take `{ payload }`; only the invariant static group map is dropped.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   HttpApiClient.makeWith(http.api as HttpApi.HttpApi<string>, {
     baseUrl,
     httpClient,
@@ -257,7 +252,6 @@ export interface Senders<R> {
   ) => Transport<unknown, R | Receiving>;
 }
 
-/** The `Senders` of `http` over `httpClient`: its native clients, built once. */
 export const sendersWith = <E, R>(
   http: AnyHttp,
   httpClient: HttpClient.HttpClient.With<E, R>,
@@ -266,8 +260,6 @@ export const sendersWith = <E, R>(
   Effect.gen(function* () {
     const native = yield* nativeOf(http, acceptingStreams(httpClient), baseUrl);
 
-    // Why: An event's route answers a page, or its stream where the request accepts one, so a
-    // poll asks with a client accepting JSON alone, as do a webhook's routes, which answer JSON.
     const plain = yield* nativeOf(http, httpClient, baseUrl);
     const polls: NativeClient<PollMethod<R>> = plain;
     const streams: NativeClient<StreamMethod<R>> = native;

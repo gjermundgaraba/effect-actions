@@ -10,15 +10,11 @@ import { messages } from "../../src/chat/handlers.js";
 import { CurrentRoom } from "../../src/chat/room.js";
 import { MessageStore } from "../../src/chat/store.js";
 import { CurrentMember } from "../../src/identity/Identity.js";
-import { members } from "../../src/identity/members.js";
+import { demoMembers } from "../../src/identity/members.js";
 
-// What the implementation does, with no transport: `Action.client` runs the same decoding,
-// `authorize` and handler a server runs. No authentication and no middleware run here, so
-// each call is given what they would provide: its caller and its room. Neither is provided
-// around the client or beside the store: a request-time service belongs to one call.
-const as = (member: keyof typeof members, room: string) =>
+const as = (member: keyof typeof demoMembers, room: string) =>
   flow(
-    Effect.provideService(CurrentMember, members[member]),
+    Effect.provideService(CurrentMember, demoMembers[member]),
     Effect.provideService(CurrentRoom, room)
   );
 
@@ -122,14 +118,12 @@ describe("messages, in process", () => {
             Effect.forkChild
           );
 
-        // The watch starts from now: let it take its first position before anyone posts.
         yield* TestClock.adjust("0 millis");
         yield* client
           .postMessage({ text: "Disk is full." })
           .pipe(as("ada", "ops"));
         yield* client.postMessage({ text: "Ready." }).pipe(as("ada", "lobby"));
 
-        // `postMessage` notifies: the watch reads at once, with no wait for its next read.
         expect(yield* Fiber.join(watching)).toMatchObject([
           {
             _tag: "Occurrence",
@@ -166,7 +160,6 @@ describe("messages, in process", () => {
 
         const received = [...(yield* firstReceived), ...(yield* firstReceived)];
 
-        // Both are the room's message 1, and a watch that saw the first still reads the second.
         expect(received).toMatchObject([
           { data: { id: 1 } },
           { data: { id: 1 } },
@@ -204,7 +197,6 @@ describe("messages, in process", () => {
 
         yield* client.postMessage({ text: "Ready." }).pipe(as("ada", "lobby"));
 
-        // An event's id, such as `<epoch>:lobby:1`, is no cursor: the cursor is `<epoch>:<id>`.
         const received = yield* client
           .watch(MessagePosted, {}, { cursor: "lobby:1" })
           .pipe(Stream.take(1), Stream.runCollect, as("grace", "lobby"));

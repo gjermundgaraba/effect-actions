@@ -18,10 +18,6 @@ import type { AnyImplementation, Served } from "./implementation.js";
 import { selection } from "./listed.js";
 import { assertDistinct, assertOnce, heldOnce } from "./names.js";
 
-/**
- * What a surface without a binding serves of `served`: the actions and event types `actions`
- * lists, each implementation holding those alone, or every one where it lists none.
- */
 export const selectFrom = (
   served: Served,
   actions: ReadonlyArray<Action.Any | Event.Any> | undefined
@@ -34,11 +30,6 @@ export const selectFrom = (
   };
 };
 
-/**
- * The event implementations among `served` a binding of `bound` serves, each holding the served
- * event types alone: those `listed` lists, or else every bound one, refusing implementations none
- * of whose event types it binds, as `servedBy` refuses such action implementations.
- */
 const eventsServedBy = (
   what: string,
   bound: readonly Event.Any[],
@@ -86,11 +77,6 @@ const eventsServedBy = (
   return selected;
 };
 
-/**
- * What `ActionHttp.layer` and `ActionRpc.layer` serve, with the checks they share: the actions
- * and event types `options.actions` lists, or every one of the binding's the implementations
- * hold; `authentication` is the binding's where a served contract is protected.
- */
 export const servingOf = <D extends Proving>(
   what: string,
   binding: {
@@ -111,8 +97,6 @@ export const servingOf = <D extends Proving>(
   const events = eventsServedBy(what, binding.events, served, listed.events);
   const eventTypes = events.flatMap((app) => app.events);
 
-  // Why: A binding spread with another descriptor, `{ ...binding, authentication }`, type-checks,
-  // so what `make` checked no longer holds for it.
   assertAuthentication(actions, binding.authentication);
   assertAuthentication(eventTypes, binding.authentication, "event");
   assertDistinct("middleware", options.middleware ?? [], (key) => key.key, {
@@ -132,10 +116,6 @@ export const servingOf = <D extends Proving>(
   };
 };
 
-/**
- * Provide the builders of what `servingOf` selects, the action implementations' and the event
- * implementations', to a surface's layer.
- */
 export const provideServed = (served: {
   readonly apps: readonly AnyImplementation[];
   readonly events: readonly AnyEventImplementation[];

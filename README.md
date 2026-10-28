@@ -131,4 +131,10 @@ A few ideas (like the native Toolkit and CLI projections) are inspired by the ex
 
 ## Contributing
 
-The rules for changing the library are in [AGENTS.md](https://github.com/gjermundgaraba/effect-actions/blob/main/AGENTS.md). MIT licensed.
+Set up with [Vite+](https://viteplus.dev/guide/): `vp install`, then `vp run ready` runs every check. The rules for changing the library are in [AGENTS.md](https://github.com/gjermundgaraba/effect-actions/blob/main/AGENTS.md). MIT licensed.
+
+## Releasing
+
+Bump the version in `package.json` and `packages/cloudflare/package.json`, commit, tag `v<version>` and push the tag. `.github/workflows/npm.yml` then publishes every package whose version npm does not have yet, the core first, through npm trusted publishing. A new package's first version is published by hand with `vp pm publish`, followed by `npm trust github <package> --repo <repo> --file npm.yml` so the workflow can publish the next.
+
+`.github/workflows/effect-latest.yml` runs the full check weekly against the newest Effect 4.x, so a minor release that passes can be admitted to the `effect` peer range.

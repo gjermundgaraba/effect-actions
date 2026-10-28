@@ -5,16 +5,10 @@ import type { McpServer } from "effect/ai";
 import type { Codec } from "../contract/codec.js";
 import type { Reporting } from "../contract/progress.js";
 
-/** The `_meta` key a `notifications/progress` carries its value under, as JSON. */
 export const progressKey = "effect-actions/progress";
 
 const tokenOf = Schema.decodeUnknownOption(McpSchema.ProgressToken);
 
-/**
- * Where a tool call's progress goes: a `notifications/progress` for each value, on the
- * `progressToken` its request carried, `progress` counting from 1, `message` the value's JSON and
- * `_meta` the value; none for a request without a token, so the values are checked and dropped.
- */
 export const progressNotifier = (
   notifications: McpServer.McpServer["Service"]["notifications"],
   progress: Codec
@@ -58,7 +52,6 @@ const Notified = Schema.fromJsonString(
 
 const notifiedOf = Schema.decodeUnknownOption(Notified);
 
-/** The value a frame's `notifications/progress` carries, or none for another frame. */
 export const progressOf = (data: string): Option.Option<Schema.Json> =>
   Option.map(
     notifiedOf(data),

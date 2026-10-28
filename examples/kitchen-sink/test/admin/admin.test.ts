@@ -63,7 +63,6 @@ describe("the operators", () => {
         const client = yield* Action.client(admin);
         const suspend = client.suspendWorkspace({ workspace: "globex" });
 
-        // No grants are stored for either: only the operator a host supplies is trusted.
         expect(
           yield* suspend.pipe(
             Effect.provideService(Operator, { id: "console", trusted: true })

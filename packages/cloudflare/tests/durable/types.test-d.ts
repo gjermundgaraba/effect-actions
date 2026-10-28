@@ -323,15 +323,15 @@ declare const plainStub: DurableObjectStub<Plain>;
 
 declare const hostedStub: DurableObjectStub<Hosted>;
 
-expectTypeOf(ActionDurableObject.layerStubClient(pluginStub)).toEqualTypeOf<
-  Layer.Layer<RpcClient.Protocol>
->();
+expectTypeOf(
+  ActionDurableObject.layerStubClient(() => pluginStub)
+).toEqualTypeOf<Layer.Layer<RpcClient.Protocol>>();
 
 // @ts-expect-error -- A stub of a class without the method has nothing to call.
-ActionDurableObject.layerStubClient(plainStub);
+ActionDurableObject.layerStubClient(() => plainStub);
 
 // @ts-expect-error -- A class delegating to handlers serves calls only if it defines the method.
-ActionDurableObject.layerStubClient(hostedStub);
+ActionDurableObject.layerStubClient(() => hostedStub);
 
 const plugins = ActionDurableObject.client(PluginRpcs);
 
@@ -363,7 +363,7 @@ expectTypeOf(plugin.start()).toEqualTypeOf<
 >();
 
 const raw = RpcClient.make(PluginRpcs).pipe(
-  Effect.provide(ActionDurableObject.layerStubClient(pluginStub))
+  Effect.provide(ActionDurableObject.layerStubClient(() => pluginStub))
 );
 
 expectTypeOf<

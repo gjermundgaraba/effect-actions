@@ -52,16 +52,16 @@ These rules override the regenerated Vite+ block above; do not edit that block.
 - An expected failure is a tagged error whose fields say what failed. Several failures of one operation are one error with a tagged `reason`, as Effect's `HttpClientError`, never one message standing for them all; a `message` is a declared field built in one place from the others.
 - Minimize the complete consumer workflow: one obvious path, useful defaults, library-owned wiring and optional advanced composition through the same model. Do not simplify internals by making consumers rebuild the wiring. Breaking changes are welcome; no compatibility shims, deprecations or migration aliases.
 - Justify new public concepts against existing ones. API/workflow proposals show before/after consumer code and concepts added or removed, for the common case and any affected advanced case.
-- For consumer-visible changes, update the guiding docs and `CHANGELOG.md`'s `Unreleased`; explain breaking-change migration. Update examples when application usage changes. For opt-in options, an example is required only when application structure or deployment changes; otherwise a focused test and concise documentation suffice. Name and explain reversals of recorded design constraints or consumer guarantees in `// Why:` comments or the changelog; routine implementation refactors need no reversal record. For untested documented guarantees, test intended behavior and correct unsupported promises instead of building machinery to preserve them.
+- For consumer-visible changes, update the guiding docs and `CHANGELOG.md`'s `Unreleased`; explain breaking-change migration. Update examples when application usage changes. For opt-in options, an example is required only when application structure or deployment changes; otherwise a focused test and concise documentation suffice. Name and explain reversals of recorded design constraints or consumer guarantees in the changelog; routine implementation refactors need no reversal record. For untested documented guarantees, test intended behavior and correct unsupported promises instead of building machinery to preserve them.
 
 ## Documentation
 
 The readers are coding agents, and they read two ways. Each fact has one home, chosen by how it is reached.
 
-- **Learning, read whole in order**: `docs/README.md`, the nearest example, `docs/Action.md`, then one page per surface. A page is the concept, the one way to do each task, whole example files as its snippets, and links to the example files that show the rest; it names the symbol whose JSDoc holds the rules instead of restating them, and keeps only the traps no declaration and no example can hold, such as a choice between modules or a deployment. A trap a learner must see lives as a comment in the example file that shows it, since examples are copied whole, product decisions and defects included: an example reuses a contract's schemas (`Schema.Array(CreateNote.input)`), and a change to one is reviewed as "what happens when this is copied verbatim?". Keep each page under 16,000 bytes, checked by `tests/docs.test.ts`: a longer page read through a tool loses its middle to the output cap, unnoticed, so split by topic when needed. Every `ts` fence in `docs/` is `example=<path>`, equal to a whole file under `examples/`, which compiles and is tested: add a small file to the nearest example rather than write a fragment.
+- **Learning, read whole in order**: `docs/README.md`, the nearest example, `docs/Action.md`, then one page per surface. A page is the concept, the one way to do each task, whole example files as its snippets, and links to the example files that show the rest; it names the symbol whose JSDoc holds the rules instead of restating them, and keeps only the traps no declaration and no example can hold, such as a choice between modules or a deployment. A trap a learner must see lives in the code and names of the example file that shows it, since examples are copied whole, product decisions and defects included: an example reuses a contract's schemas (`Schema.Array(CreateNote.input)`), and a change to one is reviewed as "what happens when this is copied verbatim?". Keep each page under 16,000 bytes, checked by `tests/docs.test.ts`: a longer page read through a tool loses its middle to the output cap, unnoticed, so split by topic when needed. Every `ts` fence in `docs/` is `example=<path>`, equal to a whole file under `examples/`, which compiles and is tested: add a small file to the nearest example rather than write a fragment.
 - **Looking up, by grepping one symbol or one message**: a rule about an option lives in that option's JSDoc; a wire fact in the JSDoc of the declaration that produces it, and in an example test that asserts it as sent; the fix for a failure the library throws in its message, one fix per check, chosen by the check and not by which claimant collided. A declaration's JSDoc is one paragraph saying what it is, then optional `**Gotchas**`: one line per trap, symptom and consequence on that line, since a grep returns one line. `<Module>-failures.md` holds only what is found by a fragment of a message the library does not own, a compiler diagnostic or Effect's own error, one line per entry; its reader arrives by the message, so an entry may repeat a gotcha's sentence.
 - `README.md` is the human pitch and quickstart, not a reference: its fences are plain snippets showing the shape of the code, no imports, exports or comments, and the whole files are the examples it links. Route readers through `docs/README.md`. Define a term where it is first used, and prefer Effect's and TypeScript's words to new ones.
-- Examples are independent, complete applications following `examples/README.md`, importing the package by name and no other example. Their domains declare services; a Layer reaching a technology (a file, a database, an upstream API) is an adapter in `src/platform/`, which no domain imports. Comments teach why; mark deployment shortcuts `DEMO ONLY`.
+- Examples are independent, complete applications following `examples/README.md`, importing the package by name and no other example. Their domains declare services; a Layer reaching a technology (a file, a database, an upstream API) is an adapter in `src/platform/`, which no domain imports. Name each deployment shortcut for what it is (`demoMembers`, `layerMemory`, `layerDemo`).
 - The Cloudflare package's pages and examples are its own, in `packages/cloudflare/docs/` and `packages/cloudflare/examples/`, and ship with it, under the same rules: its `ts` fences are whole files of its own examples, it links inside that package alone and names the core's pages in prose, and it defines its terms where first used.
 - Edit `docs/`, never generated `skills/effect-actions/`; run `vp run docs:sync` after docs changes.
 
@@ -75,15 +75,15 @@ The readers are coding agents, and they read two ways. Each fact has one home, c
 
 ## Lint
 
-- `vp check` formats, lints and type checks both packages; `vp check --fix` applies the fixes. It uses Ultracite's core, anti-slop and Vitest presets and `@effect/tsgo`'s recommended Effect preset, through the root `oxlint.config.ts` and `oxfmt.config.ts`. `vp install` patches Vite+'s Oxlint for the Effect rules through the root `prepare` script.
-- Every exception to the presets lives in `oxlint.config.ts`, with its reason beside it. Its shared block is the same in every repository; the rest are scoped to the files they name. A new exception, or a file added to one, needs the maintainer's approval. There are no inline suppressions: the `oxlint-disable-next-line` directives already in the code predate Ultracite, each with its reason, the type assertions' stating their invariant after `-- SAFETY:`; add no others.
+- `vp check` formats, lints and type checks both packages; `vp check --fix` applies the fixes. Lint comes from `@clanker-stuff/oxlint-config` through `config()` in `oxlint.config.ts`, with this repository's overrides there; formatting from `oxfmt.config.ts`, which leaves AGENTS.md to `vp config`, since it rewrites its Vite+ block on every install. `vp install` patches Vite+'s Oxlint for the Effect rules through the root `prepare` script.
+- Every exception to the preset lives in `oxlint.config.ts`, scoped to the files it names. Fix the code rather than add a lint exception. The only inline suppressions are the `oxlint-disable-next-line typescript/no-unsafe-type-assertion` directives on casts at erased generic boundaries; add no others.
 - `oxlint.config.ts` also holds the import fences: a relative import in `src/` is a sibling, another domain's public module, the contract's or a shared private file, `src/contract` imports nothing outside itself, and `packages/*/src` imports the core by its package name. `tools/oxlint/tests/configuration.test.ts` pins them.
 - Fix the owning cause, not the diagnostic's spelling. Do not hide findings through renaming, inference to `any`, casts, one-use helpers or excluded files. Preserve external-input and third-party boundary safety.
-- In `src/`, put consumer JSDoc on the declaration that ships, including private-module types, not its re-export. Use `// Why:` for a non-obvious decision and what would break if reversed; other rationale belongs in names, types, test titles or commit messages. Example comments teach.
+- In `src/`, put consumer JSDoc on the declaration that ships, including private-module types, not its re-export.
 
 ## Release
 
-- To release: bump the version in `package.json` and `packages/cloudflare/package.json`, which carry one, commit, tag `v<version>` and push the tag. `.github/workflows/npm.yml` publishes both, the core first, skipping a version npm already has. A new package's first version is published by hand, as the workflow's header says.
+- To release: bump the version in `package.json` and `packages/cloudflare/package.json`, which carry one, commit, tag `v<version>` and push the tag. `.github/workflows/npm.yml` publishes both, the core first, skipping a version npm already has. A new package's first version is published by hand, as README.md's Releasing section says.
 - After adding, renaming or removing public modules, run `vp run -r build` and include each package's generated `package.json` exports in the change. The build keeps each module its own file (`unbundle`): bundled declarations emit a dangling `__exportAll` export.
 - `package.json`'s `engines` (`>=26.12.0`) is the floor stated to consumers. CI builds and tests on `.node-version`, inside that range; raising the floor is a breaking change.
 - Upgrade Effect development packages together, in the catalog of `pnpm-workspace.yaml` both packages read, and rerun full validation. `pnpm-workspace.yaml` exempts the Effect, Vite+ toolchain and our own scopes' package families from the package manager's release-age check so their releases land the day they publish; respect the check for every other package. Raise the `~` peer's floor only when the library needs a later patch's API or fix, and record that raise as breaking.
@@ -91,3 +91,57 @@ The readers are coding agents, and they read two ways. Each fact has one home, c
 ## Effect
 
 Before writing or reviewing Effect code, read `node_modules/effect/AGENTS.md` in the package you are changing and the examples it links under `ai-docs/`. They ship with the installed `effect`, so they match the APIs the code compiles against. For exact signatures, read that package's installed source and types in `node_modules/effect` and `node_modules/@effect/*`. Do not write Effect APIs from memory or from examples for another version.
+
+## Upstream behavior the code depends on
+
+Recheck these on an upgrade of the dependency named.
+
+- Effect, HTTP:
+  - `HttpApiBuilder.group` lays the context it is built in over each request's, so `ActionHttp.layer` builds its groups in an empty context.
+  - A body with no `Content-Type` is read as JSON, which a page on another site sends without a CORS preflight, so `ActionHttp` refuses one.
+  - `HttpApi` query parameters take only fields that encode to strings, so every route is a POST.
+  - `HttpApiSecurity` types an `Http` scheme's name as `string`, so `assertPublishableResource` tells Bearer apart at runtime.
+  - `OpenApi.fromApi` merges equal security schemes of one key silently, so an authentication name that is no OpenAPI component key throws.
+  - A raw client fails a status with `StatusCodeError`, a native `HttpApiClient` an undeclared one with `DecodeError`; `status.ts` lists `HttpClient.retryTransient`'s statuses.
+  - The native SSE decoder and `Sse.decode` stop at a `retry:` field, so `mcp/reply.ts` feeds the parser by hand.
+  - `HttpServerResponse.raw` takes its status from its options, not from the web `Response`.
+- Effect, RPC:
+  - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.0.6 `src/rpc/RpcClient.ts`, which Effect does not export.
+  - Only the HTTP protocol lacks chunk acknowledgement (`supportsAck: false`), so only it gets a watch's silence rule.
+  - The HTTP protocol reads any status's body as frames, and the server answers an unserved tag with `Unknown request tag: <tag>`; `tests/rpc/events.test.ts` pins both messages.
+  - A protocol buffers a call's writes until a server runs, and `Protocol.make` calls its function as it makes the protocol (the Cloudflare stub and socket protocols rely on both).
+- Effect, MCP (4.0.5 and 4.0.6):
+  - `registerToolkit` sends every success as `structuredContent` plus one JSON text block, with no option, so `ActionMcp` registers tools through `addTool`.
+  - The registry is one layer per layer graph, so each endpoint is `Layer.fresh`.
+  - The runtime decodes `Mcp-Name` as sent or between `=?base64?` and `?=`, checks routing headers against the body only for stateless requests and core methods, and never for `initialize`.
+  - An unreadable body is answered `-32700` in a 200, and a body past `MaxBodySize` is a 413 from 4.0.6.
+  - The notification sender exists only where subscriptions are allowed.
+  - From 4.0.6 the stdio parser fails on a non-JSON line, and its retry drops the rest of that read; the transport ends by interrupting the fiber that built it.
+  - The server is forked with `forkScoped`, so a defect while installing handlers ends only that fiber.
+  - `bridge.ts` reaches an adapter's groups and `handlerRpcs`, off the public interface; `tests/mcp/bridge.test.ts` and `events.test.ts` fail if they move. `toolJsonSchema`, which inlines a top-level `$ref`, is private, so `mcp/protocol.ts` does the same.
+- Effect, elsewhere:
+  - `Layer.build` forks the memo map around its caller, so `implementation.ts` builds into the map itself.
+  - `Stream.retry` restarts its schedule at the first element after a failure.
+  - `Effect.provideContext` merges, so a webhook worker forked from the subscribe request replaces its context instead.
+  - A request's `Scope` closes with its response, so a webhook delivery runs in the subscribe request's context but not the request itself.
+  - `KeyValueStore` has no key listing, so `Webhook.layer`'s store keeps an index beside the records.
+  - `Crypto` has no HMAC, so webhook signing uses WebCrypto.
+  - A `Clock` keeps its methods on a class or in a closure, so a spread drops them.
+  - The CLI's `withSubcommands` replaces earlier subcommands, and a schema's description is read from its last check.
+  - The AI toolkit finds a handler by the tool's `id`, and its default on a failed approval policy runs the call.
+- MCP and SEP-3415:
+  - SEP-3415's error codes are provisional, pinned to its PR head `2ec39b9c49c583411b73cb460dea5f52b5c541a6`; it names the category `reason`, which `Event.CallbackFailed` calls `category`.
+  - SEP-3415 keys a webhook subscription by its subscriber's principal, has a 410 abandon one delivery alone, an absent cursor be `null`, and a stream silent for twice its 30-second heartbeat be dead.
+  - SEP-3415 asks a server to refuse callbacks to the IANA special-purpose IPv4 and IPv6 ranges that are not globally reachable; `address.ts` refuses NAT64's `64:ff9b::/96` too.
+  - MCP keeps event names starting with `mcp.` for itself, and requires a tool schema with an object root.
+  - Every 2026-07-28 result names the server in its `_meta`.
+  - Python SDK releases before python-sdk#3345 read a `null` `structuredContent` as missing.
+- Cloudflare and workerd:
+  - The runtime retries a failed alarm 2 seconds later, doubling, six times, then drops it, and gives up on a handler that crashes, so `alarm.ts` retries each owner itself and an instance's build sets the alarm again.
+  - workerd refuses a second `close()` of a closing socket and a frame sent to one, so `frames.ts` ignores both.
+  - Close codes 4000 to 4999 are private use (RFC 6455 §7.4.2 reserves 1000 to 3999), so a refusal closes with one.
+- Web platform:
+  - fetch follows redirects unless told not to, so a webhook POST runs with `redirect: "manual"`.
+  - `EventSource` sends no body or headers, so a browser watches with `fetchClient`.
+  - The URL parser copies `.well-known` as it is and strips tabs and newlines, which `Authentication`'s discovery prefilter admits.
+  - Two installed copies of a module each have their own state, so implementation keys are random, not counted.

@@ -2,7 +2,6 @@ import { Context, Duration, Effect, Equal, Hash, RcMap, Scope } from "effect";
 
 import type { ErasedValue } from "./implementation.js";
 
-/** A poll subscription's key, held with the context of the poll that first acquired it. */
 class Lease implements Equal.Equal {
   readonly key: string;
   readonly input: ErasedValue;
@@ -27,13 +26,8 @@ class Lease implements Equal.Equal {
   }
 }
 
-/**
- * The poll subscriptions of an event type with a `subscription` hook: polls of one key share one
- * acquisition, released `ttl` after the last of them.
- */
 export interface Leases {
   readonly hold: (key: string, input: ErasedValue) => Effect.Effect<void>;
-  /** Releases `key`'s lease now, rather than `ttl` after its last poll. */
   readonly release: (key: string) => Effect.Effect<void>;
 }
 
@@ -45,8 +39,6 @@ export const makeLeases = (
 ): Effect.Effect<Leases, never, unknown> =>
   Effect.map(
     RcMap.make({
-      // Why: The hook runs as the subscriber who first polled, as a stream's runs as the one who
-      // opened it; that poll's request scope is dropped, the lease's own scope holding the hook.
       lookup: (lease: Lease) =>
         Effect.provideContext(
           subscription(lease.input),

@@ -250,9 +250,6 @@ type StringFields<I> = {
 }[keyof I] &
   string;
 
-// Why: the field named is branded, not replaced by the fields allowed, so the error is the
-// option's alone: two different literals intersect to `never`, which reduces the whole argument
-// to `never` and reports every option.
 type KnownKey<O> = O extends { readonly idempotencyKey: infer K extends string }
   ? K extends StringFields<SchemaOf<O, "input", typeof NoInput>["Type"]>
     ? unknown
@@ -275,10 +272,6 @@ type OnlyOptions<O> = {
   ]: never;
 };
 
-// Why: `O` is inferred from the argument, which the compiler then never checks for excess
-// properties: a misspelled option or hint would be ignored. Options that fail `Options` itself
-// infer as `Options`, whose error the compiler already reports; checked against the rules too,
-// a missing option would be reported as the whole argument not being assignable.
 type Rules<O> = Options extends O
   ? unknown
   : OnlyOptions<O> & KnownMcp<O> & KnownKey<O>;
@@ -559,10 +552,6 @@ export const withErrors: {
   >;
 } = Function.dual(2, appendErrors);
 
-// Why: No signature refuses a list narrowed at run time, which is typed as holding members it may
-// not. Rejected: keying a list of unknown length by `string`, which holds only under
-// `noUncheckedIndexedAccess`, and requiring a tuple of single-named actions, which a variadic tuple
-// or a union of tuples still passes.
 /**
  * `actions` keyed by name, each its exact contract: `byName(actions).getUser`, its schemas
  * where a test or a mock reads them, and its types where a helper takes a name,
@@ -583,10 +572,6 @@ export function byName(actions: readonly Any[]): {
 
 type Target = Any | readonly Any[];
 
-// Why: A sentence in the parameter's type, where the error TypeScript reports for a call without
-// `authorize` ends. Rejected: a constraint named `ProtectedActionsTakeAuthorize`, the earlier
-// decision. The error named it for one action alone, a list's named its member type, and both
-// ended in `'typeof CurrentUser' is not assignable to type 'unique symbol'`.
 type TakesNoAuthorize<T extends Target> = [Protected<ActionsOf<T>>] extends [
   never,
 ]
@@ -605,24 +590,15 @@ type KeepsAnswers<T extends Target> = [
   ? never
   : Idempotency;
 
-// Why: This must stay a named alias carrying `R`. While a builder's inner call, such as
-// `Effect.gen`, is inferred, TypeScript keeps an alias's arguments marked as not yet inferred,
-// where `never` or this type written inline becomes a candidate, and the builder's record loses its
-// handlers' parameter types.
-type NoHandler<R> = { readonly "~list": R };
+type InferenceAnchor<R> = { readonly "~list": R };
 
-// Why: `Handler` written out, not the alias, for the reason on `NoHandler`: an alias whose argument
-// `R` is not yet inferred gives an `Effect.fn(...)` a builder returns nothing to infer from, and it
-// takes an `any` input.
 type Single<T extends Target, R> = T extends Any
   ? (
       input: T["input"]["Type"],
       ...reporting: ReportingOf<T>
     ) => Answer<T["success"], T["error"][number]["Type"] | BuiltIn, R>
-  : NoHandler<R>;
+  : InferenceAnchor<R>;
 
-// Why: Mapped over `RequestServices`, not over the actions' names: TypeScript infers it from the
-// record key by key, so each handler, an `Effect.fn` included, is typed from its contract.
 type Several<T extends Target, RequestServices> = {
   readonly [K in keyof RequestServices]: K extends NamesOf<T>
     ? Handler<Extract<ActionsOf<T>, { readonly name: K }>, RequestServices[K]>
@@ -680,10 +656,6 @@ export const allowAll: Authorize<Any> = () => Effect.void;
  * - What a plain `authorize` yields is a request-time requirement of every surface; to read a store once, make `authorize` an Effect that yields it and returns the function.
  * - An authorizer fails only with `Unauthenticated` or `Forbidden`; a limit callers should see, such as a rate limit, is the handler's, declared in the action's `error`.
  */
-// Why: Two overloads that no call can both be a candidate for: one takes three arguments, the
-// other two. TypeScript then reports a mismatch as that of the one signature the call could have
-// matched, where three candidates read "No overload matches this call. The last overload gave the
-// following error." before the cause. This one is first, so an authorizer is typed from it.
 export function implement<
   const T extends Target,
   RequestServices extends (T extends readonly Any[]
@@ -789,8 +761,6 @@ export function implement(
   return new Implementation(listed, memoized(recorded), authorizer);
 }
 
-// Why: Rejected: a warning for two live builds of one implementation, which parallel tests, a
-// `Layer.fresh` surface and a CLI beside a server set off legitimately.
 /**
  * The builders of `implementations`, as one layer providing nothing. Surfaces build them
  * themselves, once per layer graph, but routes under `HttpRouter.serve` or `Testing.layer`
@@ -968,9 +938,6 @@ const watcherOf =
 
     return Elements.unwrap(
       Effect.map(watchInput(event, input), ({ value }) => {
-        // Why: In process, no principal tells subscribers apart, so each watch is a subscriber
-        // of its own: a poll subscription's `subscription` hook runs as the one who polls, and is
-        // released as the watch ends, its key never polled again.
         const subscriber = uniqueKey();
 
         return watching(
@@ -980,15 +947,12 @@ const watcherOf =
               "In process",
               event.name
             )((cursor) => feed.poll(value, cursor, { subscriber })),
-            // Why: Read through the boundary every surface serves a stream by, so a source's
-            // failure is reported once and read on from, in process as over a network. With no
-            // network between, each position arrives in order, and one element waits, so a
-            // reader slower than a log source falls behind its log into a `Gap`.
             stream: (cursor) =>
               Elements.unwrap(
                 Effect.flatMap(feed.stream(value), (open) =>
                   Effect.map(
                     queuedPush(open, cursor, Effect.succeed, {
+                      ending: Function.identity,
                       inOrder: true,
                       capacity: 1,
                     }),

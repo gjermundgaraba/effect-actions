@@ -13,6 +13,8 @@ BUILDS_TOKEN=grace PUBLIC_URL=https://<a tunnel to port 3001> node --import tsx 
 vp test examples/build-events
 ```
 
+`WEBHOOKS_DIR` (default `.build-events/webhooks`) is where the server keeps webhook subscriptions, so a restart goes on delivering them. Its files hold each subscriber's secret: give the directory to that server alone, one directory per server process, since the server is the store's only writer.
+
 ## Layout
 
 ```text

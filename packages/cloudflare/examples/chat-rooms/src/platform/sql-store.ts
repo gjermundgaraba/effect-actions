@@ -12,9 +12,6 @@ const decodeSequence = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ seq: Schema.Int }))
 );
 
-// The room's messages in the object's own SQLite database, which outlives every instance: an
-// evicted instance loses its memory, never these. The Layer runs each time an instance is
-// constructed, so creating the table is idempotent.
 export const layerSql = Layer.effect(MessageStore)(
   Effect.gen(function* () {
     const { storage } = yield* ActionDurableObject.State;
@@ -30,16 +27,10 @@ export const layerSql = Layer.effect(MessageStore)(
       "CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, author TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL)"
     );
 
-    // Every expiry looks up the oldest message: indexed, it reads one row, where a scan would read
-    // the whole table, and SQLite storage is billed by rows read.
     storage.sql.exec(
       "CREATE INDEX IF NOT EXISTS messages_by_at ON messages (at)"
     );
 
-    // The room's alarm is due no later than the oldest message's expiry: `Alarm.set` keeps the
-    // earliest time it is given, so each post sets its own message's, and `expire`, which runs on
-    // the alarm, sets the next from the oldest message left. Removing the oldest message leaves
-    // its alarm, which then finds nothing due and moves on.
     const alarmForOldest = Effect.suspend(() => {
       const [oldest] = query("SELECT * FROM messages ORDER BY at LIMIT 1");
 
@@ -53,8 +44,6 @@ export const layerSql = Layer.effect(MessageStore)(
         () =>
           query("SELECT * FROM messages ORDER BY id DESC LIMIT 1")[0] ?? null
       ),
-      // AUTOINCREMENT keeps the highest id it ever gave in `sqlite_sequence`, so the last id
-      // outlives the message: one that expired or was deleted still counts.
       last: Effect.sync(
         () =>
           decodeSequence(

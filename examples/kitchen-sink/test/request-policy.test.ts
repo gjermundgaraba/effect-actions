@@ -15,9 +15,6 @@ import { memory } from "../src/memory.js";
 import { adminRoutes, publicRoutes } from "../src/routes.js";
 import { services } from "./support/services.js";
 
-// Each port as a web handler, `Request` in and `Response` out: what a platform without
-// Effect's server runs, and what a test sends raw requests to. A handler builds its routes
-// once; the test owns it, and disposes it when done.
 const web = HttpRouter.toWebHandler(
   publicRoutes.pipe(
     Layer.provide(HttpServer.layerServices),
@@ -163,8 +160,6 @@ describe("the request policy", () => {
     expect([here.status, foreignHost.status]).toStrictEqual([200, 403]);
   });
 
-  // Behind a proxy ending TLS, Node's server sees `http:`: the public URL's origin is allowed by
-  // name, not as the request's own, so a page of it is answered whatever the proxy forwards.
   it.effect("answers the public URL's page behind a proxy ending TLS", () =>
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
@@ -206,7 +201,6 @@ describe("the request policy", () => {
     )
   );
 
-  // `Testing.layer(handler)` gives the typed clients the same handler the raw requests hit.
   it.effect(
     "leaves the typed client, served from the same web handler, alone",
     () =>

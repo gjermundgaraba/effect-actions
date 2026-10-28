@@ -3,7 +3,6 @@ import { Effect } from "effect";
 
 import { alarmPrefix } from "../../src/durable/alarm.js";
 
-/** Brings every time the object's alarm keeps to now, leaving the runtime's alarm as it was. */
 export const dueNow = (stub: DurableObjectStub) =>
   Effect.promise(async () => {
     await runInDurableObject(stub, async (_, state) => {
@@ -18,10 +17,6 @@ export const dueNow = (stub: DurableObjectStub) =>
     });
   });
 
-/**
- * Runs the object's alarm as though every time it keeps had come, as `runDurableObjectAlarm`
- * runs it at once, before any has: answers whether an alarm was set.
- */
 export const runAlarmDue = (stub: DurableObjectStub) =>
   Effect.andThen(
     dueNow(stub),

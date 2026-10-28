@@ -5,7 +5,7 @@ import { Effect, Ref } from "effect";
 import { identity } from "../../src/identity/handlers.js";
 import { CurrentCaller } from "../../src/identity/Identity.js";
 import type { Member, Operator } from "../../src/identity/Identity.js";
-import { members } from "../../src/identity/members.js";
+import { demoMembers } from "../../src/identity/members.js";
 import { Permissions } from "../../src/identity/permissions.js";
 import type { Permission } from "../../src/identity/permissions.js";
 
@@ -19,7 +19,7 @@ describe("identity, in process", () => {
     Effect.gen(function* () {
       const client = yield* Action.client(identity);
 
-      expect(yield* client.whoAmI().pipe(as(members.ada))).toStrictEqual({
+      expect(yield* client.whoAmI().pipe(as(demoMembers.ada))).toStrictEqual({
         id: "ada",
         kind: "member",
       });
@@ -34,8 +34,6 @@ describe("identity, in process", () => {
     Effect.gen(function* () {
       const granted = yield* Ref.make<readonly Permission[]>([]);
 
-      // The store is a startup service, so it is provided where the client is acquired: the
-      // authorizer is built there. No call is given it again.
       const client = yield* Action.client(identity).pipe(
         Effect.provideService(
           Permissions,
@@ -43,14 +41,16 @@ describe("identity, in process", () => {
         )
       );
 
-      const refusal = yield* Effect.flip(client.whoAmI().pipe(as(members.ada)));
+      const refusal = yield* Effect.flip(
+        client.whoAmI().pipe(as(demoMembers.ada))
+      );
 
       expect(refusal).toBeInstanceOf(Action.Forbidden);
       expect(refusal.message).toBe("Requires tasks:read.");
 
       yield* Ref.set(granted, ["tasks:read"]);
 
-      expect(yield* client.whoAmI().pipe(as(members.ada))).toStrictEqual({
+      expect(yield* client.whoAmI().pipe(as(demoMembers.ada))).toStrictEqual({
         id: "ada",
         kind: "member",
       });

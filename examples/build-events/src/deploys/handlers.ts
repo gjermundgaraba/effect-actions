@@ -24,8 +24,6 @@ export const deploys = Action.implement(
           approvers: yield* approvers.standingBy(environment),
         };
 
-        // Nothing else keeps a deploy request, so `deploy.requested` is a log source: the
-        // library keeps what is published here, and delivers it to each subscriber at once.
         yield* events.publish(DeployRequested, {
           eventId: deploy.id,
           data: deploy,

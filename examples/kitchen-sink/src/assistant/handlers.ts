@@ -9,7 +9,6 @@ import { toolkit } from "../issues/assistant.js";
 import { AssistantFailed, Assistant } from "./Assistant.js";
 import { Conversations } from "./conversations.js";
 
-// A model that keeps calling tools is asked this many times in one turn, and no more.
 const requestsPerTurn = 6;
 
 type Response = LanguageModel.GenerateTextResponse<
@@ -20,9 +19,6 @@ type Response = LanguageModel.GenerateTextResponse<
 const approvalsOf = (response: Response) =>
   response.content.filter((part) => part.type === "tool-approval-request");
 
-// What Effect gives the model as the result of a call that did not run: one its member denied,
-// or one in a reply the provider cut short. Left out of `ran` below, which lists the calls that
-// ran.
 const didNotRun = Schema.is(
   Schema.Struct({
     type: Schema.Literals(["execution-denied", "execution-interrupted"]),
@@ -32,12 +28,6 @@ const didNotRun = Schema.is(
 const callsToRead = (response: Response) =>
   response.toolCalls.length > 0 && approvalsOf(response).length === 0;
 
-// The model loop behind a route. The builder runs once, at startup, and yields what a turn is
-// built from: the tools with their handlers, the model, and where conversations are kept. A
-// handler yielding them would owe them per request, which no route provides. `CurrentMember`
-// is the one per-request service: each tool call of a turn runs as the request's caller,
-// through that tool's own `authorize`. A conversation keeps its owner's id, never the member
-// itself, whose scopes would go stale between requests.
 export const assistant = Action.implement(
   Assistant,
   Effect.gen(function* () {
@@ -51,11 +41,6 @@ export const assistant = Action.implement(
       prompt: Prompt.RawInput
     ) =>
       Effect.gen(function* () {
-        // One `generateText` is one request to the model: its tool calls run, and their
-        // results come back unread. The model is asked again, with nothing new, while it
-        // called tools and none of them waits for approval. Continue on tool calls, never on
-        // tool results: the turn answering an approval holds the approved call's result and
-        // the model's reply to it.
         let response = yield* chat.generateText({ prompt, toolkit: tools });
         const results = [...response.toolResults];
 
@@ -76,10 +61,6 @@ export const assistant = Action.implement(
             .filter(({ result }) => !didNotRun(result))
             .map(({ name, isFailure }) => ({ tool: name, failed: isFailure }))
             .toArray(),
-          // Every request of the conversation still waiting for an answer, with the call it
-          // would run, read from the `Chat`'s history by the rule Effect applies when an answer
-          // arrives: one an earlier answer left open is listed in every turn until answered.
-          // The arguments are shown as JSON, as the member approves them.
           waiting: ActionToolkit.openApprovals(
             yield* Ref.get(chat.history)
           ).map(({ approvalId, name, params }) => ({
@@ -88,12 +69,8 @@ export const assistant = Action.implement(
             arguments: JSON.stringify(params),
           })),
         };
-      }).pipe(
-        // The model is a startup service, given to each turn here.
-        Effect.provideService(LanguageModel.LanguageModel, model)
-      );
+      }).pipe(Effect.provideService(LanguageModel.LanguageModel, model));
 
-    // A failed turn says what may have run.
     const turn = (conversation: string, prompt: Prompt.RawInput) =>
       Effect.flatMap(CurrentMember, (member) =>
         conversations.turn(member, conversation, (chat) =>
@@ -118,10 +95,6 @@ export const assistant = Action.implement(
               (opened) => turn(opened, prompt)
             )
           : turn(conversation, prompt),
-      // The answers start the next turn, in which an approved call runs, as this request's
-      // caller, before the model is asked again. Only the member who was asked reaches the
-      // conversation, and a turn that fails ends it, so no answer is left without its result:
-      // an `approvalId` that `openApprovals` would not list runs nothing.
       answerAssistant: ({ conversation, answers }) =>
         turn(conversation, [
           {
@@ -135,7 +108,5 @@ export const assistant = Action.implement(
         ]),
     };
   }),
-  // Any member may ask. What the assistant may do for them is each tool's rule, not this one:
-  // a member without the write scope gets the tool's refusal as a result the model reads.
   { authorize: Action.allowAll }
 );

@@ -1,7 +1,4 @@
 name: npm
-# Release: bump the version, commit, tag v<version> and push the tag. Publishes every package whose
-# version npm doesn't have yet, through npm trusted publishing. A new package's first version is
-# published by hand (`vp pm publish`), then `npm trust github <package> --repo <repo> --file npm.yml`.
 on:
   push:
     tags: ["v*"]

@@ -292,3 +292,12 @@ const authorizedFetched = ActionHttp.fetchClient(Throttling, {
 expectTypeOf<
   Effect.Services<ReturnType<typeof authorizedFetched.count>>
 >().toEqualTypeOf<Credentials>();
+
+export const boundUnder = <
+  const A extends ReadonlyArray<
+    Action.Any & { readonly caller: typeof Action.Anyone }
+  >,
+>(
+  contracts: A,
+  prefix: `/${string}`
+) => ActionHttp.make(contracts, { prefix });

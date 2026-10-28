@@ -1,8 +1,7 @@
 import { Effect } from "effect";
 
 import { CurrentMember } from "../../src/identity/Identity.js";
-import { members } from "../../src/identity/members.js";
+import { demoMembers } from "../../src/identity/members.js";
 
-// The caller of one call or subscription, as a server provides it per request.
-export const as = (member: keyof typeof members) =>
-  Effect.provideService(CurrentMember, members[member]);
+export const as = (member: keyof typeof demoMembers) =>
+  Effect.provideService(CurrentMember, demoMembers[member]);

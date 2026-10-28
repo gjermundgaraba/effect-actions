@@ -12,10 +12,6 @@ import { MessageStore } from "../src/chat/store.js";
 import { rpc } from "../src/routes.js";
 import { Rpc } from "../src/Rpc.js";
 
-// What the wire adds: the real rpcs, behind their real authentication and middleware,
-// answering in memory. The test gives them Effect's HTTP protocol, not the server's WebSocket,
-// because `Testing.layer` answers HTTP requests; no port is opened. NDJSON, not JSON: over
-// HTTP, JSON sends a response once all its streams end, so a watch would never answer.
 const server = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
   Layer.provide(RpcSerialization.layerNdjson)
@@ -27,7 +23,6 @@ const served = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide([MessageStore.layerMemory, Event.layerMemory])
 );
 
-// Each call carries its caller's token, so one client serves every caller of a test.
 const as = (token: string) =>
   RpcClient.withHeaders({ authorization: `Bearer ${token}` });
 
@@ -134,7 +129,6 @@ describe("the chat, over RPC", () => {
             Effect.forkChild
           );
 
-        // Let the watch take its position through the in-memory socket before anyone posts.
         yield* Effect.repeat(TestClock.adjust("0 millis"), { times: 10 });
         yield* client
           .postMessage({ text: "Disk is full." })
@@ -174,8 +168,6 @@ describe("the chat, over RPC", () => {
     "serves a native RpcGroup: Effect's own client calls the same rpcs",
     () =>
       Effect.gen(function* () {
-        // `Rpc.group` is what Effect's RPC tooling takes. Its methods take the payload as sent,
-        // `{}` included; `ActionRpc.client` is the one to write an application with.
         const native = yield* RpcClient.make(Rpc.group);
 
         expect(yield* native.listRooms({})).toStrictEqual({ rooms: [] });

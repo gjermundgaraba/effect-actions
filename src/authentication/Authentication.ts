@@ -280,9 +280,6 @@ export const refusalResponse = <D extends Any = never>(
   );
 };
 
-// Why: A prefilter sparing most requests a URL parse, which must admit every URL the parser may
-// resolve to a discovery path. The parser copies `.well-known` as it is and removes only a tab or a
-// newline, which Node refuses in a request target but another platform may pass through.
 const mayResolveToDiscoveryPath = /\.well-known|[\t\n\r]/u;
 
 const corsPreflight = (request: HttpServerRequest.HttpServerRequest) => {
@@ -398,13 +395,8 @@ export interface Options<A = unknown> {
   readonly schema?: Codec | undefined;
 }
 
-// Why: `principal` is checked apart from the inferred options, against the identity `make` was
-// given, which also types its parameter: inferred with them, it would take an `any` identity.
 type PrincipalOf<A> = NoInfer<Pick<Options<A>, "principal">>;
 
-// Why: A given `schema` is checked against the identity here, both ways, since `Options` cannot
-// type it: the options are bounded by `Options<never>`, which fixes the identity as `never` before
-// `make` knows it. One way alone would take a schema of a wider or a narrower type.
 type SchemaOf<O, A> = O extends { readonly schema: infer S extends Schema.Top }
   ? [S["Type"], A] extends [A, S["Type"]]
     ? unknown
@@ -442,9 +434,6 @@ export const make = <
   const principal = options[0]?.principal;
   const schema = options[0]?.schema;
 
-  // Why: The name keys its scheme in the OpenAPI document as it is, so one that is no key throws.
-  // Rejected: replacing other characters with `_`, which gives `app/Login` and `app:Login` one key,
-  // which `OpenApi.fromApi` merges silently where their schemes are equal.
   if (!openApiComponentKey.test(name)) {
     throw new Error(
       `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key: use only letters, digits, "_", "." and "-"`
@@ -466,9 +455,9 @@ export const make = <
   return {
     name,
     identity,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: A type read from the options: `SecurityOf` is the scheme given, or Bearer wherever it may be left out.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     security: security as SecurityOf<O>,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: A type read from the options: `ErrorsOf` is the list given, one schema as a list of one, or none.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     error: error as ErrorsOf<O>,
     ...(principal === undefined ? {} : { principal }),
     ...(schema === undefined ? {} : { schema }),
@@ -523,8 +512,6 @@ export interface LayerOptions<EP = never, RP = never> {
     | Effect.Effect<ProtectedResource | undefined, EP, RP>;
 }
 
-// Why: Effect types an `Http` scheme's name as `string`, so the types cannot tell Bearer from
-// another `Http` scheme; `assertPublishableResource` refuses the others when `layer` is called.
 type ResourceOf<S> = [S] extends [HttpApiSecurity.Http]
   ? unknown
   : { readonly protectedResource?: undefined };
@@ -539,9 +526,6 @@ type Resource =
   | Effect.Effect<ProtectedResource | undefined, unknown, unknown>
   | undefined;
 
-// Why: The verifier's per-request services stay this layer's to owe. Rejected: carrying them on
-// `Provider` for the routes to owe, which the routes, typed from the browser-safe descriptor alone,
-// could do only if the descriptor declared them: a new concept to save one wiring order.
 /**
  * The provider of `authentication`: `verify`, or an Effect building it once per layer graph, run on
  * each remote request a protected action receives, and on every request presenting a credential
@@ -704,7 +688,7 @@ export function layer(
                 Effect.succeed(answer(error, metadataUrl))
               )
             : route,
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
         http: ((route, optional) =>
           Effect.flatMap(
             HttpApiBuilder.securityDecode(security),
@@ -717,7 +701,7 @@ export function layer(
                     authentication["~verified"]
                   )
           )) as Runtime["http"],
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased authentication adapter boundary: verifier failures become responses, and `layer`'s signature restores the request requirements as `HttpRouter.Request` markers, never startup identities.
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
         route: ((
           route: Effect.Effect<
             HttpServerResponse.HttpServerResponse,

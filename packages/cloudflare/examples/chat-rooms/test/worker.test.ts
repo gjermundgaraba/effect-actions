@@ -14,17 +14,15 @@ import { TestClock } from "effect/testing";
 import { LobbyHttp, RoomHttp } from "../src/Api.js";
 import { followLobby, openRoom } from "../src/browser.js";
 import { MessagePosted, PostMessage } from "../src/chat/Chat.js";
-import type { RoomName } from "../src/chat/Chat.js";
+import type { DemoRoomName } from "../src/chat/Chat.js";
 import { Login } from "../src/identity/Identity.js";
 import { RoomRpc, unsupportedProtocol } from "../src/Rpc.js";
 import { pageSocket, roomSocket } from "./support/socket.js";
 
 const day = 24 * 60 * 60 * 1000;
 
-// Every request goes through the Worker's own `fetch`, as a deployed one would get it.
 const worker = ActionDurableObject.layerHttpClient(exports.default);
 
-// The rooms' JSON routes, the Worker's: each call names its room.
 const jsonAs = (token?: string) =>
   ActionHttp.client(RoomHttp, {
     baseUrl: "https://chat.example",
@@ -37,7 +35,6 @@ const jsonAs = (token?: string) =>
         }),
   });
 
-// An agent's one connection to the Worker's MCP endpoint, reaching every room.
 const agentAs = (token: string) =>
   ActionMcp.client([PostMessage, MessagePosted], {
     url: "https://chat.example/mcp",
@@ -47,8 +44,6 @@ const agentAs = (token: string) =>
     ),
   });
 
-// What the runtime does after a call answers, such as a room's alarm, is waited for in real time:
-// a test using this runs under `it.live`, as under the test clock its sleeps never pass.
 const eventually = <A, E>(
   check: Effect.Effect<A, E>,
   until: (value: A) => boolean
@@ -65,7 +60,7 @@ const arrivedIn = (received: readonly unknown[]) => (count: number) =>
   );
 
 const pageIn = (
-  room: RoomName,
+  room: DemoRoomName,
   token: string,
   headers: Record<string, string> = {}
 ) =>
@@ -92,10 +87,7 @@ const status = (path: string, body: Schema.Json = {}) =>
 
 const readAll = (room: string) => ({ room, after: 0 });
 
-// First in the file, whose Worker module is its own: no request has reached the lobby before, so
-// a first request ending without I/O is the one that would strand a client built inside it, as
-// `ActionDurableObject.layerStubClient`'s gotchas say.
-describe("the Worker's handler, built as the module loads", () => {
+describe("the Worker's handler, built as the module loads, before any other test of this file reaches the lobby", () => {
   it.effect(
     "answers a first request ending without I/O, then a call reaching the lobby",
     () =>
@@ -300,7 +292,7 @@ describe("the Worker and its rooms", () => {
           text: "Polled in design.",
         });
 
-        const polled = (room: RoomName, after: number) =>
+        const polled = (room: DemoRoomName, after: number) =>
           ada
             .watch(
               MessagePosted,
@@ -409,8 +401,6 @@ describe("the Worker and its rooms", () => {
           baseUrl: "https://chat.example",
         });
 
-        // The room tells the lobby from its `lobby` task, which the room's alarm runs once the
-        // post has answered: the lobby hears of it a moment later, not as the post returns.
         const { previews } = yield* eventually(lobby.previews(), (answer) =>
           answer.previews.some(
             ({ room, latestAt }) => room === "design" && latestAt === posted.at
@@ -487,7 +477,6 @@ describe("the Worker and its rooms", () => {
           )
         );
 
-        // The lobby hears of the post from the room's `lobby` task, a moment after it answered.
         const latestAt = yield* eventually(
           Effect.promise(
             async () => await exports.RoomsEntrypoint.latestAt("general")
@@ -541,9 +530,6 @@ describe("the Worker and its rooms", () => {
           text: "From today.",
         });
 
-        // A day passes for the first message alone: it is backdated, and the alarm set for its
-        // expiry, as its post would have set it a day ago. That time is past, so the runtime runs
-        // it at once: the test waits until it has set the next, for the recent one's.
         yield* Effect.promise(async () => {
           await runInDurableObject(stub, async (room, state) => {
             state.storage.sql.exec(

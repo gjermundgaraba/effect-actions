@@ -42,7 +42,6 @@ it.effect(
         },
       ]);
 
-      // The stream ended, and with it grace's standing by.
       const later = yield* client
         .requestDeploy({ environment: "production", version: "1.1.0" })
         .pipe(as("ada"));

@@ -1,4 +1,3 @@
-/** The last `size` ids added, oldest dropped first, to tell a repeat from what is new. */
 export interface Recent {
   readonly has: (id: string) => boolean;
   readonly add: (id: string) => void;

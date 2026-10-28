@@ -5,12 +5,6 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { Printer } from "../printers/Printers.js";
 
-// DEMO ONLY: the farm's HTTP API answered in memory, so the example and its tests run without
-// a farm. It is an `HttpClient`, so `printFarm` sends it the requests it would send over
-// the network. A real application has no such file: its entrypoints provide a real client,
-// `FetchHttpClient.layer` from `effect/http`.
-
-// A one-pixel PNG stands in for a camera's picture.
 export const picture = Uint8Array.from(
   Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",

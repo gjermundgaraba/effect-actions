@@ -46,14 +46,11 @@ import type { AttemptFailed } from "./attempt.js";
 import { randomToken, subscriptionId } from "./signing.js";
 import type { Storage, Stored } from "./stored.js";
 
-/** How `Webhook.layer` grants, verifies and retries, each with its default resolved. */
 export interface Policy {
   readonly maxTtl: Duration.Duration;
   readonly allowedCallbacks: readonly URL[];
   readonly retryFor: Duration.Duration;
-  /** Where subscriptions are kept past a restart, with `persist`. */
   readonly storage: Storage | undefined;
-  /** What resolves a callback's name for its address check, unless `resolveCallbacks` is `false`. */
   readonly dns: Dns.Dns["Service"] | undefined;
 }
 
@@ -65,13 +62,10 @@ const maxBody = 256 * 1024;
 
 const encoder = new TextEncoder();
 
-// Why: A `terminated` envelope ends a subscription no refresh can resume, so it is tried a few
-// times, a second apart and doubling, and then given up, never suspended.
-const lastAttempts = Schedule.exponential(Duration.seconds(1)).pipe(
-  Schedule.upTo({ times: 3 })
-);
+const terminatedEnvelopeRetries = Schedule.exponential(
+  Duration.seconds(1)
+).pipe(Schedule.upTo({ times: 3 }));
 
-/** One webhook subscription as the layer holds it, its mutable parts replaced by a refresh. */
 interface Held {
   readonly id: string;
   readonly url: URL;
@@ -87,7 +81,6 @@ interface Held {
   watermark: string | null;
 }
 
-/** What each grant, a subscribe's or a refresh's, gives its subscription anew. */
 type Granted = Pick<Held, "secret" | "context" | "kept" | "expiresAt">;
 
 interface Confirmed {
@@ -97,15 +90,11 @@ interface Confirmed {
 
 const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 
-// Why: A refresh resumes a suspended subscription with a fresh `retryFor`, as its failures are
-// timed from `failedSince`; one still delivering keeps the budget its failures began.
-const active = (status: DeliveryStatus): DeliveryStatus =>
+const resumedWithFreshBudget = (status: DeliveryStatus): DeliveryStatus =>
   status.active
     ? status
     : { ...Struct.omit(status, ["failedSince"]), active: true };
 
-// Why: Every grant expires, `ttlMs: null` granted `maxTtl` as an omitted one is, so a
-// subscription whose subscriber is gone, suspended or not, ends at its grant, never held for good.
 const grantOf = (ttlMs: number | null | undefined, policy: Policy) =>
   Duration.clamp(
     ttlMs === null || ttlMs === undefined
@@ -127,10 +116,6 @@ const trusted = (url: URL, prefixes: readonly URL[]) =>
         ))
   );
 
-// Why: A delivery runs as its subscriber, in the subscribe request's context, but not in the
-// request itself: its `Scope` closes with the response, and its HTTP request, credential
-// included, would otherwise be held for the whole grant. An authorizer or a source reading the
-// request finds none in a delivery, a gotcha on `Webhook.layer`.
 const snapshotOf = Context.omit(
   Scope.Scope,
   HttpServerRequest.HttpServerRequest,
@@ -144,11 +129,6 @@ const unencoded = Effect.die(
   )
 );
 
-/**
- * The webhook subscriptions of one `Webhook.layer`: each a worker reading its feed as the
- * subscriber and POSTing what it reads to the callback, until it expires, is unsubscribed, or
- * is refused.
- */
 const confirmedAt = (cursor: string | null) =>
   Effect.tap(Deferred.make<Confirmed, unknown>(), (confirmation) =>
     Deferred.succeed(confirmation, { cursor, truncated: false })
@@ -160,9 +140,6 @@ const failedCallback = (feed: WebhookFeed, category: Event.CallbackCategory) =>
     new Event.CallbackFailed({ category })
   );
 
-// Why: The callback is named by its URL as parsed, as it is kept: by the string given, a
-// spelling parsing changes, such as an explicit default port, names another subscription
-// once it is restored.
 const idOf = ({ feed, principal, input, delivery: { url } }: Subscription) =>
   Effect.flatMap(canonicalInput(feed.event.input, input), (encoded) =>
     subscriptionId(
@@ -195,8 +172,6 @@ export const makeWebhooks = (
     const holds = (subscription: Held) =>
       held.get(subscription.id) === subscription;
 
-    // Why: Only the subscription a layer holds now is kept: an old worker's last write, after its
-    // end or its replacement's start, would bring back what was removed.
     const kept = (subscription: Held) =>
       Effect.sync(() => {
         if (storage !== undefined && holds(subscription)) {
@@ -223,11 +198,6 @@ export const makeWebhooks = (
 
     const retryForMillis = Duration.toMillis(policy.retryFor);
 
-    // Why: A delivery's backoff and budget are measured from its subscription's `failedSince`,
-    // kept with it, so a worker started again, after a restart or a Durable Object's wake, goes
-    // on where the last stopped rather than from its first wait: it waits as long as the
-    // subscription has been failing, from 1 second to 5 minutes, which doubles each wait, and
-    // gives up `retryFor` after the failures began.
     const failingFor = ({ status }: Held) =>
       Effect.map(Clock.currentTimeMillis, (now) =>
         status.failedSince === undefined
@@ -235,15 +205,18 @@ export const makeWebhooks = (
           : now - Date.parse(status.failedSince)
       );
 
-    const retrying = (subscription: Held) => ({
-      schedule: Schedule.modifyDelay(Schedule.forever, () =>
+    const waitingAsLongAsFailing = (subscription: Held) =>
+      Schedule.modifyDelay(Schedule.forever, () =>
         Effect.map(failingFor(subscription), (failing) =>
           Duration.clamp(Duration.millis(failing), {
             minimum: Duration.seconds(1),
             maximum: Duration.minutes(5),
           })
         )
-      ),
+      );
+
+    const retrying = (subscription: Held) => ({
+      schedule: waitingAsLongAsFailing(subscription),
       while: (failure: AttemptFailed) =>
         failure.final
           ? Effect.succeed(false)
@@ -262,9 +235,6 @@ export const makeWebhooks = (
           )
         );
 
-    // Why: The subscriber's context replaces the one an effect runs in, where `provideContext`
-    // would merge it: the worker is forked from the subscribe request, whose services it would
-    // otherwise keep.
     const asSubscriber = <A, E>(
       subscription: Held,
       effect: Effect.Effect<A, E, unknown>
@@ -274,8 +244,6 @@ export const makeWebhooks = (
         () => subscription.context
       );
 
-    // Why: A callback `allowedCallbacks` trusts skips the address check too, as SEP-3415 lets a
-    // server configured to allow it deliver to an address not globally reachable.
     const post = (subscription: Held, webhookId: string, body: string) =>
       Effect.flatMap(Clock.currentTimeMillis, (now) =>
         Effect.provideContext(
@@ -332,10 +300,7 @@ export const makeWebhooks = (
         Effect.never
       );
 
-    // Why: A delivery abandoned at a `410` or a `413` ends the failures its budget is timed from:
-    // left set, the next delivery's first transient failure, however much later, would find the
-    // budget spent and suspend the subscription with no retry.
-    const abandoned = (subscription: Held) =>
+    const abandonedResettingBudget = (subscription: Held) =>
       Effect.andThen(
         Effect.sync(() => {
           subscription.status = Struct.omit(subscription.status, [
@@ -345,11 +310,6 @@ export const makeWebhooks = (
         kept(subscription)
       );
 
-    // Why: Each delivery is retried apart, with a fresh timestamp and signature, backing off to 5
-    // minutes, for `retryFor`; then, as SEP-3415 bounds retries, the subscription suspends until
-    // a refresh, whose worker starts again from the watermark, before the delivery it gave up. A
-    // `410` or a `413` abandons a delivery at once, so the worker reads on past it: answered
-    // `false` for `delivered`, which leaves the subscriber a gap in its place.
     const delivered = (subscription: Held, webhookId: string, body: string) =>
       post(subscription, webhookId, body).pipe(
         Effect.tapError((failure) => recorded(subscription, failure)),
@@ -358,7 +318,7 @@ export const makeWebhooks = (
           onSuccess: () => Effect.as(recorded(subscription, undefined), true),
           onFailure: (failure) =>
             failure.final
-              ? Effect.as(abandoned(subscription), false)
+              ? Effect.as(abandonedResettingBudget(subscription), false)
               : suspended(subscription),
         })
       );
@@ -372,12 +332,6 @@ export const makeWebhooks = (
         )
       );
 
-    // Why: Deliveries are serial, each acknowledged or abandoned before the next is read, so the
-    // position a delivery or a refresh carries is safe to resume from with no bookkeeping of
-    // deliveries in flight: `pushed` sends positions in order with the occurrences before them.
-    // An admission failing with no refusal fails the read, which `pushed` reports and resumes
-    // from before that occurrence, as it does a source's failure; one whose body is over 256 KiB
-    // is given up, a gap the subscriber is told of once, and the worker reads on past it.
     const deliverTo = (
       subscription: Held,
       input: Event.Any["input"]["Type"],
@@ -460,7 +414,7 @@ export const makeWebhooks = (
           JSON.stringify({ type: "terminated", error: sentError(refusal) })
         ).pipe(
           Effect.retry({
-            schedule: lastAttempts,
+            schedule: terminatedEnvelopeRetries,
             while: (failure) => !failure.final,
           }),
           Effect.ignore
@@ -475,8 +429,6 @@ export const makeWebhooks = (
         }
       });
 
-    // Why: A worker that ends of itself, expired, refused or failed, is removed from the store;
-    // one interrupted, by an unsubscribe, which removes it, or by the layer closing, stays kept.
     const finished = (subscription: Held) =>
       Effect.suspend(() =>
         holds(subscription)
@@ -484,12 +436,6 @@ export const makeWebhooks = (
           : Effect.void
       );
 
-    // Why: The end is handled after the read, where it can be interrupted: a `terminated`
-    // envelope to a failing callback must hold up neither the layer's shutdown nor a new worker
-    // for the same subscription, as it would from a finalizer. Each read is admitted afresh,
-    // where a surface's stream is admitted once: a webhook outlives its request, so an authorizer
-    // failing with no refusal, as at a restore or a refresh, is retried with the read, and only a
-    // refusal, an expiry or an unsubscribe ends a subscription.
     const workerOf = (
       subscription: Held,
       input: Event.Any["input"]["Type"],
@@ -530,8 +476,6 @@ export const makeWebhooks = (
         (worker) => asSubscriber(subscription, worker)
       );
 
-    // Why: A verified callback stays verified for as long as a subscription to it is granted, as
-    // SEP-3415's soft state; entries past it are dropped as another is kept.
     const remembered = ({ verifiedAs, expiresAt }: Held, now: number) =>
       Effect.sync(() => {
         for (const [each, expiry] of verified) {
@@ -582,12 +526,7 @@ export const makeWebhooks = (
       });
     };
 
-    // Why: A worker replacing another, at a refresh, a subscribe after expiry, an unsubscribe or a
-    // refusal, starts by awaiting the old one's end, its `subscription` hook released, so the two
-    // never hold the hook at once, and the request starting it waits for neither. What the layer
-    // holds and its worker change in one uninterruptible step, so a request cancelled meanwhile
-    // leaves the old pair or the new one, never a subscription held with no worker.
-    const handover = (
+    const swapHeldWorker = (
       id: string,
       next: Held | undefined,
       worker: Effect.Effect<void, unknown, unknown>
@@ -613,10 +552,6 @@ export const makeWebhooks = (
         })
       );
 
-    // Why: A refresh replaces the subscriber's snapshot, its identity included, so its worker
-    // starts again under it, from the watermark: one running as the first subscriber would read
-    // the source as them for as long as they refresh. A grant shortened ends the new worker at
-    // its new deadline.
     const refreshed = (
       subscription: Held,
       granted: Granted,
@@ -637,12 +572,12 @@ export const makeWebhooks = (
                   until: now + Duration.toMillis(rotationGrace),
                 },
               }),
-          status: active(status),
+          status: resumedWithFreshBudget(status),
         };
 
         const confirmation = yield* confirmedAt(watermark);
 
-        yield* handover(
+        yield* swapHeldWorker(
           renewed.id,
           renewed,
           workerOf(renewed, input, watermark, confirmation)
@@ -665,9 +600,6 @@ export const makeWebhooks = (
       previous: undefined,
     });
 
-    // Why: What a store keeps of a subscriber is its identity, the event's `caller`, by its
-    // authentication's schema, encoded at each grant, so a restart restores the latest one; a
-    // surface with a store and no schema refused to serve the event.
     const keptOf = ({ feed, keyed, input }: Subscribing) =>
       Effect.gen(function* () {
         const { schema } = keyed;
@@ -691,11 +623,6 @@ export const makeWebhooks = (
         };
       });
 
-    // Why: A restored subscription was confirmed before the restart, so its worker starts
-    // confirmed: a refusal posts `terminated`, another failure is reported, and a source failing
-    // its first read resumes. One suspended stays suspended, as SEP-3415 has a refresh alone resume
-    // it, held until then or its expiry. Its id is derived again, so one whose input's canonical
-    // form or subscriber's principal changed moves to the id its subscriber's next refresh names.
     const restoredFrom = (
       store: Storage,
       feeds: readonly WebhookFeed[],
@@ -762,7 +689,7 @@ export const makeWebhooks = (
 
         const confirmation = yield* confirmedAt(record.watermark);
 
-        yield* handover(
+        yield* swapHeldWorker(
           current,
           subscription,
           record.status.active
@@ -775,8 +702,6 @@ export const makeWebhooks = (
         }
       }).pipe(Effect.catchCause(reported));
 
-    // Why: Each surface serves its feeds as it builds, MCP and HTTP alike, so restoring is
-    // idempotent: a subscription held already, or of an event no surface serves, is left.
     const serve = (feeds: readonly WebhookFeed[], keyed: Named) =>
       Effect.gen(function* () {
         const { schema } = keyed;
@@ -786,8 +711,6 @@ export const makeWebhooks = (
             served.has(event.name) && served.get(event.name)?.event !== event
         );
 
-        // Why: A subscription is keyed by its event's name, as SEP-3415's key is, so one layer
-        // holding two event types of one name would refresh one's subscription for the other.
         if (namesake.length > 0) {
           return yield* Effect.die(
             new Error(
@@ -836,11 +759,7 @@ export const makeWebhooks = (
         }
       });
 
-    // Why: A refresh refused ends the subscription it names, as SEP-3415 ends one whose
-    // authorization is revoked: its deliveries admit the snapshot of its last grant, which an
-    // authorizer reading the identity would go on admitting. Its `terminated` envelope is POSTed
-    // apart, so the refusal is answered at once.
-    const refused = (id: string, cause: Cause.Cause<unknown>) =>
+    const terminatedOnRefusal = (id: string, cause: Cause.Cause<unknown>) =>
       Effect.gen(function* () {
         const existing = held.get(id);
 
@@ -849,7 +768,7 @@ export const makeWebhooks = (
           refusalIn(cause) !== undefined &&
           (yield* Clock.currentTimeMillis) < existing.expiresAt
         ) {
-          yield* handover(id, undefined, terminated(existing, cause));
+          yield* swapHeldWorker(id, undefined, terminated(existing, cause));
           yield* dropped(id);
         }
 
@@ -874,7 +793,7 @@ export const makeWebhooks = (
         return yield* locked(id)(
           Effect.gen(function* () {
             yield* Effect.catchCause(feed.admit(input), (cause) =>
-              refused(id, cause)
+              terminatedOnRefusal(id, cause)
             );
 
             const now = yield* Clock.currentTimeMillis;
@@ -891,8 +810,6 @@ export const makeWebhooks = (
 
             const existing = held.get(id);
 
-            // Why: A subscription lapses at its grant, whether or not its worker has ended yet,
-            // so a refresh at that instant subscribes afresh from its cursor, as after a restart.
             if (existing !== undefined && now < existing.expiresAt) {
               return yield* refreshed(existing, granted, input, now);
             }
@@ -912,7 +829,7 @@ export const makeWebhooks = (
 
             const confirmation = yield* Deferred.make<Confirmed, unknown>();
 
-            yield* handover(
+            yield* swapHeldWorker(
               id,
               subscription,
               workerOf(subscription, input, cursor, confirmation)
@@ -932,8 +849,6 @@ export const makeWebhooks = (
         );
       });
 
-    // Why: A kept subscription the layer does not hold, one that no longer decodes, is removed
-    // by its subscriber's unsubscribe, the one request that names its id.
     const unsubscribe = (
       subscription: Subscription
     ): Effect.Effect<void, unknown, unknown> =>
@@ -944,7 +859,7 @@ export const makeWebhooks = (
 
             if (now < (held.get(id)?.expiresAt ?? 0)) {
               return yield* Effect.andThen(
-                handover(id, undefined, Effect.void),
+                swapHeldWorker(id, undefined, Effect.void),
                 dropped(id)
               );
             }

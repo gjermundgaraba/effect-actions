@@ -14,19 +14,12 @@ import { authorize } from "./authorize.js";
 import { MessagePosted } from "./Chat.js";
 import { MessageStore } from "./store.js";
 
-// A cursor is the id of the last message a page holds, as `readMessages`' `after` is.
 const idOf = Schema.decodeUnknownOption(
   Schema.NumberFromString.pipe(Schema.check(Schema.isInt()))
 );
 
-// An agent polling over MCP asks again after `nextPoll`, 5 seconds by default: a request that
-// often keeps the object from the 10 idle seconds after which the runtime may hibernate it, so it
-// asks every 30 seconds, and an agent that needs a message sooner holds a stream open instead.
 const nextPoll = "30 seconds";
 
-// The room's messages as an event, read from the store that keeps them: a check source.
-// `postMessage` notifies after each post, so a page receives it at once: when an object reads a
-// check source, and what a write that does not notify misses, is on `ActionDurableObject.handlers`.
 export const messageEvents = Event.implement(
   MessagePosted,
   Effect.gen(function* () {
@@ -42,11 +35,6 @@ export const messageEvents = Event.implement(
             (id) => id >= 0 && id <= last
           );
 
-          // No cursor starts after the room's last message. One this room never gave, such as
-          // an id past its last from another copy of its database, is answered `truncated` from
-          // there: the page learns it missed messages, and reads them with `readMessages`. A
-          // message deleted or expired after a cursor is simply not read: the store keeps no
-          // record of either, so no gap marks it.
           if (Option.isNone(after)) {
             return {
               cursor: String(last),
@@ -89,7 +77,6 @@ import { LobbyHost } from "./host.js";
 import { Previews, PreviewsChanged } from "./Lobby.js";
 import { PreviewStore } from "./store.js";
 
-// The Worker's `previews`, as the lobby's object keeps them.
 export const lobby = Action.implement(
   Previews,
   Effect.map(
@@ -98,8 +85,6 @@ export const lobby = Action.implement(
   )
 );
 
-// The lobby's own API, in its object. A change notifies `PreviewsChanged`, which an object
-// outside this one could not do itself: its event is this object's.
 export const calls = LobbyCalls.toLayer(
   Effect.gen(function* () {
     const store = yield* PreviewStore;
@@ -125,11 +110,6 @@ import { Effect } from "effect";
 import { PreviewsChanged } from "./Lobby.js";
 import { PreviewStore } from "./store.js";
 
-// Every room's preview as one event, read from the lobby's store: a current source, for a value
-// small enough to send whole. A page watching is sent the previews as they are, then again after
-// each notify, which `roomChanged` makes after each change, so it needs no read before it and is
-// never sent each change it missed, which a whole value makes needless. The object keeps the
-// revision a page's cursor holds, so a page resuming at the latest is sent nothing.
 export const previewEvents = Event.implement(
   PreviewsChanged,
   Effect.map(PreviewStore, (store) => ({

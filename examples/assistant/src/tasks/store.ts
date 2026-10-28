@@ -5,14 +5,10 @@ import { TaskNotFound } from "./Tasks.js";
 
 type TaskList = readonly Task[];
 
-// Every method reads the whole list, and a change writes it back: a layer says only where the
-// list is kept, in memory below or in a file (src/platform/tasks-file.ts).
 const make = (
   load: Effect.Effect<TaskList>,
   save: (tasks: TaskList) => Effect.Effect<void>
 ) => {
-  // A model's tool calls in one turn run concurrently. Two changes reading the list before
-  // either writes it would lose one, so a change holds this lock from its read to its write.
   const lock = Semaphore.makeUnsafe(1);
 
   const change = Effect.fn("TaskStore.change")(function* (
@@ -61,7 +57,6 @@ const make = (
   });
 };
 
-/** The team's tasks. Its methods require nothing: a layer captures where the tasks are kept. */
 export class TaskStore extends Context.Service<
   TaskStore,
   {
@@ -78,10 +73,8 @@ export class TaskStore extends Context.Service<
     ) => Effect.Effect<Task, TaskNotFound>;
   }
 >()("assistant/TaskStore") {
-  /** The store over a list kept by `load` and `save`, each change serialized. */
   static readonly make = make;
 
-  /** Memory, lost with the process: what a test provides. */
   static readonly layerMemory = Layer.effect(
     TaskStore,
     Effect.map(Ref.make<TaskList>([]), (tasks) =>

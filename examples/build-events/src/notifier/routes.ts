@@ -17,12 +17,8 @@ export interface NotifierOptions {
   readonly publicUrl: string;
 }
 
-// The route build-events POSTs each failed build to, where the watch below reads them: the
-// watch's delivery appends its path to this process's public URL.
 const receiver = Webhook.layerReceiver({ path: "/hooks/builds" });
 
-// A second service, the notifier: it watches build.finished for failures by webhook, the
-// server POSTing each to it, rather than holding a stream open to build-events.
 const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
@@ -42,8 +38,6 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
             { status: "failed" },
             {
               mode: Webhook.delivery({ baseUrl: publicUrl }),
-              // Where it reached is kept, so a restart resumes there; failures the server no
-              // longer keeps arrive as a Gap instead.
               resume: {
                 store: yield* KeyValueStore.KeyValueStore,
                 key: "failed-builds",
@@ -51,15 +45,11 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
             }
           )
           .pipe(
-            // A Gap says failures were missed, which no notice can name: it is logged, for an
-            // operator to look the builds up.
             Stream.runForEach((received) =>
               Predicate.isTagged(received, "Occurrence")
                 ? notices.add(received.data)
                 : Effect.logWarning("Failed builds were missed", received)
             ),
-            // A failure no reconnect outlasts, such as a wrong PUBLIC_URL or a revoked token,
-            // ends the watch: it is logged here, for a deployment to alert on or restart by.
             Effect.tapCause(Effect.logError)
           )
       );

@@ -6,10 +6,6 @@ import { CurrentUser } from "../identity/Identity.js";
 import { Notes } from "./Notes.js";
 import { NoteStore } from "./store.js";
 
-// The builder runs once, at startup, however many surfaces serve these actions: it is where a
-// handler gets the services that last the process, never the caller. `CurrentUser` is read per
-// call, inside each handler. Each handler is a thin step from the contract to the store, and
-// none checks a scope: `authorize` has run before it.
 export const notes = Action.implement(
   Notes,
   Effect.gen(function* () {

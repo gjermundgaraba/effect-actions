@@ -42,12 +42,9 @@ export const Stream = <const E extends Codec | Fields>(
 const isStreamOf = (success: Codec): success is StreamOf<Codec> =>
   Predicate.hasProperty(success, TypeId);
 
-/** The element schema of an action answering a stream, `undefined` for any other action. */
 export const elementOf = (success: Codec): Codec | undefined =>
   isStreamOf(success) ? success.element : undefined;
 
-// Why: Not distributive, and `never` answering one value: a handler of an erased list's action,
-// `Extract`ed by a name it may not hold, is a `Handler<never>`, which any handler satisfies.
 /** What a handler or a call of an action with success `S` answers: a stream, or one value. */
 export type Answer<S extends Codec, E, R> = [S] extends [never]
   ? Effect.Effect<never, E, R>
@@ -63,7 +60,6 @@ export type ToolSuccess<S extends Codec> = [S] extends [StreamOf<infer Element>]
   ? Schema.$Array<Element>
   : S;
 
-/** The success a tool answers for an action with `success`, as `ToolSuccess` types it. */
 export const toolSuccessOf = (success: Codec): Codec => {
   const element = elementOf(success);
 

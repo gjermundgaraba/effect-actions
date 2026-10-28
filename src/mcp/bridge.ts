@@ -64,11 +64,6 @@ type Send = (
   notification: McpProtocol.ProjectedNotification
 ) => Effect.Effect<void>;
 
-/**
- * What Effect's runtime hands an adapter's `installHandlers`, as far as the bridge reads it: the
- * installation context, whose `sendNotification` exists where the transport can push, and the
- * installer.
- */
 interface Target {
   readonly context: {
     readonly sendNotification?: Send | undefined;
@@ -87,11 +82,6 @@ interface Target {
   ) => Effect.Effect<void, never, unknown>;
 }
 
-// Why: Effect 4.0.5 and 4.0.6 keep an adapter's groups typed as maps and its `handlerRpcs`, which
-// the HTTP runtime admits stateless methods by, off its public interface. Reaching them is pinned
-// to the 4.0.x line: tests/mcp/bridge.test.ts fails loudly if the groups move, and `Target`, the
-// installation target matched against `any`, is guarded only by tests/mcp/events.test.ts, which
-// time out if it moves, since Effect runs the installation in a forked fiber.
 const isGroup = (u: unknown): u is RpcGroup.RpcGroup<Rpc.AnyWithProps> =>
   Predicate.isObjectKeyword(u) &&
   "merge" in u &&
@@ -116,16 +106,11 @@ const groupOf = (
   return group;
 };
 
-/** How the bridge serves events: the implementations, and what the endpoint authenticates with. */
 export interface Serving {
   readonly events: readonly AnyEventImplementation[];
   readonly authentication: Authentication | undefined;
 }
 
-/**
- * The JSON Schemas `events/list` lists for `event`, refusing an input or a payload that is no
- * object.
- */
 export const eventSchemasOf = (
   event: Event.Any
 ): Pick<EventDescriptor, "inputSchema" | "payloadSchema"> => {
@@ -162,9 +147,6 @@ const internalError = new EventsError({
 
 const isSubscriptionError = Schema.is(Event.SubscriptionError);
 
-// Why: A refusal, or an `Event.SubscriptionError`, is the subscriber's answer, in SEP-3415's
-// codes. Any other failure is the server's: the cause goes to the log and to the request's
-// `ErrorReporter`s, as a tool call's does, and the subscriber reads a bare internal error.
 const wireErrorOf = (
   cause: Cause.Cause<unknown>
 ): Effect.Effect<EventsError> => {
@@ -196,9 +178,6 @@ const headerMismatch = (request: HttpServerRequest.HttpServerRequest) =>
     )
   );
 
-// Why: Effect's runtime checks `Mcp-Name` against the body for the core methods alone, and a mixed
-// endpoint admits a public event's request signed out by that header, so a body naming another
-// event is refused here, before it is read, as SEP-3415 requires.
 const routedTo = (name: string) =>
   Effect.flatMap(
     Effect.serviceOption(HttpServerRequest.HttpServerRequest),
@@ -254,18 +233,10 @@ const servedOf = (
   };
 };
 
-/**
- * Dies with the reason the endpoint of `serving` cannot serve one of its events, run where the
- * endpoint's layer is built: a protected one with a `subscription` hook, under an authentication
- * without a principal to key its polls by.
- */
 export const refuseUnservable = ({
   events,
   authentication,
 }: Serving): Effect.Effect<void, never, unknown> =>
-  // Why: Effect forks the server that installs the handlers, so a defect there ends only that
-  // fiber and every request waits; the refusal runs beside the tools' registration, failing the
-  // layer.
   authentication === undefined
     ? Effect.void
     : Effect.flatMap(acquireFeeds(events), (feeds) => {
@@ -280,11 +251,6 @@ export const refuseUnservable = ({
           : Effect.die(new Error(refusal));
       });
 
-/**
- * Serves the feeds the endpoint of `serving` offers by webhook to `Webhooks`, where it is
- * provided, run where the endpoint's layer is built: it restores their kept subscriptions, and
- * dies where they cannot be kept.
- */
 export const serveWebhooks = (
   serving: Serving
 ): Effect.Effect<void, never, unknown> =>
@@ -294,12 +260,6 @@ export const serveWebhooks = (
     )
   );
 
-/**
- * One push subscription, as `events/stream` holds it: what the feed's `pushed` sends, as
- * SEP-3415's notifications. Its confirmation is `active`, a later gap a fresh `active`, a
- * position a heartbeat, and a failure it reads on through `error`. A failure before `active` is
- * the request's error; a refusal after it ends the subscription with `terminated`.
- */
 const delivered = (
   {
     send,
@@ -381,16 +341,9 @@ const delivered = (
   });
 };
 
-/**
- * `base`, the 2026-07-28 adapter, also serving SEP-3415's `events/list`, `events/poll` and
- * `events/stream` for the event implementations of `serving`, and advertising the extension in
- * its discovery.
- */
 export const withEvents = (base: Adapter, serving: Serving): Adapter => {
   const { authentication } = serving;
 
-  // Why: A protected event runs as the identity the endpoint verified, as a protected tool's
-  // call does, and a refusal asking to sign in or step up is answered as its 401 or 403.
   const asSubscriber = <A, E, R>(
     event: Event.Any,
     run: Effect.Effect<A, E, R>
@@ -410,9 +363,6 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
 
       const send = target.context.sendNotification;
 
-      // Why: Every 2026-07-28 result names the server in its `_meta`, encoded per answer as
-      // Effect's own handlers' results encode it, so a server information that does not encode
-      // fails that answer rather than the forked installation, which no request would outwait.
       const meta = Effect.map(
         Effect.orDie(encodeServerInfo(target.context.serverInfo)),
         (serverInfo) => ({ "io.modelcontextprotocol/serverInfo": serverInfo })
@@ -627,8 +577,6 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
       yield* target.install(base, Requests, handlers);
     });
 
-  // Why: Named before it is returned, as `handlerRpcs` is off the adapter's public interface,
-  // which a returned literal would be checked against for excess properties.
   const adapter = {
     ...base,
     clientRpcs: groupOf(base, "clientRpcs").merge(Requests),

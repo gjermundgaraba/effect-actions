@@ -12,8 +12,6 @@ One `Action.make` per action, in the domain's contract file. Export the domain's
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { Schema } from "effect";
 
-// A contract: what the action takes and answers, whether it changes anything, and who may
-// call it. It imports no server code, so any client can import it, a browser page included.
 export const Greet = Action.make("greet", {
   description: "Greet someone by name.",
   input: { name: Schema.String },
@@ -48,10 +46,6 @@ import { CurrentUser } from "../identity/Identity.js";
 import { Notes } from "./Notes.js";
 import { NoteStore } from "./store.js";
 
-// The builder runs once, at startup, however many surfaces serve these actions: it is where a
-// handler gets the services that last the process, never the caller. `CurrentUser` is read per
-// call, inside each handler. Each handler is a thin step from the contract to the store, and
-// none checks a scope: `authorize` has run before it.
 export const notes = Action.implement(
   Notes,
   Effect.gen(function* () {
@@ -105,10 +99,6 @@ import { Effect } from "effect";
 
 import { CurrentUser, scopes } from "./Identity.js";
 
-// The one rule, read from each contract: a read needs the read scope, anything else the write
-// scope. Naming the missing scope lets an OAuth client ask for it and retry (`Forbidden`):
-// `scopes` below goes with `protectedResource` in verifier.ts, copy both or neither.
-// This named span measures authorization within the action's span, including a refusal.
 export const authorize = Effect.fn("authorize")(function* (action: Action.Any) {
   const scope = action.readOnly ? scopes.read : scopes.write;
   const user = yield* CurrentUser;

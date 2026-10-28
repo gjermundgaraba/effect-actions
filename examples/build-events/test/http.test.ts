@@ -14,7 +14,6 @@ import { inMemory } from "./support/memory.js";
 
 const served = Testing.layer(routes).pipe(Layer.provide(inMemory()));
 
-// One client of the binding per member: the token is the member, as in production.
 const as = (token: string) =>
   ActionHttp.client(Http, {
     transformClient: HttpClient.mapRequest(
@@ -30,12 +29,10 @@ describe("the service, over HTTP", () => {
         const ada = yield* as("ada");
         const grace = yield* as("grace");
 
-        // `watch` asks for `text/event-stream`, and the route holds the stream open.
         const watched = yield* grace
           .watch(BuildFinished)
           .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
-        // The watch starts from now: let it take its first position before builds finish.
         yield* TestClock.adjust("0 millis");
         yield* ada.finishBuild({ pipeline: "api", status: "passed" });
         yield* ada.finishBuild({ pipeline: "web", status: "passed" });
@@ -53,7 +50,6 @@ describe("the service, over HTTP", () => {
         const ada = yield* as("ada");
         const grace = yield* as("grace");
 
-        // `mode: "poll"` asks for a page at a time, as a client that cannot hold a stream does.
         const polled = yield* grace
           .watch(
             DeployRequested,

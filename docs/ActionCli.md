@@ -20,22 +20,15 @@ import { commands } from "./commands.js";
 import { CurrentCaller } from "./identity/Identity.js";
 import type { Operator } from "./identity/Identity.js";
 import { Permissions } from "./identity/permissions.js";
-import { tasksFile } from "./platform/tasks-file.js";
+import { demoTasksFile } from "./platform/tasks-file.js";
 
-// Entrypoint: `node --import tsx examples/assistant/src/cli.ts list-tasks`.
-// The operator's own tool. No credential arrives at a terminal, so this host names the caller
-// itself: whoever runs the command, as the trusted operator. Being local earns nothing more:
-// `authorize` runs here as for a model's tool call, and admits the operator by its kind.
 const operator: Operator = { kind: "operator", id: userInfo().username };
 
 const assistant = commands.pipe(
-  Command.provide(Layer.mergeAll(tasksFile, Permissions.layerMemory)),
+  Command.provide(Layer.mergeAll(demoTasksFile, Permissions.layerMemory)),
   Command.provideSync(CurrentCaller, operator)
 );
 
-// A command's defect, such as a tasks file that does not decode, `runMain` reports on stdout.
-// `logToStderr`, applied last, moves that to stderr, so `assistant list-tasks --json | jq` reads
-// results alone.
 Command.run(assistant, { version: "1.0.0" }).pipe(
   Effect.provide(NodeServices.layer),
   ActionCli.logToStderr,
@@ -66,8 +59,6 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { Http } from "./Api.js";
 
-// The binding's client, connected to where the server is and as which member, both read from
-// config when a command runs.
 const api = Effect.gen(function* () {
   const baseUrl = yield* Config.String("BUILDS_URL").pipe(
     Config.withDefault("http://127.0.0.1:3000")
@@ -83,13 +74,6 @@ const api = Effect.gen(function* () {
   });
 });
 
-// A command per action, and `watch <event>` per event type: `builds watch build.finished
-// --pipeline api` holds the event's stream open and prints each occurrence as a line of JSON,
-// its `cursor` included, until it is stopped. `--cursor <cursor>` resumes after that line;
-// omitted, the watch starts from now. The lines pipe into `jq` or a script as they come.
-// `builds start-build --pipeline api` prints each step as a line of JSON on stderr as it
-// starts, and the build on stdout, which a pipe reads alone. `builds tail-log --build-id
-// build-1` prints each line of its log as a line of JSON as it arrives.
 export const commands = ActionCli.remote(Http, { name: "builds", client: api });
 ```
 
@@ -126,15 +110,9 @@ import * as ActionCli from "@gjermundgaraba/effect-actions/ActionCli";
 import { identity } from "./identity/handlers.js";
 import { tasks } from "./tasks/handlers.js";
 
-// The same implementations as local commands, `assistant <action>`: a command runs the handler
-// in this process, behind the same `authorize`. `add-task` and `who-am-i` are as derived; the
-// others each change their syntax or output.
 export const commands = ActionCli.make([tasks, identity], {
   name: "assistant",
   commands: {
-    // `assistant list-tasks -a ada`: a short flag beside `--assignee`. `render` prints a line
-    // per task for a person, and adds `--json` for the JSON a script reads. `description` is the
-    // command's help, saying what a line holds; the action's stays what a model reads.
     listTasks: {
       description:
         "Print one line per task: [x] when done, then its id, title and assignee.",
@@ -147,9 +125,7 @@ export const commands = ActionCli.make([tasks, identity], {
           )
           .join("\n"),
     },
-    // `assistant complete-task 2`: an argument instead of `--id 2`.
     completeTask: { positional: ["id"] },
-    // `assistant annotate-task --id 2 < notes.md`: the notes are piped in, not a flag.
     annotateTask: { stdin: "notes" },
   },
 });

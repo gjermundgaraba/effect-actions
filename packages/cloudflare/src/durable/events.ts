@@ -24,10 +24,6 @@ const seqWidth = 16;
 
 type Emitted = Event.Emitted<Event.Any>;
 
-/**
- * A log's storage in the object's, under `effect-actions/log/<event>/`: its position, and each
- * entry by its sequence number, its data encoded as the event's payload JSON.
- */
 const storageLog = (
   storage: DurableObjectStorage,
   event: Event.Any
@@ -44,9 +40,6 @@ const storageLog = (
   const encode = Schema.encodeUnknownEffect(codec);
   const decode = Schema.decodeUnknownEffect(codec);
 
-  // Why: an entry that does not decode at all, or whose data no longer decodes as the event's
-  // payload, such as one an earlier deployment wrote, is listed unread, which the core sends as a
-  // gap at its cursor; one with no data was logged without it, as it did not encode.
   const listedOf = (
     found: Option.Option<typeof Stored.Type>
   ): Effect.Effect<Event.Listed<Emitted>> =>
@@ -83,8 +76,6 @@ const storageLog = (
 
         const { at, logged } = entry.stored;
 
-        // Why: an occurrence that does not encode is reported once, as it is appended, and kept
-        // without its data, which each reader receives as a gap.
         const data = yield* encode(logged.value.data).pipe(
           Effect.catch((error) =>
             Effect.as(
@@ -142,10 +133,6 @@ const epochOf = Schema.decodeUnknownOption(Schema.String);
 
 const countOf = Schema.decodeUnknownOption(Schema.Int);
 
-/**
- * Current sources' revisions in the object's storage, under `effect-actions/revisions/`: an
- * epoch made as the object first builds, and a counter by name.
- */
 const storageRevisions = (
   storage: DurableObjectStorage
 ): Effect.Effect<Event.RevisionStorage> => {
@@ -168,9 +155,6 @@ const storageRevisions = (
       });
     }
 
-    // Why: a bump reads each counter, then writes it one higher; two notifies bumping at once,
-    // interleaved at the read, would each write the same count, and a change would keep its
-    // subscribers' revision.
     const inTurn = Semaphore.withPermit(yield* Semaphore.make(1));
 
     return {
@@ -197,19 +181,10 @@ const storageRevisions = (
   });
 };
 
-/**
- * The object's `Event.Events`, which `handlers` and `make` provide to the services, calls and
- * routes: each log source's log kept in the object's storage, under `effect-actions/log/`, each
- * current source's revisions beside it, so a cursor outlives an eviction, and a check or current
- * source's subscribers read again when notified, not on its `nextPoll`, a timer that would keep the
- * object from hibernating. Its rules are on `handlers`.
- */
 export const layerEvents: Layer.Layer<Event.Events, never, State> =
   Layer.effect(Event.Events)(
     Effect.flatMap(State, ({ storage }) =>
       Effect.flatMap(storageRevisions(storage), (revisions) => {
-        // Why: a log is kept under its event's name, the one identity storage keeps across
-        // instances, so two event types of one name would read and append each other's entries.
         const named = new Map<string, Event.Any>();
 
         return Event.makeEvents({

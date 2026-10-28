@@ -32,7 +32,6 @@ export interface Read<A> {
   readonly hasMore: boolean;
 }
 
-/** How much a log keeps: entries of at most `maxAge`, at most `maxEvents` of them. */
 export interface Bounds {
   readonly maxAge?: Duration.Input | undefined;
   readonly maxEvents?: number | undefined;
@@ -91,7 +90,6 @@ export interface LogStorage<A> {
   readonly delete: (seqs: readonly number[]) => Effect.Effect<void>;
 }
 
-/** A log storage in memory, for the process that makes it. */
 export const memoryStorage = <A>(): LogStorage<A> => {
   let position: Position | undefined;
   let newest = 0;
@@ -110,8 +108,6 @@ export const memoryStorage = <A>(): LogStorage<A> => {
         entries.set(entry.seq, entry.stored);
         newest = Math.max(newest, entry.seq);
       }),
-    // Why: a follower reads at the tip, so its read looks up the entries from its position
-    // rather than walking every kept entry before it, up to `maxEvents` of them, on each publish.
     list: (from, limit) =>
       Effect.sync(() => {
         const listed: Array<readonly [number, Stored<A>]> = [];
@@ -144,14 +140,8 @@ export const memoryStorage = <A>(): LogStorage<A> => {
   };
 };
 
-/** What a log keeps of its entries: appending stamps one, and reading answers by cursor. */
 export interface LogStore<A> {
-  /** Keeps `logged` as the next entry. */
   readonly append: (logged: Logged<A>) => Effect.Effect<void>;
-  /**
-   * The entries after `cursor`, at most `limit`, or after the last one for `null`: a cursor
-   * naming no position kept, such as another epoch's, reads from the oldest kept, `truncated`.
-   */
   readonly read: (
     cursor: string | null,
     limit: number
@@ -174,12 +164,6 @@ const seqIn = (epoch: string, cursor: string): number | undefined => {
     : undefined;
 };
 
-/**
- * A log's entries over `storage`, read by cursor: a cursor is the storage's epoch and the
- * sequence number of the last entry it has seen, so one minted by another epoch, such as a
- * memory log's before a restart or a storage's before it was emptied, reads as truncated, as
- * does one whose next entries were dropped. An epoch is minted where the storage holds none.
- */
 export const makeLogStore = <A>(
   storage: LogStorage<A>,
   {
@@ -195,7 +179,6 @@ export const makeLogStore = <A>(
 
   const age = Duration.toMillis(Duration.fromInputUnsafe(maxAge));
 
-  // Why: appends and reads take turns, so two appends never take one sequence number.
   const turn = Semaphore.makeUnsafe(1);
 
   const positioned = Effect.flatMap(storage.position, (found) => {
@@ -208,8 +191,6 @@ export const makeLogStore = <A>(
     return Effect.as(storage.put(minted), minted);
   });
 
-  // Why: entries past their age are deleted as a read meets them, oldest first, so the oldest
-  // entry kept is the first listed: a read where none expired lists one entry.
   const oldestKept = (last: number, now: number) =>
     Effect.gen(function* () {
       for (let batch = 1; ; batch = 64) {
@@ -307,10 +288,7 @@ export interface Log<A> {
   ) => Stream.Stream<Read<Logged<A> | undefined>>;
 }
 
-/** A log over `store`, waking its followers as each entry is appended. */
 export const makeLog = <A>(store: LogStore<A>): Log<A> => {
-  // Why: The store is the only keeper of entries, so a follower that falls behind reads a gap and
-  // holds nothing; each follower's queue only wakes it, keeping one pending wake.
   const followers = new Set<Queue.Queue<undefined>>();
 
   const append = (value: A, key: string | undefined) =>

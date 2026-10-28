@@ -3,20 +3,19 @@ import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import { Effect, Redacted } from "effect";
 
 import { Login } from "./Identity.js";
-import { members } from "./members.js";
+import { demoMembers } from "./members.js";
 
-const isMember = (token: string): token is keyof typeof members =>
-  Object.hasOwn(members, token);
+const isMember = (token: string): token is keyof typeof demoMembers =>
+  Object.hasOwn(demoMembers, token);
 
-// DEMO ONLY: a token is a member's name. A real verifier checks a signed token with your
-// authorization server's library. An unknown token is the built-in `Unauthenticated`, which
-// every client decodes, a watch's included.
-export const authenticate = Authentication.layer(Login, (token) => {
+const demoVerify = (token: Redacted.Redacted) => {
   const name = Redacted.value(token);
 
   return isMember(name)
-    ? Effect.succeed(members[name])
+    ? Effect.succeed(demoMembers[name])
     : Effect.fail(
         new Action.Unauthenticated({ message: "Unknown demo token." })
       );
-});
+};
+
+export const authenticate = Authentication.layer(Login, demoVerify);

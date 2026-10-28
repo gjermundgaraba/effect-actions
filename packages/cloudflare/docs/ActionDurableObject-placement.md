@@ -13,13 +13,10 @@ import { MessagePosted, Messages } from "./chat/Chat.js";
 import { Login } from "./identity/Identity.js";
 import { Previews } from "./lobby/Lobby.js";
 
-// The rooms' JSON routes, at `/api/<action>` and `/api/events/<name>`: the Worker's, which a
-// client without a socket calls, and each room's object's, where the Worker sends each call on.
 export const RoomHttp = ActionHttp.make([...Messages, MessagePosted], {
   authentication: Login,
 });
 
-// The Worker's own JSON routes.
 export const LobbyHttp = ActionHttp.make([Previews]);
 ```
 
@@ -30,7 +27,7 @@ Then, as `routes.ts` on [ActionDurableObject.md](ActionDurableObject.md) does:
 - The class is given the placement as `make`'s `placed`, in `worker.ts`: the object then refuses `Forbidden`, on every surface, its socket and its stub included, a call or a watch whose key names another object, so a page's socket to one room cannot reach another.
 - The Worker serves `ActionDurableObject.reaching(rooms, () => env.CHAT_ROOM)` beside its own implementations, in `ActionHttp.layer` and `ActionMcp.layerHttp`, each call sent to the room's object with the caller's headers.
 
-The Worker authenticates each protected call as its own, and the object authenticates and authorizes it again, so both are given the verifier. A key's schema, `RoomName` in `Chat.ts`, is what keeps a caller from creating objects: an unknown room is `InvalidInput` before any object is reached. [chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts) reaches two rooms through one MCP connection and has a room refuse a call naming another.
+The Worker authenticates each protected call as its own, and the object authenticates and authorizes it again, so both are given the verifier. A key's schema, `DemoRoomName` in `Chat.ts`, is what keeps a caller from creating objects: an unknown room is `InvalidInput` before any object is reached. [chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts) reaches two rooms through one MCP connection and has a room refuse a call naming another.
 
 ## Serve them over MCP from the Worker
 

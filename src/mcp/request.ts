@@ -15,7 +15,6 @@ export interface Params {
   readonly [key: string]: Schema.Json | undefined;
 }
 
-/** The routing headers and JSON-RPC body of the request `request` builds. */
 export const statelessRequest = (method: string, params: Params) => {
   const { protocolVersion } = httpProtocol;
   const name = method === "resources/read" ? params["uri"] : params["name"];

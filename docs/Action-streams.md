@@ -22,8 +22,6 @@ import {
 import type { Build } from "./Builds.js";
 import { BuildStore } from "./store.js";
 
-// DEMO ONLY: each step passes at once. A runner's steps take their time, which is why a caller
-// wants to see them.
 const steps = ["install", "build", "test"];
 
 export const builds = Action.implement(
@@ -32,9 +30,6 @@ export const builds = Action.implement(
     const store = yield* BuildStore;
     const events = yield* Event.Events;
 
-    // `build.finished` is a check source over the store: write the build there first, then wake
-    // its subscribers, who read it now rather than at their next poll. `pipeline.status` is a
-    // current source: the notify moves its pipeline's revision, so its subscribers alone read it.
     const finished = (build: Effect.Effect<Build>) =>
       Effect.tap(build, ({ pipeline }) =>
         Effect.andThen(
@@ -46,7 +41,6 @@ export const builds = Action.implement(
     return {
       finishBuild: ({ pipeline, status }) =>
         finished(store.finish(pipeline, status, [status])),
-      // `progress` never waits for the caller: the build runs at its own pace.
       startBuild: ({ pipeline }, { progress }) =>
         Effect.andThen(
           Effect.forEach(
@@ -90,22 +84,16 @@ export const logs = Action.implement(
   Effect.gen(function* () {
     const store = yield* BuildStore;
 
-    // The handler returns a `Stream`, run in a scope of its own that closes when the caller
-    // stops reading, so what it acquires is released then.
     return ({ buildId }) =>
       Stream.unwrap(
         Effect.gen(function* () {
           const member = yield* CurrentMember;
-          // A failure before the first line, `BuildNotFound` here, fails the call as an action
-          // answering one value fails, a 404 over HTTP; one after a line ends the stream, the
-          // lines before it already read.
           const log = yield* store.logOf(member.pipelines, buildId);
 
           return Stream.fromIterable(log.map((line) => ({ line })));
         })
       );
   }),
-  // Which builds a member may read is the store's check, by pipeline.
   { authorize: Action.allowAll }
 );
 ```

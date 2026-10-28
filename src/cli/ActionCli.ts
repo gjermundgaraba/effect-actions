@@ -64,8 +64,6 @@ export type { Options as CommandOptions } from "./commands.js";
 
 export type { UserError } from "./commands.js";
 
-// Why: The three fields `toUserError` reads, which the bindings of `ActionHttp.make` and
-// `ActionRpc.make` both have: a command of your own calls through either.
 interface AnyBinding extends Declaring {
   readonly actions: readonly Action.Any[];
 }
@@ -135,10 +133,6 @@ export interface Options<
 
 type Subcommands = readonly Command.Command.SubcommandEntry[];
 
-// Why: A type parameter of their own. The options are inferred as the selection they hold, which is
-// all the actions' types read, so a list read from them would be lost whenever none is selected.
-// A list typed as any commands names none, as options annotated `Options` hold it with or without
-// a list: it adds nothing, where `unknown` would fail every program passing such options.
 type OwnCommand<Own extends Subcommands> = Subcommands extends Own
   ? never
   : Own[number] extends infer Entry
@@ -217,18 +211,15 @@ const runWithBuildOfItsOwn = <
 
   const builder = Implementation.layerOf(thisActionOnly);
 
-  // Why: A stream is read after its call succeeds with it, so the build is the stream's, open
-  // while it is read: provided around the call alone, it would close first, and a handler
-  // reading what its builder acquired would read it released.
-  const built =
+  const buildScopedToAnswer =
     elementOf(action.success) === undefined
       ? call.pipe(Effect.provide(builder, { local: true }))
       : Effect.succeed(
           elementsOf(call).pipe(Stream.provide(builder, { local: true }))
         );
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased handler boundary: the builders' failures and services are the implementation's `EX` and `RX`, the handler's and authorization's services its entry of `R`; the handler fails with the action's errors or a `BuiltIn`, authorization with a refusal.
-  return built as Local<App, A>;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return buildScopedToAnswer as Local<App, A>;
 };
 
 const theImplementationOf = (
@@ -295,7 +286,6 @@ const overHttp = <A extends Action.Any>(
 
         const answer = method(input, { onProgress });
 
-        // Why: A stream method answers its `Stream` itself, which the command reads as the value.
         return Stream.isStream(answer) ? Effect.succeed(answer) : answer;
       }),
     options,
@@ -303,14 +293,10 @@ const overHttp = <A extends Action.Any>(
   );
 };
 
-// Why: None where the selection holds no action, so an aggregate of event types alone requires
-// no action's services.
 type LocalCall<Apps extends Served, O> = [SelectedOf<O, Apps>] extends [never]
   ? never
   : Local<Holding<Member<Apps>, SelectedOf<O, Apps>>, SelectedOf<O, Apps>>;
 
-// Why: None where the selection holds no event type, so an aggregate of actions alone requires as
-// it did.
 type LocalWatch<App, Listed extends Event.Any> = [
   ServingEvents<App, Listed>,
 ] extends [never]
@@ -322,9 +308,6 @@ type LocalWatch<App, Listed extends Event.Any> = [
       | EventBuildServices<App, Listed>
     >;
 
-// Why: Read from the client's `watch` as a command calls it, so a client given with its own
-// `transformClient` adds what its watch fails with and requires, as a call's does; a command
-// watches by stream or poll, so never needs the receiver a webhook delivery does.
 type Watched<M, E extends Event.Any> = M extends {
   readonly watch: (
     event: E,
@@ -348,7 +331,6 @@ type WatchServices<C, E extends Event.Any> = [E] extends [never]
     ? CR | Watched<M, E>["services"]
     : HttpClient.HttpClient;
 
-/** The command watching `event` through the `watch` of each client `client` makes as it runs. */
 const watched = (
   event: Event.Any,
   client: Effect.Effect<
@@ -424,7 +406,6 @@ const aggregateCommand = (
     }
   );
 
-  // Why: One `withSubcommands`, as a second one replaces the first's commands.
   return Command.make(name).pipe(
     Command.withSubcommands([
       ...derived.map(({ command: derivedCommand }) => derivedCommand),
@@ -486,7 +467,7 @@ export const command = <
   Failing<Effect.Error<Local<Owning<Member<Apps>, A>, A>>>,
   Effect.Services<Local<Owning<Member<Apps>, A>, A>>
 > =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased implementation: the command runs `action` by its one implementation among `implementations`, so its channels are what `Local` states for that implementation.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   inProcess(toList(implementations), action, options) as never;
 
 /**
@@ -549,7 +530,6 @@ export interface Calling<C> {
   readonly client?: C;
 }
 
-// Why: `watch` is needed only where an event type is selected, as each action's method is.
 type ClientOf<
   H extends AnyHttp,
   A extends Action.Any,
@@ -569,10 +549,6 @@ type ErasedClient = Effect.Effect<
   unknown
 >;
 
-// Why: TypeScript first checks a call without its unannotated arrows, such as an inline `render`,
-// and an options literal holding one is not yet inferred into `O` then; `L`, inferred from
-// `actions` alone, holds the selection meanwhile. Checked against `Selected` alone, a client
-// narrowed to the listed actions is rejected as lacking every other action's method.
 type Needed<
   O,
   L extends readonly unknown[],
@@ -591,12 +567,10 @@ type NeededEvents<
 
 type RemoteKeys<Keys> = Keys & { readonly client?: unknown };
 
-// Why: None for no failure, so a CLI whose implementations hold no event type fails as it did.
 type Failing<F> = [F] extends [never]
   ? never
   : UserError<Exclude<F, CliError.CliError>> | Extract<F, CliError.CliError>;
 
-// Why: Distributive over the action, so an aggregate's call is any of its methods'.
 type Called<M, A extends Action.Any> = A extends unknown
   ? A["name"] extends keyof M
     ? M[A["name"]] extends (...input: never) => infer Call
@@ -605,13 +579,10 @@ type Called<M, A extends Action.Any> = A extends unknown
     : never
   : never;
 
-// Why: A call answers one value or a stream, so both carry its failures and requirements.
 type CallError<Call> = Effect.Error<Call> | Stream.Error<Call>;
 
 type CallRequirements<Call> = Effect.Services<Call> | Stream.Services<Call>;
 
-// Why: Distributive over the client, so one that may be `undefined` also fails and requires as
-// its omission does: as `ActionHttp.client(binding)` on the host's `HttpClient`.
 type CallFailure<H extends AnyHttp, C, A extends Action.Any> =
   C extends Effect.Effect<infer M, infer CE, unknown>
     ? CE | CallError<Called<M, A>>
@@ -679,8 +650,6 @@ export const make = <
     commands,
     options.subcommands ?? [],
     (action, syntax) => inProcess(served, action, syntax),
-    // Why: Each run builds the one implementation holding the event, as each run of an action's
-    // command builds its own, and releases it as the watch ends.
     events.flatMap((app) =>
       app.events.map((event) =>
         watched(event, Action.client(app), eventErrors(event, { error: [] }))
@@ -688,7 +657,7 @@ export const make = <
     )
   );
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Dynamic subcommand list: each runs one action by its implementation, so the aggregate's channels are the unions of what `Local` states over them.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return group as never;
 };
 
@@ -778,9 +747,6 @@ export function remote(
   return group;
 }
 
-// Why: Applied around the whole program, since `runMain`'s report of a defect or of a failed host
-// layer runs outside every command and every layer the host provides. It moves the logger alone: a
-// stderr `Console` around the program would move `--help` off stdout.
 /**
  * A program whose stdout carries only its results, such as a CLI feeding scripts or an MCP
  * subprocess, applied last, before `NodeRuntime.runMain`: the default logger of every layer

@@ -659,7 +659,7 @@ describe("Action.client", () => {
         const client = yield* Action.client(
           Action.implement(Status, () =>
             Effect.failCause(
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The failure under test: a cause holding an undeclared failure beside a declared one, as plain JavaScript could.
+              // oxlint-disable-next-line typescript/no-unsafe-type-assertion
               Cause.combine(Cause.fail(busy), Cause.fail(unlisted as never))
             ).pipe(Effect.withSpan("quota"))
           )

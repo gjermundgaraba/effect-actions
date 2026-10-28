@@ -6,8 +6,6 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { Http } from "./Api.js";
 
-// What a command fails with when no token is configured: a tagged error of the CLI's own, printed
-// on stderr as `MissingToken: <message>` under an `ERROR` heading, and exit 1.
 class MissingToken extends Schema.TaggedError<
   MissingToken,
   { readonly brand: unique symbol }
@@ -15,15 +13,11 @@ class MissingToken extends Schema.TaggedError<
   message: Schema.String,
 }) {}
 
-// The binding's typed client, connected to where the server is and as who is calling, both read
-// from config. Every command here, the derived ones and your own, calls through this one.
 const api = Effect.gen(function* () {
   const baseUrl = yield* Config.String("NOTES_URL").pipe(
     Config.withDefault("http://127.0.0.1:3000")
   );
 
-  // Required, since every command but `get-status` is refused without one, and mapped so that a
-  // missing one prints what to do.
   const token = yield* Config.Redacted("NOTES_TOKEN").pipe(
     Effect.mapError(
       () =>
@@ -42,18 +36,10 @@ const api = Effect.gen(function* () {
   });
 });
 
-// The file's format: each note a `# ` title line, a blank line and its body, the notes apart by
-// a blank line. A body line that starts as a title would is written with a backslash before it,
-// as Markdown escapes one, and `import` takes it off, so every note reads back as it was.
 const escape = (body: string) => body.replaceAll(/^(?=\\*# )/gmu, "\\");
 
 const unescape = (body: string) => body.replaceAll(/^\\(?=\\*# )/gmu, "");
 
-// A command of your own, for what no single action does: this one calls two and writes a file.
-// It is a native Effect CLI command, so its syntax and its output are what you write: `notes
-// export notes.md` takes its argument from `Argument`, as a flag would come from `Flag`. It
-// calls the server through `api`, the client the derived commands call, and writes with the
-// `FileSystem` every Effect CLI command has.
 const exportNotes = Command.make(
   "export",
   {
@@ -80,24 +66,13 @@ const exportNotes = Command.make(
 
       yield* Console.log(`Wrote ${whole.length} notes to ${file}`);
     }).pipe(
-      // Context of your own for a failure, on stderr before it. The line prints for every
-      // failure of the command, a file that cannot be written included, so it says only what is
-      // true of them all.
       Effect.tapError(() =>
         Console.error(`The export to ${file} did not finish.`)
       ),
-      // So the export fails as a derived command does.
       ActionCli.toUserError(Http)
     )
 ).pipe(Command.withDescription("Write every note to a file, as Markdown."));
 
-// The other half of `export`: it reads such a file and creates its notes with one call of the
-// bulk action, so the server checks every note before it writes any, and a file of more than
-// the action's 100 is refused whole. The command reads the file and nothing more.
-// `Argument.FileText` reads it, and a missing file is a usage error naming it, where
-// `Argument.String` and `FileSystem` would print the platform's error. Text before the first
-// title is refused, not dropped: the file is not one `export` wrote. The derived `import-notes`
-// stays beside it, taking the notes as a JSON array in `--notes`.
 const importNotes = Command.make(
   "import",
   {
@@ -137,20 +112,15 @@ const importNotes = Command.make(
   )
 );
 
-// A command per action of the binding, a flag per input field, each calling the server over
-// HTTP. It imports the binding alone, never a handler. It is apart from cli.ts so a test runs
-// it: test/commands.test.ts.
 export const commands = ActionCli.remote(Http, {
   name: "notes",
   client: api,
   commands: {
-    // `notes create-note --title Draft < draft.md`: the body is piped in, not a flag.
     createNote: { stdin: "body" },
     getNote: {
       positional: ["id"],
       render: (note) => `# ${note.title}\n\n${note.body}`,
     },
-    // `notes update-note <id> --revision 1 < draft.md`: an argument, a flag and stdin together.
     updateNote: { positional: ["id"], stdin: "body" },
   },
   subcommands: [exportNotes, importNotes],

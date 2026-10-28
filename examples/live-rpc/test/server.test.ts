@@ -11,23 +11,17 @@ import { MessageStore } from "../src/chat/store.js";
 import { connect } from "../src/page.js";
 import { rpc } from "../src/routes.js";
 
-// What the socket adds, which no in-memory test reaches: the upgrade, the page's `connect(url)`
-// and the bound on a message. The rpcs are served as server.ts serves them, over a WebSocket
-// at `/rpc` on Node's HTTP server, on port 0: the system picks a free one, so tests run side
-// by side. The server closes with the test's scope.
 const socket = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
   Layer.provide(RpcSerialization.layerJson)
 );
 
-// server.ts allows 64 KiB. A bound this small is passed by a message the contract accepts.
 const maxPayload = 256;
 
 const listening = HttpRouter.serve(socket, {
   disableLogger: true,
   disableListenLog: true,
 }).pipe(
-  // `provideMerge` keeps `HttpServer` for the test, which reads the port from it.
   Layer.provideMerge(
     NodeHttpServer.layer(createServer, {
       host: "127.0.0.1",
@@ -38,8 +32,6 @@ const listening = HttpRouter.serve(socket, {
   Layer.provide([MessageStore.layerMemory, Event.layerMemory])
 );
 
-// The page's client, on Node's global `WebSocket`. Each test closes it with `Effect.scoped`,
-// before the server stops: a server that is stopping waits for its open sockets.
 const chat = Effect.gen(function* () {
   const server = yield* HttpServer.HttpServer;
   const url = HttpServer.formatAddress(server.address).replace("http", "ws");
@@ -88,8 +80,6 @@ describe("the chat, over a WebSocket", () => {
         const received = yield* Deferred.make<string>();
         const stopped = yield* Deferred.make<string>();
 
-        // From the room's start, id 0, so the post reaches it however soon after the watch it is
-        // sent.
         const stop = page.room("lobby", "grace").watch(
           0,
           (message) => {
@@ -123,9 +113,6 @@ describe("the chat, over a WebSocket", () => {
 
         yield* Effect.promise(async () => await ada.post("Short."));
 
-        // 400 characters are a text the contract accepts and a message over 256 bytes. The server
-        // reads none of it: it closes the socket with 1009, "message too big", and the call fails
-        // with Effect's `RpcClientError`, its reason the socket's close, which no action declares.
         yield* Effect.promise(async () => {
           await expect(ada.post("x".repeat(400))).rejects.toMatchObject({
             reason: { code: 1009 },

@@ -2,7 +2,6 @@ import { Clock, Context, Effect } from "effect";
 
 import type { Schedule } from "./alarm.js";
 
-/** The alarm owner a task's time is kept under, one per task name. */
 export const taskOwner = (name: string) => `task:${name}`;
 
 /**
@@ -32,10 +31,6 @@ export class Tasks extends Context.Service<
   }
 >()("effect-actions-cloudflare/ActionDurableObject/Tasks") {}
 
-/**
- * The instance's `Tasks` over its `schedule`, and the alarm owners that run each of `tasks`, by
- * the name `runAfter` takes.
- */
 export const makeTasks = <E, R>(
   schedule: Schedule,
   tasks: { readonly [name: string]: Effect.Effect<void, E, R> }
@@ -51,17 +46,14 @@ export const makeTasks = <E, R>(
           );
         }
 
-        // Why: marked before the change, so a crash in it leaves the task to the alarm, and again
-        // as it ends, as an alarm run as the change waited dropped the mark once that run ended.
-        // Marked again at the same time, a mark still waiting costs a read, not a write.
-        const marked = schedule.set(
+        const markDueNow = schedule.set(
           taskOwner(name),
           yield* Clock.currentTimeMillis
         );
 
-        yield* marked;
+        yield* markDueNow;
 
-        return yield* Effect.ensuring(change, marked);
+        return yield* Effect.ensuring(change, markDueNow);
       }),
   }),
   owners: Object.fromEntries(

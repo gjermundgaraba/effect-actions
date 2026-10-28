@@ -11,8 +11,6 @@ import {
 import type { Build } from "./Builds.js";
 import { BuildStore } from "./store.js";
 
-// DEMO ONLY: each step passes at once. A runner's steps take their time, which is why a caller
-// wants to see them.
 const steps = ["install", "build", "test"];
 
 export const builds = Action.implement(
@@ -21,9 +19,6 @@ export const builds = Action.implement(
     const store = yield* BuildStore;
     const events = yield* Event.Events;
 
-    // `build.finished` is a check source over the store: write the build there first, then wake
-    // its subscribers, who read it now rather than at their next poll. `pipeline.status` is a
-    // current source: the notify moves its pipeline's revision, so its subscribers alone read it.
     const finished = (build: Effect.Effect<Build>) =>
       Effect.tap(build, ({ pipeline }) =>
         Effect.andThen(
@@ -35,7 +30,6 @@ export const builds = Action.implement(
     return {
       finishBuild: ({ pipeline, status }) =>
         finished(store.finish(pipeline, status, [status])),
-      // `progress` never waits for the caller: the build runs at its own pace.
       startBuild: ({ pipeline }, { progress }) =>
         Effect.andThen(
           Effect.forEach(

@@ -13,7 +13,6 @@ interface Stored {
   readonly image: Image;
 }
 
-/** Images attached to issues, each in its issue's workspace, as `IssueStore` keeps issues. */
 export class AttachmentStore extends Context.Service<
   AttachmentStore,
   {
@@ -29,8 +28,6 @@ export class AttachmentStore extends Context.Service<
     ) => Effect.Effect<Stored, AttachmentNotFound>;
   }
 >()("tracker/AttachmentStore") {
-  // DEMO ONLY: memory. A service captures what it depends on when it is built, here the issue
-  // store, so its methods require nothing.
   static readonly layerMemory = Layer.effect(
     AttachmentStore,
     Effect.gen(function* () {

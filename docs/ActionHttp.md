@@ -15,10 +15,6 @@ import { Login, WhoAmI } from "./identity/Identity.js";
 import { Notes } from "./notes/Notes.js";
 import { GetStatus } from "./status/Status.js";
 
-// The HTTP binding: every action at `POST /api/<name>`, the protected ones requiring `Login`.
-// It is plain data and imports no server code, so the server, the CLI and a browser page all
-// import this one value, and each gets its routes or its typed methods from it. An action
-// added here is also a `notes` command: commands.ts derives one per action of this binding.
 export const Http = ActionHttp.make([GetStatus, ...Notes, WhoAmI], {
   prefix: "/api",
   authentication: Login,
@@ -45,30 +41,18 @@ import { authenticate } from "./identity/verifier.js";
 import { notes } from "./notes/handlers.js";
 import { status } from "./status/handlers.js";
 
-// Every domain's implementation, once. Each surface below takes the same list.
 const implementations = [status, notes, identity];
 
-// JSON routes at `/api/<action>`, the binding's; `getStatus` answers anyone.
 const api = ActionHttp.layer(Http, implementations);
 
-// The host's own routes sit beside the actions' on the same router.
 const health = HttpRouter.add("GET", "/healthz", HttpServerResponse.text("ok"));
 
-// Served to anyone, which is a choice: it tells a signed-out caller every action's name and
-// shape. To keep them, leave the route out, or provide `Authentication.protect(Login).layer`
-// to it.
 const openApi = HttpRouter.add(
   "GET",
   "/api/openapi.json",
   HttpServerResponse.jsonUnsafe(OpenApi.fromApi(Http.api))
 );
 
-// What the host serves: the JSON routes, the same actions as MCP tools at `/mcp`, and the host's
-// own routes. The MCP endpoint serves the public `getStatus` beside the protected tools, so a
-// signed-out 2026-07-28 client may list the tools and call `getStatus`; what else needs a token
-// is on `ActionMcp.LayerHttpOptions.authentication`. It still requires `NoteStore`: the
-// entrypoint chooses which one, and a test chooses its own. The entrypoint also chooses how the
-// MCP endpoint runs: one server for every request, or one per request.
 const serving = (requestScoped: boolean) =>
   Layer.mergeAll(
     api,
@@ -103,11 +87,8 @@ import { HttpRouter, HttpServerRequest } from "effect/http";
 import { NoteStore } from "./notes/store.js";
 import { routes } from "./routes.js";
 
-// Entrypoint: `node --import tsx examples/notes-service/src/server.ts`.
-// It chooses the store, reads the configuration and starts Node's HTTP server.
 const server = Layer.unwrap(
   Effect.gen(function* () {
-    // The loopback default serves this machine alone; HOST=0.0.0.0 lets others reach it.
     const host = yield* Config.String("HOST").pipe(
       Config.withDefault("127.0.0.1")
     );
@@ -116,12 +97,9 @@ const server = Layer.unwrap(
 
     return HttpRouter.serve(routes).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
-      // Request bodies have no size limit unless the host sets one. This covers every route that
-      // reads its body whole.
       Layer.provide(
         Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.mebibytes(1))
       ),
-      // DEMO ONLY: notes live in this process's memory; a deployment provides a store that lasts.
       Layer.provide(NoteStore.layerMemory)
     );
   })
@@ -161,9 +139,6 @@ import { FetchHttpClient } from "effect/http";
 
 import { Http } from "./Api.js";
 
-// Entrypoint: `node --import tsx examples/quickstart/src/client.ts`, with the server running.
-// One typed method per action of the binding.
-// DEMO ONLY: a deployed client reads its `baseUrl` from configuration (kitchen-sink/src/seed.ts).
 Effect.gen(function* () {
   const client = yield* ActionHttp.client(Http, {
     baseUrl: "http://127.0.0.1:3000",
@@ -194,9 +169,6 @@ import {
 import { DeployRequested, RequestDeploy } from "./deploys/Deploys.js";
 import { Login } from "./identity/Identity.js";
 
-// The HTTP binding: each action at `POST /api/<name>`, and each event at
-// `POST /api/events/<name>`, which answers a page of JSON, or, asked for `text/event-stream`,
-// holds a stream open. It imports no server code, so a client imports it with the contracts.
 export const Http = ActionHttp.make(
   [
     FinishBuild,

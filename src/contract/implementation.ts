@@ -27,8 +27,6 @@ import { reportedTo, streamReportedTo } from "./progress.js";
 import type { Reporting } from "./progress.js";
 import { elementOf } from "./stream.js";
 
-// Why: Random, not a counter: two installed copies of this module would each count from zero and
-// repeat each other's keys.
 export const uniqueKey = (): string => Math.random().toString(36).slice(2);
 
 /** Decoded values at the dispatch boundary every surface shares. */
@@ -62,12 +60,10 @@ export type ErasedHandler<R> = (
   reporting?: Reporting
 ) => Effect.Effect<ErasedValue, ErasedValue, R>;
 
-// Why: Only a handler the types were bypassed for answers otherwise than its contract says.
 const notAStream = new Error(
   "A handler answered otherwise than its action's success declares"
 );
 
-/** The stream of a call of an action answering one, from its `ErasedHandler`'s answer. */
 export const elementsOf = (
   answer: Effect.Effect<ErasedValue, ErasedValue, unknown>
 ): Stream.Stream<ErasedValue, ErasedValue, unknown> =>
@@ -75,16 +71,11 @@ export const elementsOf = (
     Effect.filterOrElse(answer, Stream.isStream, () => Effect.die(notAStream))
   );
 
-/** The answer of a handler of an action answering one value, a stream refused as a defect. */
 export const answered = (
   answer: ReturnType<WrittenHandler<unknown>>
 ): Effect.Effect<ErasedValue, ErasedValue, unknown> =>
   Stream.isStream(answer) ? Effect.die(notAStream) : answer;
 
-/**
- * `run` as a tool calls it, a tool answering one result: the elements of an action answering a
- * stream collected, in order, into one array once the stream ends.
- */
 export const answeringWhole = (
   action: Action.Any,
   run: ErasedHandler<unknown>
@@ -133,10 +124,6 @@ export const memoized = <S, E, R>(
   return { key, layer: Layer.effect(key, build) };
 };
 
-/**
- * The builders of an implementation of `contracts` as one layer: what its builder made, and its
- * authorizer where a contract is protected, as only those need one.
- */
 export const builderLayer = <S, E, R, SA, EA, RA>(
   contracts: ReadonlyArray<Pick<Action.Any, "caller">>,
   built: Pick<Memoized<S, E, R>, "layer">,
@@ -146,15 +133,11 @@ export const builderLayer = <S, E, R, SA, EA, RA>(
     ? Layer.merge(built.layer, authorizer.layer)
     : built.layer;
 
-/** What a surface throws for an implementation some other copy of this module made. */
 export const notMadeHere = (module: "Action" | "Event"): Error =>
   new Error(
     `Not an implementation made by this ${module}.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice`
   );
 
-// Why: A failure the action's errors reject, undeclared or breaking one of their checks, is the
-// call's defect on every surface, beside why they reject it and with its trace: logs and reports
-// then name it, where a surface encoding it named only the encoding's error.
 const asDefects = (
   reason: Cause.Fail<ErasedValue>,
   rejected: Cause.Cause<Schema.SchemaError>
@@ -255,8 +238,6 @@ const dispatch = (
       );
   }
 
-  // Why: Provided whatever it is, an in-process call's `undefined` included, so a call made in a
-  // handler is named by its own surface, not by the one its caller came through.
   return (input, sink) =>
     Effect.scoped(
       admitted(input).pipe(
@@ -381,7 +362,6 @@ export class Implementation<
     });
   }
 
-  /** `app`, if this copy of the module made it; another installed copy's cannot be read. */
   private static own<App extends AnyImplementation>(app: App): App {
     if (!(#handlers in app)) {
       throw notMadeHere("Action");
@@ -511,10 +491,6 @@ export type OptionalUnless<O, Given> = {} extends O
   ? [options?: Given]
   : [options: Given];
 
-/**
- * The action implementations among what a surface is given; `eventsOf` reads the event
- * implementations, by their tag.
- */
 export const toList = (served: Served): readonly AnyImplementation[] =>
   Arr.ensure(served).filter(
     (app): app is AnyImplementation =>
@@ -539,9 +515,6 @@ type Matches<
       : never
   : never;
 
-// Why: The tests before `Matches` only spare instantiations: an action is tested against the whole
-// list first, and one whose name the list lacks is never compared pairwise; `infer A` binds the
-// actions once.
 /**
  * The actions of `App` a surface given the actions `Listed` may serve, as `select` selects
  * them by identity: an action whose type either is assignable to, or is assigned by, one
@@ -592,7 +565,6 @@ export const notHeld = {
   },
 } as const;
 
-/** The actions' names, joined; one whose name another listed contract shares is marked `(another contract)`. */
 export const markingOthers = (
   actions: ReadonlyArray<Pick<Action.Any, "name">>,
   names: ReadonlySet<string>
@@ -618,11 +590,6 @@ export const assertHeld = <C extends Pick<Action.Any, "name">>(
   }
 };
 
-/**
- * The implementations among `apps` holding what `listed` lists, each sharing its builder to hold
- * those alone, or every one where it lists none: action and event implementations alike, by the
- * contracts each `holds` and how it `share`s them.
- */
 export const selectHeld = <App, C extends Pick<Action.Any, "name">>(
   apps: readonly App[],
   listed: readonly C[] | undefined,
@@ -677,9 +644,6 @@ export const servedBy = (
 
   const actions = served.flatMap((app) => app.actions);
 
-  // Why: Refused here, when the surface is called, not by the types: a type check leaves its key
-  // deferred in a helper generic in its implementations or its binding, such as one serving
-  // `[app, double]`, which then fails to compile.
   if (actions.length === 0 && listed === undefined && apps.length > 0) {
     const names = new Set(bound.map(({ name }) => name));
 
@@ -702,8 +666,6 @@ export type Protected<A extends Pick<Action.Any, "caller">> = A extends unknown
 
 type ServiceOf<K> = K extends Context.Key<infer I, unknown> ? I : never;
 
-// Why: A `caller` narrowed to `Anyone`, such as `Action.Any & { caller: typeof Anyone }`'s, is kept
-// by TypeScript as `typeof Anyone | (Key & typeof Anyone)`, and must require no identity.
 type AuthenticationOf<A extends Action.Any> = A["caller"] extends typeof Anyone
   ? never
   : ServiceOf<A["caller"]>;
@@ -758,7 +720,6 @@ export type BuildServices<
   ? RX | ([Protected<Serving<App, Listed>>] extends [never] ? never : RAX)
   : never;
 
-/** Provide `builders`, implementations' builder layers, to a surface's layer. */
 export const provideBuilders =
   (builders: ReadonlyArray<Layer.Layer<never, unknown, unknown>>) =>
   <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, unknown, unknown> => {
@@ -781,10 +742,6 @@ export const acquire = (
     (bound) => bound.flat()
   );
 
-/**
- * What `acquisition` reads, once `builders` are built into the layer graph around the caller, and
- * held by its scope.
- */
 export const builtWith = <A>(
   builders: ReadonlyArray<Layer.Layer<never, unknown, unknown>>,
   acquisition: Effect.Effect<A, never, unknown>
@@ -796,9 +753,6 @@ export const builtWith = <A>(
       return yield* acquisition;
     }
 
-    // Why: `Layer.build` forks the memo map of the layer graph around the caller, and what a fork
-    // builds first the surfaces of that graph build again. Built into the map itself, as
-    // `HttpRouter` builds a middleware's dependencies, each builder runs once.
     const current = yield* Effect.serviceOption(Layer.CurrentMemoMap);
     const memoMap = Option.getOrElse(current, Layer.makeMemoMapUnsafe);
     const scope = yield* Effect.scope;

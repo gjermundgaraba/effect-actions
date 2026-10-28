@@ -8,7 +8,6 @@ import { ListRooms, MessagePosted, Messages } from "./Chat.js";
 import { CurrentRoom } from "./room.js";
 import { MessageStore } from "./store.js";
 
-// A public action takes no `authorize`: nothing would run it.
 export const rooms = Action.implement(
   ListRooms,
   Effect.gen(function* () {
@@ -18,8 +17,6 @@ export const rooms = Action.implement(
   })
 );
 
-// The builder runs once, at startup: it is where a handler gets its startup services. The
-// caller and the room are read per call, inside each handler, because every message has its own.
 export const messages = Action.implement(
   Messages,
   Effect.gen(function* () {
@@ -33,8 +30,6 @@ export const messages = Action.implement(
 
           return { messages: yield* store.read(room, after) };
         }),
-      // The message is in the store, which `MessagePosted`'s check reads: notifying wakes the
-      // pages watching this room to read it now.
       postMessage: ({ text }) =>
         Effect.gen(function* () {
           const room = yield* CurrentRoom;

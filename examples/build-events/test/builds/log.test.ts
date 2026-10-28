@@ -39,7 +39,6 @@ describe("a build's log", () => {
       const rpc = yield* ActionRpc.client(Rpc);
       const { id } = yield* http.startBuild({ pipeline: "api" });
 
-      // Each call returns a `Stream`: a line is read as the server sends it.
       const lines = [
         yield* Stream.runCollect(http.tailLog({ buildId: id })),
         yield* Stream.runCollect(rpc.tailLog({ buildId: id })).pipe(

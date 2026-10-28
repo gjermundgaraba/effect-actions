@@ -13,8 +13,7 @@ import { makeRecent } from "../contract/recent.js";
 import type { Recent } from "../contract/recent.js";
 import { constantTimeEqual, signature } from "./signing.js";
 
-/** How old a delivery's `webhook-timestamp` may be, or how far ahead, before it is refused. */
-const tolerance = 5 * 60;
+const timestampToleranceSeconds = 5 * 60;
 
 const dedupeWindow = 1000;
 
@@ -28,18 +27,10 @@ interface Place {
   readonly seen: Recent;
 }
 
-// Why: A POST naming no watch here is for one that ended, or one of a process that restarted,
-// whose secret is gone: a 410 is the one failure the server does not retry, and SEP-3415 has it
-// abandon that delivery alone, so such a subscription lapses at its grant.
 const gone = HttpServerResponse.empty({ status: 410 });
 
 const unauthorized = HttpServerResponse.empty({ status: 401 });
 
-/**
- * The receiver of one `Webhook.layerReceiver` at `path`: `receiving`, where each watch keeps its
- * place under an id and a secret of its own, and `handler`, which verifies a POST against the
- * secret of the watch its URL names and hands its body to that watch.
- */
 export const makeReceiver = (path: `/${string}`) =>
   Effect.sync(() => {
     const places = new Map<string, Place>();
@@ -87,7 +78,7 @@ export const makeReceiver = (path: `/${string}`) =>
       if (
         id === undefined ||
         !Number.isInteger(timestamp) ||
-        Math.abs(now - timestamp) > tolerance
+        Math.abs(now - timestamp) > timestampToleranceSeconds
       ) {
         return unauthorized;
       }

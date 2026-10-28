@@ -12,8 +12,6 @@ const day = 24 * 60 * 60 * 1000;
 
 let objects = 0;
 
-// The adapter against a room's real SQLite database, inside a fresh object of its own: what it
-// reaches is the Workers runtime, so the runtime is its stand-in.
 const inObject = <A, E>(
   use: (
     store: MessageStore["Service"],
@@ -39,9 +37,6 @@ const inObject = <A, E>(
     );
   });
 
-// A clock a millisecond later at each read, which never yields: posts running at once read
-// times of their own, where at one shared time the oldest message and the latest would set the
-// same alarm. Effect's TestClock moves on through a semaphore, which lets each post finish first.
 const tickingFrom = (start: number): Clock.Clock => {
   let now = start;
   const tick = () => (now += 1);

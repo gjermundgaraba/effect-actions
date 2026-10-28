@@ -367,10 +367,6 @@ const apiOf = (
     .add(first === undefined ? empty : empty.add(first, ...rest));
 };
 
-// Why: Every route is a POST, a `readOnly` action's included. A GET carries its input in the query
-// string, where `HttpApi` takes only fields that encode to strings or arrays of strings, so a
-// nested input or a number has no faithful form; and the caching a GET would buy only a public
-// `readOnly` action gives up, as a protected route's answers are `no-store`.
 const successOf = (action: Action.Any, errors: Action.Errors) => {
   const element = elementOf(action.success);
 
@@ -409,7 +405,6 @@ const answerOf = (action: Action.Any, run: ErasedHandler<unknown>) => {
     : answeringWithProgress(action.success, run);
 };
 
-/** A route a binding declares, of an action or an event type: a POST taking its body alone. */
 type Route = HttpApiEndpoint.HttpApiEndpoint<
   string,
   "POST",
@@ -435,10 +430,6 @@ const withinLayerMiddleware = (
   return within;
 };
 
-// Why: Two forms, actions alone or with options, not one whose options are a conditional rest
-// parameter, as `OptionalUnless` gives: through one, TypeScript infers no `const` tuple of `error`,
-// which `Certain` needs. The first takes public actions by its constraint, which a helper generic
-// in them meets.
 /**
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`, a
  * `readOnly` one too, and event types, each at `POST <prefix>/events/<name>`. Every endpoint
@@ -457,7 +448,8 @@ export function make<
     (Action.Any | Event.Any) & { readonly caller: typeof Anyone }
   >,
 >(
-  contracts: Contracts
+  contracts: Contracts,
+  options?: Pick<Options, "prefix">
 ): Binding<
   Only<Contracts, Action.Any>,
   [],
@@ -479,9 +471,6 @@ export function make<
   DescriptorOf<O>,
   Only<Contracts, Event.Any>
 >;
-// Why: Reached only when the forms above fail. TypeScript reports a call matching no overload by
-// the last one's error, so this one tells protected actions without options to name their
-// authentication, where the first form's constraint would tell them to be public.
 export function make<
   const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
 >(
@@ -535,10 +524,6 @@ export function make(
   return { actions, events, ...bound, prefix: absolutePath(mount), api };
 }
 
-// Why: `HttpApiBuilder.group` lays the context it is built in over each request's, so a startup
-// value would win over a request's own under one tag. Built in an empty context it lays nothing.
-// That relies on `group` reading nothing else there: a service it starts to read fails the build,
-// but a reference silently takes its default.
 const buildInEmptyContext = <A, E>(
   group: Layer.Layer<A, E>
 ): Layer.Layer<A, E> =>
@@ -549,9 +534,6 @@ const buildInEmptyContext = <A, E>(
     )
   );
 
-// Why: Puts the startup context `buildInEmptyContext` withholds beneath each request's, not over
-// it. It wraps the whole route rather than the handler, so `HttpApi`'s own error reporting runs
-// once, in the merged context.
 const startupBeneathRequest = () =>
   HttpRouter.middleware(
     Effect.map(Effect.context<unknown>(), (built) => {
@@ -564,10 +546,6 @@ const startupBeneathRequest = () =>
     })
   ).layer;
 
-// Why: A middleware of its own, just inside authentication, answers a step-up refusal. Effect's
-// security middleware sees a route's failure only wrapped in a private type, and a refusal recorded
-// in the handler, as MCP records it, would override a layer middleware that recovers from it or
-// replaces it.
 class StepUp extends HttpApiMiddleware.Service<StepUp>()(
   "effect-actions/ActionHttp/StepUp"
 ) {}
@@ -576,8 +554,6 @@ class JsonContentType extends HttpApiMiddleware.Service<JsonContentType>()(
   "effect-actions/ActionHttp/JsonContentType"
 ) {}
 
-// Why: Effect reads a body with no `Content-Type` as JSON, which a page on another site can send
-// without a CORS preflight; a wrong type Effect refuses itself.
 const jsonContentType = () =>
   Layer.succeed(JsonContentType, (route) =>
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
@@ -673,8 +649,6 @@ export function layer(
       : within.middleware(StepUp).middleware(authentication["~middleware"]);
   };
 
-  // Why: Without the verifier's errors, which `make` declares: the security middleware answers
-  // them itself, so a served route never fails with one.
   const api = apiOf(name, [
     ...actions.map((action) =>
       routed(
@@ -781,7 +755,7 @@ export function layer(
 
       return HttpApiBuilder.group(api, name, (builder) =>
         builder.handleAll(
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Dynamic endpoint registration boundary: the native router selects the endpoint, and so the action, before its handler runs; `layer`'s signature restores every channel.
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion
           byName as never
         )
       ).pipe(
@@ -832,7 +806,7 @@ export function client(
   binding: AnyHttp,
   options?: ClientOptions | ClientOptions<unknown, unknown>
 ): Effect.Effect<unknown, never, HttpClient.HttpClient> {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased implementation: the native client is invariant in what it fails with and requires, so no one type holds both overloads' options; each overload states the channels its own options give.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return methods(binding, options as ClientOptions<unknown, unknown>);
 }
 
@@ -857,7 +831,7 @@ export function fetchClient(
     ...options
   }: FetchClientOptions | FetchClientOptions<unknown, unknown> = {}
 ): object {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased implementation: as `client`'s, each overload states the channels its own options give. Building runs no request, so it needs only the `HttpClient` provided here; what a transform requires, each call requires.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return methods(binding, options as ClientOptions<unknown>).pipe(
     Effect.provide(FetchHttpClient.layer),
     Effect.provideService(

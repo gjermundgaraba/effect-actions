@@ -14,7 +14,6 @@ export const Task = Schema.Struct({
 
 export type Task = typeof Task.Type;
 
-// A declared error is part of the contract.
 export class TaskNotFound extends Schema.TaggedError<
   TaskNotFound,
   { readonly brand: unique symbol }
@@ -22,7 +21,6 @@ export class TaskNotFound extends Schema.TaggedError<
   id: Schema.String,
 }) {}
 
-// A field's description is what a model reads beside the tool, and the flag's help text.
 const Id = Schema.String.annotate({
   description: "The id listed beside the task.",
 });

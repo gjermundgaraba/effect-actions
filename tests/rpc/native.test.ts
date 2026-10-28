@@ -290,7 +290,7 @@ describe("ActionRpc native rpcs", () => {
         const exit = yield* Effect.exit(
           whoseOver(
             Protected,
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: The failure under test: a binding modified past its types, as plain JavaScript could.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion
             ActionRpc.layer(added as typeof Protected, [
               status,
               userActions,

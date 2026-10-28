@@ -9,7 +9,6 @@ import { CreateNote, GetNote } from "../src/notes/Notes.js";
 import { GetStatus } from "../src/status/Status.js";
 import worker from "../src/worker.js";
 
-// What a host calling the worker's `fetch` gets: the module's own handler, answering in memory.
 const served = Testing.layer(worker.fetch);
 
 const as = (token: string) => ({

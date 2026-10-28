@@ -7,10 +7,6 @@ import { Issues } from "./Issues.js";
 import { IssueStore } from "./store.js";
 import { writeLimit } from "./write-limit.js";
 
-// Several actions sharing one builder. It runs once, at startup, however many surfaces serve
-// these actions, and yields the startup services: the store, and the write limit built on the
-// limiter. `CurrentMember` is a per-request service: each handler reads it per call, so one
-// build serves every caller. No handler checks a scope: `authorize` has run before it.
 export const issues = Action.implement(
   Issues,
   Effect.gen(function* () {
@@ -35,7 +31,6 @@ export const issues = Action.implement(
         Effect.flatMap(CurrentMember, (member) =>
           store.get(member.workspace, id)
         ),
-      // One function wraps every limited handler, and gives it the member it counted.
       createIssue: (draft) =>
         limited((member) => store.create(member.workspace, draft)),
       commentOnIssue: ({ id, text }) =>

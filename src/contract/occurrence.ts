@@ -46,7 +46,6 @@ export type OccurrenceSchema<E extends Event.Any> = Schema.TaggedStruct<
   ReturnType<typeof fieldsOf<Schema.Literal<E["name"]>, E["payload"]>>
 >;
 
-/** An occurrence of `event`, as a subscriber decodes it. */
 export const OccurrenceOf = <E extends Event.Any>(
   event: E
 ): OccurrenceSchema<E> =>
@@ -55,18 +54,14 @@ export const OccurrenceOf = <E extends Event.Any>(
     fieldsOf(Schema.Literal(event.name), event.payload)
   );
 
-/** Any occurrence, its data erased, as a feed makes it. */
 export const AnyOccurrence = Schema.TaggedStruct(
   "Occurrence",
   fieldsOf(Schema.String, Schema.Unknown)
 );
 
-/** What a subscriber of `event` decodes: an occurrence, or a gap. */
 export const ReceivedOf = <E extends Event.Any>(event: E) =>
   Schema.Union([OccurrenceOf(event), Gap]);
 
-// Why: Its timestamp and data are each given their JSON codec, the other fields being JSON already,
-// so what it encodes to is typed as the wire's object rather than as any JSON.
 const untaggedOf = (event: Event.Any) =>
   OccurrenceOf(event).mapFields((fields) => ({
     ...Struct.omit(fields, ["_tag"]),
@@ -74,10 +69,6 @@ const untaggedOf = (event: Event.Any) =>
     data: Schema.toCodecJson(event.payload),
   }));
 
-/**
- * How a subscriber of `event` decodes an occurrence sent as JSON without its tag, as MCP's
- * notifications and a webhook's body carry one.
- */
 export const untaggedOccurrenceOf = (event: Event.Any) => {
   const occurrence = OccurrenceOf(event);
   const decode = Schema.decodeUnknownEffect(untaggedOf(event));
@@ -86,9 +77,6 @@ export const untaggedOccurrenceOf = (event: Event.Any) => {
     Effect.map(decode(wire), (fields) => occurrence.make(fields));
 };
 
-// Why: A feed checks each occurrence's data encodes before it is delivered, so a failure to encode
-// here is a defect.
-/** How a surface encodes an occurrence of `event` as JSON without its tag, its counterpart. */
 export const encodeUntaggedOf = (event: Event.Any) => {
   const encode = Schema.encodeEffect(untaggedOf(event));
 

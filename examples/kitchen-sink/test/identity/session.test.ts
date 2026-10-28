@@ -15,8 +15,6 @@ import { Rpc } from "../../src/Rpc.js";
 import { WorkspaceRegistry } from "../../src/workspaces/registry.js";
 import { services } from "../support/services.js";
 
-// The web app's rpcs in memory. The server serves them over a WebSocket; here the same layer
-// is given Effect's HTTP protocol, which a client reaches through `Testing.layer`.
 const server = rpc.pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
   Layer.provide(RpcSerialization.layerJson)
@@ -28,19 +26,13 @@ const protocol = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
 
 const socket = protocol.pipe(Layer.provide(Testing.layer(server)));
 
-// `provideMerge`: the test reads the registry the rpcs' verifier reads.
 const served = socket.pipe(Layer.provideMerge(memory));
 
-// The rpcs beside the public port's routes under one `Testing.layer`, as server.ts serves them
-// under one router, there over a WebSocket. `provideMerge`: the test calls the JSON routes
-// with the `HttpClient` the rpc client's protocol is given.
 const servedWithHttp = protocol.pipe(
   Layer.provideMerge(Testing.layer(Layer.merge(server, publicRoutes))),
   Layer.provide(services())
 );
 
-// Each call carries its caller's session cookie, as a browser attaches it, so one client
-// serves several callers. Authentication is per message.
 const as = (session: string) =>
   RpcClient.withHeaders({ cookie: `tracker_session=${session}` });
 
@@ -116,8 +108,6 @@ describe("a session cookie, over RPC", () => {
           ),
         });
 
-        // Sixty requests as ada in acme, half on each surface: each middleware counts, and the
-        // next request is refused on either.
         yield* Effect.forEach(Array.range(1, 30), () => http.whoAmI());
         yield* Effect.forEach(Array.range(1, 30), () =>
           rpcs.whoAmI().pipe(as("ada-at-acme"))

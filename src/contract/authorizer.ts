@@ -4,17 +4,9 @@ import type { Refusal } from "./errors.js";
 import { memoized } from "./implementation.js";
 import type { ErasedAuthorize } from "./implementation.js";
 
-// Why: An index TypeScript cannot read until `T` is known, so an implementation written inside a
-// surface's arguments infers nothing from what that surface accepts. Rejected: `NoInfer<T>`, which
-// stays in a layer's requirements, where providing a union's members in two `Layer.provide` calls
-// leaves it owed; this reads as `T` itself once inferred.
 /** `T`, read only once it is inferred: an implementation's build channels. */
 export type Deferred<T> = [T][T extends unknown ? 0 : never];
 
-// Why: The rule written out, not `Authorize`, since TypeScript would infer `RA` from only one
-// branch of a conditional authorizer whose other branch is typed `Authorize`, such as
-// `enabled ? authorize : Action.allowAll`, and an alias whose `RA` is not yet inferred gives a
-// rule written inside a builder nothing to infer from.
 /** What `implement` takes as `authorize` for contracts `C`: the rule, or an Effect building it. */
 export type Authorizer<C, RA, EAX, RAX> =
   | ((contract: C) => Effect.Effect<void, Refusal, RA>)
@@ -31,11 +23,6 @@ export interface Holding {
   readonly module: "Action" | "Event";
 }
 
-/**
- * The memoized authorizer of an implementation: the `authorize` given where it holds a protected
- * contract, which then requires one, and a rule allowing every call where it holds none, which
- * then takes none.
- */
 export const authorizerOf = <C>(
   holding: Holding,
   holdsProtected: boolean,

@@ -22,15 +22,8 @@ import { ImportNotes, Note, NoteNotFound } from "../src/notes/Notes.js";
 import { NoteStore } from "../src/notes/store.js";
 import { routes } from "../src/routes.js";
 
-// What the commands add to the routes: their syntax and what they print. They call the real
-// routes in memory, as a client with a token does, where cli.ts connects them to a server. A
-// service a builder yields is provided here too (routes.test.ts).
 const served = Testing.layer(routes).pipe(Layer.provide(NoteStore.layerMemory));
 
-// Effect's own runner, given arguments instead of the process's, and what the commands read from
-// the environment as a Layer, so the test decides whether a token is configured, whatever the
-// shell holds. The console of `it.effect` keeps every line printed, so a run returns the lines
-// it added.
 const connected = (
   environment: Record<string, string>,
   args: readonly string[],
@@ -53,14 +46,12 @@ const connected = (
     return (yield* TestConsole.logLines).slice(before);
   });
 
-// A run as the caller `token` names.
 const run = (token: string, args: readonly string[], stdin = "") =>
   connected({ NOTES_TOKEN: token }, args, stdin);
 
 const fitsAFile = (text: string) =>
   new TextDecoder().decode(new TextEncoder().encode(text)) === text;
 
-// Lines a random string almost never holds, each one the format has to keep apart from a title.
 const trickyLines = Arbitrary.array(
   Arbitrary.schema(
     Schema.Literals([
@@ -103,7 +94,6 @@ describe("the commands", () => {
     "take an argument, a flag and stdin, and print what `render` returns",
     () =>
       Effect.gen(function* () {
-        // A command without `render` prints its result as JSON.
         const [created] = yield* run(
           "ada",
           ["create-note", "--title", "Plan"],
@@ -134,7 +124,6 @@ describe("the commands", () => {
     "describe a flag in `--help` as the contract describes its field",
     () =>
       Effect.gen(function* () {
-        // Help is one printed text. The description is the `revision` field's, from Notes.ts.
         expect(yield* run("ada", ["update-note", "--help"])).toStrictEqual([
           expect.stringContaining("The revision you read: 1 for a new note"),
         ]);
@@ -146,7 +135,6 @@ describe("the commands", () => {
       yield* run("ada", ["create-note", "--title", "Plan"], "First draft\n");
       yield* run("ada", ["create-note", "--title", "Budget"], "Too small\n");
 
-      // The command writes with the real file system, so the test gives it a real directory.
       const files = yield* FileSystem.FileSystem;
       const file = `${yield* files.makeTempDirectoryScoped()}/notes.md`;
 
@@ -202,7 +190,6 @@ describe("the commands", () => {
 
       expect(notes.map(({ title }) => title)).toStrictEqual(["Plan", "Budget"]);
 
-      // A missing file is a usage error: the command's help, and the file named on stderr.
       yield* Effect.flip(run("ada", ["import", `${directory}/nowhere.md`]));
 
       expect(yield* TestConsole.errorLines).toContainEqual(
@@ -213,9 +200,6 @@ describe("the commands", () => {
     }).pipe(Effect.provide(Layer.merge(served, NodeServices.layer)))
   );
 
-  // Any notes the contract accepts, generated from its schema, with lines that start as a title
-  // would added to their bodies. A file holds Unicode text, so a string JSON carries but no file
-  // can, one with a lone surrogate, is left out.
   it.effect.prop(
     "import every note `export` wrote as it was, whatever its body holds",
     [importable],
@@ -301,12 +285,10 @@ describe("the commands", () => {
         "userMessage",
         '{"_tag":"Unauthenticated","message":"Unknown demo token."}'
       );
-      // The command's own context is a line of its own on stderr, the JSON left as it is.
       expect(yield* TestConsole.errorLines).toContain(
         "The export to notes.md did not finish."
       );
 
-      // Not an action's error: the file system's, named in the message.
       const unwritable = yield* Effect.flip(
         run("ada", ["export", "no-such-directory/notes.md"])
       );
@@ -342,12 +324,10 @@ describe("the commands", () => {
           "MissingToken: NOTES_TOKEN is not set. Set it to your token: export NOTES_TOKEN=<your token>"
         );
 
-        // What a person sees: that message, once, on stderr, and no report of a `ConfigError`.
         expect(yield* TestConsole.errorLines).toStrictEqual([
           expect.stringContaining("NOTES_TOKEN is not set."),
         ]);
 
-        // The token is read when a command runs, so help needs none.
         yield* connected({}, ["list-notes", "--help"]);
 
         expect(yield* TestConsole.logLines).toHaveLength(2);

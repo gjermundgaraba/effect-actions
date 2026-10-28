@@ -5,16 +5,12 @@ import { CurrentCaller } from "./Identity.js";
 import { Permissions } from "./permissions.js";
 import type { Permission } from "./permissions.js";
 
-// The one rule, for a model's tool call and for a command alike. The permission store is a
-// startup service, so this Effect gets it; the caller differs per call, so the function it
-// returns reads it.
 export const authorize = Effect.gen(function* () {
   const permissions = yield* Permissions;
 
   return Effect.fn("authorize")(function* (action: Action.Any) {
     const caller = yield* CurrentCaller;
 
-    // The operator is trusted, and has no entry in the store. Only a host can name one.
     if (caller.kind === "operator") {
       return;
     }

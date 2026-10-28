@@ -6,7 +6,6 @@ import {
   SchemaTransformation,
 } from "effect";
 
-/** A webhook's callback: an https URL, which each delivery is POSTed to, decoded as a `URL`. */
 export const CallbackUrl = Schema.String.annotate({
   description: "The https URL each delivery is POSTed to.",
 }).pipe(

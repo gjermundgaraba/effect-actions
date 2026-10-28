@@ -230,12 +230,6 @@ export type LayerIdentity<App, A extends Action.Any, E extends Event.Any> = [
   ? Identity<Protected<Serving<App, A>> | Protected<ServingEvents<App, E>>>
   : never;
 
-// Why: The caller named among a server's startup requirements reads `Type 'CurrentUser' is not
-// assignable to type 'never'` where the server is launched, which says nothing of the builder that
-// yields it. Refusing the implementation where the surface takes it was tried, and it refused every
-// helper generic in its implementations, whose builders' services are not yet known. The sentence
-// is a property's name, not a string: an error then ends by naming it wherever the routes are
-// run, where a string's ended `Type 'string' is not assignable to type 'Scope'` in a test.
 /**
  * What a server of the actions `A` of the implementations `App` reads at startup, as
  * `BuildServices` states it, with the caller a builder yields named as the mistake it is: a server
@@ -280,9 +274,6 @@ export type ServedProvider<
   ? never
   : ProviderOf<D>;
 
-// Why: Identity, not equality. Two descriptors of one name share the provider's service, so nothing
-// else tells them apart. Rejected: comparing the schemes, which takes per-kind rules following
-// Effect's decoders and still lets the errors differ.
 export const providerOf = <I, Name extends string>(
   auth: Descriptor<I, unknown, Security, Name, Action.Errors>
 ): Effect.Effect<Runtime, never, Provider<I, Name>> =>

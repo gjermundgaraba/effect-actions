@@ -61,8 +61,6 @@ const reconnectDelay = Duration.seconds(1);
 
 const maxReconnectDelay = Duration.seconds(30);
 
-// Why: `Stream.retry` starts its schedule again at the first element after a failure, so the
-// backoff counts only the failures since the stream last delivered.
 const afterFailures = <E>(transient: (error: E) => boolean) =>
   Schedule.min([
     Schedule.exponential(reconnectDelay),
@@ -83,7 +81,6 @@ const isSubscriptionError: Predicate.Refinement<
   Event.SubscriptionError
 > = Schema.is(Event.SubscriptionError);
 
-/** Whether a watch's failure says the server serves its event by poll alone, refusing to push it. */
 const pushRefused = Predicate.compose(
   isSubscriptionError,
   ({ reason }) =>
@@ -92,25 +89,12 @@ const pushRefused = Predicate.compose(
     reason.value === "push"
 );
 
-// Why: Duplicates arrive within a reconnect or a replay of the last page, so the ids of the last
-// thousand occurrences are enough, and a long watch holds no more.
 const dedupeWindow = 1000;
 
-// Why: A watch holds what its receiver accepted until its consumer reads it, so a consumer
-// behind by this many has the next POST answered 503, which the server retries, rather than
-// the watch holding more.
 const capacity = 16;
 
-// Why: Unsubscribing is cleanup the server's expiry does anyway, so a server that does not
-// answer delays a watch's end by this much at most.
 const unsubscribeTimeout = Duration.seconds(5);
 
-/**
- * One webhook subscription from `cursor`, read from `received`, where its receiver puts each
- * body: each grant, the subscribe's and each refresh's when half of it is left, is put there too,
- * behind what was accepted before it, so its position is kept in order; a refresh's failure is
- * put there as well, and ends the run where it is read.
- */
 const delivered = <E, R>(
   webhook: WebhookTransport<E, R>,
   request: Omit<WebhookRequest, "cursor">,
@@ -176,11 +160,6 @@ const delivered = <E, R>(
   );
 };
 
-/**
- * The occurrences and gaps of one subscription, as every client's `watch` answers them. Each run
- * starts from `options`: what one run saw, the cursor and the ids it deduplicates by, ends with
- * it, and only `resume` carries a cursor to the next.
- */
 export const watching = <E, R, SE = never>(
   transport: Transport<E, R>,
   { cursor: given, mode, resume }: Event.WatchOptions<SE> = {}
@@ -189,11 +168,6 @@ export const watching = <E, R, SE = never>(
   E | SE | Event.SubscriptionError | Schema.SchemaError,
   R
 > => {
-  // Why: A subscription that ends or drops for a reason `transient` admits reopens from the last
-  // position it reached, as long as the watch is read: a second after it ends, and after a
-  // failure later each time, doubling to 30 seconds, until something arrives again. Each
-  // reconnect is logged, and the watch's error channel keeps the failures it cannot outlast.
-  // One that refuses to push, where `polled` is given, polls instead from that position.
   const reconnecting = (
     open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
     cursor: string | null,
@@ -228,9 +202,6 @@ export const watching = <E, R, SE = never>(
   const polled = (cursor: string | null) =>
     reconnecting((at) => paged(transport.poll, at), cursor);
 
-  // Why: A watch keeps one place at the receiver, and one subscription, for as long as it runs:
-  // a reconnect refreshes it, and what the receiver accepted waits for the watch through it.
-  // Its callback is checked before it takes a place, so one the server would refuse fails here.
   const webhooked = (
     { baseUrl, ttl }: Event.WebhookDelivery,
     cursor: string | null
@@ -291,7 +262,7 @@ export const watching = <E, R, SE = never>(
 
   return Stream.suspend(() => {
     const seen = makeRecent(dedupeWindow);
-    let pending: string | null = null;
+    let keptOnNextPull: string | null = null;
 
     const keep = (cursor: string | null): Effect.Effect<void, SE> =>
       cursor === null || resume === undefined
@@ -308,14 +279,11 @@ export const watching = <E, R, SE = never>(
       return true;
     };
 
-    // Why: A position is kept once what came before it is handled: an occurrence's when the next
-    // element is pulled, which a consumer does after handling it, and a page's end as it is read,
-    // after its occurrences. A consumer stopped mid-way then receives the unhandled one again.
     const handled = Effect.fnUntraced(function* (
       fed: Fed
     ): Effect.fn.Return<ReadonlyArray<Event.Received<Event.Any>>, SE> {
-      yield* keep(pending);
-      pending = null;
+      yield* keep(keptOnNextPull);
+      keptOnNextPull = null;
 
       if (Predicate.isTagged(fed, "Checked")) {
         yield* keep(fed.cursor);
@@ -327,7 +295,7 @@ export const watching = <E, R, SE = never>(
         return [fed];
       }
 
-      pending = fed.cursor;
+      keptOnNextPull = fed.cursor;
 
       return fresh(fed.eventId) ? [fed] : [];
     });
@@ -356,12 +324,11 @@ export const watching = <E, R, SE = never>(
     ).pipe(
       Stream.rechunk(1),
       Stream.mapEffect(handled),
-      // Why: A failure is pulled as the next element is, after the consumer handled the last.
       Stream.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Stream.failCause(cause)
           : Stream.concat(
-              Stream.fromEffectDrain(keep(pending)),
+              Stream.fromEffectDrain(keep(keptOnNextPull)),
               Stream.failCause(cause)
             )
       ),

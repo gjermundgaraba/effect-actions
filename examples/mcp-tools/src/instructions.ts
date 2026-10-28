@@ -1,7 +1,3 @@
-// What the server tells a client of itself, on either transport: `server.ts` and `stdio.ts`
-// both give it. `instructions` are for the model, as the tools' descriptions are: what the
-// tools are for together, and what to be careful with. A client shows them to the model once,
-// when it connects.
 export const serverInfo = {
   name: "print-farm",
   version: "1.0.0",

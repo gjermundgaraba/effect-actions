@@ -25,22 +25,16 @@ import {
 import { State } from "./state.js";
 import { makeSubscriptions } from "./subscriptions.js";
 
-/** What a protocol does with the events of the sockets carrying its tag. */
 interface Receiver {
-  /** Hands a message to the protocol. */
   readonly message: (
     socket: WebSocket,
     data: string | ArrayBuffer
   ) => Effect.Effect<void>;
-  /** Tells the protocol the socket closed or failed. */
   readonly close: (socket: WebSocket) => Effect.Effect<void>;
 }
 
-// Why: without the runtime's `web_socket_auto_reply_to_close`, before the `compatibility_date`
-// `2026-04-07`, nothing answers a client's close frame, and every page closing a socket sees a
-// 1006. Replying here, as Cloudflare's hibernation example does in `webSocketClose`, completes
-// the handshake under any date, for a protocol's socket and one the object accepted itself
-// alike, and a socket the runtime or the class already answered is left as it is.
+const restartCloseCode = 1012;
+
 const replyToClose = (socket: WebSocket, code: number, reason: string) =>
   Effect.sync(() => {
     if (code >= 1000 && code !== 1005 && code !== 1006 && code !== 1015) {
@@ -91,7 +85,6 @@ export class Sockets extends Context.Service<
     readonly allocate: Effect.Effect<number>;
   }
 >()("effect-actions-cloudflare/ActionDurableObject/Sockets") {
-  /** One dispatcher, with no protocol registered, for the instance whose `State` it is given. */
   static readonly layer: Layer.Layer<Sockets, never, State> = Layer.effect(
     Sockets
   )(
@@ -152,9 +145,6 @@ export class Sockets extends Context.Service<
   );
 }
 
-// Why: `pending` holds the ids of the calls the socket sent that are not answered yet, in the
-// attachment, which survives hibernation as storage does and costs no write, so an instance
-// finds the calls the one before it was answering when it was evicted.
 const Attachment = Schema.Struct({
   headers: Schema.Array(
     Schema.mutable(Schema.Tuple([Schema.String, Schema.String]))
@@ -164,14 +154,12 @@ const Attachment = Schema.Struct({
 
 const decodeAttachment = Schema.decodeUnknownExit(Schema.NullishOr(Attachment));
 
-/** The socket's attachment, failing when it does not decode, or `undefined` with none. */
 const attachmentOf = (socket: WebSocket) =>
   Exit.map(
     decodeAttachment(socket.deserializeAttachment()),
     (held) => held ?? undefined
   );
 
-/** The socket's attachment, or `undefined` with none or one that does not decode. */
 const heldOf = (socket: WebSocket) =>
   Exit.match(attachmentOf(socket), {
     onFailure: Function.constUndefined,
@@ -180,10 +168,7 @@ const heldOf = (socket: WebSocket) =>
 
 const pendingOf = (socket: WebSocket) => heldOf(socket)?.pending ?? [];
 
-// Why: answers whether the attachment holds the update, which it cannot past the runtime's 16
-// KiB: a call whose id it cannot hold is refused, as an eviction would leave it unanswered on a
-// socket kept open. One with no attachment to hold it, as on celld, is not tracked.
-const tracked = (
+const heldInAttachment = (
   socket: WebSocket,
   update: (
     pending: ReadonlyArray<string | number>
@@ -211,7 +196,6 @@ const tracked = (
   }
 };
 
-// Why: an exit answers its call, and a defect every call of its client, which fails them all.
 const settledBy = (response: RpcMessage.FromServerEncoded) =>
   Match.value(response).pipe(
     Match.tag(
@@ -234,9 +218,6 @@ const encodeDefect = Schema.encodeSync(
   RpcSerialization.json.codecFor(Schema.Defect())
 );
 
-// Why: `HttpServerResponse.raw` takes its status from its options, not from the web `Response`
-// it carries, and the request logger and the server's span read that status: without it, every
-// upgrade is logged and traced as 200.
 const upgraded = (client: WebSocket) =>
   HttpServerResponse.raw(
     new Response(null, { status: 101, webSocket: client }),
@@ -247,20 +228,10 @@ const closeReasonBytes = 123;
 
 const bytesOf = (text: string) => new TextEncoder().encode(text).byteLength;
 
-// Why: a refusal's code is one of the private-use codes, 4000 to 4999, as the WHATWG WebSocket
-// standard's `close()` takes them: the core's `watch` ends at a close with one of those, the
-// server's on purpose, and connects again after any other, as after a drop, each upgrade waking
-// the object. RFC 6455 §7.4.2 reserves 1000 to 2999 for the protocol and 3000 to 3999 for
-// registered uses. The rule is checked here rather than on a socket pair made at build: an
-// accepted end whose close goes unanswered keeps that build's request in flight, and an eviction
-// waits for in-flight requests to drain.
 const acceptedCode = (code: number) =>
   Number.isInteger(code) && code >= 4000 && code <= 4999;
 
-// Why: the runtime throws at `close` for a code or a reason it does not take, so a refusal judged
-// only as a page of another version arrives, after a deploy, would fail that upgrade, which the
-// page sees as a drop and its client connects again after for good: the loop the refusal ends.
-const refusalOf = (protocol: LayerWebSocketOptions["protocol"]) =>
+const validatedRefusal = (protocol: LayerWebSocketOptions["protocol"]) =>
   Effect.gen(function* () {
     if (protocol === undefined) {
       return;
@@ -326,11 +297,6 @@ export const refuseUpgrade = (
     return Effect.succeed(upgraded(client));
   });
 
-/**
- * A hibernating `RpcServer.Protocol` over the object's WebSockets, speaking JSON, and its
- * upgrade route at `path`. Each socket carries two tags, its group's and its own id's, and keeps
- * its upgrade request's headers in its attachment, so both survive hibernation.
- */
 const makeProtocol = (
   state: DurableObjectState,
   sockets: Sockets["Service"],
@@ -342,12 +308,10 @@ const makeProtocol = (
 
     const group = groupTag(path);
 
-    const refusal = yield* refusalOf(version);
+    const refusal = yield* validatedRefusal(version);
 
     const idOf = (socket: WebSocket) => socketIdOf(state.getTags(socket));
 
-    // Why: Effect's socket client pings every five seconds. Answered by the runtime, a ping never
-    // wakes a hibernating object, which would otherwise stay billed for as long as a page is open.
     state.setWebSocketAutoResponse(
       new WebSocketRequestResponsePair(
         String(parser.encode(RpcMessage.constPing)),
@@ -358,8 +322,6 @@ const makeProtocol = (
     const disconnects = yield* Queue.make<number>();
     const subscriptions = makeSubscriptions(state, path);
 
-    // Why: every frame the object sends, a defect it answers a message with included, settles the
-    // calls it answers, so a socket keeps no call pending that its client has already failed.
     const send = (clientId: number, response: RpcMessage.FromServerEncoded) =>
       sendFrame(state, clientId, response).pipe(
         Effect.andThen(
@@ -371,7 +333,7 @@ const makeProtocol = (
             }
 
             for (const socket of state.getWebSockets(socketTag(clientId))) {
-              tracked(socket, settled);
+              heldInAttachment(socket, settled);
             }
           })
         ),
@@ -383,20 +345,11 @@ const makeProtocol = (
         message: (socket, data) => {
           const clientId = idOf(socket);
 
-          // Why: suspended, so a frame that does not parse, a message the server cannot read,
-          // such as `null`, or an attachment that does not decode is answered with a defect, as
-          // Effect's own socket protocol answers a frame, never rejecting the event, which a
-          // runtime may answer by closing the socket. The event ends once each message is
-          // written: a call doing I/O or waiting on a timer keeps the object from hibernating.
           return Effect.gen(function* () {
-            // Why: workerd keeps a socket's attachment across hibernation; celld 0.6.2 drops
-            // it when it evicts an idle object, and the socket arrives without one. It then has
-            // no saved headers: a message carrying its own token still authenticates, and one
-            // relying on the upgrade's is refused as unauthenticated.
             const headers =
               (yield* Effect.orDie(attachmentOf(socket)))?.headers ?? [];
 
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: What a client sent: RpcServer checks each message's tag, id and payload, and a message it cannot read fails as a defect, answered as one.
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion
             const messages = parser.decode(
               Predicate.isString(data) ? data : new Uint8Array(data)
             ) as readonly RpcMessage.FromClientEncoded[];
@@ -407,7 +360,7 @@ const makeProtocol = (
 
             const kept =
               sent.length === 0 ||
-              tracked(socket, (pending) => [...pending, ...sent]);
+              heldInAttachment(socket, (pending) => [...pending, ...sent]);
 
             return yield* Effect.forEach(
               messages,
@@ -452,8 +405,6 @@ const makeProtocol = (
         },
       });
 
-      // Why: the router does not tell a protocol the prefix it is mounted under, so two protocols
-      // at one `path` would share their sockets' tags and answer each other's sockets.
       if (!registered) {
         return Effect.die(
           new Error(
@@ -462,19 +413,12 @@ const makeProtocol = (
         );
       }
 
-      // Why: written as the protocol is made, the server buffering them until it runs, so the
-      // subscriptions of the sockets kept open across hibernation resume before any message of
-      // the event that woke the object, each authenticated again from its own headers.
       const resumed = subscriptions.resumed(write, (socket, kept) => {
-        // Why: a call the instance before was answering when an eviction, a deploy or a crash
-        // cut it off is never answered, and its client would wait on an open socket for good,
-        // since the runtime answers its pings: its socket is closed with 1012, a restart, so the
-        // client fails the call and connects again. A kept subscription among them resumes instead.
         if (pendingOf(socket).every(kept)) {
           return true;
         }
 
-        closeQuietly(socket, 1012, lostCalls);
+        closeQuietly(socket, restartCloseCode, lostCalls);
 
         return false;
       });

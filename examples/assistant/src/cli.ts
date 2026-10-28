@@ -9,22 +9,15 @@ import { commands } from "./commands.js";
 import { CurrentCaller } from "./identity/Identity.js";
 import type { Operator } from "./identity/Identity.js";
 import { Permissions } from "./identity/permissions.js";
-import { tasksFile } from "./platform/tasks-file.js";
+import { demoTasksFile } from "./platform/tasks-file.js";
 
-// Entrypoint: `node --import tsx examples/assistant/src/cli.ts list-tasks`.
-// The operator's own tool. No credential arrives at a terminal, so this host names the caller
-// itself: whoever runs the command, as the trusted operator. Being local earns nothing more:
-// `authorize` runs here as for a model's tool call, and admits the operator by its kind.
 const operator: Operator = { kind: "operator", id: userInfo().username };
 
 const assistant = commands.pipe(
-  Command.provide(Layer.mergeAll(tasksFile, Permissions.layerMemory)),
+  Command.provide(Layer.mergeAll(demoTasksFile, Permissions.layerMemory)),
   Command.provideSync(CurrentCaller, operator)
 );
 
-// A command's defect, such as a tasks file that does not decode, `runMain` reports on stdout.
-// `logToStderr`, applied last, moves that to stderr, so `assistant list-tasks --json | jq` reads
-// results alone.
 Command.run(assistant, { version: "1.0.0" }).pipe(
   Effect.provide(NodeServices.layer),
   ActionCli.logToStderr,

@@ -5,7 +5,6 @@ import type { RpcMessage } from "effect/rpc";
 import { deleted } from "./batches.js";
 import { closeQuietly, groupTag, RequestId, socketIdOf } from "./frames.js";
 
-/** Where an object keeps its sockets' event subscriptions. */
 export const keptPrefix = "effect-actions/subscription/";
 
 const Request = Schema.TaggedStruct("Request", {
@@ -20,29 +19,21 @@ const requestOf = Schema.decodeUnknownOption(Request);
 
 const payloadOf = Schema.decodeUnknownOption(Schema.Json);
 
+const resumeFailedCode = 1000;
+
 const unresumable =
   "This server could not resume this socket's subscriptions: connect again";
 
-// Why: Effect's request id is a number or a string, `1` and `"1"` two ids, so the key says which.
 const suffixOf = (socket: number, id: string | number) =>
   `${socket}#${Predicate.isNumber(id) ? "n" : "s"}${id}`;
 
 const socketOf = (suffix: string) =>
   Number(suffix.slice(0, suffix.indexOf("#")));
 
-/**
- * The event subscriptions of the sockets one `layerWebSocket` path accepted, kept in storage:
- * `keeper` stores each request as `ActionRpc.layer` admits it, `sent` stores the payload that
- * resumes it with each chunk sent and forgets it at its exit, `closed` forgets a socket's, and
- * `resumed` writes each kept one whose socket of this path is still open to the server again,
- * from there.
- */
 export const makeSubscriptions = (state: DurableObjectState, path: string) => {
   const { storage } = state;
   const group = groupTag(path);
 
-  // Why: the request, its headers included, is written once, as it is admitted, and only the
-  // payload it resumes from is written again as the subscription moves.
   const requests = `${keptPrefix}request/${path}#`;
   const payloads = `${keptPrefix}payload/${path}#`;
 
@@ -51,11 +42,10 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
     `${payloads}${suffix}`,
   ];
 
-  // Why: once `resumed` has run, as the build making the protocol runs it, storage holds this
-  // path's subscriptions exactly as this map does, every other one resumed or forgotten, so a
-  // close forgets a socket's from it, listing nothing: a socket that never subscribed costs no
-  // storage call.
-  const live = new Map<string, ActionRpc.KeptSubscription["resumeFrom"]>();
+  const liveSubscriptionsMirror = new Map<
+    string,
+    ActionRpc.KeptSubscription["resumeFrom"]
+  >();
 
   const listed = (prefix: string) =>
     Effect.map(
@@ -68,12 +58,12 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
 
   const closed = (socket: number) =>
     Effect.suspend(() => {
-      const owned = [...live.keys()].filter(
+      const owned = [...liveSubscriptionsMirror.keys()].filter(
         (suffix) => socketOf(suffix) === socket
       );
 
       for (const suffix of owned) {
-        live.delete(suffix);
+        liveSubscriptionsMirror.delete(suffix);
       }
 
       return deleted(storage, owned.flatMap(keysOf));
@@ -83,11 +73,10 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
     keep: ({ clientId, requestId, tag, payload, headers, resumeFrom }) =>
       Effect.suspend(() => {
         const suffix = suffixOf(clientId, requestId);
-        const resuming = live.has(suffix);
+        const resuming = liveSubscriptionsMirror.has(suffix);
 
-        live.set(suffix, resumeFrom);
+        liveSubscriptionsMirror.set(suffix, resumeFrom);
 
-        // Why: a request `resumed` wrote is stored as it is, its payload the one it resumed from.
         if (resuming) {
           return Effect.void;
         }
@@ -110,7 +99,7 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
     values: RpcMessage.ResponseChunkEncoded["values"]
   ) =>
     Effect.suspend(() => {
-      const payload = live.get(suffix)?.(values);
+      const payload = liveSubscriptionsMirror.get(suffix)?.(values);
 
       return payload === undefined
         ? Effect.void
@@ -132,7 +121,7 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
         Effect.suspend(() => {
           const suffix = suffixOf(socket, requestId);
 
-          return live.delete(suffix)
+          return liveSubscriptionsMirror.delete(suffix)
             ? Effect.promise(async () => await storage.delete(keysOf(suffix)))
             : Effect.void;
         })
@@ -140,25 +129,16 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
       Match.orElse(() => Effect.void)
     );
 
-  // Why: a kept subscription that cannot be resumed, such as one a later version of this package
-  // stores in another shape, would leave its watch waiting on an open socket for good, since the
-  // runtime answers its pings: the socket is closed with 1000, outside the codes a watch ends at,
-  // so the page connects again and subscribes anew.
   const unresumed = (socket: WebSocket) =>
     Effect.andThen(
       Effect.logWarning(
         `layerWebSocket at ${path} could not resume a socket's kept event subscriptions, and closes it`
       ),
       Effect.sync(() => {
-        closeQuietly(socket, 1000, unresumable);
+        closeQuietly(socket, resumeFailedCode, unresumable);
       })
     );
 
-  /**
-   * Writes each kept subscription of a socket of this path still open to the server, from where
-   * it reached, and forgets the rest: `held` answers whether a socket stays open, given whether
-   * one of its requests is a subscription kept for it, and closes one that does not.
-   */
   const resumed = (
     write: (
       socket: number,
@@ -174,10 +154,6 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
       const resumeFrom = new Map(yield* listed(payloads));
       const keptIds = new Set(kept.map(([suffix]) => suffix));
 
-      // Why: matched by the path's group as well as the socket's id, as a socket's id is unique
-      // only among the sockets open, so a subscription this path kept while it was not served,
-      // such as across a deployment that dropped it, never resumes on another path's socket given
-      // that id since, authenticated with its first caller's headers.
       const open = new Map<number, WebSocket>();
 
       for (const socket of state.getWebSockets(group)) {
@@ -210,10 +186,7 @@ export const makeSubscriptions = (state: DurableObjectState, path: string) => {
 
       for (const { suffix, socket, request } of entries) {
         if (open.has(socket) && !unread.has(socket) && Option.isSome(request)) {
-          // Why: marked live before `keep` admits the request again, so its stored request is
-          // not written over, and an exit before then, such as a refused authentication,
-          // forgets it.
-          live.set(suffix, Function.constUndefined);
+          liveSubscriptionsMirror.set(suffix, Function.constUndefined);
 
           yield* write(socket, request.value);
         } else {

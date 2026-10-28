@@ -106,24 +106,13 @@ export type Running<E = unknown, R = unknown> = ReadonlyArray<
 
 export const defaultNextPoll = Duration.seconds(5);
 
-// Why: A page's wait goes on the wire as finite milliseconds, so `Duration.infinity`, which a
-// check source answering "read me only when notified" may give, would fail every poll's answer.
 const longestNextPoll = Duration.minutes(5);
 
 const logPageSize = 100;
 
-// Why: A check's page is the source's, whose cursor is the page's alone, so only a log source,
-// read by sequence, can stop a page early and resume from where it stopped.
 const pageLimit = (maxEvents: number) =>
   Math.min(Math.max(Math.floor(maxEvents), 1), logPageSize);
 
-// Why: An id generated only when the source gives none: one the source gives, such as an
-// upstream's own, is what lets a subscriber deduplicate a replay. Its data is checked once, here,
-// through its JSON, so every surface sends, and a watch in process receives, what a client
-// decodes. An occurrence whose data breaks its schema is reported and a `Gap` sent in its place,
-// so a subscriber reads on past it, as a poll answers the rest of its page: a check's occurrences
-// before a page's last share the page's cursor, so failing the read would resume at the same
-// page, failing again.
 const occurrencesOf = (event: Event.Any) => {
   const sent = jsonRoundTrip(event.payload);
 
@@ -153,7 +142,6 @@ const occurrencesOf = (event: Event.Any) => {
 const isOccurrence = (fed: Fed): fed is ErasedOccurrence =>
   Predicate.isTagged(fed, "Occurrence");
 
-/** A poll's page of `items`: their occurrences, `truncated` too where a gap stands for one. */
 const pageOf = (
   items: ReadonlyArray<ErasedOccurrence | Gap>,
   { truncated, ...page }: Omit<Page, "events">
@@ -172,11 +160,9 @@ const lifted = <A, R>(
 ): Effect.Effect<A, never, R> =>
   Effect.isEffect(value) ? value : Effect.succeed(value);
 
-/** The key a subscriber of `input` is reached by, as the source's `key` answers it. */
 const keyOf = (source: ErasedSource, input: ErasedValue) =>
   source.key === undefined ? Effect.undefined : lifted(source.key(input));
 
-// Why: Each source holds leases of its own, so a subscriber and an input are a lease's key.
 const leaseKey = (
   event: Event.Any,
   subscriber: string | undefined,
@@ -211,17 +197,10 @@ const checkRun = (
 ): Run => {
   const occurrenceOf = occurrencesOf(event);
 
-  // Why: A stream yields a skipped occurrence's `Gap` in its place, at the cursor the page was
-  // asked for, so a resume from it reads the rest of the page again; a poll's page, holding
-  // occurrences alone, says it as `truncated`.
   const read = (input: ErasedValue, cursor: string | null) =>
     Effect.flatMap(source.check(input, cursor), (answered) =>
       Effect.map(
         Effect.forEach(answered.events, (emitted, index) =>
-          // Why: A check's cursor is the page's: an occurrence before the last resumes from the
-          // cursor the page was asked for, which replays rather than skips what follows it. On a
-          // truncated page that cursor is no longer served, so resuming there reads a gap again:
-          // the honest answer, as the rest of the page has no position of its own to skip to.
           occurrenceOf(
             emitted,
             index === answered.events.length - 1 ? answered.cursor : cursor
@@ -233,8 +212,6 @@ const checkRun = (
 
   return {
     poll: (input, cursor) => Effect.map(read(input, cursor), answeredPage),
-    // Why: The waiter is held before the first read, so a notify while it runs reads again at
-    // once rather than at the next poll.
     stream: (input, cursor) =>
       Stream.unwrap(
         Effect.map(Effect.flatMap(keyOf(source, input), wakes), (woken) =>
@@ -258,9 +235,6 @@ const checkRun = (
   };
 };
 
-// Why: The revision is read before the value: a value written between them is read with an
-// older revision, so the next read, at the revision its notify moved, sends it again, where the
-// other order would pair an older value with the newer revision and never send the change.
 const currentRun = (
   event: Event.Any,
   source: Event.Current<Event.Any, unknown>,
@@ -304,8 +278,6 @@ const logRun = (
     }: Entry<Logged<Event.Emitted<Event.Any>> | undefined>
   ): Effect.Effect<ErasedOccurrence | Gap | undefined, never, unknown> =>
     Effect.gen(function* () {
-      // Why: An entry its storage could not read is a gap at its cursor, before any of the
-      // source's callbacks, which are owed the data it was published with.
       if (logged === undefined) {
         yield* Effect.annotateLogs(
           Effect.logWarning(
@@ -336,9 +308,6 @@ const logRun = (
           ? emitted.data
           : yield* lifted(source.transform(input, emitted.data));
 
-      // Why: An entry's id and time are fixed when it was appended, so every read and every
-      // subscriber receive the same: a replay is deduplicated, and stamped when it happened. The
-      // cursor is unique, its epoch changing with each log.
       return yield* occurrenceOf(
         {
           data,
@@ -349,9 +318,6 @@ const logRun = (
       );
     });
 
-  // Why: An entry the subscriber does not reach or match sends nothing: the read's closing
-  // `Checked` moves the position past it, so an `inOrder` push sends one per read, not one
-  // per skipped entry of a busy log.
   const received = (
     input: ErasedValue,
     key: string | undefined,
@@ -400,7 +366,6 @@ const logRun = (
   };
 };
 
-/** `run` with the source's `subscription` held while each subscription lasts. */
 const hooked = (
   event: Event.Any,
   run: Run,
@@ -499,10 +464,6 @@ const assertSource = (event: Event.Any, source: ErasedValue): ErasedSource => {
   return source;
 };
 
-/**
- * The runtime of `events`' sources: one per event, from the source given for one event alone, or
- * from a record keyed by event name, the builder run once for all of them.
- */
 export const sourcesOf = (
   events: readonly Event.Any[],
   single: boolean,
@@ -543,9 +504,6 @@ export const sourcesOf = (
       : Effect.sync(() => checked(sources))
   );
 
-  // Why: each event's source attaches as a layer of its own over the one build, so a surface
-  // serving a selection attaches only the sources it serves: an unselected log source fed by
-  // `emit` never starts, nor dies where the host's `Events` consumes no `emit`.
   return events.map((event) => {
     const run = memoized(
       Effect.flatMap(Effect.service(built.key), (keyed) =>
@@ -592,9 +550,6 @@ const guarded = (
           { captureStackTrace: false }
         )
       ),
-    // Why: Admitted once, as the subscription starts: a surface reopening it after a source's
-    // failure reads on under that admission, as a held stream does between reads, and a client's
-    // reconnect is a new subscription, admitted again.
     stream: (input) =>
       Effect.as(admit(input), (cursor: string | null) =>
         run
@@ -695,7 +650,6 @@ export class EventImplementation<
     });
   }
 
-  /** What runs each event type `app` holds. */
   private static held(app: AnyEventImplementation): Running {
     return EventImplementation.own(app).#running.filter(([event]) =>
       app.events.includes(event)
@@ -715,11 +669,6 @@ export class EventImplementation<
 export type AnyEventImplementation<E extends Event.Any = Event.Any> =
   EventImplementation<E, unknown, unknown, unknown, unknown, unknown, unknown>;
 
-/**
- * Why `surface` cannot serve `feeds` unless its authentication is `keyed` by a principal: a
- * protected event type whose `subscription` hook is held per subscriber between polls, which a
- * principal names.
- */
 export const unkeyedHook = (
   surface: string,
   feeds: readonly Feed[],
@@ -738,16 +687,11 @@ export const unkeyedHook = (
         Option.getOrUndefined
       );
 
-/** The event implementations among what a surface is given. */
 export const eventsOf = (served: Served): readonly AnyEventImplementation[] =>
   Arr.ensure(served).filter((app): app is AnyEventImplementation =>
     Predicate.isTagged(app, "EventImplementation")
   );
 
-/**
- * The event implementations among `apps` holding an event type of `listed`, each holding those
- * alone, refusing one listed that none holds; every one where `listed` is absent.
- */
 export const selectEvents = (
   apps: readonly AnyEventImplementation[],
   listed: readonly Event.Any[] | undefined
@@ -759,13 +703,11 @@ export const selectEvents = (
     (own, app) => EventImplementation.share(own, app)
   );
 
-/** The builder layers of event implementations, as a surface provides them. */
 export const feedBuilders = (
   events: readonly AnyEventImplementation[]
 ): ReadonlyArray<Layer.Layer<never, unknown, unknown>> =>
   events.map((app) => EventImplementation.layerOf(app));
 
-/** Every feed of event implementations, from the context their builders provide. */
 export const acquireFeeds = (
   events: readonly AnyEventImplementation[]
 ): Effect.Effect<readonly Feed[], never, unknown> =>
@@ -856,8 +798,6 @@ export type EventServedRequest<
             : never)
   : never;
 
-// Why: Each event type's identity is excluded from its own sources' services alone: a public
-// one's endpoint authenticates no one, so a source of it reading an identity still owes it.
 type EndpointRequest<R, E extends Event.Any> = E extends unknown
   ? E["caller"] extends typeof Anyone
     ? RequestOf<R, E["name"]>

@@ -54,8 +54,6 @@ type OnlyOptions<O> = {
   ]: never;
 };
 
-// Why: As on `Action.make`: `O` is inferred from the argument, which the compiler then never
-// checks for excess properties.
 type Rules<O> = Options extends O ? unknown : OnlyOptions<O>;
 
 type InputOf<O> = O extends { readonly input?: infer I }
@@ -174,35 +172,12 @@ export interface Page<E extends Any> {
 }
 
 interface Hooked<E extends Any, R> {
-  /**
-   * What a subscription needs set up upstream while it lasts, such as joining a channel: a scoped
-   * Effect, whose finalizer tears it down, run as the subscriber. A stream's lasts as long as the
-   * stream, a poll subscription's until `lease` after its last poll, or, watched in process, until
-   * the watch ends, and a webhook subscription's until it is unsubscribed or lapses, set up again
-   * as `persist` restores it.
-   *
-   * **Gotchas**
-   *
-   * - Write it so it may run twice for one subscription: a lease does not outlive the process, so a poll after a restart sets it up again.
-   * - A poll subscription's runs in its first poll's context, that request included, held until its lease ends, where a webhook subscription's runs without the request: read what it needs from the request in middleware, which provides it as a service.
-   */
   readonly subscription?:
     | ((
         input: E["input"]["Type"]
       ) => Effect.Effect<void, never, R | Scope.Scope>)
     | undefined;
-  /** How long a poll subscription's `subscription` lasts after its last poll; defaults to 5 minutes. */
   readonly lease?: Duration.Input | undefined;
-  /**
-   * The key a subscriber of `input` is reached by, run as the subscriber, such as the room it
-   * follows: `Events.notify` and `Events.publish` given a key reach the subscribers of that key
-   * alone, and those it answers `undefined` for, who follow every key. Without it, every
-   * announcement reaches every subscriber.
-   *
-   * **Gotchas**
-   *
-   * - An occurrence a log's `emit` gives without a `key` reaches every subscriber, whatever key it follows: give each one its key.
-   */
   readonly key?:
     | ((
         input: E["input"]["Type"]
@@ -490,11 +465,6 @@ type TakesNoAuthorize<T extends Target> = [Protected<EventsOf<T>>] extends [
 
 type NamesOf<T extends Target> = EventsOf<T>["name"];
 
-// Why: The source written out, not `Source`, and the record mapped over `RequestServices`, for the
-// reasons on `Action.implement`'s: an alias whose `R` is not yet inferred gives a check written
-// inside a builder nothing to infer its input from, and TypeScript infers a record mapped over
-// its own keys key by key, so each source reads services of its own, and a surface serving some
-// of the event types owes only theirs.
 type SourcesOf<T extends Target, R, RequestServices> = T extends Any
   ? Check<T, R> | Current<T, R> | Log<T, R>
   : {

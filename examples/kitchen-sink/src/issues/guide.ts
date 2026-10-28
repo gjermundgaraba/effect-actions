@@ -11,13 +11,8 @@ const guide = `# Triage
 - Writes are limited to ten a minute. When refused, wait as long as the error says.
 `;
 
-// The contracts keyed by name, each its exact contract. The prompt below names its tools through
-// them, so renaming an action is a compile error here, not a stale instruction to a model.
 const tools = Action.byName(Issues);
 
-// Effect's own MCP resources and prompts, served beside the actions' tools as an endpoint's
-// `features`: native, not actions. This guide is the same for every caller, so it reads no
-// caller, which `features` never receive.
 export const features = Layer.mergeAll(
   McpServer.resource({
     uri: "tracker://guides/triage",

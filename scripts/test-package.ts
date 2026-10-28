@@ -14,6 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Schema } from "effect";
+import { API, SymbolFlags } from "typescript/unstable/sync";
 
 import manifest from "../package.json" with { type: "json" };
 import cloudflareManifest from "../packages/cloudflare/package.json" with { type: "json" };
@@ -52,74 +53,70 @@ const refuseInternalKeys = (declarations: string) => {
   }
 };
 
-const declared =
-  /^(?:export )?(?:declare )?(?:const|function|class|interface|type|enum|namespace) (?<name>[\w$]+)/u;
+const entriesOf = (
+  installed: string,
+  exports: Readonly<Record<string, string>>
+) =>
+  Object.entries(exports).flatMap(([subpath, file]) =>
+    subpath === "./package.json"
+      ? []
+      : [path.join(installed, file.replace(/\.mjs$/u, ".d.mts"))]
+  );
 
-const exportedHere =
-  /^export (?:declare )?(?:const|function|class|interface|type|enum|namespace) (?<name>[\w$]+)/u;
+const refuseUndocumented = (directory: string, entries: readonly string[]) => {
+  const project = path.join(directory, "documented.json");
 
-const exportList = /^export \{(?<names>[^}]*)\};?$/u;
+  writeFileSync(
+    project,
+    JSON.stringify({
+      compilerOptions: { ...compilerOptions, skipLibCheck: true, types: [] },
+      files: entries,
+    })
+  );
 
-const namesIn = (list: string) =>
-  list
-    .split(",")
-    .map(
-      (entry) =>
-        entry
-          .trim()
-          .replace(/^type /u, "")
-          .split(" as ")[0]
-          ?.trim() ?? ""
-    )
-    .filter((name) => name !== "");
+  const api = new API({ cwd: directory });
 
-const refuseUndocumented = (directory: string) => {
-  for (const entry of readdirSync(directory, {
-    recursive: true,
-    encoding: "utf-8",
-  })) {
-    if (!entry.endsWith(".d.mts")) {
-      continue;
+  try {
+    const [opened] = api
+      .updateSnapshot({ openProjects: [project] })
+      .getProjects();
+
+    if (opened === undefined) {
+      throw new Error(`TypeScript opened no project from ${project}`);
     }
 
-    const lines = readFileSync(path.join(directory, entry), "utf-8").split(
-      "\n"
-    );
+    const { program, checker } = opened;
 
-    const documented = new Map<string, boolean>();
+    const undocumented = entries.flatMap((entry) => {
+      const source = program.getSourceFile(entry);
 
-    for (const [index, line] of lines.entries()) {
-      const name = declared.exec(line)?.groups?.["name"];
+      const module =
+        source === undefined ? undefined : checker.getSymbolAtLocation(source);
 
-      if (name !== undefined && documented.get(name) !== true) {
-        documented.set(
-          name,
-          lines[index - 1]?.trimEnd().endsWith("*/") === true
-        );
-      }
-    }
-
-    const exported = lines.flatMap((line) => {
-      const here = exportedHere.exec(line)?.groups?.["name"];
-
-      if (here !== undefined) {
-        return [here];
+      if (module === undefined) {
+        return [`${entry} (not found)`];
       }
 
-      const list = exportList.exec(line)?.groups?.["names"];
-
-      return list === undefined ? [] : namesIn(list);
+      return checker
+        .getExportsOfModule(module)
+        .filter(
+          (exported) =>
+            checker.getDocumentationCommentOfSymbol(
+              (exported.flags & SymbolFlags.Alias) === 0
+                ? exported
+                : checker.getAliasedSymbol(exported)
+            ) === ""
+        )
+        .map((exported) => `${entry}: ${exported.name}`);
     });
-
-    const undocumented = exported.filter(
-      (name) => documented.get(name) === false
-    );
 
     if (undocumented.length > 0) {
       throw new Error(
-        `${path.join(directory, entry)} ships ${undocumented.join(", ")} without JSDoc: put the comment on the exported declaration`
+        `The public API ships without JSDoc: ${undocumented.join(", ")}: put the comment on the exported declaration`
       );
     }
+  } finally {
+    api.close();
   }
 };
 
@@ -214,8 +211,10 @@ try {
 
   refuseUnshipped(root, installed);
   refuseUnshipped(cloudflare, installedCloudflare);
-  refuseUndocumented(path.join(installed, "dist"));
-  refuseUndocumented(path.join(installedCloudflare, "dist"));
+  refuseUndocumented(consumer, [
+    ...entriesOf(installed, manifest.publishConfig.exports),
+    ...entriesOf(installedCloudflare, cloudflareManifest.publishConfig.exports),
+  ]);
 
   const quickstart = path.join(installed, "examples", "quickstart", "src");
 

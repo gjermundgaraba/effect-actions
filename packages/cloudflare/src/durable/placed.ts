@@ -71,8 +71,6 @@ export const reaching = <H extends ActionHttp.Any>(
   return ActionHttp.placed(placement.binding, (input, contract) => {
     const key = placement.keys[contract.name];
 
-    // Why: a contract's name is a `string` to the compiler, so the lookup may find no key, though
-    // `PlacementKeys` gives each contract of the binding one: the Worker has no object to reach.
     if (key === undefined) {
       throw new Error(
         `ActionDurableObject.placed: its keys hold none for ${contract.name} (give placed a key for each contract of its binding, by name)`
@@ -91,12 +89,6 @@ export const reaching = <H extends ActionHttp.Any>(
   });
 };
 
-/**
- * The input check of an object named `name`, given `placement`: an input of one of its contracts
- * whose key names another object is refused.
- */
-// Why: the Worker decoded the input to pick the object, and the object decodes it again, since
-// only the input it decodes is the one its handler is given: the check runs on that one.
 export const layerInputCheck = (
   placement: AnyPlacement,
   name: string | undefined

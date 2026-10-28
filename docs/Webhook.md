@@ -27,7 +27,6 @@ import { Login } from "./identity/Identity.js";
 import { authenticate } from "./identity/verifier.js";
 import { Rpc } from "./Rpc.js";
 
-// Every domain's implementation, once: the events beside the actions, in one list.
 const implementations = [
   builds,
   logs,
@@ -37,17 +36,6 @@ const implementations = [
   deployEvents,
 ];
 
-// The actions as MCP tools and the events as MCP events, at `/mcp`. A client polls with
-// `events/poll`, or holds `events/stream` open and is pushed each occurrence. Both events are
-// protected, so each request needs a member's token, and each subscriber sees what its token
-// lets it. This long-lived process holds the deploy event's `subscription` hook between polls and
-// its log in memory, and pushes each occurrence: a `requestScoped` endpoint would serve the events
-// by poll and webhook alone, and a serverless host, where no process lasts, check sources alone,
-// without `Webhook.layer`.
-//
-// A tool answers one result, so `tailLog` would collect a whole log before answering, all of it
-// in a model's context: its implementation, `logs`, is left out, and the endpoint serves every
-// other action and every event.
 const mcp = ActionMcp.layerHttp(
   [builds, buildEvents, statusEvents, deploys, deployEvents],
   {
@@ -57,25 +45,13 @@ const mcp = ActionMcp.layerHttp(
   }
 );
 
-// The same implementations as routes under `/api`, for a client that speaks HTTP rather than
-// MCP: one implementation of each event serves every surface.
 const api = ActionHttp.layer(Http, implementations);
 
-// And as Effect RPC at `/rpc`, over HTTP. A watch is a stream rpc that never ends, so the
-// serialization frames each element as it is sent: `layerNdjson` does, where `layerJson` would
-// answer once every stream of the request ended, which a watch never does.
 const rpc = ActionRpc.layer(Rpc, implementations).pipe(
   Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
   Layer.provide(RpcSerialization.layerNdjson)
 );
 
-// Webhook delivery for MCP and HTTP alike: a member names a callback URL and a secret, with
-// MCP's `events/subscribe` or `POST /api/events/<name>/subscribe`, and each occurrence it may see
-// is POSTed there, signed. One layer holds the subscriptions of both, so either surface refreshes
-// one made over the other. `persist` keeps each in a `KeyValueStore`, so a restart goes on
-// delivering from where it reached, as the subscriber `Login`'s `schema` keeps. It needs an
-// `HttpClient` to POST, `Dns` to check where each callback resolves, and the store, which
-// `server.ts` provides.
 export const routes = Layer.mergeAll(mcp, api, rpc).pipe(
   Layer.provide(authenticate),
   Layer.provide(Webhook.layer({ persist: true }))
@@ -103,12 +79,8 @@ import { Http } from "../src/Api.js";
 import { routes } from "../src/routes.js";
 import { inMemory } from "./support/memory.js";
 
-// The subscriber's secret: `whsec_` and 24 to 64 random bytes in base64. The server signs each
-// POST with it, and the subscriber checks each POST it receives against it.
 const secret = `whsec_${Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64")}`;
 
-// A subscriber's check, as Standard Webhooks defines it: an HMAC-SHA256 of the id, the
-// timestamp and the body exactly as received, among the space-separated `v1,` signatures.
 const signed = async (request: Request, body: string) => {
   const key = await crypto.subtle.importKey(
     "raw",
@@ -146,8 +118,6 @@ interface Received {
   readonly signed: boolean;
 }
 
-// grace's server: it answers the verification POST by echoing its challenge, which proves it
-// asked for these deliveries, and acknowledges each delivery with a 2xx.
 const subscriber =
   (received: Queue.Enqueue<Received>) => async (request: Request) => {
     const text = await request.text();
@@ -201,20 +171,14 @@ describe("the service, by webhook", () => {
           ),
         });
 
-        // The answer names the subscription, which each POST's `x-mcp-subscription-id`
-        // carries, and when to subscribe again to keep it: one not refreshed by then ends.
         const subscription = yield* subscribe;
         const verification = yield* Queue.take(received);
 
         yield* ada.finishBuild({ pipeline: "api", status: "passed" });
-        // Each build finished notifies `build.finished`: the server asks the store at once, and
-        // POSTs what it answers.
         yield* ada.finishBuild({ pipeline: "web", status: "passed" });
 
-        // grace sees only the web pipeline.
         const delivery = yield* Queue.take(received);
 
-        // The same request again refreshes the subscription, and answers how it is going.
         const refreshed = yield* subscribe;
 
         expect(verification).toMatchObject({
@@ -262,12 +226,8 @@ export interface NotifierOptions {
   readonly publicUrl: string;
 }
 
-// The route build-events POSTs each failed build to, where the watch below reads them: the
-// watch's delivery appends its path to this process's public URL.
 const receiver = Webhook.layerReceiver({ path: "/hooks/builds" });
 
-// A second service, the notifier: it watches build.finished for failures by webhook, the
-// server POSTing each to it, rather than holding a stream open to build-events.
 const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
@@ -287,8 +247,6 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
             { status: "failed" },
             {
               mode: Webhook.delivery({ baseUrl: publicUrl }),
-              // Where it reached is kept, so a restart resumes there; failures the server no
-              // longer keeps arrive as a Gap instead.
               resume: {
                 store: yield* KeyValueStore.KeyValueStore,
                 key: "failed-builds",
@@ -296,15 +254,11 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
             }
           )
           .pipe(
-            // A Gap says failures were missed, which no notice can name: it is logged, for an
-            // operator to look the builds up.
             Stream.runForEach((received) =>
               Predicate.isTagged(received, "Occurrence")
                 ? notices.add(received.data)
                 : Effect.logWarning("Failed builds were missed", received)
             ),
-            // A failure no reconnect outlasts, such as a wrong PUBLIC_URL or a revoked token,
-            // ends the watch: it is logged here, for a deployment to alert on or restart by.
             Effect.tapCause(Effect.logError)
           )
       );

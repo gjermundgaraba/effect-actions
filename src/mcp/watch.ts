@@ -55,16 +55,13 @@ import {
 } from "./reply.js";
 import { request } from "./request.js";
 
-/** What a watch's request needs of the client: its HTTP client, the endpoint, the event. */
 interface Watched<R = unknown> {
   readonly http: Pick<HttpClient.HttpClient.With<unknown, R>, "execute">;
   readonly url: string;
   readonly event: Event.Any;
-  /** The refusals a 401 or 403 decodes as: the built-in ones, and the descriptor's errors. */
   readonly refusedWith: Action.Errors;
 }
 
-/** Reads one message as a request's reply: its result, by `success`, or its error. */
 const replyOf = <A, I>(success: Schema.Codec<A, I>) =>
   Schema.decodeUnknownOption(
     Schema.fromJsonString(
@@ -77,8 +74,6 @@ const replyOf = <A, I>(success: Schema.Codec<A, I>) =>
 
 const pollReplyOf = replyOf(PollEvents.successSchema);
 
-// Why: A frame is read as a reply, or as a notification whose params its method's rpc decodes, so
-// the methods a push stream carries are the `Notifications` group's alone.
 const Frame = Schema.Union([
   Schema.Struct({ error: WireError }),
   Schema.Struct({
@@ -92,7 +87,6 @@ const decodeFrame = Schema.decodeUnknownOption(Schema.fromJsonString(Frame));
 
 type Notified = RpcGroup.Rpcs<typeof Notifications>;
 
-/** Reads one notification's params as what a push stream sends, where they decode. */
 type Reader = (
   params: Schema.Json | undefined
 ) => Option.Option<Effect.Effect<readonly Pushed[], unknown>>;
@@ -116,10 +110,6 @@ const encodeCallback = Schema.encodeSync(WebhookCallback);
 
 const encodeTarget = Schema.encodeSync(WebhookTarget);
 
-// Why: An endpoint's transient status, and an internal error answering a poll or a stream, which
-// `layerHttp` answers for a source's failure, are what a 5xx is to an HTTP watch: a reconnect may
-// outlast them. The client reads a status itself, so it is an `McpCallError`, not an
-// `HttpClientError`.
 const transientReason = (reason: McpCallError["reason"]): boolean =>
   Match.value(reason).pipe(
     Match.tag("StatusError", ({ status }) => isTransientStatus(status)),
@@ -135,10 +125,6 @@ const transient = Predicate.or(
   Predicate.compose(isMcpCallError, ({ reason }) => transientReason(reason))
 );
 
-/**
- * The transport of one subscription over an MCP endpoint served by `layerHttp`: `events/poll`
- * for each page, and `events/stream` read as it arrives, each failing as the endpoint answered.
- */
 export const transportOf = <R>(
   { http, url, event, refusedWith }: Watched<R>,
   input: Schema.Json
@@ -149,9 +135,6 @@ export const transportOf = <R>(
   const occurrenceOf = (wire: WireOccurrence) =>
     untagged({ ...wire, cursor: wire.cursor ?? null });
 
-  // Why: A refusal the endpoint's authentication answers is a 401 or a 403 with the refusal's
-  // JSON, as for a tool's call; one the event's authorizer answers is SEP-3415's `Forbidden`,
-  // its `data` the refusal's JSON.
   const failed = (
     method: string,
     error: WireError
@@ -184,7 +167,6 @@ export const transportOf = <R>(
         )
     );
 
-  /** The result of one `method` request, or what its error reply fails with. */
   const answered = <A>(
     method: string,
     params: { readonly [key: string]: Schema.Json },
@@ -270,8 +252,6 @@ export const transportOf = <R>(
           return Effect.succeed([]);
         }
 
-        // Why: Another notification on the stream is not the watch's to read, but one of its own
-        // methods that does not decode leaves it unconfirmed, or blind, until its silence reconnects.
         return Option.getOrElse(reader(frame.params), () =>
           Effect.as(
             Effect.logWarning(
@@ -292,8 +272,6 @@ export const transportOf = <R>(
 
   const stream = (cursor: string | null): Stream.Stream<Fed, unknown, R> =>
     Stream.unwrap(
-      // Why: A server may hold the stream's status back until its first read is done, as
-      // Effect's HTTP protocol does, so the wait for it is bounded as a silence is.
       Effect.map(
         failingWhenUnanswered(sent("events/stream", { cursor })),
         (response) =>

@@ -44,4 +44,10 @@ Every example follows one layout, which is the one we recommend for an applicati
 
 In a monorepo, the contract files and the binding are the package that the server, the CLI and the website all depend on; the rest is the server.
 
-Every token, user and store in these examples is a demo. Each place that must change before a deployment is marked `DEMO ONLY`.
+Every token, user and store in these examples is a demo. Each place that must change before a deployment says so in its name (`demoMembers`, `layerMemory`, `layerDemo`, `fakeFarm`, `scripted`), except these:
+
+- build-events' `finishBuild` action, which a member calls where a CI runner would, and its build steps, which pass at once.
+- notes-service's `verify`, which takes a token as a user's name where a real verifier checks a signed token, and its `https://auth.example.com` authorization server, where no server is.
+- notes-service's `stdio.ts`, whose in-memory store holds notes of its own, not the running server's.
+- quickstart's `client.ts`, whose `baseUrl` a deployed client reads from configuration.
+- kitchen-sink's `seed.ts`, which files a first issue in `acme` as `ada`, since the server's stores start empty.

@@ -14,7 +14,6 @@ import { inMemory } from "./support/memory.js";
 
 const served = Testing.layer(routes).pipe(Layer.provide(inMemory()));
 
-// Effect's own runner, given arguments instead of the process's, as the member `token` names.
 const run = (token: string, args: readonly string[]) =>
   Command.runWith(commands, { version: "0" })(args).pipe(
     Effect.provide(
@@ -29,7 +28,6 @@ describe("the commands", () => {
     "print each build a member may see as a line of JSON, until stopped",
     () =>
       Effect.gen(function* () {
-        // A watch runs until it is stopped, as Ctrl-C stops it: here, by interrupting it.
         const watching = yield* Effect.forkChild(
           run("grace", ["watch", "build.finished"])
         );
@@ -47,7 +45,6 @@ describe("the commands", () => {
         yield* TestClock.adjust("5 seconds");
         yield* Fiber.interrupt(watching);
 
-        // Each line carries its cursor: `--cursor` given it resumes after that build.
         const lines = yield* Schema.decodeUnknownEffect(
           Schema.Array(Schema.fromJsonString(Schema.Unknown))
         )(yield* TestConsole.logLines);
@@ -65,7 +62,6 @@ describe("the commands", () => {
       Effect.gen(function* () {
         yield* run("ada", ["start-build", "--pipeline", "api"]);
 
-        // stdout holds the answer alone, so `builds start-build ... | jq` reads the build.
         expect(yield* TestConsole.logLines).toStrictEqual([
           JSON.stringify(
             { id: "build-1", pipeline: "api", status: "passed" },
@@ -94,7 +90,6 @@ describe("the commands", () => {
         ]);
         yield* run("ada", ["tail-log", "--build-id", "build-1"]);
 
-        // A line per element, as JSON Lines: `builds tail-log ... | jq -r .line` prints the log.
         expect((yield* TestConsole.logLines).slice(1)).toStrictEqual([
           '{"line":"failed"}',
         ]);

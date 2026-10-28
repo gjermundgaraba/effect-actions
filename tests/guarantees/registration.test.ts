@@ -1260,7 +1260,7 @@ describe("projection boundaries", () => {
     });
 
     const apps = Action.implement(Leaked, () =>
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: A handler failing with an error its contract does not declare, which the types refuse.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
       Effect.fail(leakedFromAModel as never)
     );
 

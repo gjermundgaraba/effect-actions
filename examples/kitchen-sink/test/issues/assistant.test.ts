@@ -4,12 +4,11 @@ import { Effect, Layer, Stream } from "effect";
 import { LanguageModel } from "effect/ai";
 
 import { CurrentMember } from "../../src/identity/Identity.js";
-import { members } from "../../src/identity/members.js";
+import { demoMembers } from "../../src/identity/members.js";
 import { layer, toolkit, triage } from "../../src/issues/assistant.js";
 import { issues } from "../../src/issues/handlers.js";
 import { memory } from "../../src/memory.js";
 
-// A model that asks for the same two tools in every turn stands in for a provider's.
 const model = LanguageModel.make({
   generateText: () =>
     Effect.succeed([
@@ -29,9 +28,8 @@ const model = LanguageModel.make({
   streamText: () => Stream.empty,
 });
 
-const asAda = Effect.provideService(CurrentMember, members.ada);
+const asAda = Effect.provideService(CurrentMember, demoMembers.ada);
 
-// The toolkit's handlers and a client of the same implementation, over one store.
 const services = layer.pipe(Layer.provideMerge(memory));
 
 describe("the assistant's tools", () => {
@@ -75,13 +73,11 @@ describe("the assistant's tools", () => {
           "closeIssue",
         ]);
 
-        // `tools.handle` is a caller that is not a model's turn: it asks no approval, and takes
-        // the arguments as JSON. The implementation's `authorize` runs all the same.
         const refused = yield* tools
           .handle("closeIssue", { id: "ACME-1" })
           .pipe(
             Effect.flatMap(Stream.runCollect),
-            Effect.provideService(CurrentMember, members.linus)
+            Effect.provideService(CurrentMember, demoMembers.linus)
           );
 
         expect(

@@ -51,7 +51,6 @@ export interface RevisionStorage {
   readonly bump: (names: readonly string[]) => Effect.Effect<void>;
 }
 
-/** Revisions kept in memory, starting again, in a new epoch, with each call. */
 const memoryRevisions = (): RevisionStorage => {
   const counts = new Map<string, number>();
 
@@ -67,10 +66,6 @@ const memoryRevisions = (): RevisionStorage => {
   };
 };
 
-// Why: A subscriber of a key is at its key's count plus every notify without a key, and one
-// following every key at the count of every notify: each count moves exactly when a notify reaches
-// that subscriber, never for another key's, so a current source answers no unchanged value. A key
-// is written after a mark no unkeyed name ends with, so the empty key is a key like any other.
 const everyKey = (event: Event.Any) => event.name;
 
 const noKey = (event: Event.Any) => `${event.name}\u0000`;
@@ -108,17 +103,11 @@ export class Events extends Context.Service<
   }
 >()("effect-actions/Event/Events") {}
 
-/** How an implementation's sources attach to an `Events` as it builds. */
 interface Attachments {
-  /** How a check or current source's subscribers are woken, for as long as the scope lasts. */
   readonly check: (
     event: Event.Any,
     current: boolean
   ) => Effect.Effect<Checking, never, Scope.Scope>;
-  /**
-   * `event`'s one log, kept as long as the `Events` is, made with `bounds` at the first
-   * attachment, and fed by `emit` where given, unless the scope ends before its turn.
-   */
   readonly log: (
     event: Event.Any,
     bounds: Bounds | undefined,
@@ -126,11 +115,8 @@ interface Attachments {
   ) => Effect.Effect<Log<ErasedEmitted>, never, Scope.Scope>;
 }
 
-// Why: Attaching a source is the surfaces' business, never domain code's, so it is kept by the
-// service it belongs to rather than on the service domain code yields.
 const attached = new WeakMap<Events["Service"], Attachments>();
 
-/** How sources attach to `events`, the `Events` `makeEvents` made; one made otherwise dies. */
 export const attachmentsOf = (
   events: Events["Service"]
 ): Effect.Effect<Attachments> =>
@@ -163,7 +149,6 @@ interface Kept {
   feeding: boolean;
 }
 
-/** Whether an announcement to `target` reaches a subscriber of `key`: either absent means every one. */
 export const reaches = (target: string | undefined, key: string | undefined) =>
   target === undefined || key === undefined || target === key;
 
@@ -248,10 +233,6 @@ export const makeEvents = (
     const isCheck = (event: Event.Any) =>
       (checks.get(event)?.attached.size ?? 0) > 0;
 
-    // Why: one emit stream feeds a log at a time, so two builds of one source never append each
-    // occurrence twice, until it ends or fails, its build released or not: interrupting it as its
-    // build is released would lose what a shared upstream sends before the next one subscribes.
-    // The next held one then takes over; one whose build is released before its turn never feeds.
     const feed = (kept: Kept): Effect.Effect<void> =>
       Effect.suspend(() => {
         const [next] = kept.feeding ? [] : kept.waiting;
@@ -293,11 +274,6 @@ export const makeEvents = (
 
           const key = notifyOptions?.key;
 
-          // Why: The revision moves at every notify of an event not attached as a check source,
-          // whose subscribers never read it: a request-scoped server attaches a current source
-          // only while it serves a request, so a change announced between requests is read at
-          // the next. It moves before a subscriber wakes, so the read it wakes to answers the
-          // value written before this notify.
           return Effect.andThen(
             checks.get(event)?.current === false
               ? Effect.void

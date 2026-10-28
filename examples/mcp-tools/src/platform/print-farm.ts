@@ -14,13 +14,8 @@ const fail = (message: string) => Effect.fail(new PrintFarmError({ message }));
 
 const unreadable = "The print farm sent an answer this server could not read.";
 
-// An id is written into the path as it is: the contract admits only letters, digits,
-// `_` and `-`, so it is always one segment. Encoding would not make other text safe:
-// `encodeURIComponent` leaves `..` alone, and a URL parser then walks up the path.
 const at = (id: string, rest = "") => `/api/printers/${id}${rest}`;
 
-// The farm answers a request it refuses with a status that is not 2xx and `{ "error": "..." }`.
-// Its reason is passed on to the model, which can act on "The printer is busy with a job".
 const refuseUnlessOk = HttpClientResponse.matchStatus({
   "2xx": (response) => Effect.succeed(response),
   orElse: (response) =>
@@ -35,9 +30,6 @@ const refuseUnlessOk = HttpClientResponse.matchStatus({
     ),
 });
 
-// Every other way a call to the farm fails, as the same declared error: no connection, an
-// answer of another shape than expected, or none in time. Nothing of the HTTP client's own
-// errors leaves this file, so no tool can fail with something its contract does not declare.
 const asPrintFarmError = <A>(
   effect: Effect.Effect<
     A,
@@ -71,10 +63,6 @@ const asImage = (response: HttpClientResponse.HttpClientResponse) =>
     return { data: new Uint8Array(yield* response.arrayBuffer), mimeType };
   });
 
-// Built once, when the process starts. It requires an `HttpClient` and reads its settings
-// from `Config`: the entrypoint decides which client, and the environment says which farm.
-// Not `fetch`: as a service, a test replaces the network alone and opens no port
-// (test/printers/printers.test.ts).
 export const printFarm = Layer.effect(
   PrintFarm,
   Effect.gen(function* () {
@@ -89,10 +77,6 @@ export const printFarm = Layer.effect(
       HttpClient.transformResponse(Effect.flatMap(refuseUnlessOk))
     );
 
-    // Signs in once, here, and every call below reuses the token, kept `Redacted` so no log
-    // prints it. A farm that refuses the sign-in stops the process at startup, with its
-    // reason, before any tool is listed. A real client also signs in again when a call
-    // answers 401, as tokens expire.
     const session = yield* http
       .post("/api/login", {
         body: HttpBody.jsonUnsafe({ user, password: Redacted.value(password) }),

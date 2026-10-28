@@ -41,13 +41,23 @@ const completionOf = Schema.decodeUnknownOption(
   ])
 );
 
+const completesCall = (
+  answer: ReadonlyArray<{ readonly _tag: string }>,
+  request: RpcMessage.RequestEncoded
+) =>
+  answer.some((response) =>
+    Option.exists(
+      completionOf(response),
+      (completion) =>
+        !Predicate.isTagged(completion, "Exit") ||
+        completion.requestId === request.id
+    )
+  );
+
 const makeProtocol = (target: Effect.Effect<Stub>) =>
   RpcClient.Protocol.make((write) =>
     Effect.succeed({
       send: (clientId: number, request: RpcMessage.FromClientEncoded) =>
-        // Why: a call over the stub is answered once, so an interruption or an acknowledgement
-        // has nowhere to go: an interrupted call's answer is dropped, as over Effect's HTTP
-        // protocol.
         Predicate.isTagged(request, "Request")
           ? Effect.gen(function* () {
               const stub = yield* target;
@@ -63,22 +73,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
                   ),
               });
 
-              // Why: an answer completes this call only with its own request's exit, its id of
-              // the same type, as the client keys its calls, or a connection's end; an exit for
-              // another request leaves the client waiting for good, so it is refused as an
-              // answer that ended too soon.
-              const completes =
-                isAnswer(answer) &&
-                answer.some((response) =>
-                  Option.exists(
-                    completionOf(response),
-                    (completion) =>
-                      !Predicate.isTagged(completion, "Exit") ||
-                      completion.requestId === request.id
-                  )
-                );
-
-              if (!completes) {
+              if (!(isAnswer(answer) && completesCall(answer, request))) {
                 return yield* clientError(
                   new RpcClientError.RpcClientDefect({
                     message:
@@ -89,7 +84,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
               }
 
               yield* Effect.forEach(
-                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: What the object answered: an array of tagged responses, one completing this call, as checked above; the native client decodes each exit and chunk it reads with the rpc's schemas.
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion
                 answer as readonly RpcMessage.FromServerEncoded[],
                 (response) => write(clientId, response),
                 { discard: true }
@@ -104,15 +99,15 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
 
 /**
  * The `RpcClient.Protocol` `RpcClient.make` and `ActionRpc.client` call an object's rpcs with,
- * over `stub`, or over the stub a function returns as each call is sent: each call is one call
+ * over the stub `stubOf` returns as each call is sent: each call is one call
  * of the object's `effectActionsRpc` method, its messages and their answer passed as values,
  * each schema's plain form, which the object serves through `make`'s or `handlers`' `calls`. The stub's own failure is an `RpcClientError`, as an HTTP transport's
  * is, in every call's errors.
  *
  * **Gotchas**
  *
- * - A stub given is held, and many exceptions leave a stub broken, failing every later call through it with the same error: give a function, `() => env.ROOM.getByName(name)`, called as each call is sent, for a new stub each time; one that throws is a defect, not an `RpcClientError`, as it is no failure of the stub.
- * - An `RpcClientError`'s `RpcClientDefect` holds the runtime's error as its `cause`: `.retryable` true allows repeating the call, as Cloudflare's guide says, and `.durableObjectReset` true needs a new stub, which a function gives.
+ * - `stubOf` is called as each call is sent, `() => env.ROOM.getByName(name)`, for a new stub each time, since many exceptions leave a stub broken, failing every later call through it with the same error; one that throws is a defect, not an `RpcClientError`, as it is no failure of the stub.
+ * - An `RpcClientError`'s `RpcClientDefect` holds the runtime's error as its `cause`: `.retryable` true allows repeating the call, as Cloudflare's guide says, and `.durableObjectReset` true needs a new stub, which the next call's `stubOf` gives.
  * - Workers RPC limits a call's arguments and its answer to 32 MiB, serialized: past it, the call fails with the runtime's `limited to 32MiB` error.
  * - An object serving no `calls`, once built, or a class without the method, fails each call, with the object's or the runtime's message as the error's cause; an object whose build fails fails it with that failure first.
  * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.
@@ -122,25 +117,21 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
 export const layerStubClient = (
-  stub: Stub | (() => Stub)
+  stubOf: () => Stub
 ): Layer.Layer<RpcClient.Protocol> =>
-  Layer.effect(RpcClient.Protocol)(
-    // Why: a stub is an object, `typeof` reporting it so whatever its proxy answers to `in`, so
-    // a function is the factory.
-    makeProtocol(
-      Predicate.isFunction(stub) ? Effect.sync(stub) : Effect.succeed(stub)
-    )
-  );
+  Layer.effect(RpcClient.Protocol)(makeProtocol(Effect.sync(stubOf)));
 
-const CurrentStub = Context.Reference<(() => Stub) | undefined>(
+const StubOfCurrentCall = Context.Reference<(() => Stub) | undefined>(
   "effect-actions-cloudflare/ActionDurableObject/CurrentStub",
   { defaultValue: Function.constUndefined }
 );
 
-const currentStub = Effect.flatMap(Effect.service(CurrentStub), (stubOf) =>
-  stubOf === undefined
-    ? Effect.die(new Error("No stub for the call"))
-    : Effect.sync(stubOf)
+const currentStub = Effect.flatMap(
+  Effect.service(StubOfCurrentCall),
+  (stubOf) =>
+    stubOf === undefined
+      ? Effect.die(new Error("No stub for the call"))
+      : Effect.sync(stubOf)
 );
 
 type Unary<Rpcs extends Rpc.Any> = Rpcs extends Rpc.Any
@@ -194,19 +185,16 @@ export const client = <Rpcs extends Rpc.Any>(
   Scope.Scope | Rpc.MiddlewareClient<Rpcs>
 > =>
   Effect.gen(function* () {
-    // Why: `RpcClient.make` runs each call's send in the calling fiber's context, so the call's
-    // stub factory is a reference set around it, and one client serves every object. The factory
-    // runs at each send: a stub an exception broke fails every later call through it.
     const native: NativeClient = yield* RpcClient.make(group).pipe(
       Effect.provideServiceEffect(
         RpcClient.Protocol,
         makeProtocol(currentStub)
       ),
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased native client: one method per rpc of the group, by its tag, each taking its payload and options.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
       Effect.map((made) => made as NativeClient)
     );
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Native group boundary: every rpc of a group is a native `Rpc`, carrying its schemas.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const rpcs = group.requests.values() as Iterable<Rpc.AnyWithProps>;
 
     const unary = new Set(
@@ -216,7 +204,7 @@ export const client = <Rpcs extends Rpc.Any>(
     );
 
     return (stubOf: () => Stub) =>
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Erased client: one method per rpc of the group, each the native client's, whose declared errors, `RpcClientError` and successes `Client` types.
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
       Object.fromEntries(
         Object.entries(native).flatMap(([tag, method]) =>
           unary.has(tag)
@@ -225,7 +213,7 @@ export const client = <Rpcs extends Rpc.Any>(
                   tag,
                   (...args: Parameters<NativeMethod>) =>
                     method(...args).pipe(
-                      Effect.provideService(CurrentStub, stubOf)
+                      Effect.provideService(StubOfCurrentCall, stubOf)
                     ),
                 ],
               ]

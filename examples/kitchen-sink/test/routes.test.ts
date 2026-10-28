@@ -11,9 +11,6 @@ import { AdminHttp, Http } from "../src/Api.js";
 import { adminRoutes, builders, publicRoutes } from "../src/routes.js";
 import { services } from "./support/services.js";
 
-// The host's surfaces, as routes.ts builds them, answering in memory: no port is opened. Each
-// port is a `Testing.layer` of its own, and what they share is provided above both, as
-// server.ts does.
 const shared = builders.pipe(Layer.provideMerge(services()));
 
 const onPublicPort = Effect.provide(Testing.layer(publicRoutes));
@@ -98,7 +95,6 @@ describe("the public port", () => {
     "refuses, at the MCP endpoint, a page of this host that is not on its list",
     () =>
       Effect.gen(function* () {
-        // The request policy lets both through: one is the request's own origin, one is listed.
         const listed = yield* from("/mcp", "http://localhost:6274");
 
         const sameHost = yield* from(
@@ -133,8 +129,6 @@ describe("the two ports", () => {
         (client) => client.getStatus()
       ).pipe(onAdminPort);
 
-      // `status`'s builder names the start it ran in. With `builders` above both ports it ran
-      // once. Provide `memory` alone instead, and each port runs it: two instances.
       expect(onAdmin.instance).toBe(onPublic.instance);
     }).pipe(Effect.provide(shared))
   );

@@ -3,10 +3,6 @@ import { Context, Effect, Layer } from "effect";
 import { NoteChanged, NoteNotFound, RequestConflict } from "./Notes.js";
 import type { Note } from "./Notes.js";
 
-/**
- * Where notes live, each owned by one user. Ownership is checked here, in the data access, so no
- * surface and no handler can skip it.
- */
 export class NoteStore extends Context.Service<
   NoteStore,
   {
@@ -21,7 +17,6 @@ export class NoteStore extends Context.Service<
       body: string,
       requestId?: string
     ) => Effect.Effect<Note, RequestConflict>;
-    /** Every note or none: a database does this in one transaction. */
     readonly createAll: (
       owner: string,
       notes: ReadonlyArray<{ readonly title: string; readonly body: string }>
@@ -39,16 +34,9 @@ export class NoteStore extends Context.Service<
     readonly count: Effect.Effect<number>;
   }
 >()("notes-service/NoteStore") {
-  // DEMO ONLY: notes and replay records live in this process's memory, without eviction, so
-  // they neither survive a restart nor coordinate separate server instances. A deployed store
-  // commits the mutation and its replay record in one transaction, enforces uniqueness of
-  // caller, operation and key, and defines a retention window: an expired key no longer
-  // protects a retry. A separate network call is not made atomic by a local record.
   static readonly layerMemory = Layer.sync(NoteStore, () => {
-    // One map per owner: a note is only ever looked up among its owner's, whatever id is asked.
     const notes = new Map<string, Map<string, Note>>();
 
-    // Keep the original result even after the note is updated or deleted.
     const creations = new Map<string, Map<string, Note>>();
 
     const ownedBy = (owner: string) =>
@@ -58,6 +46,57 @@ export class NoteStore extends Context.Service<
       notes.set(owner, ownedBy(owner).set(note.id, note));
 
       return note;
+    };
+
+    const createdAtomically = (
+      owner: string,
+      title: string,
+      body: string,
+      requestId: string | undefined
+    ): Note | RequestConflict => {
+      if (requestId !== undefined) {
+        const recorded = creations.get(owner)?.get(requestId);
+
+        if (recorded !== undefined) {
+          return recorded.title === title && recorded.body === body
+            ? recorded
+            : new RequestConflict({ requestId });
+        }
+      }
+
+      const note = save(owner, {
+        id: crypto.randomUUID(),
+        title,
+        body,
+        revision: 1,
+      });
+
+      if (requestId !== undefined) {
+        const requests = creations.get(owner) ?? new Map<string, Note>();
+        requests.set(requestId, note);
+        creations.set(owner, requests);
+      }
+
+      return note;
+    };
+
+    const updatedAtomically = (
+      owner: string,
+      id: string,
+      body: string,
+      revision: number
+    ): Note | NoteNotFound | NoteChanged => {
+      const current = ownedBy(owner).get(id);
+
+      if (current === undefined) {
+        return new NoteNotFound({ id });
+      }
+
+      if (current.revision !== revision) {
+        return new NoteChanged({ id, revision: current.revision });
+      }
+
+      return save(owner, { ...current, body, revision: revision + 1 });
     };
 
     const get = Effect.fn("NoteStore.get")(function* (
@@ -78,34 +117,13 @@ export class NoteStore extends Context.Service<
       get,
       create: Effect.fn("NoteStore.create")(
         function* (owner, title, body, requestId) {
-          if (requestId !== undefined) {
-            const recorded = creations.get(owner)?.get(requestId);
+          const created = createdAtomically(owner, title, body, requestId);
 
-            if (recorded !== undefined) {
-              if (recorded.title !== title || recorded.body !== body) {
-                return yield* new RequestConflict({ requestId });
-              }
-
-              return recorded;
-            }
+          if (created instanceof RequestConflict) {
+            return yield* created;
           }
 
-          // No yield between lookup, mutation and recording: concurrent calls cannot interleave
-          // or interruption leave a note without its result.
-          const note = save(owner, {
-            id: crypto.randomUUID(),
-            title,
-            body,
-            revision: 1,
-          });
-
-          if (requestId !== undefined) {
-            const requests = creations.get(owner) ?? new Map<string, Note>();
-            requests.set(requestId, note);
-            creations.set(owner, requests);
-          }
-
-          return note;
+          return created;
         }
       ),
       createAll: (owner, all) =>
@@ -114,22 +132,18 @@ export class NoteStore extends Context.Service<
             save(owner, { id: crypto.randomUUID(), title, body, revision: 1 })
           )
         ),
-      // No `yield*` between the read and the write: a fiber may be set aside at one, and two
-      // updates that each read revision 1 before either wrote would both succeed. A database
-      // does this with a conditional update or a transaction.
       update: Effect.fn("NoteStore.update")(
         function* (owner, id, body, revision) {
-          const current = ownedBy(owner).get(id);
+          const updated = updatedAtomically(owner, id, body, revision);
 
-          if (current === undefined) {
-            return yield* new NoteNotFound({ id });
+          if (
+            updated instanceof NoteNotFound ||
+            updated instanceof NoteChanged
+          ) {
+            return yield* updated;
           }
 
-          if (current.revision !== revision) {
-            return yield* new NoteChanged({ id, revision: current.revision });
-          }
-
-          return save(owner, { ...current, body, revision: revision + 1 });
+          return updated;
         }
       ),
       remove: Effect.fn("NoteStore.remove")(function* (owner, id) {

@@ -5,8 +5,6 @@ import { Socket } from "effect/socket";
 
 import { Rpc } from "./Rpc.js";
 
-// Entrypoint of the web app, an Effect program in a page. It imports the RPC binding and
-// nothing of the server. Its client has the methods of `ActionHttp.client`, over one socket.
 export const board = Effect.gen(function* () {
   const tracker = yield* ActionRpc.client(Rpc);
 
@@ -16,10 +14,6 @@ export const board = Effect.gen(function* () {
   return { me, issues };
 });
 
-// Effect's own client protocol: a WebSocket speaking the server's JSON. The page sends no
-// credential itself: the browser attaches the session cookie to the upgrade, and the server
-// authenticates every message with it. A client that cannot rely on a cookie, such as a script,
-// sends a header on each message instead, with `RpcClient.withHeaders`.
 export const protocol = (url: string) =>
   RpcClient.layerProtocolSocket().pipe(
     Layer.provide(Socket.layerWebSocket(url)),
@@ -29,9 +23,6 @@ export const protocol = (url: string) =>
     ])
   );
 
-// `open("wss://tracker.example.com/rpc")`: one run on a socket of its own, closed when it ends.
-// A page that stays connected builds the protocol's Layer once, such as in a `ManagedRuntime`,
-// and runs its programs in it.
 export const open = async (url: string) =>
   await Effect.runPromise(
     board.pipe(Effect.scoped, Effect.provide(protocol(url)))

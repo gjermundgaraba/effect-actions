@@ -1,10 +1,6 @@
 import { Clock, Console, Effect, Function, Predicate } from "effect";
 
-// Why: Next to Node's console, `table` printing as `log` does, a timer's milliseconds past a
-// second, a group without indentation and no warning for an unknown label are deliberate. Node's
-// layouts are not rebuilt, as no stdio server or CLI needs them: it promises only that every method
-// writes through `error`, counters and timers keeping their counts and start times.
-const stderrConsole = (
+const stderrOnlyConsole = (
   console: Console.Console,
   clock: Clock.Clock
 ): Console.Console => {
@@ -107,6 +103,6 @@ export const withStderrConsole = <A, E, R>(
     Effect.zipWith(
       Effect.service(Console.Console),
       Effect.service(Clock.Clock),
-      stderrConsole
+      stderrOnlyConsole
     )
   );

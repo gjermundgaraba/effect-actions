@@ -17,19 +17,14 @@ import {
 import { publicRoutes } from "../../src/routes.js";
 import { services } from "../support/services.js";
 
-// What authentication adds on the wire: the public port behind its real providers, answering
-// in memory. A caller is the credential its client sends.
 const served = Testing.layer(publicRoutes).pipe(Layer.provide(services()));
 
-// A test replaces the one service it is about. Provided before `services`, this layer is the
-// `Directory` the routes are built with; `services` gives them the rest.
 const servedWith = (directory: Layer.Layer<Directory>) =>
   Testing.layer(publicRoutes).pipe(
     Layer.provide(directory),
     Layer.provide(services())
   );
 
-// A directory that cannot reach its issuer.
 const issuerDown = Layer.succeed(
   Directory,
   Directory.of({
@@ -64,7 +59,6 @@ describe("a bearer token", () => {
           scopes: ["issues:read"],
         });
 
-        // A member of acme alone, asking for globex: refused, with no scope to step up to.
         const refused = yield* Effect.flip(elsewhere.whoAmI());
 
         expect(refused).toBeInstanceOf(Action.Forbidden);
@@ -89,7 +83,6 @@ describe("a bearer token", () => {
         );
         expect(refused.message).toBe("Requires issues:write.");
 
-        // The same refusal as sent: the 403 an OAuth client re-authorizes on.
         const response = yield* HttpClientRequest.post(
           "/api/v1/closeIssue"
         ).pipe(
@@ -119,7 +112,6 @@ describe("a bearer token", () => {
           scopes_supported: ["issues:read", "issues:write"],
         });
 
-        // A protected tool's call without a token: the endpoint's own 401, before any tool runs.
         const refused = yield* HttpClient.execute(
           ActionMcp.request("tools/call", { name: "whoAmI", arguments: {} })
         );
@@ -137,8 +129,6 @@ describe("a bearer token", () => {
       Effect.gen(function* () {
         const http = yield* ActionHttp.client(Http, as("ada", "acme"));
 
-        // Over MCP it is the endpoint's HTTP answer, before any tool runs, not a tool's result: the
-        // client decodes it given the descriptor the endpoint serves with.
         const mcp = yield* ActionMcp.client([WhoAmI], {
           ...as("ada", "acme"),
           authentication: Login,

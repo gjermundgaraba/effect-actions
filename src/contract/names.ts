@@ -4,8 +4,6 @@ const namePattern = "[A-Za-z0-9_-]{1,128}";
 
 const validName = new RegExp(`^${namePattern}$`, "u");
 
-// Why: Every client is keyed by action name, so a name a client already answers to would
-// shadow it.
 const reserved = [
   ["then", "which would make a client a thenable, awaited as a promise"],
   ["watch", "every client's method for events"],
@@ -13,7 +11,6 @@ const reserved = [
 
 export const reservedNames: readonly string[] = reserved.map(([name]) => name);
 
-/** The reserved names as a message lists them: `"then" or "watch"`. */
 export const reservedList = reservedNames
   .map((name) => `"${name}"`)
   .join(" or ");

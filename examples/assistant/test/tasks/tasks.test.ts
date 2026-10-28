@@ -4,20 +4,17 @@ import { Effect, Layer } from "effect";
 
 import { CurrentCaller } from "../../src/identity/Identity.js";
 import type { Member, Operator } from "../../src/identity/Identity.js";
-import { members } from "../../src/identity/members.js";
+import { demoMembers } from "../../src/identity/members.js";
 import { Permissions } from "../../src/identity/permissions.js";
 import { tasks } from "../../src/tasks/handlers.js";
 import { TaskStore } from "../../src/tasks/store.js";
 import { TaskNotFound } from "../../src/tasks/Tasks.js";
 
-// What the implementation does, with no model and no command line: `Action.client` runs the
-// same decoding, `authorize` and handler every surface runs. Each call names its caller.
 const as = (caller: Member | Operator) =>
   Effect.provideService(CurrentCaller, caller);
 
 const operator: Operator = { kind: "operator", id: "root" };
 
-// A test supplies its services as an entrypoint does: here the store is memory.
 const services = Layer.mergeAll(TaskStore.layerMemory, Permissions.layerMemory);
 
 describe("tasks, in process", () => {
@@ -27,21 +24,23 @@ describe("tasks, in process", () => {
 
       yield* client
         .addTask({ title: "Book the venue", assignee: "ada" })
-        .pipe(as(members.ada));
+        .pipe(as(demoMembers.ada));
       yield* client
         .addTask({ title: "Send invitations", assignee: "grace" })
         .pipe(as(operator));
 
       const { tasks: listed } = yield* client
         .listTasks()
-        .pipe(as(members.grace));
+        .pipe(as(demoMembers.grace));
 
       expect(listed.map(({ id, addedBy }) => [id, addedBy])).toStrictEqual([
         ["1", "ada"],
         ["2", "root"],
       ]);
       expect(
-        yield* client.listTasks({ assignee: "grace" }).pipe(as(members.grace))
+        yield* client
+          .listTasks({ assignee: "grace" })
+          .pipe(as(demoMembers.grace))
       ).toMatchObject({
         tasks: [{ title: "Send invitations" }],
       });
@@ -55,15 +54,15 @@ describe("tasks, in process", () => {
         const client = yield* Action.client(tasks);
         const add = client.addTask({ title: "Order lunch", assignee: "guest" });
 
-        const refusal = yield* Effect.flip(add.pipe(as(members.guest)));
+        const refusal = yield* Effect.flip(add.pipe(as(demoMembers.guest)));
 
         expect(refusal).toBeInstanceOf(Action.Forbidden);
         expect(refusal.message).toBe("Requires tasks:write.");
-        expect(yield* client.listTasks().pipe(as(members.guest))).toStrictEqual(
-          {
-            tasks: [],
-          }
-        );
+        expect(
+          yield* client.listTasks().pipe(as(demoMembers.guest))
+        ).toStrictEqual({
+          tasks: [],
+        });
       }).pipe(Effect.provide(services))
   );
 
@@ -94,7 +93,7 @@ describe("tasks, in process", () => {
         const annotate = client.annotateTask({ id: "9", notes: "Urgent." });
 
         expect(
-          yield* Effect.flip(annotate.pipe(as(members.ada)))
+          yield* Effect.flip(annotate.pipe(as(demoMembers.ada)))
         ).toStrictEqual(new TaskNotFound({ id: "9" }));
       }).pipe(Effect.provide(services))
   );

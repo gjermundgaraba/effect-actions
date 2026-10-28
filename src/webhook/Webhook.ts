@@ -8,7 +8,7 @@ import * as Event from "../contract/Event.js";
 import { Receiving } from "../contract/receiving.js";
 import { Webhooks } from "../contract/webhooks.js";
 import { makeReceiver } from "./receiver.js";
-import { makeStorage } from "./stored.js";
+import { makeWriteBehindStorage } from "./stored.js";
 import { makeWebhooks } from "./subscriptions.js";
 
 /** How `layer` grants, verifies and retries webhook subscriptions. */
@@ -78,8 +78,6 @@ const trustedOf = (prefix: string): URL => {
   return url;
 };
 
-// Why: every grant expires, so a subscription whose subscriber is gone ends at its grant: a
-// `maxTtl` of no end would grant none, never ending one nobody refreshes.
 const maxTtlOf = (input: Duration.Input): Duration.Duration => {
   const maxTtl = Duration.fromInputUnsafe(input);
 
@@ -165,7 +163,10 @@ export function layer(
 
       const storage =
         options.persist === true
-          ? yield* Effect.flatMap(KeyValueStore.KeyValueStore, makeStorage)
+          ? yield* Effect.flatMap(
+              KeyValueStore.KeyValueStore,
+              makeWriteBehindStorage
+            )
           : undefined;
 
       return yield* makeWebhooks({
