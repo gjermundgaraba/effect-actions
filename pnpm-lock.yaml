@@ -188,9 +188,6 @@ catalogs:
     oxfmt:
       specifier: 0.74.0
       version: 0.74.0
-    oxlint:
-      specifier: 1.89.0
-      version: 1.89.0
     ultracite:
       specifier: 8.0.2
       version: 8.0.2
@@ -236,9 +233,6 @@ importers:
       oxfmt:
         specifier: 'catalog:'
         version: 0.74.0(vite-plus@1.4.0(@types/node@26.6.5)(@vitest/ui@5.0.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.89.0(oxlint-tsgolint@7.0.2004)(vite-plus@1.4.0(@types/node@26.6.5)(@vitest/ui@5.0.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))
       tsx:
         specifier: 4.23.15
         version: 4.23.15

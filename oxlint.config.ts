@@ -1,5 +1,4 @@
 import { config } from "@clanker-stuff/oxlint-config";
-import type { OxlintConfig } from "oxlint";
 
 const sourceOrLintProbe = (glob: string) => [
   `src/${glob}`,
@@ -21,7 +20,7 @@ const sharedPrivateFiles = [
 
 const lintingProbes = process.env["LINT_PROBE"] !== undefined;
 
-const lint: OxlintConfig = config({
+const lint = config({
   env: { browser: false },
   testBlocks: ["it.effect", "it.effect.prop", "it.live", "it.prop"],
   expectBlocks: ["it.effect.each"],
