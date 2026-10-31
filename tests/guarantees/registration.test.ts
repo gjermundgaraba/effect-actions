@@ -14,7 +14,7 @@ import {
 } from "effect";
 import { AiError, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpClient, HttpRouter } from "effect/http";
-import { OpenApi } from "effect/http-api";
+import { HttpApiSchema, OpenApi } from "effect/http-api";
 
 import * as ActionCli from "../../src/cli/ActionCli.js";
 import * as Action from "../../src/contract/Action.js";
@@ -677,6 +677,95 @@ describe("projection boundaries", () => {
         )
       );
     })
+  );
+
+  it.effect(
+    "reads a declared error's HTTP status past the checks after it, from a key annotation, and cleared by an explicit undefined, as Effect does",
+    () =>
+      Effect.gen(function* () {
+        const nonEmpty = Schema.makeFilter(
+          ({ id }: { readonly id: string }) => id.length > 0
+        );
+
+        const Lost = Schema.Struct({
+          _tag: Schema.tag("Lost"),
+          id: Schema.String,
+        })
+          .annotate({ httpApiStatus: 404 })
+          .check(nonEmpty);
+
+        class Gone extends Schema.TaggedError<
+          Gone,
+          { readonly brand: unique symbol }
+        >()("Gone", { id: Schema.String }, { httpApiStatus: 410 }) {}
+
+        const Moved = Schema.TaggedStruct("Moved", { id: Schema.String }).pipe(
+          HttpApiSchema.status(409)
+        );
+
+        const Cleared = Schema.TaggedStruct("Cleared", { id: Schema.String })
+          .pipe(HttpApiSchema.status(409))
+          .annotate({ httpApiStatus: undefined });
+
+        const Fail = Action.make("fail", {
+          description: "Four failures",
+          readOnly: false,
+          caller: Action.Anyone,
+          input: Schema.Struct({
+            which: Schema.Literals(["lost", "gone", "moved", "cleared"]),
+          }),
+          success: Schema.String,
+          error: [Lost, Gone.check(nonEmpty), Moved, Cleared],
+        });
+
+        const failures = {
+          lost: { _tag: "Lost", id: "a" },
+          gone: new Gone({ id: "a" }),
+          moved: Moved.make({ id: "a" }),
+          cleared: Cleared.make({ id: "a" }),
+        } as const;
+
+        const apps = Action.implement([Fail], {
+          fail: ({ which }) => Effect.fail(failures[which]),
+        });
+
+        const Http = ActionHttp.make([Fail]);
+
+        expect(
+          Object.keys(
+            OpenApi.fromApi(Http.api).paths["/api/fail"]?.post?.responses ?? {}
+          ).toSorted()
+        ).toStrictEqual([
+          "200",
+          "400",
+          "401",
+          "403",
+          "404",
+          "409",
+          "410",
+          "422",
+        ]);
+
+        yield* Effect.gen(function* () {
+          const client = yield* ActionHttp.client(Http);
+
+          for (const [which, status] of [
+            ["lost", 404],
+            ["gone", 410],
+            ["moved", 409],
+            ["cleared", 422],
+          ] as const) {
+            expect(
+              (yield* send(post("/api/fail", { which }))).status,
+              which
+            ).toBe(status);
+            expect(
+              yield* Effect.flip(client.fail({ which })),
+              which
+            ).toStrictEqual(failures[which]);
+          }
+        }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, apps))));
+      })
   );
 
   it("sends a union with a status of its own at that status, and a member without one as 422", () => {

@@ -106,6 +106,7 @@ Recheck these on an upgrade of the dependency named.
   - The native SSE decoder and `Sse.decode` stop at a `retry:` field, so `mcp/reply.ts` feeds the parser by hand.
   - `HttpServerResponse.raw` takes its status from its options, not from the web `Response`.
   - `HttpApiSchema.StreamSse` encodes `data` through `Schema.toCodecJson` since 4.1.1, so `http/events.ts` passes the schema as is.
+  - `HttpApiSchema` reads `httpApiStatus` from the checks, last to first and into groups, then the schema's annotations, then its key's, an explicit `undefined` clearing it; that reader is private, so `contract/status.ts` mirrors it.
 - Effect, RPC:
   - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.1.1 `src/rpc/RpcClient.ts`, which Effect does not export.
   - Only the HTTP protocol lacks chunk acknowledgement (`supportsAck: false`), so only it gets a watch's silence rule.

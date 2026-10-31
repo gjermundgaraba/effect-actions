@@ -1,8 +1,36 @@
-import { SchemaAST } from "effect";
+import { Predicate, SchemaAST } from "effect";
+import type { Schema } from "effect";
 
 import type * as Action from "./Action.js";
 
-export const httpApiStatusOf = SchemaAST.resolveAt<number>("httpApiStatus");
+const statusAnnotationsOf = (
+  node: SchemaAST.AST | SchemaAST.FilterGroup<unknown>
+): Schema.Annotations.Annotations | undefined => {
+  for (const check of (node.checks ?? []).toReversed()) {
+    if (Predicate.hasProperty(check.annotations, "httpApiStatus")) {
+      return check.annotations;
+    }
+
+    const grouped =
+      check._tag === "FilterGroup" ? statusAnnotationsOf(check) : undefined;
+
+    if (grouped !== undefined) {
+      return grouped;
+    }
+  }
+
+  return Predicate.hasProperty(node.annotations, "httpApiStatus")
+    ? node.annotations
+    : undefined;
+};
+
+export const httpApiStatusOf = (ast: SchemaAST.AST): number | undefined => {
+  const status = (statusAnnotationsOf(ast) ?? ast.context?.annotations)?.[
+    "httpApiStatus"
+  ];
+
+  return Predicate.isNumber(status) ? status : undefined;
+};
 
 const transientStatuses = new Set([408, 429, 500, 502, 503, 504]);
 
