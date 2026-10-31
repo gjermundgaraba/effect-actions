@@ -17,7 +17,6 @@ import {
   Scope,
   Semaphore,
   Stream,
-  Struct,
 } from "effect";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 import type { HttpClient } from "effect/http";
@@ -33,7 +32,7 @@ import { encodeUntaggedOf } from "../contract/occurrence.js";
 import { pushed, refusalIn } from "../contract/push.js";
 import type { Pushed } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
-import type { DeliveryStatus, Subscribed } from "../contract/subscribe.js";
+import type { Subscribed } from "../contract/subscribe.js";
 import type {
   Subscribing,
   Subscription,
@@ -42,7 +41,8 @@ import type {
 } from "../contract/webhooks.js";
 import { checkedHost } from "./address.js";
 import { attempt, challenged } from "./attempt.js";
-import type { AttemptFailed } from "./attempt.js";
+import { deliveryHealth, failingForMs, healthOf, statusOf } from "./health.js";
+import type { Health, HealthEvent } from "./health.js";
 import { randomToken, subscriptionId } from "./signing.js";
 import type { Storage, Stored } from "./stored.js";
 
@@ -77,7 +77,7 @@ interface Held {
   previous: { readonly key: Uint8Array; readonly until: number } | undefined;
   context: Context.Context<unknown>;
   expiresAt: number;
-  status: DeliveryStatus;
+  health: Health;
   watermark: string | null;
 }
 
@@ -89,11 +89,6 @@ interface Confirmed {
 }
 
 const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
-
-const resumedWithFreshBudget = (status: DeliveryStatus): DeliveryStatus =>
-  status.active
-    ? status
-    : { ...Struct.omit(status, ["failedSince"]), active: true };
 
 const grantOf = (ttlMs: number | null | undefined, policy: Policy) =>
   Duration.clamp(
@@ -182,7 +177,7 @@ export const makeWebhooks = (
             secret: subscription.secret,
             expiresAt: subscription.expiresAt,
             watermark: subscription.watermark,
-            status: subscription.status,
+            status: statusOf(subscription.health),
           });
         }
       });
@@ -196,34 +191,37 @@ export const makeWebhooks = (
       lookup: (_id: string) => Semaphore.make(1),
     });
 
-    const retryForMillis = Duration.toMillis(policy.retryFor);
+    const health = deliveryHealth(Duration.toMillis(policy.retryFor));
 
-    const failingFor = ({ status }: Held) =>
-      Effect.map(Clock.currentTimeMillis, (now) =>
-        status.failedSince === undefined
-          ? 0
-          : now - Date.parse(status.failedSince)
-      );
+    const transitioned = (subscription: Held, event: HealthEvent) =>
+      Effect.suspend(() => {
+        const [next] = health.transition(subscription.health, event);
+
+        if (next === subscription.health) {
+          return Effect.void;
+        }
+
+        subscription.health = next;
+
+        return kept(subscription);
+      });
 
     const waitingAsLongAsFailing = (subscription: Held) =>
       Schedule.modifyDelay(Schedule.forever, () =>
-        Effect.map(failingFor(subscription), (failing) =>
-          Duration.clamp(Duration.millis(failing), {
-            minimum: Duration.seconds(1),
-            maximum: Duration.minutes(5),
-          })
+        Effect.map(Clock.currentTimeMillis, (now) =>
+          Duration.clamp(
+            Duration.millis(failingForMs(subscription.health, now)),
+            {
+              minimum: Duration.seconds(1),
+              maximum: Duration.minutes(5),
+            }
+          )
         )
       );
 
     const retrying = (subscription: Held) => ({
       schedule: waitingAsLongAsFailing(subscription),
-      while: (failure: AttemptFailed) =>
-        failure.final
-          ? Effect.succeed(false)
-          : Effect.map(
-              failingFor(subscription),
-              (failing) => failing < retryForMillis
-            ),
+      while: () => subscription.health.value === "Failing",
     });
 
     const locked =
@@ -267,59 +265,31 @@ export const makeWebhooks = (
         )
       );
 
-    const recorded = (subscription: Held, failure: AttemptFailed | undefined) =>
-      Effect.flatMap(Clock.currentTimeMillis, (now) =>
-        Effect.suspend(() => {
-          const { status } = subscription;
-
-          subscription.status =
-            failure === undefined
-              ? { active: true, lastDeliveryAt: iso(now), lastError: null }
-              : {
-                  ...status,
-                  lastError: failure.category,
-                  failedSince: status.failedSince ?? iso(now),
-                };
-
-          return failure !== undefined &&
-            status.lastError === failure.category &&
-            status.failedSince !== undefined
-            ? Effect.void
-            : kept(subscription);
-        })
-      );
-
-    const suspended = (subscription: Held) =>
-      Effect.andThen(
-        Effect.andThen(
-          Effect.sync(() => {
-            subscription.status = { ...subscription.status, active: false };
-          }),
-          kept(subscription)
-        ),
-        Effect.never
-      );
-
-    const abandonedResettingBudget = (subscription: Held) =>
-      Effect.andThen(
-        Effect.sync(() => {
-          subscription.status = Struct.omit(subscription.status, [
-            "failedSince",
-          ]);
-        }),
-        kept(subscription)
-      );
-
     const delivered = (subscription: Held, webhookId: string, body: string) =>
       post(subscription, webhookId, body).pipe(
-        Effect.tapError((failure) => recorded(subscription, failure)),
+        Effect.tapError(({ category, final }) =>
+          Effect.flatMap(Clock.currentTimeMillis, (at) =>
+            transitioned(subscription, {
+              type: "AttemptFailed",
+              category,
+              final,
+              at,
+            })
+          )
+        ),
         Effect.retry(retrying(subscription)),
         Effect.matchEffect({
-          onSuccess: () => Effect.as(recorded(subscription, undefined), true),
-          onFailure: (failure) =>
-            failure.final
-              ? Effect.as(abandonedResettingBudget(subscription), false)
-              : suspended(subscription),
+          onSuccess: () =>
+            Effect.as(
+              Effect.flatMap(Clock.currentTimeMillis, (at) =>
+                transitioned(subscription, { type: "Delivered", at })
+              ),
+              true
+            ),
+          onFailure: () =>
+            subscription.health.value === "Suspended"
+              ? Effect.never
+              : Effect.succeed(false),
         })
       );
 
@@ -559,7 +529,7 @@ export const makeWebhooks = (
       now: number
     ) =>
       Effect.gen(function* () {
-        const { status, watermark } = subscription;
+        const { health: before, watermark } = subscription;
 
         const renewed: Held = {
           ...subscription,
@@ -572,7 +542,7 @@ export const makeWebhooks = (
                   until: now + Duration.toMillis(rotationGrace),
                 },
               }),
-          status: resumedWithFreshBudget(status),
+          health: health.transition(before, { type: "Refreshed" })[0],
         };
 
         const confirmation = yield* confirmedAt(watermark);
@@ -590,7 +560,7 @@ export const makeWebhooks = (
           refreshBefore: iso(renewed.expiresAt),
           cursor: watermark,
           truncated: false,
-          deliveryStatus: status,
+          deliveryStatus: statusOf(before),
         };
       });
 
@@ -657,6 +627,16 @@ export const makeWebhooks = (
           record.identity
         );
 
+        const restoredHealth = yield* Option.match(healthOf(record.status), {
+          onNone: () =>
+            Effect.die(
+              new Error(
+                `The kept webhook subscription ${id} has a delivery status no subscription reaches, ${JSON.stringify(record.status)} (unsubscribe it to remove the record, then subscribe again)`
+              )
+            ),
+          onSome: Effect.succeed,
+        });
+
         const principal = keyed.principal(identity);
 
         const current = yield* idOf({
@@ -683,7 +663,7 @@ export const makeWebhooks = (
           secret,
           context: Context.add(built, feed.event.caller, identity),
           expiresAt,
-          status: record.status,
+          health: restoredHealth,
           watermark: record.watermark,
         });
 
@@ -692,9 +672,9 @@ export const makeWebhooks = (
         yield* swapHeldWorker(
           current,
           subscription,
-          record.status.active
-            ? workerOf(subscription, input, record.watermark, confirmation)
-            : Effect.andThen(expired(subscription), finished(subscription))
+          restoredHealth.value === "Suspended"
+            ? Effect.andThen(expired(subscription), finished(subscription))
+            : workerOf(subscription, input, record.watermark, confirmation)
         );
 
         if (current !== id) {
@@ -820,7 +800,7 @@ export const makeWebhooks = (
               url,
               feed,
               principal,
-              status: { active: true, lastDeliveryAt: null, lastError: null },
+              health: health.initialState,
               watermark: cursor,
             });
 
