@@ -77,7 +77,7 @@ Give the success an `Action.Image` field and return its bytes and MIME type from
 
 Name the protected actions' authentication descriptor as `authentication` and provide its provider to the routes: [notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts). Write the [descriptor](Authentication.md#declare-how-callers-sign-in) and its [provider](Authentication.md#verify-credentials) once for every surface, and [publish discovery](Authentication.md#publish-oauth-discovery) so an MCP client finds where to sign in. What a signed-in caller may do is each implementation's [`authorize`](Action.md#authorize-calls), which runs on every call of a protected tool.
 
-- **One endpoint or two.** What a mixed endpoint, serving public and protected tools, shows and runs signed out is on `ActionMcp.LayerHttpOptions`'s `authentication`.
+- **One endpoint or two.** What a mixed endpoint, serving public and protected tools, shows and runs signed out, and how to hide its protected tools then, is on `ActionMcp.LayerHttpOptions`'s `authentication`.
 - Test as a signed-in caller ([Testing.md](Testing.md#test-as-a-signed-in-caller)): [notes-service/test/routes.test.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/test/routes.test.ts).
 
 ## Serve events

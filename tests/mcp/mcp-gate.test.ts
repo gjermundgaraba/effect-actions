@@ -69,6 +69,12 @@ const mixedEndpoint = ({
   return { web, calls };
 };
 
+const ToolNames = Schema.Struct({
+  result: Schema.Struct({
+    tools: Schema.Array(Schema.Struct({ name: Schema.String })),
+  }),
+});
+
 const named = (request: Request, name: string) => {
   request.headers.set("mcp-name", `=?base64?${Base64.encode(name)}?=`);
 
@@ -320,6 +326,55 @@ describe.each([
         tools: [{ name: "status" }, { name: "renameUser" }, { name: "double" }],
       },
     });
+  });
+
+  it("lists protected tools only to a request sending a credential, under a McpServer.visibility provided around the endpoint, after verifying it", async () => {
+    const protectedNames = new Set<string>(
+      [Status, RenameUser, Double].flatMap(({ name, caller }) =>
+        caller === Action.Anyone ? [] : [name]
+      )
+    );
+
+    const hidingProtectedWithoutCredential = McpServer.visibility(
+      ({ target, headers }) =>
+        Effect.succeed(
+          headers["authorization"] !== undefined || !protectedNames.has(target)
+        )
+    );
+
+    const { app } = makeExampleAppRecordingCalls();
+
+    const web = serve(
+      ActionMcp.layerHttp(app, {
+        name: "gate",
+        version: "0",
+        authentication: Login,
+        requestScoped,
+      }).pipe(
+        Layer.provide(authenticate),
+        Layer.provide(hidingProtectedWithoutCredential.layer)
+      )
+    );
+
+    const listedTo = async (request: Request) => {
+      const response = await web.handler(request);
+
+      return response.status === 200
+        ? Schema.decodeUnknownSync(ToolNames)(
+            await response.json()
+          ).result.tools.map(({ name }) => name)
+        : response.status;
+    };
+
+    await expect(
+      listedTo(mcpRequest({ method: "tools/list" }))
+    ).resolves.toStrictEqual(["status"]);
+    await expect(
+      listedTo(withBearer(mcpRequest({ method: "tools/list" }), "reader"))
+    ).resolves.toStrictEqual(["status", "renameUser", "double"]);
+    await expect(
+      listedTo(withBearer(mcpRequest({ method: "tools/list" }), "forged"))
+    ).resolves.toBe(401);
   });
 
   it("refuses a protected tool, prompt or resource before decoding its arguments", async () => {

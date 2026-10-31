@@ -165,7 +165,8 @@ export interface LayerHttpOptions<
    * **Gotchas**
    *
    * - A credential a request presents is still verified, on a public tool's call too: an expired or invalid one answers 401, its challenge naming `invalid_token`, on which a client refreshes it or signs in again.
-   * - `tools/list` names every tool, protected ones included: serve public tools on an endpoint of their own if signed-out callers must not see the rest.
+   * - `tools/list` names every tool, protected ones included: to list only the public ones to a request sending no credential, provide around the endpoint a `McpServer.visibility` returning `false` for a protected tool's `target` when, under Bearer, `headers["authorization"]` is absent, as the endpoint verifies a credential sent before it answers the listing. Or serve public tools on an endpoint of their own.
+   * - A client shown no protected tool never calls one, so it never gets the 401 that starts its sign-in: hide them only from clients that sign in before listing, such as one configured with a token.
    * - A client of a 2025 revision opens a session, which on an endpoint serving a protected tool only a signed-in caller does: it signs in for every request there, a public tool's call and `tools/list` included.
    * - Every prompt and resource request needs a credential, listings included: to offer them signed out, serve them on an endpoint without protected tools.
    * - A handler that sends a notification starts the response, so a refusal after it is an `isError: true` tool result, not the 401 or 403 a client re-authorizes on: refuse in `authorize`.
