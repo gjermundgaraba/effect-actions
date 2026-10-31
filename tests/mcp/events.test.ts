@@ -512,6 +512,50 @@ describe("MCP events over HTTP", () => {
   );
 
   it.effect(
+    "routes an Mcp-Name as McpServer.decodeNameHeader decodes it: a non-canonical base64 form is served, a malformed one is a mismatch",
+    () =>
+      Effect.gen(function* () {
+        const poll = ActionMcp.request("events/poll", {
+          name: "message.posted",
+          cursor: null,
+        });
+
+        const trailingBitsSet = yield* HttpClient.execute(
+          HttpClientRequest.setHeader(
+            poll,
+            "mcp-name",
+            "=?base64?bWVzc2FnZS5wb3N0ZWR=?="
+          )
+        );
+
+        const malformed = yield* HttpClient.execute(
+          HttpClientRequest.setHeader(poll, "mcp-name", "=?base64?***?=")
+        );
+
+        expect(trailingBitsSet.status).toBe(200);
+        expect(
+          yield* Schema.decodeEffect(Json)(yield* trailingBitsSet.text)
+        ).toMatchObject({ result: { events: [] } });
+        expect(malformed.status).toBe(400);
+        expect(
+          yield* Schema.decodeEffect(Json)(yield* malformed.text)
+        ).toMatchObject({ error: { code: -32_020 } });
+      }).pipe(
+        Effect.provide(
+          Layer.provideMerge(
+            Testing.layer(
+              ActionMcp.layerHttp(makeLog().posted, {
+                name: "events",
+                version: "0",
+              })
+            ),
+            Event.layerMemory
+          )
+        )
+      )
+  );
+
+  it.effect(
     "answers events/* in a 2025 session as a method it does not know",
     () =>
       Effect.gen(function* () {

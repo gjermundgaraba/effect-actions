@@ -118,7 +118,7 @@ Recheck these on an upgrade of the dependency named.
   - A registration layer needs `McpServer`, and `registrations` build before the server reads a request, so `ActionMcp` registers its features and tools there.
   - A handler's services are `McpRequest<"Requires", X>`, which `Layer.provide` does not satisfy; `layerHttp` turns them into `Request<"Requires", X>`, and `ActionMcp.runStdio` into `X`.
   - A transport's layer outputs `McpServer`, and `toWebHandler` lays a layer's output over each request's context, so `ActionMcp` provides the transport to `Layer.empty` and outputs nothing: two endpoints in one graph would each read the other's registry.
-  - The runtime decodes `Mcp-Name` as sent or between `=?base64?` and `?=`, checks routing headers against the body only for stateless requests and core methods, and never for `initialize`.
+  - The runtime decodes `Mcp-Name` as sent or between `=?base64?` and `?=`, checks routing headers against the body only for stateless requests and core methods, and never for `initialize`. `McpServer.decodeNameHeader` exports that decoding, which `ActionMcp`'s authentication gate and `bridge.ts` call.
   - An unreadable body is answered `-32700` in a 200, and a body past `MaxBodySize` is a 413.
   - The notification sender exists only where subscriptions are allowed.
   - The stdio parser fails on a non-JSON line, and its retry drops the rest of that read; the transport ends by interrupting the fiber that built it.

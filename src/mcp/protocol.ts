@@ -90,11 +90,6 @@ export const toolJsonSchema = (
     : { ...root, $defs: definitions };
 };
 
-export const routingFormsOf = (name: string): readonly string[] => [
-  name,
-  `=?base64?${Base64.encode(name)}?=`,
-];
-
 type Codec = Action.Any["success"];
 
 export const fieldKey = "effect-actions/field";

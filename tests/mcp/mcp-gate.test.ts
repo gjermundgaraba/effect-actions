@@ -201,6 +201,40 @@ describe.each([
     expect(calls).toStrictEqual([]);
   });
 
+  it("decodes Mcp-Name as McpServer.decodeNameHeader does: a public name's non-canonical base64 is admitted signed out, a malformed one refused", async () => {
+    const Ping = Action.make("ping", {
+      description: "Answer pong",
+      readOnly: true,
+      caller: Action.Anyone,
+      success: Schema.String,
+    });
+
+    const pinging = Action.implement(Ping, () => Effect.succeed("pong"));
+
+    const web = serve(
+      ActionMcp.layerHttp([pinging, makeExampleAppRecordingCalls().app], {
+        name: "gate",
+        version: "0",
+        authentication: Login,
+        requestScoped,
+      }).pipe(Layer.provide(authenticate))
+    );
+
+    const pingNamed = async (name: string) => {
+      const request = rawToolCall("ping");
+      request.headers.set("mcp-name", name);
+
+      return await web.handler(request);
+    };
+
+    const admitted = await pingNamed("=?base64?cGluZx==?=");
+    expect(admitted.status).toBe(200);
+    await expect(valueOf(admitted)).resolves.toBe("pong");
+
+    const malformed = await pingNamed("=?base64?***?=");
+    expect(malformed.status).toBe(401);
+  });
+
   it("never gives a public tool an identity, though its request presents a valid credential", async () => {
     const Whoever = Action.make("whoever", {
       description: "Whether the call has a caller",

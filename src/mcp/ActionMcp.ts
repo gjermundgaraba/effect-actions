@@ -81,7 +81,6 @@ import {
   liftedFrom,
   liftOf,
   protocols,
-  routingFormsOf,
   toolJsonSchema,
 } from "./protocol.js";
 import type { Lift, Lifted } from "./protocol.js";
@@ -554,9 +553,7 @@ const openOf = (
   contracts: ReadonlyArray<Pick<Action.Any, "name" | "caller">>
 ) =>
   new Set(
-    contracts
-      .filter(({ caller }) => caller === Anyone)
-      .flatMap(({ name }) => routingFormsOf(name))
+    contracts.flatMap(({ name, caller }) => (caller === Anyone ? [name] : []))
   );
 
 const requiresAuthentication = (
@@ -590,7 +587,10 @@ const requiresAuthentication = (
       return true;
     }
 
-    const name = headers["mcp-name"];
+    const sent = headers["mcp-name"];
+
+    const name =
+      sent === undefined ? undefined : McpServer.decodeNameHeader(sent);
 
     return name === undefined || !open[named].has(name);
   };

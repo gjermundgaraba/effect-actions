@@ -10,7 +10,7 @@ import {
   Result,
   Schema,
 } from "effect";
-import { McpSchema } from "effect/ai";
+import { McpSchema, McpServer } from "effect/ai";
 import type { McpProtocol } from "effect/ai";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/http";
 import type { Rpc, RpcGroup, RpcMessage } from "effect/rpc";
@@ -49,7 +49,7 @@ import {
   Terminated,
 } from "./events.js";
 import type { EventDescriptor, PollEvents, WireOccurrence } from "./events.js";
-import { isObjectSchema, routingFormsOf, toolJsonSchema } from "./protocol.js";
+import { isObjectSchema, toolJsonSchema } from "./protocol.js";
 
 type Adapter = McpProtocol.ProtocolAdapter<
   "2026-07-28",
@@ -181,11 +181,17 @@ const headerMismatch = (request: HttpServerRequest.HttpServerRequest) =>
 const routedTo = (name: string) =>
   Effect.flatMap(
     Effect.serviceOption(HttpServerRequest.HttpServerRequest),
-    (request) =>
-      Option.isNone(request) ||
-      routingFormsOf(name).includes(request.value.headers["mcp-name"] ?? "")
+    (request) => {
+      if (Option.isNone(request)) {
+        return Effect.void;
+      }
+
+      const sent = request.value.headers["mcp-name"];
+
+      return sent !== undefined && McpServer.decodeNameHeader(sent) === name
         ? Effect.void
-        : headerMismatch(request.value)
+        : headerMismatch(request.value);
+    }
   );
 
 type Arguments = (typeof PollEvents.payloadSchema.Type)["arguments"];
