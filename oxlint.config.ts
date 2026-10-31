@@ -20,7 +20,7 @@ const sharedPrivateFiles = [
 
 const lintingProbes = process.env["LINT_PROBE"] !== undefined;
 
-const lint = config({
+const lint: ReturnType<typeof config> = config({
   env: { browser: false },
   testBlocks: ["it.effect", "it.effect.prop", "it.live", "it.prop"],
   expectBlocks: ["it.effect.each"],
