@@ -13,6 +13,7 @@ The `effect` peer is now `~4.1.1`.
 ### Changes
 
 - A declared error answers over HTTP with its `httpApiStatus` as Effect's HTTP layer reads it, where it answered 422: set before a check, as in `.annotate({ httpApiStatus: 404 }).check(…)` or a class error declared as `Gone.check(…)`, or set by `HttpApiSchema.status`. A client built from the same contract agrees; another client that matched 422 sees the declared status.
+- `Webhook.layer` with `persist` reports the subscriptions whose writes are still pending 5 seconds into its close, as `UnfinishedWrites` naming their ids, where it dropped them silently. The next build restores each as last written.
 
 ## 0.24.0
 

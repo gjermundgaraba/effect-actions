@@ -1,4 +1,12 @@
-import { Duration, Effect, Option, Queue, Schema, Semaphore } from "effect";
+import {
+  Cause,
+  Duration,
+  Effect,
+  Option,
+  Queue,
+  Schema,
+  Semaphore,
+} from "effect";
 import type { Scope } from "effect";
 import { KeyValueStore } from "effect/persistence";
 
@@ -35,6 +43,21 @@ const prefix = "effect-actions/webhook";
 const Index = Schema.Array(Schema.String);
 
 const flushTimeout = Duration.seconds(5);
+
+class UnfinishedWrites extends Schema.TaggedError<
+  UnfinishedWrites,
+  { readonly brand: unique symbol }
+>()("UnfinishedWrites", {
+  ids: Schema.Array(Schema.String),
+  message: Schema.String,
+}) {
+  static of(ids: readonly string[]): UnfinishedWrites {
+    return new UnfinishedWrites({
+      ids,
+      message: `Webhook.layer closed with subscriptions ${ids.join(", ")} unwritten after ${Duration.format(flushTimeout)}: the store keeps each one's last write`,
+    });
+  }
+}
 
 export const makeWriteBehindStorage = (
   store: KeyValueStore.KeyValueStore
@@ -116,7 +139,11 @@ export const makeWriteBehindStorage = (
       Effect.forever(Effect.andThen(Queue.take(marked), flushed))
     );
     yield* Effect.addFinalizer(() =>
-      flushed.pipe(Effect.timeout(flushTimeout), Effect.ignore)
+      Effect.timeoutOrElse(flushed, {
+        duration: flushTimeout,
+        orElse: () =>
+          reported(Cause.fail(UnfinishedWrites.of([...pending.keys()]))),
+      })
     );
 
     return {

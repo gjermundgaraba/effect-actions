@@ -1,10 +1,21 @@
 import { expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Option, Schema, Scope } from "effect";
+import {
+  Deferred,
+  Effect,
+  ErrorReporter,
+  Exit,
+  Fiber,
+  Option,
+  Schema,
+  Scope,
+} from "effect";
 import { KeyValueStore } from "effect/persistence";
+import { TestClock } from "effect/testing";
 
 import { WebhookSecret } from "../../src/contract/callback.js";
 import { makeWriteBehindStorage } from "../../src/webhook/stored.js";
 import type { Stored } from "../../src/webhook/stored.js";
+import { recorder } from "../support/reporter.js";
 import { secretOf, settled } from "../support/webhook.js";
 
 const record: Stored = {
@@ -156,4 +167,50 @@ it.effect("keeps a mark made as an earlier one of its id is written", () =>
     expect(reopened.ids()).toStrictEqual([]);
     expect(yield* memory.has(key)).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory))
+);
+
+it.effect(
+  "reports the subscriptions still unwritten 5 seconds into the layer's close, and closes",
+  () => {
+    const reported: string[] = [];
+
+    return Effect.gen(function* () {
+      const memory = yield* KeyValueStore.KeyValueStore;
+      const scope = yield* Scope.make();
+
+      const hanging = KeyValueStore.make({
+        get: memory.get,
+        getUint8Array: memory.getUint8Array,
+        set: () => Effect.never,
+        remove: () => Effect.never,
+        clear: memory.clear,
+        size: memory.size,
+        keys: memory.keys,
+      });
+
+      const storage = yield* makeWriteBehindStorage(hanging).pipe(
+        Scope.provide(scope)
+      );
+
+      storage.mark("sub_alice", record);
+
+      const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void));
+
+      yield* TestClock.adjust("4 seconds");
+
+      const reportedEarly = reported.length;
+
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(closing);
+
+      expect(reportedEarly).toBe(0);
+      expect(reported).toHaveLength(1);
+      expect(reported[0]).toContain("sub_alice");
+    }).pipe(
+      Effect.provide([
+        KeyValueStore.layerMemory,
+        ErrorReporter.layer([recorder(reported)]),
+      ])
+    );
+  }
 );
