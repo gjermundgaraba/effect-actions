@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { Mac } from "effect/crypto";
 import { Base64, Hex } from "effect/encoding";
 
 import { sha256Hex } from "../contract/digest.js";
@@ -42,15 +43,5 @@ export const randomToken: Effect.Effect<string> = Effect.sync(() =>
   Hex.encode(crypto.getRandomValues(new Uint8Array(16)))
 );
 
-export const constantTimeEqual = (a: string, b: string): boolean => {
-  const left = encoder.encode(a);
-  const right = encoder.encode(b);
-
-  return (
-    left.length === right.length &&
-    left.reduce(
-      (differs, byte, index) => differs | (byte ^ (right[index] ?? 0)),
-      0
-    ) === 0
-  );
-};
+export const constantTimeEqual = (a: string, b: string): boolean =>
+  Mac.timingSafeEqual(encoder.encode(a), encoder.encode(b));
