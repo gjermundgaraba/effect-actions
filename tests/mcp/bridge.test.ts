@@ -57,7 +57,7 @@ describe("the MCP events bridge, over Effect's 2026-07-28 adapter", () => {
     });
 
     expect(() => withEvents(moved, serving)).toThrow(
-      "Effect's MCP 2026-07-28 adapter holds no handlerRpcs group: effect-actions supports MCP events on effect 4.0.x (install the effect version its peer range names)"
+      "Effect's MCP 2026-07-28 adapter holds no handlerRpcs group: effect-actions supports MCP events on effect 4.1.x (install the effect version its peer range names)"
     );
   });
 });

@@ -172,7 +172,6 @@ export interface Options<
    * **Gotchas**
    *
    * - Router middleware and `HttpRouter.provideRequest` around the routes run for a socket's upgrade request alone: a service only they provide is missing from every call over the socket, which dies with `Internal server error`; list an `RpcMiddleware` in `ActionRpc.layer`'s `middleware`, or make it a startup service.
-   * - `toWebHandler` reads no `HttpServerRequest.MaxBodySize`: the platform limits request bodies.
    */
   readonly routes?: Layer.Layer<A, E, R> | undefined;
   /**

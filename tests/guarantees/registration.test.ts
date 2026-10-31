@@ -1,8 +1,10 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
+  Cause,
   Context,
   Deferred,
   Effect,
+  Exit,
   Fiber,
   Function,
   JsonPointer,
@@ -11,7 +13,7 @@ import {
   Schema,
 } from "effect";
 import { AiError, McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpRouter } from "effect/http";
 import { OpenApi } from "effect/http-api";
 
 import * as ActionCli from "../../src/cli/ActionCli.js";
@@ -28,6 +30,7 @@ import {
   rawToolCall,
   send,
   sessionRequest,
+  valueOf,
 } from "../support/requests.js";
 import { serve } from "../support/serve.js";
 import type { Handler } from "../support/serve.js";
@@ -1072,7 +1075,7 @@ describe("projection boundaries", () => {
     );
   });
 
-  it("serves native resources, prompts and tools given as features, and none merged beside", async () => {
+  it("serves native resources, prompts and tools given as features", async () => {
     const Ping = Action.make("ping", {
       description: "Ping",
       readOnly: true,
@@ -1107,10 +1110,6 @@ describe("projection boundaries", () => {
       ActionMcp.layerHttp(app, { ...options, features: native })
     );
 
-    const beside = serve(
-      Layer.mergeAll(ActionMcp.layerHttp(app, options), native)
-    );
-
     await expect(listedFeatures(served.handler)).resolves.toMatchObject({
       tools: ["native", "ping"],
       resources: {
@@ -1118,12 +1117,84 @@ describe("projection boundaries", () => {
       },
       prompts: { result: { prompts: [{ name: "triage" }] } },
     });
+  });
 
-    await expect(listedFeatures(beside.handler)).resolves.toMatchObject({
-      tools: ["ping"],
-      resources: { result: { resources: [] } },
-      prompts: { error: { code: -32_601 } },
+  it("fails to build a native feature merged beside an endpoint, naming McpServer", async () => {
+    const app = Action.implement(
+      Action.make("ping", {
+        description: "Ping",
+        readOnly: true,
+        caller: Action.Anyone,
+      }),
+      () => Effect.void
+    );
+
+    const beside = Layer.merge(
+      ActionMcp.layerHttp(app, { name: "test", version: "0" }),
+      McpServer.prompt({
+        name: "triage",
+        content: () => Effect.succeed("Triage."),
+      })
+    );
+
+    const exit = await Effect.runPromiseExit(
+      Effect.scoped(
+        Layer.build(beside.pipe(Layer.provide(HttpRouter.layer)))
+      ).pipe(
+        Effect.updateContext(
+          (nothing: Context.Context<never>) =>
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+            nothing as Context.Context<McpServer.McpServer>
+        )
+      )
+    );
+
+    assert(Exit.isFailure(exit));
+    expect(String(Cause.squash(exit.cause))).toContain(
+      "Service not found: effect/ai/McpServer"
+    );
+  });
+
+  it("gives a handler its own endpoint's registry beside another endpoint", async () => {
+    const ListTools = Action.make("list-tools", {
+      description: "This server's tools",
+      readOnly: true,
+      caller: Action.Anyone,
+      success: Schema.Array(Schema.String),
     });
+
+    const OnlyB = Action.make("only-b", {
+      description: "Served on /b",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const web = serve(
+      Layer.mergeAll(
+        ActionMcp.layerHttp(
+          Action.implement(ListTools, () =>
+            Effect.map(McpServer.McpServer, ({ tools }) =>
+              tools.map(({ tool }) => tool.name)
+            )
+          ),
+          { name: "a", version: "0", path: "/a" }
+        ),
+        ActionMcp.layerHttp(
+          Action.implement(OnlyB, () => Effect.void),
+          { name: "b", version: "0", path: "/b" }
+        )
+      )
+    );
+
+    const called = await web.handler(
+      mcpRequest({
+        method: "tools/call",
+        params: { name: "list-tools", arguments: {} },
+        path: "/a",
+      })
+    );
+
+    await expect(valueOf(called)).resolves.toStrictEqual(["list-tools"]);
   });
 
   it.effect(
@@ -1145,20 +1216,20 @@ describe("projection boundaries", () => {
           })
         );
 
-        const features = Layer.mergeAll(
-          McpServer.resource({
-            uri: "docs://readme",
-            name: "README",
-            content: Effect.service(Docs),
-          }),
-          McpServer.prompt({
-            name: "triage",
-            content: () =>
-              Effect.map(
-                Effect.service(Docs),
-                (readme) => `Triage with ${readme}`
-              ),
-          })
+        const features = Layer.unwrap(
+          Effect.map(Effect.service(Docs), (readme) =>
+            Layer.mergeAll(
+              McpServer.resource({
+                uri: "docs://readme",
+                name: "README",
+                content: Effect.succeed(readme),
+              }),
+              McpServer.prompt({
+                name: "triage",
+                content: () => Effect.succeed(`Triage with ${readme}`),
+              })
+            )
+          )
         );
 
         const app = Action.implement(

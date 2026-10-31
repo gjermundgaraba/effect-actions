@@ -81,6 +81,7 @@ const failingWhileDown = (store: KeyValueStore.KeyValueStore) => {
       remove: (at) => write(store.remove(at), at),
       clear: store.clear,
       size: store.size,
+      keys: store.keys,
     }),
   };
 };

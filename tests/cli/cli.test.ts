@@ -88,6 +88,11 @@ it.effect(
       expect(
         failure(yield* Effect.exit(exec(number, ["--input", '{"value":"22"}'])))
       ).toBeInstanceOf(CliError.ShowHelp);
+      expect(
+        failure(
+          yield* Effect.exit(exec(number, ["--value", "1", "--value", "2"]))
+        )
+      ).toBeInstanceOf(CliError.ShowHelp);
 
       const empty = ActionCli.command(app, Empty);
       yield* exec(empty, []);

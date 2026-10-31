@@ -7,10 +7,12 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
   Console,
+  Context,
   Deferred,
   Effect,
   Exit,
   Fiber,
+  Layer,
   Predicate,
   Schema,
   Sink,
@@ -574,6 +576,74 @@ it.effect("serves native features given as features beside the tools", () =>
 
     expect(JSON.parse(listed)).toMatchObject({
       result: { prompts: [{ name: "triage" }] },
+    });
+  })
+);
+
+it.effect("gives a native feature the services provided around it", () =>
+  Effect.gen(function* () {
+    class Docs extends Context.Service<Docs, string>()("stdio/Docs") {}
+
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const [read = ""] = yield* converse(
+      ActionMcp.runStdio(
+        Action.implement(Ping, () => Effect.void),
+        {
+          name: "test",
+          version: "0",
+          features: McpServer.resource({
+            uri: "docs://readme",
+            name: "README",
+            content: Effect.service(Docs),
+          }),
+        }
+      ).pipe(Effect.provideService(Docs, "# Acme")),
+      "2025-11-25",
+      [{ method: "resources/read", params: { uri: "docs://readme" } }]
+    );
+
+    expect(JSON.parse(read)).toMatchObject({
+      result: { contents: [{ uri: "docs://readme", text: "# Acme" }] },
+    });
+  })
+);
+
+it.live("lists every tool to a host asking while features build", () =>
+  Effect.gen(function* () {
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+    });
+
+    const [listed = ""] = yield* converse(
+      ActionMcp.runStdio(
+        Action.implement(Ping, () => Effect.void),
+        {
+          name: "test",
+          version: "0",
+          features: Layer.unwrap(
+            Effect.as(
+              Effect.sleep("200 millis"),
+              McpServer.prompt({
+                name: "triage",
+                content: () => Effect.succeed("Triage."),
+              })
+            )
+          ),
+        }
+      ),
+      "2025-11-25",
+      [{ method: "tools/list" }]
+    );
+
+    expect(JSON.parse(listed)).toMatchObject({
+      result: { tools: [{ name: "ping" }] },
     });
   })
 );

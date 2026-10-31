@@ -11,7 +11,7 @@ import {
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
-import { post } from "../support/requests.js";
+import { mcpRequest, post } from "../support/requests.js";
 import { serve } from "../support/serve.js";
 
 const Echo = Action.make("echo", {
@@ -77,9 +77,12 @@ describe("MaxBodySize", () => {
       )
   );
 
-  it("reads a body over MaxBodySize whole under HttpRouter.toWebHandler", async () => {
+  it("limits ActionHttp's routes alone under HttpRouter.toWebHandler by Layer.provide", async () => {
     const { handler } = serve(
-      ActionHttp.layer(ActionHttp.make([Echo]), app).pipe(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([Echo]), app),
+        ActionMcp.layerHttp(app, { name: "test", version: "0" })
+      ).pipe(
         Layer.provide(
           Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.bytes(1024))
         )
@@ -87,11 +90,43 @@ describe("MaxBodySize", () => {
     );
 
     const large = "x".repeat(4096);
-    const response = await handler(post("/api/echo", { text: large }));
 
-    expect([response.status, await response.json()]).toStrictEqual([
-      200,
-      large,
-    ]);
+    const route = await handler(post("/api/echo", { text: large }));
+
+    const tool = await handler(
+      mcpRequest({
+        method: "tools/call",
+        params: { name: "echo", arguments: { text: large } },
+      })
+    );
+
+    expect([route.status, tool.status]).toStrictEqual([413, 200]);
+  });
+
+  it("limits both surfaces under HttpRouter.toWebHandler by HttpRouter.provideRequest", async () => {
+    const { handler } = serve(
+      Layer.mergeAll(
+        ActionHttp.layer(ActionHttp.make([Echo]), app),
+        ActionMcp.layerHttp(app, { name: "test", version: "0" })
+      ).pipe(
+        HttpRouter.provideRequest(
+          Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.bytes(1024))
+        )
+      )
+    );
+
+    const large = "x".repeat(4096);
+
+    const route = await handler(post("/api/echo", { text: large }));
+
+    const tool = await handler(
+      mcpRequest({
+        method: "tools/call",
+        params: { name: "echo", arguments: { text: large } },
+      })
+    );
+
+    expect([route.status, await route.text()]).toStrictEqual([413, ""]);
+    expect([tool.status, await tool.text()]).toStrictEqual([413, ""]);
   });
 });

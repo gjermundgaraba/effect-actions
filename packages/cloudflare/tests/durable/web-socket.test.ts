@@ -110,6 +110,18 @@ describe("layerWebSocket", () => {
       }).pipe(Effect.scoped)
   );
 
+  it.effect("completes a native rpc called with discard", () =>
+    Effect.gen(function* () {
+      const client = yield* scopedClientOver(
+        yield* upgradeToRpc(room("discard"), bearer("ada"))
+      );
+
+      yield* client.whose(undefined, { discard: true });
+
+      expect(yield* client.whose()).toBe("ada");
+    }).pipe(Effect.scoped)
+  );
+
   it.effect(
     "refuses a socket's protected calls without a token, and serves its public ones",
     () =>

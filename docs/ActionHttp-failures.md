@@ -20,7 +20,7 @@ What you see when something is wrong, and the fix. Search for a fragment of the 
 
 ## Client methods
 
-- `HttpClientError` whose `reason._tag` is `DecodeError`, printed `Decode error (<status> …)`, for a status such as 429: no schema declares that status; declare the error on the binding when middleware answers with it, on the action when its handler does. For a 500, the cause is in the server's logs.
+- `HttpClientError` whose `reason._tag` is `DecodeError`, printed `Decode: undeclared status code (<status> …)`, for a status such as 429: no schema declares that status; declare the error on the binding when middleware answers with it, on the action when its handler does. For a 500, the cause is in the server's logs.
 - `HttpClientError` whose `reason._tag` is `InvalidUrlError` outside a browser: relative routes have no page to resolve against; set `baseUrl`.
 - Type error listing `HttpClient` as an unsatisfied requirement: provide one, such as `FetchHttpClient.layer`, or use `ActionHttp.fetchClient`.
 - `Expected 1 arguments` at a client method: `{}` is not a valid input for the action, so pass its input; where the argument may be omitted, leave it out, as `undefined` is a type error.

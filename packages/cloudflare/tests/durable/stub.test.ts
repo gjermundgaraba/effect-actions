@@ -109,6 +109,17 @@ describe("layerStubClient", () => {
       }).pipe(Effect.scoped)
   );
 
+  it.effect("completes a call made with discard, whose handler has run", () =>
+    Effect.gen(function* () {
+      const client = yield* rawOver(plugin("discards"));
+      const code = { plugin: "notes", pane: false };
+
+      yield* client.install({ code }, { discard: true });
+
+      expect(yield* client.install({ code })).toStrictEqual({ version: 2 });
+    }).pipe(Effect.scoped)
+  );
+
   it.effect("answers a call on an evicted object, which builds again", () =>
     Effect.gen(function* () {
       const stub = plugin("evicted");

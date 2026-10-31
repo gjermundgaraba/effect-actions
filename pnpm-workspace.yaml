@@ -4,10 +4,10 @@ catalog:
   "@clanker-stuff/oxlint-config": 0.1.0
   "@cloudflare/vitest-plugin": 1.4.7
   "@cloudflare/workers-types": 5.20261025.1
-  "@effect/platform-node": 4.0.6
+  "@effect/platform-node": 4.1.1
   "@effect/tsgo": 0.57.0
-  "@effect/vitest": 4.0.6
-  effect: 4.0.6
+  "@effect/vitest": 4.1.1
+  effect: 4.1.1
   vite: npm:@voidzero-dev/vite-plus-core@1.4.0
   vite-plus: 1.4.0
   vitest: 5.0.5

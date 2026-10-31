@@ -28,7 +28,13 @@ import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { Posted, settle } from "../support/events.js";
 import { recorder } from "../support/reporter.js";
-import { as, initializeParams, sessionRequest } from "../support/requests.js";
+import {
+  as,
+  initializeParams,
+  mcpRequest,
+  sessionRequest,
+} from "../support/requests.js";
+import { serve } from "../support/serve.js";
 import { Json } from "../support/sse.js";
 import { transcript } from "../support/stdio-host.js";
 
@@ -185,6 +191,31 @@ describe("an MCP event type", () => {
     ).toThrow(
       `MCP event name starts with "mcp.", which MCP keeps for its own events: mcp.task (rename it, or serve it on another surface)`
     );
+  });
+
+  it("leaves a 2026-07-28 tools/list Effect's cacheHints", async () => {
+    const Ticked = Event.make("tick", {
+      description: "",
+      payload: {},
+      caller: Action.Anyone,
+    });
+
+    const web = serve(
+      ActionMcp.layerHttp(
+        Event.implement(Ticked, { log: { emit: Stream.empty } }),
+        {
+          name: "events",
+          version: "0",
+          cacheHints: { tools: { ttl: "1 minute", cacheScope: "private" } },
+        }
+      ).pipe(Layer.provide(Event.layerMemory))
+    );
+
+    const listed = await web.handler(mcpRequest({ method: "tools/list" }));
+
+    await expect(listed.json()).resolves.toMatchObject({
+      result: { ttlMs: 60_000, cacheScope: "private" },
+    });
   });
 });
 

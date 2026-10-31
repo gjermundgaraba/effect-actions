@@ -64,7 +64,8 @@ describe("the action span", () => {
 
       const status = spans.get("guarded")?.status;
       assert(status?._tag === "Ended");
-      assert(Exit.hasFails(status.exit));
+      assert(Exit.isFailure(status.exit));
+      assert(Cause.hasFails(status.exit.cause));
       expect(Cause.squash(status.exit.cause)).toBe(refusal);
     }).pipe(Effect.provideService(Tracer.Tracer, tracer));
   });
@@ -90,7 +91,8 @@ describe("the action span", () => {
             .pipe(Effect.provideService(CurrentActor, actors.alice))
         );
 
-        assert(Exit.hasDies(exit));
+        assert(Exit.isFailure(exit));
+        assert(Cause.hasDies(exit.cause));
         expect(Cause.squash(exit.cause)).toBe(failure);
         expect(spans.get("guarded")?.status).toMatchObject({
           _tag: "Ended",
@@ -115,7 +117,8 @@ describe("the action span", () => {
 
         const exit = yield* Effect.exit(client.public());
 
-        assert(Exit.hasDies(exit));
+        assert(Exit.isFailure(exit));
+        assert(Cause.hasDies(exit.cause));
         expect(Cause.squash(exit.cause)).toBe(failure);
         expect(spans.get("public")?.status).toMatchObject({
           _tag: "Ended",
@@ -218,7 +221,8 @@ describe("the action span", () => {
 
       const exit = yield* Effect.exit(client.public());
 
-      assert(Exit.hasDies(exit));
+      assert(Exit.isFailure(exit));
+      assert(Cause.hasDies(exit.cause));
       expect(Cause.squash(exit.cause)).toBe(failure);
       expect(spans.get("public")?.status).toMatchObject({
         _tag: "Ended",

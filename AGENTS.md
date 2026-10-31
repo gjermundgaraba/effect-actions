@@ -102,21 +102,24 @@ Recheck these on an upgrade of the dependency named.
   - `HttpApi` query parameters take only fields that encode to strings, so every route is a POST.
   - `HttpApiSecurity` types an `Http` scheme's name as `string`, so `assertPublishableResource` tells Bearer apart at runtime.
   - `OpenApi.fromApi` merges equal security schemes of one key silently, so an authentication name that is no OpenAPI component key throws.
-  - A raw client fails a status with `StatusCodeError`, a native `HttpApiClient` an undeclared one with `DecodeError`; `status.ts` lists `HttpClient.retryTransient`'s statuses.
+  - A raw client fails a status with `StatusCodeError`, a native `HttpApiClient` an undeclared one with `DecodeError`; `status.ts` lists the statuses of `HttpClient.isTransientResponse`, which takes a response where `mcp/watch.ts` and `idempotency.ts` hold a number.
   - The native SSE decoder and `Sse.decode` stop at a `retry:` field, so `mcp/reply.ts` feeds the parser by hand.
   - `HttpServerResponse.raw` takes its status from its options, not from the web `Response`.
 - Effect, RPC:
-  - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.0.6 `src/rpc/RpcClient.ts`, which Effect does not export.
+  - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.1.1 `src/rpc/RpcClient.ts`, which Effect does not export.
   - Only the HTTP protocol lacks chunk acknowledgement (`supportsAck: false`), so only it gets a watch's silence rule.
-  - The HTTP protocol reads any status's body as frames, and the server answers an unserved tag with `Unknown request tag: <tag>`; `tests/rpc/events.test.ts` pins both messages.
+  - The HTTP protocol reads any status's body as frames, and the server answers an unserved tag with `Unknown request tag: <tag>`; `tests/rpc/rpc.test.ts` pins that message, `tests/rpc/events.test.ts` what the client does with both.
   - A protocol buffers a call's writes until a server runs, and `Protocol.make` calls its function as it makes the protocol (the Cloudflare stub and socket protocols rely on both).
-- Effect, MCP (4.0.5 and 4.0.6):
+- Effect, MCP (4.1.0 and 4.1.1):
   - `registerToolkit` sends every success as `structuredContent` plus one JSON text block, with no option, so `ActionMcp` registers tools through `addTool`.
   - The registry is one layer per layer graph, so each endpoint is `Layer.fresh`.
+  - A registration layer needs `McpServer`, and `registrations` build before the server reads a request, so `ActionMcp` registers its features and tools there.
+  - A handler's services are `McpRequest<"Requires", X>`, which `Layer.provide` does not satisfy; `layerHttp` turns them into `Request<"Requires", X>`, and `ActionMcp.runStdio` into `X`.
+  - A transport's layer outputs `McpServer`, and `toWebHandler` lays a layer's output over each request's context, so `ActionMcp` provides the transport to `Layer.empty` and outputs nothing: two endpoints in one graph would each read the other's registry.
   - The runtime decodes `Mcp-Name` as sent or between `=?base64?` and `?=`, checks routing headers against the body only for stateless requests and core methods, and never for `initialize`.
-  - An unreadable body is answered `-32700` in a 200, and a body past `MaxBodySize` is a 413 from 4.0.6.
+  - An unreadable body is answered `-32700` in a 200, and a body past `MaxBodySize` is a 413.
   - The notification sender exists only where subscriptions are allowed.
-  - From 4.0.6 the stdio parser fails on a non-JSON line, and its retry drops the rest of that read; the transport ends by interrupting the fiber that built it.
+  - The stdio parser fails on a non-JSON line, and its retry drops the rest of that read; the transport ends by interrupting the fiber that built it.
   - The server is forked with `forkScoped`, so a defect while installing handlers ends only that fiber.
   - `bridge.ts` reaches an adapter's groups and `handlerRpcs`, off the public interface; `tests/mcp/bridge.test.ts` and `events.test.ts` fail if they move. `toolJsonSchema`, which inlines a top-level `$ref`, is private, so `mcp/protocol.ts` does the same.
 - Effect, elsewhere:
@@ -124,8 +127,8 @@ Recheck these on an upgrade of the dependency named.
   - `Stream.retry` restarts its schedule at the first element after a failure.
   - `Effect.provideContext` merges, so a webhook worker forked from the subscribe request replaces its context instead.
   - A request's `Scope` closes with its response, so a webhook delivery runs in the subscribe request's context but not the request itself.
-  - `KeyValueStore` has no key listing, so `Webhook.layer`'s store keeps an index beside the records.
-  - `Crypto` has no HMAC, so webhook signing uses WebCrypto.
+  - `KeyValueStore` listed no keys before 4.1.0, which is why `Webhook.layer`'s store keeps an index beside the records; `keys` scans the whole backing store, and the file store's fails on a foreign file.
+  - `effect/crypto`'s `Mac` and `Digest` are services no runtime bundle provides, so webhook signing and `contract/digest.ts` call WebCrypto, which adds no requirement to any surface.
   - A `Clock` keeps its methods on a class or in a closure, so a spread drops them.
   - The CLI's `withSubcommands` replaces earlier subcommands, and a schema's description is read from its last check.
   - The AI toolkit finds a handler by the tool's `id`, and its default on a failed approval policy runs the call.

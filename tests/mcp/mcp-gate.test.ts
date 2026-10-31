@@ -51,7 +51,7 @@ const mixedEndpoint = ({
   features,
   requestScoped = false,
 }: {
-  readonly features?: Layer.Layer<never>;
+  readonly features?: Layer.Layer<never, never, McpServer.McpServer>;
   readonly requestScoped?: boolean;
 } = {}) => {
   const { app, calls } = makeExampleAppRecordingCalls();
@@ -341,6 +341,32 @@ describe.each([
     }
 
     expect(calls).toStrictEqual([]);
+  });
+
+  it("gives a native feature no caller, even signed in", async () => {
+    const { web } = mixedEndpoint({
+      features: McpServer.resource({
+        uri: "whoami://current",
+        name: "Caller",
+        content: Effect.map(Effect.serviceOption(CurrentActor), (caller) =>
+          Option.isSome(caller) ? "signed in" : "nobody"
+        ),
+      }),
+    });
+
+    const read = await web.handler(
+      withBearer(
+        mcpRequest({
+          method: "resources/read",
+          params: { uri: "whoami://current" },
+        }),
+        "reader"
+      )
+    );
+
+    await expect(read.json()).resolves.toMatchObject({
+      result: { contents: [{ uri: "whoami://current", text: "nobody" }] },
+    });
   });
 
   it("authenticates a native feature's listing, completion and subscription", async () => {

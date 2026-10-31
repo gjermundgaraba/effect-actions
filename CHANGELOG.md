@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+Built and tested against `effect` and `@effect/platform-node` `4.1.1`. The `effect` peer is now `~4.1.0`.
+
+### Breaking changes
+
+**The `effect` peer requires Effect 4.1.0 or a later 4.1.x patch**: `ActionMcp` hands its tools and features to Effect's `McpServer` through `registrations`, which 4.1.0 added, and the Cloudflare package's webhook store provides the `keys` 4.1.0 requires.
+
+- Migrate: install `effect` and every `@effect/*` package at `~4.1.0`. Effect's own changelog lists its breaking changes; those that reach this package's consumers follow.
+
+**A service a native feature's handler reads is a request's**, as Effect 4.1.0 types it. `ActionMcp.layerHttp` asks for `Request<"Requires", X>` where it asked for `X`, and `Layer.provide` no longer satisfies it. `runStdio` still asks for `X`, provided around it. This reverses the guarantee that `features` never receive a request's services: a feature's handler now reads what router middleware provides. The caller `authentication` verifies still reaches protected tools alone, so content that depends on it stays an action.
+
+- Migrate: provide a request service with router middleware. Read a service known at startup in a `Layer.unwrap` around the feature, and close over it:
+
+  ```ts
+  // Before
+  const features = McpServer.resource({
+    uri,
+    name,
+    content: Effect.service(Docs),
+  });
+
+  // After
+  const features = Layer.unwrap(
+    Effect.map(Effect.service(Docs), (readme) =>
+      McpServer.resource({ uri, name, content: Effect.succeed(readme) })
+    )
+  );
+  ```
+
+**A native feature merged beside an endpoint is a type error**, and with the types bypassed fails as the layer builds with `Service not found: effect/ai/McpServer`, where it registered on another registry and was never served, without an error.
+
+- Migrate: pass it as `features`.
+
+**`HttpServerRequest.MaxBodySize` holds under `HttpRouter.toWebHandler`**, answering an empty 413, where it was ignored, as `ActionHttp.layer`'s and `ActionDurableObject`'s gotchas said. This reverses both.
+
+- Migrate: a limit around routes served this way now applies, so raise it where larger bodies are expected. `HttpRouter.provideRequest` limits `ActionHttp` routes and MCP endpoints; `Layer.provide` limits the former alone.
+
+**A single-valued `ActionCli` flag given twice is refused**, with the command's help, where the first value won.
+
+- Migrate: pass the flag once.
+
+### Changes
+
+- `ActionMcp` registers its features and tools before the server reads a request, where a stdio host asking while `features` built was answered `tools/list` with no tools.
+- `ActionMcp.Options` takes Effect's `cacheHints`, which set how long a 2026-07-28 client may treat a discovery or list result as fresh. It takes no `registrations`, which `features` stands for.
+- An undeclared status prints `Decode: undeclared status code (<status> …)`, where it printed `Decode error (<status> …)`. Its `reason._tag` is still `DecodeError`.
+- An rpc called with `discard: true` completes when the server acknowledges it, where it completed when the request was written. Peers on Effect's `SchemaBinary` serialization upgrade together, its envelope having changed.
+
 ## 0.23.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.0.6`. The `effect` peer stays `~4.0.5`.

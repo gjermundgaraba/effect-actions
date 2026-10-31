@@ -99,7 +99,7 @@ const groupOf = (
 
   if (!isGroup(group)) {
     throw new Error(
-      `Effect's MCP ${adapter.protocolVersion} adapter holds no ${key} group: effect-actions supports MCP events on effect 4.0.x (install the effect version its peer range names)`
+      `Effect's MCP ${adapter.protocolVersion} adapter holds no ${key} group: effect-actions supports MCP events on effect 4.1.x (install the effect version its peer range names)`
     );
   }
 

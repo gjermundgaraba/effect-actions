@@ -91,7 +91,7 @@ expectTypeOf(
   Layer.Layer<
     never,
     Cause.IllegalArgumentError | Missing,
-    HttpRouter.HttpRouter | Docs
+    HttpRouter.HttpRouter | HttpRouter.Request<"Requires", Docs>
   >
 >();
 
@@ -101,7 +101,7 @@ expectTypeOf(
   Layer.Layer<
     never,
     Cause.IllegalArgumentError | Missing,
-    HttpRouter.HttpRouter | Docs
+    HttpRouter.HttpRouter | HttpRouter.Request<"Requires", Docs>
   >
 >();
 
@@ -125,7 +125,11 @@ expectTypeOf(
     features: registeringThroughRegistry,
   })
 ).toEqualTypeOf<
-  Layer.Layer<never, Cause.IllegalArgumentError, HttpRouter.HttpRouter | Docs>
+  Layer.Layer<
+    never,
+    Cause.IllegalArgumentError,
+    HttpRouter.HttpRouter | HttpRouter.Request<"Requires", Docs>
+  >
 >();
 
 expectTypeOf(
@@ -136,6 +140,44 @@ expectTypeOf(
 ).toEqualTypeOf<
   Effect.Effect<void, Cause.IllegalArgumentError, Stdio.Stdio | Docs>
 >();
+
+const readAtStartup = Layer.unwrap(
+  Effect.map(Effect.service(Docs), (content) =>
+    McpServer.resource({
+      uri: "docs://readme",
+      name: "README",
+      content: Effect.succeed(content),
+    })
+  )
+);
+
+expectTypeOf(
+  ActionMcp.layerHttp(status, { ...options, features: readAtStartup })
+).toEqualTypeOf<
+  Layer.Layer<never, Cause.IllegalArgumentError, HttpRouter.HttpRouter | Docs>
+>();
+
+expectTypeOf(
+  ActionMcp.runStdio(status, { ...options, features: readAtStartup })
+).toEqualTypeOf<
+  Effect.Effect<void, Cause.IllegalArgumentError, Stdio.Stdio | Docs>
+>();
+
+expectTypeOf(
+  Layer.merge(ActionMcp.layerHttp(status, options), readAtStartup)
+).toEqualTypeOf<
+  Layer.Layer<
+    never,
+    Cause.IllegalArgumentError,
+    HttpRouter.HttpRouter | McpServer.McpServer | Docs
+  >
+>();
+
+ActionMcp.layerHttp(status, {
+  ...options,
+  // @ts-expect-error -- A native option `features` stands for.
+  registrations: Layer.empty,
+});
 
 const listed = Action.implement(
   [Action.make("first", read), Action.make("second", read)],

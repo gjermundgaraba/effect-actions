@@ -12,6 +12,7 @@ import {
   Stream,
   Tracer,
 } from "effect";
+import { McpServer } from "effect/ai";
 import type { HttpClient } from "effect/http";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
@@ -301,6 +302,32 @@ describe("a value provided per request", () => {
       await expect(valueOf(await web.handler(mcp))).resolves.toBe("request");
     }
   );
+
+  it("reaches a native feature, as it reaches a tool", async () => {
+    const web = serve(
+      ActionMcp.layerHttp(where, {
+        name: "test",
+        version: "0",
+        features: McpServer.resource({
+          uri: "tenant://current",
+          name: "Tenant",
+          content: Effect.service(Tenant),
+        }),
+      }).pipe(Layer.provide(tenantFromHeader.layer))
+    );
+
+    const response = await web.handler(
+      mcpRequest({
+        method: "resources/read",
+        params: { uri: "tenant://current" },
+        headers: { "x-tenant": "request" },
+      })
+    );
+
+    await expect(response.json()).resolves.toMatchObject({
+      result: { contents: [{ uri: "tenant://current", text: "request" }] },
+    });
+  });
 
   it.each(["HTTP", "MCP"] as const)(
     "is still the one a handler gives a Toolkit call it makes, over %s",

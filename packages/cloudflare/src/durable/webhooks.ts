@@ -159,6 +159,9 @@ const storageStore = (storage: DurableObjectStorage) => {
       )
     ),
     size: Effect.map(listed, (found) => found.size),
+    keys: Effect.map(listed, (found) =>
+      [...found.keys()].map((key) => key.slice(webhookPrefix.length))
+    ),
   });
 };
 

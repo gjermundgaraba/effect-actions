@@ -1,13 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import {
   evictDurableObject,
   runDurableObjectAlarm,
   runInDurableObject,
 } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { DateTime, Effect, Layer } from "effect";
-import { HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
+import { ByteSize, DateTime, Effect, Layer, Result, Schema } from "effect";
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpRouter,
+  HttpServerRequest,
+} from "effect/http";
 
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { dueNow, runAlarmDue } from "../support/alarm.js";
@@ -304,6 +311,67 @@ describe("handlers", () => {
           builds: 2,
           finalized: 1,
         });
+      })
+  );
+
+  it.effect(
+    "limits a route and an MCP endpoint by a MaxBodySize given with HttpRouter.provideRequest",
+    () =>
+      Effect.gen(function* () {
+        const Echo = Action.make("echo", {
+          description: "Echo the text",
+          readOnly: false,
+          caller: Action.Anyone,
+          input: Schema.Struct({ text: Schema.String }),
+          success: Schema.String,
+        });
+
+        const echo = Action.implement(Echo, ({ text }) => Effect.succeed(text));
+        const text = "x".repeat(4096);
+
+        const statuses = yield* Effect.promise(
+          async () =>
+            await runInDurableObject(room("max-body"), async (_, state) => {
+              const object = ActionDurableObject.handlers(state, {
+                routes: Layer.mergeAll(
+                  ActionHttp.layer(ActionHttp.make([Echo]), echo),
+                  ActionMcp.layerHttp(echo, { name: "test", version: "0" })
+                ).pipe(
+                  HttpRouter.provideRequest(
+                    Layer.succeed(
+                      HttpServerRequest.MaxBodySize,
+                      ByteSize.bytes(1024)
+                    )
+                  )
+                ),
+                disableLogger: true,
+              });
+
+              const route = await object.fetch(
+                new Request("https://object/api/echo", {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ text }),
+                })
+              );
+
+              const tool = await object.fetch(
+                Result.getOrThrow(
+                  HttpClientRequest.toWebResult(
+                    ActionMcp.request(
+                      "tools/call",
+                      { name: "echo", arguments: { text } },
+                      { url: "https://object/mcp" }
+                    )
+                  )
+                )
+              );
+
+              return [route.status, tool.status];
+            })
+        );
+
+        expect(statuses).toStrictEqual([413, 413]);
       })
   );
 

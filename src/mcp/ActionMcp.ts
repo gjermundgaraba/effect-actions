@@ -12,6 +12,7 @@ import {
   Stdio,
   Stream,
 } from "effect";
+import type { Scope } from "effect";
 import type { McpProtocol } from "effect/ai";
 import { AiError, McpSchema, McpServer } from "effect/ai";
 import { HttpRouter, HttpServerRequest } from "effect/http";
@@ -96,15 +97,19 @@ export type { Client, ClientOptions } from "./client.js";
 export type { Params, RequestOptions } from "./request.js";
 
 /**
- * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option but `protocols`,
- * the server information, `instructions` and `extensions` among them, the actions `A` that are
- * its tools and the event types `A` it serves, and the native features it serves beside them.
+ * An MCP server, over HTTP or stdio: every native `McpServer.layerStdio` option but `protocols`
+ * and `registrations`, the server information, `instructions`, `extensions` and `cacheHints`
+ * among them, the actions `A` that are its tools and the event types `A` it serves, and the
+ * native features it serves beside them.
  */
 export interface Options<
   E = never,
   R = never,
   A extends Action.Any | Event.Any = Action.Any | Event.Any,
-> extends Omit<Parameters<typeof McpServer.layerStdio>[0], "protocols"> {
+> extends Omit<
+  Parameters<typeof McpServer.layerStdio>[0],
+  "protocols" | "registrations"
+> {
   /**
    * The actions that are tools and the event types it serves, among the implementations':
    * `[GetUser, RenameUser, UserRenamed]`, exactly those. Each keeps its implementation's
@@ -117,23 +122,24 @@ export interface Options<
   readonly actions?: readonly A[] | undefined;
   /**
    * Native MCP features served beside the actions' tools, such as `McpServer.resource`,
-   * `McpServer.prompt` and `McpServer.toolkit` layers merged into one. They register on this
-   * server's registry and run with the services they were built with, and no `authorize` runs for
-   * them.
+   * `McpServer.prompt` and `McpServer.toolkit` layers merged into one: Effect's `registrations`,
+   * registered on this server's registry before it reads a request. No `authorize` runs for them.
    *
    * **Gotchas**
    *
-   * - Merged beside the endpoint instead of passed here, they register on another registry and are never served, without an error.
-   * - A service provided to this layer itself is built again for the features alone, so a resource reads another store than the tools write: provide it around the endpoint.
-   * - They never receive a request's services, so they cannot read the caller: content that depends on the caller is an action.
+   * - Merged beside the endpoint instead of passed here, they need an `McpServer` nothing provides: a type error, and `Service not found: effect/ai/McpServer` as the layer builds.
+   * - A service a handler reads is a request's, in the endpoint's `Request<"Requires", X>`, as a tool's is: provide it with router middleware, or around `runStdio`. `Layer.provide` does not satisfy it.
+   * - A service known at startup is read in a `Layer.unwrap` around the feature, which closes over it: the endpoint then needs it at startup, and shares it with the tools.
+   * - A layer provided to this layer itself is built again for the features alone, so a resource reads another store than the tools write: provide it around the endpoint.
+   * - They cannot read the caller, which `authentication` gives protected tools alone: content that depends on the caller is an action.
    */
   readonly features?: Layer.Layer<never, E, R> | undefined;
 }
 
 /**
  * One Streamable HTTP MCP endpoint: `Options`, `authentication`, `requestScoped`, and every native
- * `McpServer.layerHttp` option, `allowedOrigins` among them, except `protocols` and
- * `allowSessionTermination`, which are fixed.
+ * `McpServer.layerHttp` option, `allowedOrigins` among them, except `protocols`, `registrations`
+ * and `allowSessionTermination`, which are fixed.
  */
 export interface LayerHttpOptions<
   E = never,
@@ -144,7 +150,7 @@ export interface LayerHttpOptions<
     Options<E, R, A>,
     Omit<
       Parameters<typeof McpServer.layerHttp>[0],
-      "protocols" | "path" | "allowSessionTermination"
+      "protocols" | "path" | "allowSessionTermination" | "registrations"
     > {
   /** The endpoint's route; defaults to `/mcp`. */
   readonly path?: HttpRouter.PathInput;
@@ -196,7 +202,12 @@ type HttpToolRequestContext<R> = Exclude<
   HttpRouter.Provided
 >;
 
-type Features<R> = Exclude<R, McpServer.McpServer>;
+type Features<R> = Exclude<
+  McpServer.McpRequest.Without<R>,
+  McpServer.McpServer
+>;
+
+type FeatureRequest<R> = McpServer.McpRequest.Only<"Requires", R>;
 
 type Contracts<Apps extends Served, O> =
   | SelectedOf<O, Apps>
@@ -471,10 +482,12 @@ const servingEvents = <P extends readonly McpProtocol.AnyProtocolAdapter[]>(
     ? [stateless, ...rest]
     : [withEvents(stateless, serving), ...rest];
 
-const server = <Out, R>(
+const server = <Out, E, R>(
   apps: readonly AnyImplementation[],
   serving: Serving,
-  transport: Layer.Layer<Out, Cause.IllegalArgumentError, R>,
+  transport: (
+    registrations: Layer.Layer<never, unknown, unknown>
+  ) => Layer.Layer<Out, E, R>,
   features: Layer.Layer<never, unknown, unknown> = Layer.empty
 ) => {
   const { events, authentication } = serving;
@@ -515,9 +528,10 @@ const server = <Out, R>(
     yield* registerTools(apps, authentication);
   });
 
-  return Layer.effectDiscard(register).pipe(
-    Layer.provide(features),
-    Layer.provide(transport),
+  return Layer.empty.pipe(
+    Layer.provide(
+      transport(Layer.effectDiscard(register).pipe(Layer.provide(features)))
+    ),
     Layer.fresh,
     provideServed({ apps, events })
   );
@@ -673,6 +687,7 @@ export function layerHttp<
       HttpToolRequestContext<
         | RemoteRequest<Member<Apps>, SelectedOf<O, Apps>>
         | EventServedRequest<Member<Apps>, SelectedEventsOf<O, Apps>>
+        | FeatureRequest<R>
       >
     >
   | ProviderOf<D>
@@ -702,20 +717,24 @@ export function layerHttp(
   const transport = server(
     selected,
     serving,
-    requestScoped === true
-      ? McpServer.layerHttpRequestScoped({
-          ...options,
-          path,
-          protocols: servingEvents([httpProtocol], serving),
-        })
-      : McpServer.layerHttp({
-          ...options,
-          path,
-          protocols: servingEvents(protocols, serving),
-          allowSessionTermination: true,
-          allowSubscriptions:
-            allowSubscriptions ?? (features !== undefined || events.length > 0),
-        }),
+    (registrations) =>
+      requestScoped === true
+        ? McpServer.layerHttpRequestScoped({
+            ...options,
+            path,
+            protocols: servingEvents([httpProtocol], serving),
+            registrations,
+          })
+        : McpServer.layerHttp({
+            ...options,
+            path,
+            protocols: servingEvents(protocols, serving),
+            allowSessionTermination: true,
+            allowSubscriptions:
+              allowSubscriptions ??
+              (features !== undefined || events.length > 0),
+            registrations,
+          }),
     features
   );
 
@@ -802,6 +821,7 @@ export function runStdio<
   | ToolRequestContext<
       | ServedRequest<Member<Apps>, SelectedOf<O, Apps>>
       | EventRequestOf<Member<Apps>, SelectedEventsOf<O, Apps>>
+      | Exclude<FeatureRequest<R>, Scope.Scope>
     >
   | Features<R>
 >;
@@ -817,10 +837,12 @@ export function runStdio(
   const transport = server(
     selected,
     serving,
-    McpServer.layerStdio({
-      ...options,
-      protocols: servingEvents(protocols, serving),
-    }).pipe(Layer.provide(jsonLinesOnly)),
+    (registrations) =>
+      McpServer.layerStdio({
+        ...options,
+        protocols: servingEvents(protocols, serving),
+        registrations,
+      }).pipe(Layer.provide(jsonLinesOnly)),
     features
   );
 
