@@ -50,6 +50,7 @@ import type {
   AnyImplementation,
   BuildServices,
   BuildError,
+  ErasedHandler,
   ErasedValue,
   Holding,
   Member,
@@ -131,6 +132,7 @@ export interface Options<
    * - A service known at startup is read in a `Layer.unwrap` around the feature, which closes over it: the endpoint then needs it at startup, and shares it with the tools.
    * - A layer provided to this layer itself is built again for the features alone, so a resource reads another store than the tools write: provide it around the endpoint.
    * - They cannot read the caller, which `authentication` gives protected tools alone: content that depends on the caller is an action.
+   * - A `McpServer.middleware` layer merged into them, a `McpServer.visibility` one included, runs for the actions' tools and not for the features beside it: provide it around the endpoint to reach both.
    */
   readonly features?: Layer.Layer<never, E, R> | undefined;
 }
@@ -330,7 +332,8 @@ const registerTools = Effect.fnUntraced(function* (
 
   for (const [action, handler] of bound) {
     const toolSuccess = toolSuccessOf(action.success);
-    const run = answeringWhole(action, handler);
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const run = answeringWhole(action, handler) as ErasedHandler<never>;
     const lift = liftOf(toolSuccess);
     const media = lift.fields.length === 0 ? undefined : lift;
 
@@ -410,6 +413,7 @@ const registerTools = Effect.fnUntraced(function* (
     yield* registry.addTool({
       tool,
       annotations: Context.empty(),
+      services: built,
       handle: (payload: ErasedValue) =>
         Effect.annotateCurrentSpan({ tool: action.name }).pipe(
           Effect.andThen(() => decode(payload ?? {})),
@@ -441,11 +445,7 @@ const registerTools = Effect.fnUntraced(function* (
               })
             )
           ),
-          Effect.catchCause(internalErrorOnDefect),
-          Effect.updateContext(
-            (request: Context.Context<McpSchema.McpRequestContext>) =>
-              Context.merge(built, request)
-          )
+          Effect.catchCause(internalErrorOnDefect)
         ),
     });
   }

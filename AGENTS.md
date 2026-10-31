@@ -114,6 +114,7 @@ Recheck these on an upgrade of the dependency named.
   - A protocol buffers a call's writes until a server runs, and `Protocol.make` calls its function as it makes the protocol (the Cloudflare stub and socket protocols rely on both).
 - Effect, MCP (4.1.1):
   - `registerToolkit` sends every success as `structuredContent` plus one JSON text block, with no option, so `ActionMcp` registers tools through `addTool`.
+  - `addTool` reads the `McpServer.middleware` stacks, `visibility` included, from its `services`, and lays the rest under each request's context, less the request's own keys, so `ActionMcp` passes its build context there.
   - The registry is one layer per layer graph, so each endpoint is `Layer.fresh`.
   - A registration layer needs `McpServer`, and `registrations` build before the server reads a request, so `ActionMcp` registers its features and tools there.
   - A handler's services are `McpRequest<"Requires", X>`, which `Layer.provide` does not satisfy; `layerHttp` turns them into `Request<"Requires", X>`, and `ActionMcp.runStdio` into `X`.
