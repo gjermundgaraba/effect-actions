@@ -24,6 +24,7 @@ import { projectedErrors } from "../contract/declared.js";
 import { Refusal } from "../contract/errors.js";
 import type { BuiltIn } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
+import { liftOf } from "../contract/lift.js";
 import { split } from "../contract/listed.js";
 import { assertOnce } from "../contract/names.js";
 import { progressSink } from "../contract/progress.js";
@@ -32,7 +33,7 @@ import { elementOf } from "../contract/stream.js";
 import type { Answer } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
 import type { WatchArgs, WatchRequirement } from "../contract/watch.js";
-import { defaultPath, liftOf, unliftedFrom } from "./protocol.js";
+import { defaultPath, unliftedFrom } from "./protocol.js";
 import {
   bodyOf,
   callError,

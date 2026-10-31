@@ -13,8 +13,9 @@ export const Media = Schema.Struct({
 /**
  * An image, a media field of a success: `{ data: Uint8Array, mimeType: string }`, `mimeType` such
  * as `image/png`. A top-level field of a struct success, one, optional, or a required array, or the
- * whole success, one or an array: an MCP tool lifts it into an image block of its own, and every other
- * surface sends it as JSON, the bytes in base64. `ActionMcp` refuses it anywhere else.
+ * whole success, one or an array: an MCP tool lifts it into an image block of its own, a toolkit tool
+ * into a file part of what its model reads, and every other surface sends it as JSON, the bytes in
+ * base64. `ActionMcp` refuses it anywhere else, and a toolkit sends it there in the JSON.
  *
  * **Gotchas**
  *

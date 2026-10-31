@@ -28,7 +28,7 @@ Where things are, in a project that installs the package: these pages in `node_m
 | [ActionMcp.md](ActionMcp.md) | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, serve events, allow browser clients, add prompts and resources, send notifications |
 | [ActionRpc.md](ActionRpc.md) | bind actions to Effect rpcs, serve them on a protocol, call them, add native rpcs, send request context with a call |
 | [ActionRpc-events.md](ActionRpc-events.md) | serve and watch events over rpcs, follow what a request names, such as a room |
-| [ActionToolkit.md](ActionToolkit.md) | give a model actions as a native Effect AI `Toolkit`, name the caller, ask for approval |
+| [ActionToolkit.md](ActionToolkit.md) | give a model actions as a native Effect AI `Toolkit`, show it images, name the caller, ask for approval |
 | [ActionCli.md](ActionCli.md) | run actions as local commands, or call a server from commands; watch events; shape flags, input and output; name the caller; add a command of your own |
 | [Webhook.md](Webhook.md) | deliver events to a subscriber's callback by webhook, signed, and watch by webhook |
 | [Authentication.md](Authentication.md) | declare how callers sign in, verify credentials, publish OAuth discovery, step up for a scope |

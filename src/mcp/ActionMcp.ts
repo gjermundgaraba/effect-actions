@@ -61,6 +61,8 @@ import type {
   Served,
   ServedRequest,
 } from "../contract/implementation.js";
+import { liftedFrom, liftOf } from "../contract/lift.js";
+import type { Lift, Lifted } from "../contract/lift.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
 import { provideServed, selectFrom } from "../contract/serving.js";
 import { toolSuccessOf } from "../contract/stream.js";
@@ -79,12 +81,9 @@ import {
   httpProtocol,
   isMisplaced,
   isObjectSchema,
-  liftedFrom,
-  liftOf,
   protocols,
   toolJsonSchema,
 } from "./protocol.js";
-import type { Lift, Lifted } from "./protocol.js";
 
 export { client } from "./client.js";
 

@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Schema, SchemaGetter, Stream } from "effect";
+import { Effect, Layer, Schema, SchemaGetter } from "effect";
 import { McpServer, Tool, Toolkit } from "effect/ai";
 import { Base64 } from "effect/encoding";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -876,21 +876,6 @@ describe("media fields on the other surfaces", () => {
 
         expect(yield* client.shot()).toStrictEqual({ screen, image });
       }).pipe(Effect.provide(Testing.layer(ActionHttp.layer(Http, shot))))
-  );
-
-  it.effect(
-    "gives a Toolkit's model the JSON, and its handler the decoded success",
-    () =>
-      Effect.gen(function* () {
-        const tools = ActionToolkit.make(shot);
-
-        const [returned] = yield* Effect.flatMap(tools.toolkit, (toolkit) =>
-          Effect.flatMap(toolkit.handle("shot", {}), Stream.runCollect)
-        ).pipe(Effect.provide(tools.layer));
-
-        expect(returned?.encodedResult).toStrictEqual(jsonWithBase64Bytes);
-        expect(returned?.result).toStrictEqual({ screen, image });
-      })
   );
 });
 

@@ -1,7 +1,6 @@
 import { Effect, Schema, SchemaGetter } from "effect";
 import type { Context, Layer } from "effect";
-import { Tool, Toolkit } from "effect/ai";
-import type { Prompt } from "effect/ai";
+import { Prompt, Tool, Toolkit } from "effect/ai";
 
 import type * as Action from "../contract/Action.js";
 import type { Codec } from "../contract/codec.js";
@@ -32,6 +31,7 @@ import type {
   Serving,
   ErasedValue,
 } from "../contract/implementation.js";
+import { liftedFrom, liftOf } from "../contract/lift.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
 import { progressSink } from "../contract/progress.js";
 import { toolSuccessOf } from "../contract/stream.js";
@@ -190,6 +190,28 @@ type ProgressOf<P> = P extends Codec
     >
   : never;
 
+const modelOutputOf = (success: Codec) => {
+  const lift = liftOf(success);
+
+  if (lift.fields.length === 0) {
+    return undefined;
+  }
+
+  const encodeRest =
+    lift.rest === undefined
+      ? undefined
+      : Schema.encodeUnknownSync(Schema.toCodecJson(lift.rest));
+
+  return (result: ErasedValue): readonly Prompt.ToolModelOutputPart[] => [
+    ...(encodeRest === undefined
+      ? []
+      : [Prompt.textPart({ text: JSON.stringify(encodeRest(result)) })]),
+    ...liftedFrom(lift, result).map(({ value }) =>
+      Prompt.filePart({ mediaType: value.mimeType, data: value.data })
+    ),
+  ];
+};
+
 const jsonToolOf = (action: Action.Any) => {
   const success = toolSuccessOf(action.success);
 
@@ -203,6 +225,7 @@ const jsonToolOf = (action: Action.Any) => {
     ),
     failure: Schema.toCodecJson(Schema.Union(projectedErrors(action))),
     failureMode: "return",
+    toModelOutput: modelOutputOf(success),
   });
 };
 
@@ -220,6 +243,9 @@ type ErasedTools = Tools<Record<string, Tool.Any>, unknown, unknown>;
  *
  * - An action answering a stream, `Action.Stream`, answers its elements collected into one array once the stream ends, its tool's success that array.
  * - An action declaring `progress` streams each value as a result with `preliminary: true` before its success, its `result` `{ _tag: "Progress", value }`, so its tool's success schema is that or `success`; a model reads the success alone.
+ * - An image where `Action.Image` lifts one reaches the model as a `file` part of the result's `modelOutput`, after one `text` part of the other fields' JSON when the success has any, while `result` and `encodedResult` keep it: a `Chat`'s history holds each image twice, its bytes and their base64.
+ * - A provider that takes only text tool results reads each image as a placeholder, `[image/png omitted]` as `Prompt.toolModelOutputToText` writes it, so its model never sees the image.
+ * - `setSuccess(…)` on a generated tool drops the mapping: the model reads the JSON again, the bytes in base64.
  * - A success is a result with `isFailure: false`, `result` the value and `encodedResult` its JSON; a declared error a result with `isFailure: true` and `result` the error, which the model reads, never a raised failure; a refusal as `Action.Unauthenticated` and `Action.Forbidden` say.
  * - Arguments that do not decode are a result with `isFailure: true` whose `result` is an `AiError` with `reason` a `ToolParameterValidationError`, never `InvalidInput`, and neither `authorize` nor the handler runs; undeclared arguments are dropped and the call runs.
  * - A defect, or a failure the action's errors reject, is the call's defect; a success or an error that does not encode fails the call with an `AiError`, `Failed to encode result for tool …`.
