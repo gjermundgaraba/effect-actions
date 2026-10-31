@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+The `effect` peer is now `~4.1.1`.
+
+### Breaking changes
+
+**The `effect` peer requires Effect 4.1.1 or a later 4.1.x patch**: `ActionHttp`'s event streams rely on 4.1.1's `HttpApiSchema.StreamSse`, which encodes each event's data through its JSON codec. On 4.1.0, `ActionHttp.client`'s `watch` fails to decode a streamed occurrence's `timestamp`.
+
+- Migrate: install `effect` and every `@effect/*` package at `~4.1.1`.
+
 ## 0.24.0
 
 Built and tested against `effect` and `@effect/platform-node` `4.1.1`. The `effect` peer is now `~4.1.0`.

@@ -105,12 +105,13 @@ Recheck these on an upgrade of the dependency named.
   - A raw client fails a status with `StatusCodeError`, a native `HttpApiClient` an undeclared one with `DecodeError`; `status.ts` lists the statuses of `HttpClient.isTransientResponse`, which takes a response where `mcp/watch.ts` and `idempotency.ts` hold a number.
   - The native SSE decoder and `Sse.decode` stop at a `retry:` field, so `mcp/reply.ts` feeds the parser by hand.
   - `HttpServerResponse.raw` takes its status from its options, not from the web `Response`.
+  - `HttpApiSchema.StreamSse` encodes `data` through `Schema.toCodecJson` since 4.1.1, so `http/events.ts` passes the schema as is.
 - Effect, RPC:
   - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.1.1 `src/rpc/RpcClient.ts`, which Effect does not export.
   - Only the HTTP protocol lacks chunk acknowledgement (`supportsAck: false`), so only it gets a watch's silence rule.
   - The HTTP protocol reads any status's body as frames, and the server answers an unserved tag with `Unknown request tag: <tag>`; `tests/rpc/rpc.test.ts` pins that message, `tests/rpc/events.test.ts` what the client does with both.
   - A protocol buffers a call's writes until a server runs, and `Protocol.make` calls its function as it makes the protocol (the Cloudflare stub and socket protocols rely on both).
-- Effect, MCP (4.1.0 and 4.1.1):
+- Effect, MCP (4.1.1):
   - `registerToolkit` sends every success as `structuredContent` plus one JSON text block, with no option, so `ActionMcp` registers tools through `addTool`.
   - The registry is one layer per layer graph, so each endpoint is `Layer.fresh`.
   - A registration layer needs `McpServer`, and `registrations` build before the server reads a request, so `ActionMcp` registers its features and tools there.

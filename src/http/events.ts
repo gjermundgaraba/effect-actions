@@ -37,7 +37,7 @@ export const pageOf = <E extends Event.Any>(event: E) =>
 
 export const sentOf = <E extends Event.Any>(event: E) =>
   HttpApiSchema.StreamSse({
-    data: Schema.toCodecJson(PushedOf(event)),
+    data: PushedOf(event),
     error: Refusal,
   });
 
