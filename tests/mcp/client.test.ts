@@ -36,7 +36,7 @@ import {
   UserNotFound,
   WhoAmI,
 } from "../support/app/contracts.js";
-import { as } from "../support/requests.js";
+import { as, ToolList } from "../support/requests.js";
 import { serve } from "../support/serve.js";
 
 const againstHost = <A, E>(
@@ -646,12 +646,6 @@ describe("client", () => {
 describe("request", () => {
   it.effect("answers as the endpoint sent it, whatever its status", () =>
     Effect.gen(function* () {
-      const Listed = Schema.Struct({
-        result: Schema.Struct({
-          tools: Schema.Array(Schema.Struct({ name: Schema.String })),
-        }),
-      });
-
       const Failed = Schema.Struct({
         error: Schema.Struct({ code: Schema.Finite, message: Schema.String }),
       });
@@ -662,7 +656,7 @@ describe("request", () => {
             HttpClient.execute(
               ActionMcp.request("tools/list", {}, headersAs())
             ),
-            HttpClientResponse.schemaBodyJson(Listed)
+            HttpClientResponse.schemaBodyJson(ToolList)
           ),
           HttpClient.execute(
             ActionMcp.request(

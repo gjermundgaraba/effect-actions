@@ -7,6 +7,7 @@ import * as Action from "../../src/contract/Action.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import type { Params } from "../../src/mcp/request.js";
 import * as Testing from "../../src/testing/Testing.js";
+import { ToolList } from "../support/requests.js";
 import { Json } from "../support/sse.js";
 import { converse } from "../support/stdio-host.js";
 
@@ -41,12 +42,6 @@ const replyTo = (method: string, params: Params = {}) =>
   Effect.flatMap(HttpClient.execute(ActionMcp.request(method, params)), (r) =>
     Effect.flatMap(r.text, Schema.decodeEffect(Json))
   );
-
-const ToolNames = Schema.Struct({
-  result: Schema.Struct({
-    tools: Schema.Array(Schema.Struct({ name: Schema.String })),
-  }),
-});
 
 const recordingMiddleware = () => {
   const seen: string[] = [];
@@ -122,7 +117,7 @@ describe.each([
           replyTo("tools/call", { name: "missing", arguments: {} }),
         ]).pipe(Effect.provide(Testing.layer(endpoint)));
 
-        const { result } = yield* Schema.decodeUnknownEffect(ToolNames)(listed);
+        const { result } = yield* Schema.decodeUnknownEffect(ToolList)(listed);
 
         expect(result.tools.map(({ name }) => name)).toStrictEqual(["ping"]);
         expect(unknown).toMatchObject({ error: { code: -32_602 } });

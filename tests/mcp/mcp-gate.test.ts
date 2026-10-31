@@ -16,6 +16,7 @@ import {
   mcpRequest,
   rawToolCall,
   sessionRequest,
+  ToolList,
   valueOf,
   withBearer,
 } from "../support/requests.js";
@@ -68,12 +69,6 @@ const mixedEndpoint = ({
 
   return { web, calls };
 };
-
-const ToolNames = Schema.Struct({
-  result: Schema.Struct({
-    tools: Schema.Array(Schema.Struct({ name: Schema.String })),
-  }),
-});
 
 const named = (request: Request, name: string) => {
   request.headers.set("mcp-name", `=?base64?${Base64.encode(name)}?=`);
@@ -360,7 +355,7 @@ describe.each([
       const response = await web.handler(request);
 
       return response.status === 200
-        ? Schema.decodeUnknownSync(ToolNames)(
+        ? Schema.decodeUnknownSync(ToolList)(
             await response.json()
           ).result.tools.map(({ name }) => name)
         : response.status;

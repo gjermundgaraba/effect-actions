@@ -96,6 +96,12 @@ export const as = (token: string) => ({
   transformClient: HttpClient.mapRequest(HttpClientRequest.bearerToken(token)),
 });
 
+export const ToolList = Schema.Struct({
+  result: Schema.Struct({
+    tools: Schema.Array(Schema.Struct({ name: Schema.String })),
+  }),
+});
+
 const RawToolCallSuccess = Schema.Struct({
   result: Schema.Struct({ structuredContent: Schema.Json }),
 });
