@@ -13,8 +13,7 @@ import { KeyValueStore } from "effect/persistence";
 import { TestClock } from "effect/testing";
 
 import { WebhookSecret } from "../../src/contract/callback.js";
-import { makeWriteBehindStorage } from "../../src/webhook/stored.js";
-import type { Stored } from "../../src/webhook/stored.js";
+import { makeWriteBehindStorage, Stored } from "../../src/webhook/stored.js";
 import { recorder } from "../support/reporter.js";
 import { secretOf, settled } from "../support/webhook.js";
 
@@ -111,12 +110,12 @@ it.effect(
 
       storage.mark("sub_alice", record);
 
-      yield* settled(() => state.writes === 2);
+      yield* settled(() => state.writes === 1);
 
       state.down = true;
       storage.mark("sub_alice", undefined);
 
-      yield* settled(() => state.writes === 3);
+      yield* settled(() => state.writes === 2);
       yield* settled();
 
       const once = state.writes;
@@ -133,9 +132,43 @@ it.effect(
 
       const reopened = yield* makeWriteBehindStorage(memory);
 
-      expect([once, again]).toStrictEqual([3, 5]);
+      expect([once, again]).toStrictEqual([2, 4]);
       expect(reopened.ids()).toStrictEqual([]);
       expect(yield* memory.has(key)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory))
+);
+
+it.effect(
+  "lists the records under its prefix alone, and writes past 0.24's index, leaving it in place",
+  () =>
+    Effect.gen(function* () {
+      const store = yield* KeyValueStore.KeyValueStore;
+      const index = "effect-actions/webhook";
+      const listed = JSON.stringify(["sub_alice", "sub_bob"]);
+      const scope = yield* Scope.make();
+
+      yield* store.set(index, listed);
+      yield* store.set("notes/sub_carol", "{}");
+      yield* KeyValueStore.toSchemaStore(store, Stored).set(key, record);
+
+      const storage = yield* makeWriteBehindStorage(store).pipe(
+        Scope.provide(scope)
+      );
+
+      const listedAtBuild = storage.ids();
+
+      storage.mark("sub_dave", record);
+
+      yield* Scope.close(scope, Exit.void);
+
+      const reopened = yield* makeWriteBehindStorage(store);
+
+      expect(listedAtBuild).toStrictEqual(["sub_alice"]);
+      expect(yield* storage.get("sub_alice")).toStrictEqual(
+        Option.some(record)
+      );
+      expect(reopened.ids()).toStrictEqual(["sub_alice", "sub_dave"]);
+      expect(yield* store.get(index)).toBe(listed);
     }).pipe(Effect.scoped, Effect.provide(KeyValueStore.layerMemory))
 );
 

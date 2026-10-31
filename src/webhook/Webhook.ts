@@ -50,7 +50,8 @@ export interface Options {
    * - A subscription suspended stays suspended when restored, until its subscriber's refresh delivers again.
    * - Secrets and identities are kept as JSON, as given, so give the layer a store only the server reads.
    * - A kept subscription whose input or identity no longer decodes, as after a schema change, is reported at each build and never restored, until its subscriber unsubscribes it.
-   * - A store whose index cannot be read as the layer builds fails the build; a write that fails later is reported and tried again with the next.
+   * - The build lists every key of the store, a `SELECT id` over a SQL store's whole table or a read of the file store's directory, and restores those under `effect-actions/webhook/`: where the application keeps many keys in that store, give the layer one of its own.
+   * - A store whose keys cannot be listed as the layer builds fails the build, as the file store's does on a file name that is not percent-encoding, such as `100%.txt`; a write that fails later is reported and tried again with the next.
    * - Writes still pending 5 seconds into the layer's close are reported as `UnfinishedWrites` and dropped: the next build restores each subscription as last written, missing one subscribed since and keeping one removed since.
    * - A callback's verification is not kept: a restored subscription delivers on, and a new one to the same callback after a restart is verified again.
    */

@@ -14,6 +14,7 @@ The `effect` peer is now `~4.1.1`.
 
 - A declared error answers over HTTP with its `httpApiStatus` as Effect's HTTP layer reads it, where it answered 422: set before a check, as in `.annotate({ httpApiStatus: 404 }).check(…)` or a class error declared as `Gone.check(…)`, or set by `HttpApiSchema.status`. A client built from the same contract agrees; another client that matched 422 sees the declared status.
 - `Webhook.layer` with `persist` reports the subscriptions whose writes are still pending 5 seconds into its close, as `UnfinishedWrites` naming their ids, where it dropped them silently. The next build restores each as last written.
+- `Webhook.layer` with `persist` finds kept subscriptions with the store's `keys`, and keeps no index beside them: each change is one write, of its record. The build lists every key of the backing store, a `SELECT id` over a SQL table or a read of the file store's directory, and fails where that fails, as the file store's does on a file name that is not percent-encoding, such as `100%.txt`. The index 0.24 kept at `effect-actions/webhook` is ignored and left in place: a server rolled back to 0.24 restores only the ids that index lists, and a subscription made since returns at its subscriber's next refresh.
 
 ## 0.24.0
 

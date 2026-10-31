@@ -38,16 +38,10 @@ import {
   url,
 } from "../support/webhook.js";
 
-const index = "effect-actions/webhook";
+const records = "effect-actions/webhook/";
 
 const keptIds = (store: KeyValueStore.KeyValueStore) =>
-  Effect.map(store.get(index), (ids) =>
-    ids === undefined
-      ? []
-      : Schema.decodeSync(Schema.fromJsonString(Schema.Array(Schema.String)))(
-          ids
-        )
-  );
+  KeyValueStore.prefix(store, records).keys;
 
 const failing: typeof acknowledging = (body) =>
   body["type"] === undefined
@@ -151,54 +145,44 @@ describe("webhook subscriptions kept by persist", () => {
   );
 
   it.effect(
-    "lists a subscription whose index write failed at its next write, so a restart restores it",
+    "writes a subscription again whose write failed, as the layer closes, so a restart restores it",
     () =>
       Effect.gen(function* () {
         const memory = yield* KeyValueStore.KeyValueStore;
-        let indexWrites = 0;
+        let writes = 0;
 
-        const failingFirstIndexWrite: KeyValueStore.KeyValueStore = {
+        const failingFirstWrite: KeyValueStore.KeyValueStore = {
           ...memory,
           set: (key, value) => {
-            if (key !== index) {
-              return memory.set(key, value);
-            }
+            writes += 1;
 
-            indexWrites += 1;
-
-            return indexWrites === 1
+            return writes === 1
               ? Effect.die(new Error("The store is down."))
               : memory.set(key, value);
           },
         };
 
-        const before = makeWorld({ kept: failingFirstIndexWrite });
+        const before = makeWorld({ kept: failingFirstWrite });
         const after = makeWorld({ kept: memory });
 
-        const grant = yield* Effect.gen(function* () {
+        const [grant, keptAfterFailure] = yield* Effect.gen(function* () {
           const granted = yield* subscribed(secretOf(1));
 
-          before.world.changes.push({ id: "c1", by: "bob" });
+          yield* until(() => writes === 1);
 
-          yield* until(() => events(before.world.received).length === 1);
-
-          return granted;
+          return [granted, yield* keptIds(memory)] as const;
         }).pipe(Effect.provide(before.server));
 
-        after.world.changes.push(
-          { id: "c1", by: "bob" },
-          { id: "c2", by: "bob" }
-        );
+        after.world.changes.push({ id: "c1", by: "bob" });
 
         yield* until(() => events(after.world.received).length === 1).pipe(
           Effect.provide(after.server)
         );
 
-        expect([indexWrites, yield* keptIds(memory)]).toStrictEqual([
-          2,
-          [grant.id],
-        ]);
-        expect(events(after.world.received)).toMatchObject([{ eventId: "c2" }]);
+        expect([keptAfterFailure, writes]).toStrictEqual([[], 2]);
+        expect(
+          after.world.received.map((delivery) => delivery.subscription)
+        ).toStrictEqual([grant.id]);
       }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
 
@@ -281,7 +265,7 @@ describe("webhook subscriptions kept by persist", () => {
           subscribed(secretOf(2), undefined, { token: "bob" }),
         ]).pipe(Effect.provide(before.server));
 
-        const key = `${index}/${bob.id}`;
+        const key = `${records}${bob.id}`;
 
         yield* store.set(
           key,
@@ -409,7 +393,7 @@ describe("webhook subscriptions kept by persist", () => {
   );
 
   it.effect(
-    "removes an id its index lists with no record, and keeps one whose record fails to read",
+    "keeps a subscription whose record fails to read as the layer builds, reporting the read",
     () =>
       Effect.gen(function* () {
         const memory = yield* KeyValueStore.KeyValueStore;
@@ -420,12 +404,10 @@ describe("webhook subscriptions kept by persist", () => {
           Effect.provide(before.server)
         );
 
-        yield* memory.set(index, JSON.stringify([grant.id, "ghost"]));
-
         const failingReads: KeyValueStore.KeyValueStore = {
           ...memory,
           get: (key) =>
-            key === `${index}/${grant.id}`
+            key === `${records}${grant.id}`
               ? Effect.die(new Error("The store is down."))
               : memory.get(key),
         };
@@ -691,11 +673,10 @@ describe("webhook subscriptions kept by persist", () => {
       );
 
       yield* store.set(
-        `${index}/stale`,
-        (yield* store.get(`${index}/${grant.id}`)) ?? ""
+        `${records}stale`,
+        (yield* store.get(`${records}${grant.id}`)) ?? ""
       );
-      yield* store.remove(`${index}/${grant.id}`);
-      yield* store.set(index, JSON.stringify(["stale"]));
+      yield* store.remove(`${records}${grant.id}`);
 
       after.world.changes.push({ id: "c1", by: "bob" });
 

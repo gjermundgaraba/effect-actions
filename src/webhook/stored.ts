@@ -38,9 +38,7 @@ export interface Storage {
   >;
 }
 
-const prefix = "effect-actions/webhook";
-
-const Index = Schema.Array(Schema.String);
+const prefix = "effect-actions/webhook/";
 
 const flushTimeout = Duration.seconds(5);
 
@@ -64,55 +62,26 @@ export const makeWriteBehindStorage = (
 ): Effect.Effect<Storage, never, Scope.Scope> =>
   Effect.gen(function* () {
     const records = KeyValueStore.toSchemaStore(
-      KeyValueStore.prefix(store, `${prefix}/`),
+      KeyValueStore.prefix(store, prefix),
       Stored
     );
 
-    const index = KeyValueStore.toSchemaStore(store, Index);
-
-    let indexed: ReadonlySet<string> = new Set(
-      yield* Effect.orDie(
-        Effect.map(
-          index.get(prefix),
-          Option.getOrElse((): readonly string[] => [])
-        )
-      )
-    );
-
+    const kept = new Set(yield* Effect.orDie(records.keys));
     const pending = new Map<string, Stored | undefined>();
     const marked = yield* Queue.sliding<undefined>(1);
     const writing = Semaphore.makeUnsafe(1);
 
-    const listed = (next: ReadonlySet<string>) =>
+    const written = (id: string, record: Stored | undefined) =>
       Effect.andThen(
-        index.set(prefix, [...next]),
+        record === undefined ? records.remove(id) : records.set(id, record),
         Effect.sync(() => {
-          indexed = next;
+          if (record === undefined) {
+            kept.delete(id);
+          } else {
+            kept.add(id);
+          }
         })
       );
-
-    const removedThenUnlisted = (id: string) =>
-      Effect.andThen(
-        records.remove(id),
-        Effect.suspend(() =>
-          indexed.has(id)
-            ? listed(new Set([...indexed].filter((each) => each !== id)))
-            : Effect.void
-        )
-      );
-
-    const listedThenKept = (id: string, record: Stored) =>
-      Effect.andThen(
-        Effect.suspend(() =>
-          indexed.has(id) ? Effect.void : listed(new Set([...indexed, id]))
-        ),
-        records.set(id, record)
-      );
-
-    const written = (id: string, record: Stored | undefined) =>
-      record === undefined
-        ? removedThenUnlisted(id)
-        : listedThenKept(id, record);
 
     const clearedUnlessRemarked = (id: string, record: Stored | undefined) =>
       Effect.sync(() => {
@@ -151,7 +120,7 @@ export const makeWriteBehindStorage = (
         pending.set(id, record);
         Queue.offerUnsafe(marked, undefined);
       },
-      ids: () => [...new Set([...indexed, ...pending.keys()])],
+      ids: () => [...new Set([...kept, ...pending.keys()])],
       get: (id) =>
         pending.has(id)
           ? Effect.succeed(Option.fromUndefinedOr(pending.get(id)))

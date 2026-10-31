@@ -129,7 +129,7 @@ Recheck these on an upgrade of the dependency named.
   - `Stream.retry` restarts its schedule at the first element after a failure.
   - `Effect.provideContext` merges, so a webhook worker forked from the subscribe request replaces its context instead.
   - A request's `Scope` closes with its response, so a webhook delivery runs in the subscribe request's context but not the request itself.
-  - `KeyValueStore` listed no keys before 4.1.0, which is why `Webhook.layer`'s store keeps an index beside the records; `keys` scans the whole backing store, and the file store's fails on a foreign file.
+  - `Webhook.layer`'s store lists its records once as it builds, with `KeyValueStore.keys` under its prefix; `keys` scans the whole backing store, `SELECT id FROM` the table on SQL and a directory read on the file store, whose `keys` lists `.DS_Store` and subdirectories but fails on a file name that is not percent-encoding, such as `100%.txt`.
   - `effect/crypto`'s `Mac` and `Digest` are services no runtime bundle provides, so webhook signing and `contract/digest.ts` call WebCrypto, which adds no requirement to any surface.
   - A `Clock` keeps its methods on a class or in a closure, so a spread drops them.
   - The CLI's `withSubcommands` replaces earlier subcommands, and a schema's description is read from its last check.
