@@ -264,34 +264,46 @@ export class Versioned extends ActionDurableObject.make({
   routes: versionedRoutes,
 }) {}
 
-class Appended extends Context.Service<Appended, Deferred.Deferred<string>>()(
-  "test/Appended"
-) {}
+class Appended extends Context.Service<
+  Appended,
+  {
+    readonly polled: Deferred.Deferred<undefined>;
+    readonly appended: Deferred.Deferred<string>;
+  }
+>()("test/Appended") {}
 
 const slowBuild = Effect.andThen(
   Effect.sleep("300 millis"),
-  Deferred.make<string>()
+  Effect.all({
+    polled: Deferred.make<undefined>(),
+    appended: Deferred.make<string>(),
+  })
 );
 
 const pollAndAppend = Layer.mergeAll(
   HttpRouter.add(
     "GET",
     "/poll",
-    Effect.flatMap(Effect.service(Appended), (appended) =>
-      Effect.map(
-        Effect.timeoutOption(Deferred.await(appended), "3 seconds"),
-        (woken) =>
-          HttpServerResponse.text(Option.getOrElse(woken, () => "timed out"))
+    Effect.flatMap(Effect.service(Appended), ({ polled, appended }) =>
+      Effect.andThen(
+        Deferred.succeed(polled, undefined),
+        Effect.map(
+          Effect.timeoutOption(Deferred.await(appended), "3 seconds"),
+          (woken) =>
+            HttpServerResponse.text(Option.getOrElse(woken, () => "timed out"))
+        )
       )
     )
   ),
   HttpRouter.add(
     "POST",
     "/append",
-    Effect.flatMap(Effect.service(Appended), (appended) =>
-      Effect.as(
-        Deferred.succeed(appended, "appended"),
-        HttpServerResponse.text("done")
+    Effect.flatMap(Effect.service(Appended), ({ polled, appended }) =>
+      Effect.flatMap(Deferred.isDone(polled), (waiting) =>
+        Effect.as(
+          Deferred.succeed(appended, "appended"),
+          HttpServerResponse.text(waiting ? "done" : "done before any poll")
+        )
       )
     )
   )
