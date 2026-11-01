@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.26.1
+
+Development tooling and test dependencies were updated. There are no consumer-facing runtime changes.
+
 ## 0.26.0
 
 ### Breaking changes
