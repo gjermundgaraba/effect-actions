@@ -34,5 +34,5 @@ export const settled = <E, R>(done: Effect.Effect<boolean, E, R>) =>
       }),
       done
     ),
-    { until: (finished) => finished, times: 200 }
+    { until: (finished) => finished }
   );
