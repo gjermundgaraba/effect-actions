@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- **The core depends on `xstate` `6.0.0-alpha.71` at runtime**, its first dependency besides the `effect` peer. `Webhook.layer` keeps a subscription's delivery health in an `xstate/fsm` transition table. A refresh's `deliveryStatus` and a kept record's `status` keep their shape, and records kept by 0.25.0 restore as before.
+
 ## 0.25.0
 
 The `effect` peer is now `~4.1.1`.

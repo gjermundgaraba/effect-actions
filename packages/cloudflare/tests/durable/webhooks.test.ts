@@ -157,7 +157,7 @@ const failedFor = (stub: DurableObjectStub, ago: number) =>
             key,
             Schema.encodeSync(Record)({
               ...record,
-              status: { ...status, failedSince },
+              status: { ...status, lastError: "http_5xx", failedSince },
             })
           );
         }
