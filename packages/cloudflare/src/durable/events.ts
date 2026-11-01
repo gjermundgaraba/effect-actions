@@ -149,11 +149,7 @@ const storageRevisions = (
 
     const epoch = kept ?? crypto.randomUUID();
 
-    if (kept === undefined) {
-      yield* Effect.promise(async () => {
-        await storage.put(epochKey, epoch);
-      });
-    }
+    let unwritten = kept === undefined;
 
     const inTurn = Semaphore.withPermit(yield* Semaphore.make(1));
 
@@ -167,14 +163,16 @@ const storageRevisions = (
           ),
           (counts) =>
             Effect.promise(async () => {
-              await storage.put(
-                Object.fromEntries(
+              await storage.put({
+                ...(unwritten ? { [epochKey]: epoch } : {}),
+                ...Object.fromEntries(
                   counts.map(([name, count]) => [
                     `${countPrefix}${name}`,
                     count + 1,
                   ])
-                )
-              );
+                ),
+              });
+              unwritten = false;
             })
         ).pipe(inTurn),
     };

@@ -4,6 +4,7 @@
 
 ### Changes
 
+- `ActionDurableObject` writes its current sources' revision epoch, `effect-actions/revisions/epoch`, with the first `notify`, where each instance wrote it as it built, so an object that is only read, such as one asked for a resource that does not exist, keeps no key for its revisions. A watch of a current source on an object never notified receives the value again after an eviction, under a new id, where it kept its id. An object already holding the key keeps it and its ids.
 - `ActionDurableObject.handlers`' gotchas said that the events arriving while a build runs, such as the one building again after a failure, run once it ends, one after another, so a slow one held those after it. This corrects the documented ordering, and the behavior is unchanged: every build, as the instance is constructed and again after a failure, runs under `blockConcurrencyWhile`, and the runtime delivers the events it held as to a built instance, so a long-poll sent during a build holds no append sent after it.
 - `ActionDurableObject.handlers`' gotchas name `enable_request_signal`: without it in the Worker's `compatibility_flags`, an aborted request's fiber, such as a long-poll's, runs on until its own timeout.
 

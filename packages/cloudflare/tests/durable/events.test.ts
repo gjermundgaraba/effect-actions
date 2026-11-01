@@ -270,6 +270,38 @@ describe("an event subscription over layerWebSocket", () => {
       }).pipe(Effect.scoped)
   );
 
+  it.live("an epoch minted before an eviction is not reused", () =>
+    Effect.gen(function* () {
+      const stub = watching("epoch-unwritten");
+
+      const client = yield* clientOver(
+        yield* upgradeToRpc(stub, bearer("ada"))
+      );
+
+      const { received } = yield* collected(client.watch(Statused));
+
+      yield* until(() => received.length === 1);
+      yield* untilKept(
+        stub,
+        (cursors) => cursors.length === 1 && cursors[0]?.endsWith(":0") === true
+      );
+
+      const before = yield* keptCursors(stub);
+
+      yield* evicted(stub);
+      yield* Effect.promise(async () => {
+        await stub.say("wakes it");
+      });
+      yield* until(() => received.length === 2);
+      yield* untilKept(
+        stub,
+        (cursors) => cursors.length === 1 && cursors[0] !== before[0]
+      );
+
+      expect(received).toStrictEqual(["idle", "idle"]);
+    }).pipe(Effect.scoped)
+  );
+
   it.live(
     "authenticates a resumed watch again, ending it as unauthenticated where its token was revoked while the object slept",
     () =>
@@ -464,6 +496,28 @@ const namesake = () =>
   });
 
 describe("the object's Event.Events", () => {
+  it.live("a never-written object stores no key", () =>
+    Effect.gen(function* () {
+      const stub = watching("never-written");
+
+      const response = yield* Effect.promise(
+        async () => await stub.fetch("https://object/unrouted")
+      );
+
+      expect(response.status).toBe(404);
+      expect(
+        yield* Effect.promise(
+          async () =>
+            await runInDurableObject(stub, async (_, state) => {
+              const stored = await state.storage.list();
+
+              return [...stored.keys()];
+            })
+        )
+      ).toStrictEqual([]);
+    })
+  );
+
   it.live(
     "refuses a second log source whose event type shares the first's name",
     () =>
