@@ -10,22 +10,15 @@ import {
   Semaphore,
 } from "effect";
 
+import { alarmSlot, keptOf, Kept, retryDelay, runOf, slotOf } from "./slot.js";
+import type { Run, SlotEvent } from "./slot.js";
 import { State } from "./state.js";
 
 export const alarmPrefix = "effect-actions/alarm/";
 
 const keyOf = (owner: string) => `${alarmPrefix}${owner}`;
 
-const Kept = Schema.Struct({ at: Schema.Finite, failures: Schema.Int });
-
-const keptOf = Schema.decodeUnknownOption(Kept);
-
-const backoffRetries = 6;
-
-const hour = 60 * 60 * 1000;
-
-const retryDelay = (failures: number) =>
-  failures > backoffRetries ? hour : 2000 * 2 ** (failures - 1);
+const decode = Schema.decodeUnknownOption(Kept);
 
 type Owners<E, R> = Readonly<
   Record<string, (info: AlarmInvocationInfo) => Effect.Effect<void, E, R>>
@@ -34,20 +27,14 @@ type Owners<E, R> = Readonly<
 export const makeSchedule = (state: DurableObjectState) => {
   const { storage } = state;
   const lock = Semaphore.makeUnsafe(1);
-  const runningInThisInstance = new Set<string>();
-
-  const read = (owner: string) =>
-    Effect.map(
-      Effect.promise(async () => await storage.get(keyOf(owner))),
-      keptOf
-    );
+  const runs = new Map<string, Run>();
 
   const times = Effect.promise(
     async () => await storage.list({ prefix: alarmPrefix })
   ).pipe(
     Effect.map((listed) =>
       [...listed].flatMap(([key, value]) =>
-        Option.match(keptOf(value), {
+        Option.match(decode(value), {
           onNone: () => [],
           onSome: (kept) => [{ owner: key.slice(alarmPrefix.length), ...kept }],
         })
@@ -65,10 +52,44 @@ export const makeSchedule = (state: DurableObjectState) => {
     });
   });
 
-  const keep = (owner: string, kept: typeof Kept.Type) =>
-    Effect.promise(async () => {
-      await storage.put(keyOf(owner), kept);
-    });
+  const stepped = (owner: string, event: SlotEvent) =>
+    lock.withPermits(1)(
+      Effect.gen(function* () {
+        const kept = yield* Effect.promise(
+          async () => await storage.get(keyOf(owner))
+        );
+
+        const before = slotOf(
+          Option.getOrUndefined(decode(kept)),
+          runs.get(owner)
+        );
+
+        const [after] = alarmSlot.transition(before, event);
+
+        if (after === before) {
+          return undefined;
+        }
+
+        const next = keptOf(after);
+        const run = runOf(after);
+
+        yield* Effect.promise(async () => {
+          await (next === undefined
+            ? storage.delete(keyOf(owner))
+            : storage.put(keyOf(owner), next));
+        });
+
+        if (run === undefined) {
+          runs.delete(owner);
+        } else {
+          runs.set(owner, run);
+        }
+
+        yield* rearm;
+
+        return after;
+      })
+    );
 
   return {
     rearm,
@@ -84,33 +105,10 @@ export const makeSchedule = (state: DurableObjectState) => {
       )
     ),
     set: (owner: string, at: number) =>
-      lock.withPermits(1)(
-        Effect.flatMap(read(owner), (kept) =>
-          Option.exists(kept, (held) => held.at === at && held.failures === 0)
-            ? Effect.void
-            : Effect.andThen(keep(owner, { at, failures: 0 }), rearm)
-        )
-      ),
+      Effect.asVoid(stepped(owner, { type: "Replace", at })),
     setBy: (owner: string, at: number) =>
-      lock.withPermits(1)(
-        Effect.flatMap(read(owner), (kept) =>
-          Option.exists(
-            kept,
-            (held) =>
-              held.at <= at &&
-              (held.failures === 0 || !runningInThisInstance.has(owner))
-          )
-            ? Effect.void
-            : Effect.andThen(keep(owner, { at, failures: 0 }), rearm)
-        )
-      ),
-    clear: (owner: string) =>
-      lock.withPermits(1)(
-        Effect.andThen(
-          Effect.promise(async () => await storage.delete(keyOf(owner))),
-          rearm
-        )
-      ),
+      Effect.asVoid(stepped(owner, { type: "NoLaterThan", at })),
+    clear: (owner: string) => Effect.asVoid(stepped(owner, { type: "Clear" })),
     runDue: <E, R>(owners: Owners<E, R>) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
@@ -118,113 +116,58 @@ export const makeSchedule = (state: DurableObjectState) => {
 
         yield* Effect.forEach(
           kept.filter(({ at }) => at <= now),
-          ({ owner }) =>
-            Effect.gen(function* () {
-              const run = owners[owner];
+          ({ owner }) => {
+            const run = owners[owner];
 
-              const stored = Effect.map(read(owner), Option.getOrUndefined);
-
-              const drop = Effect.promise(
-                async () => await storage.delete(keyOf(owner))
-              );
-
-              const due = yield* lock.withPermits(1)(
+            return Effect.acquireUseRelease(
+              Effect.flatMap(Clock.currentTimeMillis, (startedAt) =>
+                stepped(owner, {
+                  type: "Due",
+                  now,
+                  startedAt,
+                  served: run !== undefined,
+                })
+              ),
+              (slot) =>
                 Effect.gen(function* () {
-                  const current = yield* stored;
-
-                  if (current === undefined || current.at > now) {
+                  if (slot?.value !== "Running" || run === undefined) {
                     return;
                   }
 
-                  if (run === undefined) {
-                    return yield* Effect.as(drop, undefined);
-                  }
+                  const { retryCount, scheduledTime, mark } = slot.context;
 
-                  const startedAt = yield* Clock.currentTimeMillis;
+                  yield* Effect.promise(async () => {
+                    await storage.sync();
+                  });
 
-                  const mark = {
-                    at: startedAt + retryDelay(current.failures + 1),
-                    failures: current.failures + 1,
-                  };
-
-                  yield* keep(owner, mark).pipe(
-                    Effect.andThen(rearm),
-                    Effect.andThen(
-                      Effect.promise(async () => {
-                        await storage.sync();
-                      })
-                    )
+                  const exit = yield* Effect.exit(
+                    run({ retryCount, isRetry: retryCount > 0, scheduledTime })
                   );
 
-                  runningInThisInstance.add(owner);
-
-                  return { ...current, mark, run };
-                })
-              );
-
-              if (due === undefined) {
-                return;
-              }
-
-              const { at, failures, mark } = due;
-              const attempt = failures + 1;
-
-              const exit = yield* Effect.exit(
-                due.run({
-                  retryCount: failures,
-                  isRetry: failures > 0,
-                  scheduledTime: at,
-                })
-              );
-
-              if (Exit.isFailure(exit)) {
-                yield* Effect.logError(
-                  `The alarm of ${owner} failed: retried in ${retryDelay(attempt)} ms`,
-                  exit.cause
-                );
-              }
-
-              const endedAt = yield* Clock.currentTimeMillis;
-
-              yield* lock.withPermits(1)(
-                Effect.gen(function* () {
-                  runningInThisInstance.delete(owner);
-
-                  const current = yield* stored;
-
-                  const isMark =
-                    current?.at === mark.at &&
-                    current.failures === mark.failures;
-
-                  if (Exit.isSuccess(exit)) {
-                    if (isMark) {
-                      yield* drop;
-                    }
-
-                    return;
+                  if (Exit.isFailure(exit)) {
+                    yield* Effect.logError(
+                      `The alarm of ${owner} failed: retried in ${retryDelay(mark.failures)} ms`,
+                      exit.cause
+                    );
                   }
 
-                  if (current === undefined) {
-                    return;
-                  }
+                  const endedAt = yield* Clock.currentTimeMillis;
 
-                  const retry = {
-                    at: endedAt + retryDelay(attempt),
-                    failures: attempt,
-                  };
-
-                  if (isMark || retry.at < current.at) {
-                    yield* keep(owner, retry);
-                  }
-                })
-              );
-            }).pipe(
-              Effect.ensuring(
+                  yield* stepped(
+                    owner,
+                    Exit.isSuccess(exit)
+                      ? { type: "Succeeded" }
+                      : { type: "Failed", endedAt }
+                  );
+                }),
+              (slot) =>
                 Effect.sync(() => {
-                  runningInThisInstance.delete(owner);
+                  if (slot?.value === "Running") {
+                    runs.delete(owner);
+                  }
                 })
-              )
-            ),
+            );
+          },
           { discard: true }
         );
 
