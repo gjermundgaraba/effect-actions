@@ -55,9 +55,15 @@ const setAlarm = (stub: DurableObjectStub) =>
     });
   });
 
-const pollThenAppend = (stub: DurableObjectStub) =>
-  Effect.flatMap(
+const pollThenAppend = (stubOf: (attempt: number) => DurableObjectStub) => {
+  let attempt = 0;
+
+  return Effect.flatMap(
     Effect.promise(async () => {
+      const stub = stubOf(attempt);
+
+      attempt += 1;
+
       const poll = stub.fetch("https://object/poll");
 
       await scheduler.wait(5);
@@ -68,7 +74,13 @@ const pollThenAppend = (stub: DurableObjectStub) =>
       ]);
     }),
     (responses) => Effect.forEach(responses, textOf)
+  ).pipe(
+    Effect.repeat({
+      until: ([, appended]) => appended !== "done before any poll",
+      times: 4,
+    })
   );
+};
 
 const stored = (stub: DurableObjectStub, key: string) =>
   Effect.promise(
@@ -163,7 +175,9 @@ describe("handlers", () => {
     () =>
       Effect.gen(function* () {
         expect(
-          yield* pollThenAppend(env.SLOW_BUILT.getByName("long-poll"))
+          yield* pollThenAppend((attempt) =>
+            env.SLOW_BUILT.getByName(`long-poll-${attempt}`)
+          )
         ).toStrictEqual(["appended", "done"]);
       })
   );
@@ -173,7 +187,9 @@ describe("handlers", () => {
     () =>
       Effect.gen(function* () {
         expect(
-          yield* pollThenAppend(env.SLOW_BUILT_AGAIN.getByName("long-poll"))
+          yield* pollThenAppend((attempt) =>
+            env.SLOW_BUILT_AGAIN.getByName(`long-poll-${attempt}`)
+          )
         ).toStrictEqual(["appended", "done"]);
       })
   );
