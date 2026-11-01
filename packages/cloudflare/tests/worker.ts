@@ -1,5 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
-import { Data, DateTime, Effect, Layer } from "effect";
+import {
+  Context,
+  Data,
+  DateTime,
+  Deferred,
+  Effect,
+  Layer,
+  Option,
+} from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 
 import * as ActionDurableObject from "../src/durable/ActionDurableObject.js";
@@ -254,6 +262,66 @@ export class Failing extends ActionDurableObject.make({
 
 export class Versioned extends ActionDurableObject.make({
   routes: versionedRoutes,
+}) {}
+
+class Appended extends Context.Service<Appended, Deferred.Deferred<string>>()(
+  "test/Appended"
+) {}
+
+const slowBuild = Effect.andThen(
+  Effect.sleep("300 millis"),
+  Deferred.make<string>()
+);
+
+const pollAndAppend = Layer.mergeAll(
+  HttpRouter.add(
+    "GET",
+    "/poll",
+    Effect.flatMap(Effect.service(Appended), (appended) =>
+      Effect.map(
+        Effect.timeoutOption(Deferred.await(appended), "3 seconds"),
+        (woken) =>
+          HttpServerResponse.text(Option.getOrElse(woken, () => "timed out"))
+      )
+    )
+  ),
+  HttpRouter.add(
+    "POST",
+    "/append",
+    Effect.flatMap(Effect.service(Appended), (appended) =>
+      Effect.as(
+        Deferred.succeed(appended, "appended"),
+        HttpServerResponse.text("done")
+      )
+    )
+  )
+);
+
+export class SlowBuilt extends ActionDurableObject.make({
+  services: () => Layer.effect(Appended)(slowBuild),
+  routes: pollAndAppend,
+}) {}
+
+export class SlowBuiltAgain extends ActionDurableObject.make({
+  services: () =>
+    Layer.effect(Appended)(
+      Effect.flatMap(ActionDurableObject.State, ({ storage }) =>
+        Effect.flatMap(
+          Effect.promise(async () => {
+            const attempts = (await storage.get<number>("attempts")) ?? 0;
+
+            await storage.put("attempts", attempts + 1);
+
+            return attempts;
+          }),
+          (attempts) =>
+            attempts === 0
+              ? Effect.die(new Error("The first build fails"))
+              : slowBuild
+        )
+      )
+    ),
+  routes: pollAndAppend,
 }) {}
 
 export class Watching extends ActionDurableObject.make({

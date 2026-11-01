@@ -37,6 +37,8 @@
       { "name": "HOOKING", "class_name": "Hooking" },
       { "name": "SHELF", "class_name": "Shelf" },
       { "name": "TASKED", "class_name": "Tasked" },
+      { "name": "SLOW_BUILT", "class_name": "SlowBuilt" },
+      { "name": "SLOW_BUILT_AGAIN", "class_name": "SlowBuiltAgain" },
     ],
   },
   "migrations": [
@@ -72,6 +74,8 @@
         "Hooking",
         "Shelf",
         "Tasked",
+        "SlowBuilt",
+        "SlowBuiltAgain",
       ],
     },
   ],

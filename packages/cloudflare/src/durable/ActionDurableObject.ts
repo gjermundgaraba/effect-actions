@@ -624,8 +624,7 @@ const handlersOf = <S>(
  *
  * - An instance lasts until the runtime evicts it, and the next event builds everything again on a new one: nothing the services, calls or routes build is finalized, and in-memory state is lost, so keep state in storage.
  * - A build that fails is dropped with all it built, and the events waiting on it are rejected with its failure: the next event builds again, under the same gate.
- * - The events arriving while a build runs, such as the one building again after a failure, run once it ends, one after another, each to its end before the next: a slow one holds those after it.
- * - An instance builds as it is constructed, under `blockConcurrencyWhile`, so the runtime holds every event, the first included, until the build ends, then delivers them one by one, as to a built instance: a build longer than 30 seconds resets the object.
+ * - Every build, as the instance is constructed and again after a failure, runs under `blockConcurrencyWhile`, so the runtime holds every other event until it ends, then delivers them as to a built instance, where a long-poll holds no event after it: a build longer than 30 seconds resets the object.
  * - Every Effect of the object runs under Effect's microtask scheduler, `new Scheduler.MixedScheduler("sync")`, where its default's timers would let the next event in between any two steps: CPU-heavy work holds every other event until it ends.
  * - Calls still interleave where a plain method's would: while one waits on I/O, another object or a timer, such as `Effect.sleep`, the next event runs, so serialize a read and the write that depends on it with a `Semaphore`, or make both one synchronous `storage.kv` or `storage.sql` step.
  * - Without `routes`, `fetch` answers 404; without `calls`, `effectActionsRpc` rejects once the object is built, naming the option.

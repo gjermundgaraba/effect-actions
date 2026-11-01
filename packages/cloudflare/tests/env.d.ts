@@ -22,6 +22,8 @@ import type {
   Room,
   RouterProvided,
   Shelf,
+  SlowBuilt,
+  SlowBuiltAgain,
   Streamed,
   Stubbed,
   Tasked,
@@ -62,6 +64,8 @@ declare global {
       readonly HOOKING: DurableObjectNamespace<Hooking>;
       readonly SHELF: DurableObjectNamespace<Shelf>;
       readonly TASKED: DurableObjectNamespace<Tasked>;
+      readonly SLOW_BUILT: DurableObjectNamespace<SlowBuilt>;
+      readonly SLOW_BUILT_AGAIN: DurableObjectNamespace<SlowBuiltAgain>;
       readonly GREETING: string;
     }
   }

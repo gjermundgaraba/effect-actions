@@ -55,6 +55,21 @@ const setAlarm = (stub: DurableObjectStub) =>
     });
   });
 
+const pollThenAppend = (stub: DurableObjectStub) =>
+  Effect.flatMap(
+    Effect.promise(async () => {
+      const poll = stub.fetch("https://object/poll");
+
+      await scheduler.wait(5);
+
+      return await Promise.all([
+        poll,
+        stub.fetch("https://object/append", { method: "POST" }),
+      ]);
+    }),
+    (responses) => Effect.forEach(responses, textOf)
+  );
+
 const stored = (stub: DurableObjectStub, key: string) =>
   Effect.promise(
     async () =>
@@ -141,6 +156,26 @@ describe("handlers", () => {
 
       expect([yield* textOf(response), builds]).toStrictEqual(["1", 1]);
     })
+  );
+
+  it.live(
+    "a long-poll held during the first build does not hold a later append",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* pollThenAppend(env.SLOW_BUILT.getByName("long-poll"))
+        ).toStrictEqual(["appended", "done"]);
+      })
+  );
+
+  it.live(
+    "a long-poll held during a build again after a failure does not hold a later append",
+    () =>
+      Effect.gen(function* () {
+        expect(
+          yield* pollThenAppend(env.SLOW_BUILT_AGAIN.getByName("long-poll"))
+        ).toStrictEqual(["appended", "done"]);
+      })
   );
 
   it.effect(
