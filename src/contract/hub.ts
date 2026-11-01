@@ -34,8 +34,9 @@ export interface Checking {
  */
 export interface RevisionStorage {
   /**
-   * Changes whenever the counters start again, so a cursor from before is behind every revision;
-   * kept by the time it succeeds, as every revision is built from it.
+   * The epoch the counters count in, run before each revision is built from it: one value until
+   * the counters start again, so a cursor from before is behind every revision, kept by the time
+   * it succeeds.
    */
   readonly epoch: Effect.Effect<string>;
   readonly get: (name: string) => Effect.Effect<number>;
