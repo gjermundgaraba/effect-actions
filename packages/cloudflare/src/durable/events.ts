@@ -142,14 +142,23 @@ const storageRevisions = (
       (found) => Option.getOrElse(countOf(found), () => 0)
     );
 
+  const written = (epoch: string) =>
+    Effect.as(
+      Effect.promise(async () => {
+        await storage.put(epochKey, epoch);
+      }),
+      epoch
+    );
+
   return Effect.gen(function* () {
     const kept = Option.getOrUndefined(
       epochOf(yield* Effect.promise(async () => await storage.get(epochKey)))
     );
 
-    const epoch = kept ?? crypto.randomUUID();
-
-    let unwritten = kept === undefined;
+    const epoch =
+      kept === undefined
+        ? yield* Effect.cached(written(crypto.randomUUID()))
+        : Effect.succeed(kept);
 
     const inTurn = Semaphore.withPermit(yield* Semaphore.make(1));
 
@@ -163,16 +172,14 @@ const storageRevisions = (
           ),
           (counts) =>
             Effect.promise(async () => {
-              await storage.put({
-                ...(unwritten ? { [epochKey]: epoch } : {}),
-                ...Object.fromEntries(
+              await storage.put(
+                Object.fromEntries(
                   counts.map(([name, count]) => [
                     `${countPrefix}${name}`,
                     count + 1,
                   ])
-                ),
-              });
-              unwritten = false;
+                )
+              );
             })
         ).pipe(inTurn),
     };

@@ -2,9 +2,15 @@
 
 ## Unreleased
 
+### Breaking changes
+
+**`Event.RevisionStorage`'s `epoch` is an `Effect`**: `Event.makeEvents` runs it each time it builds a revision, so a storage keeping its epoch writes it then, before the first revision is handed out, and a host handing out none writes none.
+
+- Migrate: give `epoch: Effect.succeed(epoch)` where you gave `epoch`, or an Effect that keeps the epoch before it succeeds.
+
 ### Changes
 
-- `ActionDurableObject` writes its current sources' revision epoch, `effect-actions/revisions/epoch`, with the first `notify`, where each instance wrote it as it built, so an object that is only read, such as one asked for a resource that does not exist, keeps no key for its revisions. A watch of a current source on an object never notified receives the value again after an eviction, under a new id, where it kept its id. An object already holding the key keeps it and its ids.
+- `ActionDurableObject` writes its current sources' revision epoch, `effect-actions/revisions/epoch`, as a watch of a current source first reads a revision, where each instance wrote it as it built, so an object no such watch reads, such as one only asked for a resource that does not exist or notified with no watch, keeps no epoch. Each `notify` that moves a revision still writes its counts. A watch resumes after an eviction at the revision it reached, as before. After a `storage.deleteAll`, the instance never writes its epoch back, so the revisions' ids repeat ones its watches have seen until the object is evicted, as before, and the next instance writes a new epoch as a watch reads.
 - `ActionDurableObject.handlers`' gotchas said that the events arriving while a build runs, such as the one building again after a failure, run once it ends, one after another, so a slow one held those after it. This corrects the documented ordering, and the behavior is unchanged: every build, as the instance is constructed and again after a failure, runs under `blockConcurrencyWhile`, and the runtime delivers the events it held as to a built instance, so a long-poll sent during a build holds no append sent after it.
 - `ActionDurableObject.handlers`' gotchas name `enable_request_signal`: without it in the Worker's `compatibility_flags`, an aborted request's fiber, such as a long-poll's, runs on until its own timeout.
 

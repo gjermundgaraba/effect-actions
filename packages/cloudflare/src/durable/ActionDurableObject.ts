@@ -613,10 +613,10 @@ const handlersOf = <S>(
  * given its `ctx`, the handlers that build `services`, then `calls`, with the stub's protocol,
  * and `routes`, with `Sockets`, once per instance, as it is constructed, with the object's own
  * services provided, its `Event.Events`' logs kept in its storage, under `effect-actions/log/`,
- * and its current sources' revisions beside them from their first `notify`, so a cursor outlives
- * an eviction, and share that one build across every event, which awaits it. `fetch` serves the
- * routes, the socket handlers dispatch through `Sockets`, `effectActionsRpc` through the calls'
- * server, `alarm` runs the times `Alarm` keeps and `run` runs an Effect in the object.
+ * and its current sources' revisions beside them, so a cursor outlives an eviction, and share
+ * that one build across every event, which awaits it. `fetch` serves the routes, the socket
+ * handlers dispatch through `Sockets`, `effectActionsRpc` through the calls' server, `alarm` runs
+ * the times `Alarm` keeps and `run` runs an Effect in the object.
  * Delegate the handlers the class serves this way, as methods:
  * `effectActionsRpc(request: StubRequest)` returning the handlers' own.
  *
@@ -635,8 +635,8 @@ const handlersOf = <S>(
  * - Its `Event.Events` keeps a logged occurrence's data as its payload's JSON: one that does not encode as it is published is logged then, and one that no longer decodes, such as after a deployment changed the payload, is reported as it is read; each is sent as a gap.
  * - Provide no other `Event.Events`, such as the core's `Event.layerMemory`, to the services or routes: it shadows the object's, its logs lost at each eviction and its check sources read on a timer that keeps the object awake.
  * - A log's entries live beside the application's data: a store deleting every key deletes them too, and a subscriber resuming from one of their cursors receives a gap.
- * - A current source's revisions live beside them, under `effect-actions/revisions/`: a store deleting every key starts them again, and until the object is evicted their ids repeat ones its watches have seen, which drop them.
- * - A current source's revisions take no key until its event's first `notify`, so an object only read stores none of them: after an eviction, a watch of a current source never notified receives the value again, under a new id.
+ * - A current source's revisions live beside them, under `effect-actions/revisions/`: a store deleting every key starts them again, and until the object is evicted their ids repeat ones its watches have seen, which drop them, as the instance never writes its epoch back.
+ * - A current source's revision epoch, `effect-actions/revisions/epoch`, is written as a watch first reads a revision, and its counts at each `notify` that moves one: an object no watch of a current source reads, such as one only asked for a resource that does not exist, stores no epoch.
  * - Two log sources of event types sharing a name die as the second attaches, naming it: each log is kept under its event's name.
  * - A log source fed by `emit` dies as it attaches, naming `publish`: an evicted object would miss what the stream sends meanwhile, with no gap, and its open stream would keep the object awake.
  * - A subscriber's read that fails is tried again 5 seconds later, on a timer, until one succeeds: a source failing for good keeps the object awake, billed, and sends each subscriber a `Failed` each time.

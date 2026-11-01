@@ -270,36 +270,151 @@ describe("an event subscription over layerWebSocket", () => {
       }).pipe(Effect.scoped)
   );
 
-  it.live("an epoch minted before an eviction is not reused", () =>
-    Effect.gen(function* () {
-      const stub = watching("epoch-unwritten");
+  it.live(
+    "resumes a watch of a current source never notified at the revision it saw, across evictions",
+    () =>
+      Effect.gen(function* () {
+        const stub = watching("never-notified");
 
-      const client = yield* clientOver(
-        yield* upgradeToRpc(stub, bearer("ada"))
-      );
+        const client = yield* clientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
 
-      const { received } = yield* collected(client.watch(Statused));
+        const { received } = yield* collected(client.watch(Statused));
 
-      yield* until(() => received.length === 1);
-      yield* untilKept(
-        stub,
-        (cursors) => cursors.length === 1 && cursors[0]?.endsWith(":0") === true
-      );
+        yield* until(() => received.length === 1);
+        yield* untilKept(
+          stub,
+          (cursors) =>
+            cursors.length === 1 && cursors[0]?.endsWith(":0") === true
+        );
 
-      const before = yield* keptCursors(stub);
+        const [seen] = yield* keptCursors(stub);
 
-      yield* evicted(stub);
-      yield* Effect.promise(async () => {
-        await stub.say("wakes it");
-      });
-      yield* until(() => received.length === 2);
-      yield* untilKept(
-        stub,
-        (cursors) => cursors.length === 1 && cursors[0] !== before[0]
-      );
+        for (const wake of ["one", "two", "three"]) {
+          yield* evicted(stub);
+          yield* Effect.promise(async () => {
+            await stub.say(wake);
+          });
+        }
 
-      expect(received).toStrictEqual(["idle", "idle"]);
-    }).pipe(Effect.scoped)
+        yield* Effect.promise(async () => {
+          await stub.status("done");
+        });
+        yield* until(() => received.includes("done"));
+        yield* untilKept(
+          stub,
+          (cursors) =>
+            cursors.length === 1 && cursors[0]?.endsWith(":1") === true
+        );
+
+        expect(received).toStrictEqual(["idle", "done"]);
+        expect(yield* keptCursors(stub)).toStrictEqual([
+          seen?.replace(/:0$/u, ":1"),
+        ]);
+      }).pipe(Effect.scoped)
+  );
+
+  it.live(
+    "after a deleteAll, sends a watch the value it dropped once, at the next eviction",
+    () =>
+      Effect.gen(function* () {
+        const stub = watching("deleted-all");
+
+        const client = yield* clientOver(
+          yield* upgradeToRpc(stub, bearer("ada"))
+        );
+
+        const first = yield* collected(client.watch(Statused));
+
+        yield* until(() => first.received.length === 1);
+        yield* Effect.promise(async () => {
+          await stub.status("busy");
+        });
+        yield* untilKept(
+          stub,
+          (cursors) =>
+            cursors.length === 1 && cursors[0]?.endsWith(":1") === true
+        );
+
+        const [seen] = yield* keptCursors(stub);
+
+        yield* Fiber.interrupt(first.fiber);
+        yield* untilKept(stub, (cursors) => cursors.length === 0);
+        yield* Effect.promise(async () => {
+          await runInDurableObject(stub, async (_, state) => {
+            await state.storage.deleteAll();
+          });
+          await stub.status("done");
+        });
+
+        const { received } = yield* collected(
+          client.watch(Statused, {}, { cursor: seen })
+        );
+
+        yield* untilKept(stub, (cursors) => cursors.length === 1);
+
+        for (const wake of ["one", "two", "three"]) {
+          yield* evicted(stub);
+          yield* Effect.promise(async () => {
+            await stub.say(wake);
+          });
+          yield* until(() => received.length >= 1);
+        }
+
+        yield* Effect.promise(async () => {
+          await stub.status("again");
+        });
+        yield* until(() => received.includes("again"));
+
+        expect(received).toStrictEqual(["done", "again"]);
+      }).pipe(Effect.scoped)
+  );
+
+  it.live(
+    "writes one epoch for two watches given their first revision together",
+    () =>
+      Effect.gen(function* () {
+        const stub = watching("watched-together");
+
+        const clients = yield* Effect.forEach(
+          [bearer("ada"), bearer("ada")],
+          (headers) => Effect.flatMap(upgradeToRpc(stub, headers), clientOver),
+          { concurrency: "unbounded" }
+        );
+
+        const watches = yield* Effect.forEach(clients, (client) =>
+          collected(client.watch(Statused))
+        );
+
+        yield* until(() =>
+          watches.every(({ received }) => received.length === 1)
+        );
+        yield* untilKept(
+          stub,
+          (cursors) =>
+            cursors.length === 2 &&
+            cursors.every((cursor) => cursor?.endsWith(":0") === true)
+        );
+
+        const epoch = yield* Effect.promise(
+          async () =>
+            await runInDurableObject(
+              stub,
+              async (_, state) =>
+                await state.storage.get("effect-actions/revisions/epoch")
+            )
+        );
+
+        expect(watches.map(({ received }) => received)).toStrictEqual([
+          ["idle"],
+          ["idle"],
+        ]);
+        expect(yield* keptCursors(stub)).toStrictEqual([
+          `${String(epoch)}:0`,
+          `${String(epoch)}:0`,
+        ]);
+      }).pipe(Effect.scoped)
   );
 
   it.live(

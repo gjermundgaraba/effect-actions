@@ -33,8 +33,11 @@ export interface Checking {
  * in an `epoch` telling them from counters that started again.
  */
 export interface RevisionStorage {
-  /** Changes whenever the counters start again, so a cursor from before is behind every revision. */
-  readonly epoch: string;
+  /**
+   * Changes whenever the counters start again, so a cursor from before is behind every revision;
+   * kept by the time it succeeds, as every revision is built from it.
+   */
+  readonly epoch: Effect.Effect<string>;
   readonly get: (name: string) => Effect.Effect<number>;
   /** Adds one to each counter `names` names. */
   readonly bump: (names: readonly string[]) => Effect.Effect<void>;
@@ -44,7 +47,7 @@ const memoryRevisions = (): RevisionStorage => {
   const counts = new Map<string, number>();
 
   return {
-    epoch: globalThis.crypto.randomUUID(),
+    epoch: Effect.succeed(globalThis.crypto.randomUUID()),
     get: (name) => Effect.sync(() => counts.get(name) ?? 0),
     bump: (names) =>
       Effect.sync(() => {
@@ -313,16 +316,20 @@ export const makeEvents = (
             revision: (key) =>
               key === undefined
                 ? Effect.map(
-                    revisions.get(everyKey(event)),
-                    (count) => `${revisions.epoch}:${count}`
+                    Effect.all([
+                      revisions.epoch,
+                      revisions.get(everyKey(event)),
+                    ]),
+                    ([epoch, count]) => `${epoch}:${count}`
                   )
                 : Effect.map(
                     Effect.all([
+                      revisions.epoch,
                       revisions.get(noKey(event)),
                       revisions.get(ofKey(event, key)),
                     ]),
-                    ([unkeyed, keyed]) =>
-                      `${revisions.epoch}:${unkeyed + keyed}:${key}`
+                    ([epoch, unkeyed, keyed]) =>
+                      `${epoch}:${unkeyed + keyed}:${key}`
                   ),
           })
         ),

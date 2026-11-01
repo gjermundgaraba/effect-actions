@@ -101,7 +101,7 @@ export const calls = LobbyCalls.toLayer(
 );
 ```
 
-The lobby's event is a whole value, every room's preview in each occurrence, so it has a current source, whose revisions the object keeps in its storage: a page is sent the previews as they are, then again after each notify, and watches with no read before it, `followLobby` in [chat-rooms/src/browser.ts](../examples/chat-rooms/src/browser.ts):
+The lobby's event is a whole value, every room's preview in each occurrence, so it has a current source, whose revision the object keeps in its storage once a watch has read it: a page is sent the previews as they are, then again after each notify, and watches with no read before it, `followLobby` in [chat-rooms/src/browser.ts](../examples/chat-rooms/src/browser.ts):
 
 ```ts example=chat-rooms/src/lobby/events.ts
 import * as Event from "@gjermundgaraba/effect-actions/Event";

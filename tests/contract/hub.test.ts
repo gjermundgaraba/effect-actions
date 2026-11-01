@@ -541,7 +541,7 @@ describe("Event.makeEvents", () => {
           Event.makeEvents({
             log: () => memoryStorage(),
             revisions: {
-              epoch: "epoch",
+              epoch: Effect.succeed("epoch"),
               get: () => Effect.succeed(0),
               bump: () =>
                 Effect.sync(() => {
