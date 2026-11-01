@@ -238,7 +238,7 @@ ActionToolkit.make(app, {
 
 ActionToolkit.make(app, {
   // @ts-expect-error -- A check requiring the caller would be a requirement no tool states.
-  needsApproval: () => Effect.map(Principal, () => true),
+  needsApproval: () => Effect.as(Principal, true),
 });
 
 ActionToolkit.make(app, { needsApproval: () => Effect.fail("unavailable") });
