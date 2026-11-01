@@ -200,9 +200,6 @@ catalogs:
     vitest:
       specifier: 5.0.5
       version: 5.0.5
-    xstate:
-      specifier: 6.0.0-alpha.71
-      version: 6.0.0-alpha.71
 
 overrides:
   vite@*: npm:@voidzero-dev/vite-plus-core@1.4.0
@@ -211,10 +208,6 @@ overrides:
 importers:
 
   .:
-    dependencies:
-      xstate:
-        specifier: 'catalog:'
-        version: 6.0.0-alpha.71
     devDependencies:
       '@clanker-stuff/oxlint-config':
         specifier: 'catalog:'
@@ -260,10 +253,6 @@ importers:
         version: 5.0.5(@types/node@26.6.5)(@vitest/browser-preview@5.0.5)(@vitest/ui@5.0.5)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@26.6.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(typescript@7.0.2)(yaml@2.9.1))
 
   packages/cloudflare:
-    dependencies:
-      xstate:
-        specifier: 'catalog:'
-        version: 6.0.0-alpha.71
     devDependencies:
       '@cloudflare/vitest-plugin':
         specifier: 'catalog:'
@@ -2269,10 +2258,6 @@ packages:
       utf-8-validate:
         optional: true
 
-  xstate@6.0.0-alpha.71:
-    resolution: {integrity: sha512-ABNE8jHjqzpQd/gX8huQYvSlbrOEaJcvzBtt6qWMooQuvxKoarkEKT0JFr3ymhI5Jza72YmfsWnFEophersmhQ==}
-    hasBin: true
-
   yaml@2.9.1:
     resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
     engines: {node: '>= 14.6'}
@@ -3857,8 +3842,6 @@ snapshots:
   ws@8.21.0: {}
 
   ws@8.22.0: {}
-
-  xstate@6.0.0-alpha.71: {}
 
   yaml@2.9.1: {}
 

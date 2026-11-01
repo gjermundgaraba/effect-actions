@@ -75,9 +75,6 @@
     "docs:sync": "vpx scripts/sync-skill.ts",
     "ready": "vp check && vp test && vp run test:package"
   },
-  "dependencies": {
-    "xstate": "catalog:"
-  },
   "devDependencies": {
     "@clanker-stuff/oxlint-config": "catalog:",
     "@effect/platform-node": "catalog:",

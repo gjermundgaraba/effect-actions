@@ -12,7 +12,7 @@ const step = (
   event: SlotEvent
 ) => {
   const before = slotOf(kept, run);
-  const [after] = alarmSlot.transition(before, event);
+  const after = alarmSlot.transition(before, event);
 
   return after === before
     ? "unchanged"
@@ -297,7 +297,7 @@ describe("an owner's slot read back from storage", () => {
   });
 
   it("reads a run cut off with its instance as a retry, run as the next", () => {
-    const [running] = alarmSlot.transition(slotOf(scheduled, undefined), {
+    const running = alarmSlot.transition(slotOf(scheduled, undefined), {
       type: "Due",
       now: 1000,
       startedAt: 1000,

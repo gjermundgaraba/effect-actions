@@ -43,9 +43,6 @@
     "build": "vp pack",
     "prepublishOnly": "vp run build"
   },
-  "dependencies": {
-    "xstate": "catalog:"
-  },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "catalog:",
     "@cloudflare/workers-types": "catalog:",

@@ -64,7 +64,7 @@ export const makeSchedule = (state: DurableObjectState) => {
           runs.get(owner)
         );
 
-        const [after] = alarmSlot.transition(before, event);
+        const after = alarmSlot.transition(before, event);
 
         if (after === before) {
           return undefined;
@@ -134,7 +134,7 @@ export const makeSchedule = (state: DurableObjectState) => {
                     return;
                   }
 
-                  const { retryCount, scheduledTime, mark } = slot.context;
+                  const { retryCount, scheduledTime, mark } = slot.run;
 
                   yield* Effect.promise(async () => {
                     await storage.sync();

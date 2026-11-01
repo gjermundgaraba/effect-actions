@@ -195,7 +195,7 @@ export const makeWebhooks = (
 
     const transitioned = (subscription: Held, event: HealthEvent) =>
       Effect.suspend(() => {
-        const [next] = health.transition(subscription.health, event);
+        const next = health.transition(subscription.health, event);
 
         if (next === subscription.health) {
           return Effect.void;
@@ -542,7 +542,7 @@ export const makeWebhooks = (
                   until: now + Duration.toMillis(rotationGrace),
                 },
               }),
-          health: health.transition(before, { type: "Refreshed" })[0],
+          health: health.transition(before, { type: "Refreshed" }),
         };
 
         const confirmation = yield* confirmedAt(watermark);

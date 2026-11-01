@@ -21,7 +21,7 @@ const after = (health: Health, ...events: readonly HealthEvent[]) => {
   let current = health;
 
   for (const event of events) {
-    [current] = machine.transition(current, event);
+    current = machine.transition(current, event);
   }
 
   return current;
