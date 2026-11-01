@@ -5,6 +5,7 @@
 ### Changes
 
 - `ActionDurableObject.handlers`' gotchas said that the events arriving while a build runs, such as the one building again after a failure, run once it ends, one after another, so a slow one held those after it. This corrects the documented ordering, and the behavior is unchanged: every build, as the instance is constructed and again after a failure, runs under `blockConcurrencyWhile`, and the runtime delivers the events it held as to a built instance, so a long-poll sent during a build holds no append sent after it.
+- `ActionDurableObject.handlers`' gotchas name `enable_request_signal`: without it in the Worker's `compatibility_flags`, an aborted request's fiber, such as a long-poll's, runs on until its own timeout.
 
 ## 0.25.1
 
