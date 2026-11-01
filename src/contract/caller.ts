@@ -16,7 +16,6 @@ export interface Proving {
   readonly identity: { readonly key: string };
 }
 
-/** What declares a caller: an action or an event. */
 export type Called = Pick<Action.Any, "name" | "caller">;
 
 /** What names one caller of a surface: its authentication's `principal`, where it has one. */

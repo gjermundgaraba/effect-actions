@@ -11,10 +11,6 @@ export interface User {
   readonly scopes: ReadonlyArray<typeof Scope.Type>;
 }
 
-/**
- * Who is calling. A protected action declares it, `caller: CurrentUser`; authentication
- * provides it per request, and a local host, such as the stdio server, provides it itself.
- */
 export class CurrentUser extends Context.Service<CurrentUser, User>()(
   "notes-service/CurrentUser"
 ) {}

@@ -868,7 +868,10 @@ const subscriptionHandlerOf = (
       const open = yield* feed.stream(yield* decodeEventInput(input));
 
       if (keeper === undefined) {
-        return yield* queuedPush(open, cursor, encode, { ending: boundary });
+        return yield* queuedPush(open, cursor, encode, {
+          ending: boundary,
+          positions: "heartbeat",
+        });
       }
 
       yield* keeper.keep({
@@ -894,7 +897,7 @@ const subscriptionHandlerOf = (
 
       return yield* queuedPush(open, cursor, encode, {
         ending: boundary,
-        inOrder: true,
+        positions: "watermark",
       });
     });
 

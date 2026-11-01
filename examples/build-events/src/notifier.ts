@@ -10,7 +10,7 @@ import { notifier } from "./notifier/routes.js";
 
 const server = Layer.unwrap(
   Effect.gen(function* () {
-    const buildEvents = yield* Config.String("BUILDS_URL").pipe(
+    const buildEventsUrl = yield* Config.String("BUILDS_URL").pipe(
       Config.withDefault("http://127.0.0.1:3000")
     );
 
@@ -23,7 +23,9 @@ const server = Layer.unwrap(
 
     const port = yield* Config.Port("PORT").pipe(Config.withDefault(3001));
 
-    return HttpRouter.serve(notifier({ buildEvents, token, publicUrl })).pipe(
+    return HttpRouter.serve(
+      notifier({ buildEventsUrl, token, publicUrl })
+    ).pipe(
       Layer.provide(NodeHttpServer.layer(createServer, { host, port })),
       Layer.provide(
         Layer.succeed(HttpServerRequest.MaxBodySize, ByteSize.kibibytes(256))

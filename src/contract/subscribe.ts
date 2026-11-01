@@ -35,10 +35,6 @@ export type AnyWebhookCancellation = ReturnType<
   typeof WebhookCancellationOf<Event.Any>
 >["Type"];
 
-/**
- * How a webhook subscription's deliveries are going, as a refresh answers it: whether it is
- * delivering, when it last delivered, and the category of its last failure, since when it fails.
- */
 export const DeliveryStatus = Schema.Struct({
   active: Schema.Boolean,
   lastDeliveryAt: Schema.NullOr(Schema.String),

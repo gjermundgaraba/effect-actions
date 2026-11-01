@@ -46,9 +46,7 @@ export const methodDecodedWithoutTransportOwingCaller = Effect.gen(
       .getUser({ id: "1" })
       // @ts-expect-error -- No transport: no `SchemaError` to catch, nor an `HttpClientError`.
       .pipe(Effect.catchTag("SchemaError", () => Effect.void));
-    // @ts-expect-error -- Only the actions it was given.
-    // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
-    void users.double({ value: 2 });
+    expectTypeOf(users).not.toHaveProperty("double");
   }
 );
 
@@ -146,9 +144,7 @@ export const selectionWithItsBuilderAndAuthorization = Effect.gen(function* () {
     Users | Scope.Scope
   >();
   expectTypeOf<Effect.Services<typeof got>>().toEqualTypeOf<CurrentActor>();
-  // @ts-expect-error -- A selection's client has only the selected actions.
-  // oxlint-disable-next-line typescript/no-unsafe-call -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
-  void client.renameUser({ id: "1", name: "Bea" });
+  expectTypeOf(client).not.toHaveProperty("renameUser");
 });
 
 export const noScopeOwedPerCall = Effect.gen(function* () {

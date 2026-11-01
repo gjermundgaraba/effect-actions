@@ -218,23 +218,21 @@ import { Http } from "../Api.js";
 import { BuildFinished } from "../builds/Builds.js";
 import { Notices } from "./Notices.js";
 
-/** Where build-events is, who the notifier signs in as there, and where it is reached itself. */
 export interface NotifierOptions {
-  readonly buildEvents: string;
+  readonly buildEventsUrl: string;
   readonly token: string | Redacted.Redacted;
-  /** This process's public https origin, which build-events POSTs to. */
   readonly publicUrl: string;
 }
 
 const receiver = Webhook.layerReceiver({ path: "/hooks/builds" });
 
-const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
+const watcher = ({ buildEventsUrl, token, publicUrl }: NotifierOptions) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const notices = yield* Notices;
 
       const builds = yield* ActionHttp.client(Http, {
-        baseUrl: buildEvents,
+        baseUrl: buildEventsUrl,
         transformClient: HttpClient.mapRequest(
           HttpClientRequest.bearerToken(token)
         ),
@@ -265,7 +263,6 @@ const watcher = ({ buildEvents, token, publicUrl }: NotifierOptions) =>
     })
   );
 
-/** The notifier's routes: the receiver, and the watch reading from that same receiver. */
 export const notifier = (options: NotifierOptions) =>
   watcher(options).pipe(Layer.provideMerge(receiver));
 ```

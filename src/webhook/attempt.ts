@@ -3,7 +3,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import type { HttpClientResponse } from "effect/http";
 
 import type { CallbackCategory } from "../contract/Event.js";
-import { signature } from "./signing.js";
+import { standardWebhooksSignature } from "./signing.js";
 
 export class AttemptFailed extends Data.TaggedError("AttemptFailed")<{
   readonly category: CallbackCategory;
@@ -46,7 +46,14 @@ const sent = <A>(
     });
 
     const timestamp = Math.floor((yield* Clock.currentTimeMillis) / 1000);
-    const signed = yield* signature(keys, webhookId, timestamp, body);
+
+    const signed = yield* standardWebhooksSignature(
+      keys,
+      webhookId,
+      timestamp,
+      body
+    );
+
     const client = HttpClient.withScope(yield* HttpClient.HttpClient);
 
     const request = HttpClientRequest.post(url).pipe(

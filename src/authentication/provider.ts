@@ -213,10 +213,19 @@ export type Matching<A extends Pick<Action.Any, "caller">, D> =
           readonly "Authentication descriptor does not cover every protected action": never;
         };
 
-/** Keep public requirements separate, without rescanning all handlers for every action. */
+type PublicRequest<App, A extends Action.Any> = ServedRequest<
+  App,
+  Extract<A, { readonly caller: typeof Anyone }>
+>;
+
+type ProtectedRequestLessIdentity<App, A extends Action.Any> = Exclude<
+  ServedRequest<App, Protected<A>>,
+  Identity<Protected<A>>
+>;
+
 export type RemoteRequest<App, A extends Action.Any> =
-  | ServedRequest<App, Extract<A, { readonly caller: typeof Anyone }>>
-  | Exclude<ServedRequest<App, Protected<A>>, Identity<Protected<A>>>;
+  | PublicRequest<App, A>
+  | ProtectedRequestLessIdentity<App, A>;
 
 /**
  * The identity a remote layer's authentication provides every request, where `App` serves only

@@ -35,10 +35,6 @@ const keyOf = (text: string): Option.Option<Uint8Array> =>
       )
     : Option.none();
 
-/**
- * A webhook's signing secret, as Standard Webhooks writes one: `whsec_` and the base64 of 24 to
- * 64 bytes, decoded as the `SigningSecret` it is.
- */
 export const WebhookSecret = Schema.String.annotate({
   description:
     "whsec_ and the base64 of 24 to 64 random bytes, which signs each delivery.",

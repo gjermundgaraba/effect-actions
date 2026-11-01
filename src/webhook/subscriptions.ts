@@ -421,7 +421,7 @@ export const makeWebhooks = (
           cursor,
           deliverTo(subscription, input, confirmation),
           {
-            inOrder: true,
+            positions: "watermark",
             resumesUnconfirmed: Deferred.isDoneUnsafe(confirmation),
           }
         ),

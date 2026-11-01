@@ -115,8 +115,8 @@ const served = [...failing, Status] as const;
 
 const app = Action.implement(served, {
   crash: () => Effect.die(defect),
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  leak: () => Effect.fail(new Leaked({ id: "secret-id" }) as never),
+  // @ts-expect-error -- The failure under test: an error the action does not declare.
+  leak: () => Effect.fail(new Leaked({ id: "secret-id" })),
   count: () => Effect.succeed(Infinity),
   brittle: () =>
     Effect.fail(new Fragile({ value: Infinity }, { disableChecks: true })),

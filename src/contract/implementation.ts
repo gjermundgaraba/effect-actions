@@ -32,20 +32,14 @@ export const uniqueKey = (): string => Math.random().toString(36).slice(2);
 /** Decoded values at the dispatch boundary every surface shares. */
 export type ErasedValue = Action.Any["input"]["Type"];
 
-/**
- * A handler as written, erased: its answer, or the stream of an action answering one. Method
- * extraction makes the argument bivariant: a surface selects the action before it invokes a
- * handler, so its decoded input is the matching handler input, and handlers are not widened at
- * their public API.
- */
 export type WrittenHandler<R> = {
-  handle(
+  bivarianceHack(
     input: ErasedValue,
     reporting?: Reporting
   ):
     | Effect.Effect<ErasedValue, ErasedValue, R>
     | Stream.Stream<ErasedValue, ErasedValue, R>;
-}["handle"];
+}["bivarianceHack"];
 
 export type Handlers<R> = Readonly<Record<string, WrittenHandler<R>>>;
 
@@ -268,7 +262,7 @@ const dispatch = (
  */
 export class Implementation<
   A extends Action.Any,
-  RequestServices extends { readonly [name: string]: unknown },
+  RequestServices,
   EX,
   RX,
   RA = never,
@@ -379,16 +373,7 @@ export class Implementation<
  * given.
  */
 export type AnyImplementation<A extends Action.Any = Action.Any> =
-  Implementation<
-    A,
-    // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- Type-only requirements by action name, erased to the top type.
-    { readonly [name: string]: unknown },
-    unknown,
-    unknown,
-    unknown,
-    unknown,
-    unknown
-  >;
+  Implementation<A, unknown, unknown, unknown, unknown, unknown, unknown>;
 
 /** What a surface serves: one implementation, of actions or of events, or a list of them. */
 export type Served =
@@ -680,12 +665,14 @@ export type RequestOf<App, A extends Action.Any> = App extends {
   readonly "~authorizeRequest": infer RA;
 }
   ? A extends Action.Any
-    ? [A["name"] & keyof R] extends [never]
-      ? never
-      :
-          | R[A["name"] & keyof R]
-          | (A["caller"] extends typeof Anyone ? never : RA)
-          | AuthenticationOf<A>
+    ? unknown extends R
+      ? unknown
+      : [A["name"] & keyof R] extends [never]
+        ? never
+        :
+            | R[A["name"] & keyof R]
+            | (A["caller"] extends typeof Anyone ? never : RA)
+            | AuthenticationOf<A>
     : never
   : never;
 

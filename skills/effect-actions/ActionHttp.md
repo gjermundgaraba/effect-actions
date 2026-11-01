@@ -108,7 +108,7 @@ const server = Layer.unwrap(
 Layer.launch(server).pipe(NodeRuntime.runMain());
 ```
 
-- A service a verifier, handler or authorizer reads per request is provided by router middleware around the layer ([kitchen-sink/src/workspaces/tenant.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/workspaces/tenant.ts), read by the verifier, provided in [kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts)), or, for a handler or authorizer, by `ActionHttp.LayerOptions.middleware`; declaring it, and why not `HttpRouter.provideRequest`, are on `ActionHttp.layer`.
+- A service a verifier, handler or authorizer reads per request is provided by router middleware around the layer ([kitchen-sink/src/identity/workspace-header.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/workspace-header.ts), read by the verifier, provided in [kitchen-sink/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/routes.ts)), or, for a handler or authorizer, by `ActionHttp.LayerOptions.middleware`; declaring it, and why not `HttpRouter.provideRequest`, are on `ActionHttp.layer`.
 
 ### Split a binding across layers, and add middleware
 

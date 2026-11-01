@@ -126,6 +126,7 @@ const lint: ReturnType<typeof config> = config({
         "tests/cli/cli-types.test-d.ts",
         "tests/contract/{client-types,contract-types}.test-d.ts",
         "tests/contract/client.test.ts",
+        "tests/guarantees/bindings.test.ts",
         "tests/guarantees/types.test-d.ts",
         "tests/mcp/events.test.ts",
         "tests/mcp/mcp-types.test-d.ts",
@@ -194,7 +195,7 @@ const lint: ReturnType<typeof config> = config({
         "packages/cloudflare/scripts/package-consumer/worker.ts",
         "scripts/package-consumer/index.ts",
         "tests/contract/{client,event,input-check,tracing}.test.ts",
-        "tests/guarantees/builds.model.test.ts",
+        "tests/guarantees/{builds.model,registration}.test.ts",
         "tests/toolkit/toolkit.test.ts",
       ],
       rules: { "effecttsgo/missing-effect-context": "off" },
@@ -205,6 +206,8 @@ const lint: ReturnType<typeof config> = config({
         "scripts/package-consumer/index.ts",
         "tests/authentication/authentication.test.ts",
         "tests/contract/client.test.ts",
+        "tests/guarantees/{defects,registration}.test.ts",
+        "tests/rpc/rpc.test.ts",
       ],
       rules: { "effecttsgo/missing-effect-error": "off" },
     },
@@ -256,11 +259,15 @@ const lint: ReturnType<typeof config> = config({
       rules: {
         "effecttsgo/schema-class-missing-brand": "off",
         "effecttsgo/schema-class-object-literal": "off",
+        "typescript/no-misused-spread": "off",
       },
     },
     {
       files: ["tests/guarantees/types.test-d.ts"],
-      rules: { "effecttsgo/effect-succeed-with-void": "off" },
+      rules: {
+        "effecttsgo/effect-succeed-with-void": "off",
+        "typescript/no-misused-spread": "off",
+      },
     },
     {
       files: ["tests/authentication/authentication.test.ts"],

@@ -277,9 +277,11 @@ ActionToolkit.make([app, eraser, reader], {
 });
 
 ActionToolkit.make([reader, eraser], {
-  // @ts-expect-error -- An input field only one action has, unnarrowed.
-  // oxlint-disable-next-line typescript/no-unsafe-return -- Compile-failure fixture: the rejected field yields an error type; nothing runs.
-  needsApproval: (call) => call.input.hard,
+  needsApproval: (call) => {
+    expectTypeOf(call.input).not.toHaveProperty("hard");
+
+    return false;
+  },
 });
 
 ActionToolkit.make([reader, eraser], {

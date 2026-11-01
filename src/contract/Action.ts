@@ -953,7 +953,7 @@ const watcherOf =
                   Effect.map(
                     queuedPush(open, cursor, Effect.succeed, {
                       ending: Function.identity,
-                      inOrder: true,
+                      positions: "watermark",
                       capacity: 1,
                     }),
                     (queue) => Elements.fromQueue(queue)

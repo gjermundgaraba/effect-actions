@@ -24,16 +24,10 @@ import type {
   Subscribed,
 } from "./subscribe.js";
 
-/** A webhook subscription a watch asks for: where to POST, signed how, from where, for how long. */
 export type WebhookRequest = Omit<AnyWebhookSubscription, "input">;
 
-/** What a subscribe answers a watch: when to refresh by, and where delivery starts. */
 export type Grant = Pick<Subscribed, "refreshBefore" | "cursor" | "truncated">;
 
-/**
- * How a client keeps one webhook subscription: the receiver its deliveries reach, subscribing, or
- * refreshing, and unsubscribing at its surface, and reading each body delivered to it.
- */
 export interface WebhookTransport<E, R> {
   readonly receiver: Effect.Effect<Receiving["Service"], never, R>;
   readonly subscribe: (request: WebhookRequest) => Effect.Effect<Grant, E, R>;
@@ -43,12 +37,6 @@ export interface WebhookTransport<E, R> {
   readonly read: (body: Delivered) => Effect.Effect<readonly Fed[], E>;
 }
 
-/**
- * How a client reaches one subscription to the event `name`: a poll from a cursor, a stream from
- * one, each failing with `Unsupported` where its surface serves no such mode, and a webhook
- * subscription where it delivers by webhook. Each answers decoded occurrences. Where the stream
- * crosses a network, `transient` says which of its failures a reconnect may outlast.
- */
 export interface Transport<E, R> {
   readonly name: string;
   readonly poll: (cursor: string | null) => Effect.Effect<Page, E, R>;

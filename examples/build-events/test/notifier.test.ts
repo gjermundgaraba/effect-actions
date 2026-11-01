@@ -26,7 +26,7 @@ describe("the notifier, by webhook", () => {
       );
 
       const notifierRoutes = notifier({
-        buildEvents: "http://build-events.internal",
+        buildEventsUrl: "http://build-events.internal",
         token: "grace",
         publicUrl: "https://hooks.example.com",
       }).pipe(Layer.provide(handedOver));

@@ -285,16 +285,20 @@ describe("ActionRpc native rpcs", () => {
     () =>
       Effect.gen(function* () {
         const Extra = Rpc.make("extra", { success: Schema.String });
-        const added = { ...Protected, rpcs: Protected.rpcs.add(Extra) };
+
+        const added: typeof Protected = {
+          ...Protected,
+          // @ts-expect-error -- The failure under test: a binding whose rpcs gained one its authentication does not cover.
+          rpcs: Protected.rpcs.add(Extra),
+        };
 
         const exit = yield* Effect.exit(
           whoseOver(
             Protected,
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-            ActionRpc.layer(added as typeof Protected, [
-              status,
-              userActions,
-            ]).pipe(Layer.provide(signedIn), Layer.provide(authenticate)),
+            ActionRpc.layer(added, [status, userActions]).pipe(
+              Layer.provide(signedIn),
+              Layer.provide(authenticate)
+            ),
             (client) => client.whose().pipe(as("alice"))
           )
         );

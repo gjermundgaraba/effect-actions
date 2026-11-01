@@ -6,7 +6,6 @@ dist
 !.vscode/settings.json
 !.vscode/extensions.json
 
-# dotenv environment variable files
 .env
 .env.*
 !.env.example
@@ -15,5 +14,4 @@ coverage/
 *.tsbuildinfo
 .vitest/
 
-# build-events keeps its webhook subscriptions here when run from the repository root.
 .build-events/

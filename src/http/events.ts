@@ -131,7 +131,10 @@ export const answering = (
         const open = yield* feed.stream(input);
 
         return Stream.fromQueue(
-          yield* queuedPush(open, cursor, encode, { ending: Function.identity })
+          yield* queuedPush(open, cursor, encode, {
+            ending: Function.identity,
+            positions: "heartbeat",
+          })
         );
       }
 

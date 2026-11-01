@@ -21,11 +21,7 @@ const hmac = (key: Uint8Array, content: string) =>
     );
   });
 
-/**
- * A delivery's `webhook-signature`: Standard Webhooks' `v1,` HMAC-SHA256 of `id.timestamp.body`
- * under each key, space apart, so a receiver mid-rotation verifies under either.
- */
-export const signature = (
+export const standardWebhooksSignature = (
   keys: readonly Uint8Array[],
   id: string,
   timestamp: number,

@@ -93,7 +93,6 @@ export const typeAssertions = () => {
   // @ts-expect-error -- Implementations cannot be fabricated from a contract.
   ActionHttp.layer(Http, [{ actions: [Double] }]);
   // @ts-expect-error -- Spreading a nominal implementation cannot manufacture its private builder.
-  // oxlint-disable-next-line typescript/no-misused-spread -- Deliberate nominal-fabrication compile-failure fixture.
   ActionHttp.layer(Http, [{ ...single, actions: [Double] }]);
   Action.implement(
     Actions,
@@ -126,9 +125,11 @@ export const typeAssertions = () => {
     Actions,
     {
       ...ok,
-      // @ts-expect-error -- Input fields come from the schema.
-      // oxlint-disable-next-line typescript/no-unsafe-assignment -- Compile-failure fixture: the rejected field yields an error type; nothing runs.
-      getUser: ({ userId }) => Effect.succeed({ id: userId, name: "" }),
+      getUser: (input) => {
+        expectTypeOf(input).not.toHaveProperty("userId");
+
+        return Effect.succeed({ id: input.id, name: "" });
+      },
     },
     { authorize: Action.allowAll }
   );
@@ -1014,11 +1015,9 @@ export const effectFnHandlerTypes = () => {
 
   Action.implement([Lookup, Rename], {
     lookup: Effect.fn(function* ({ id }) {
-      // @ts-expect-error -- `Effect.fn` in a record: a string has no such method.
-      // oxlint-disable-next-line typescript/no-unsafe-call, typescript/no-unsafe-assignment -- Compile-failure fixture: the rejected method yields an error type; nothing runs.
-      const shouted: string = id.toUpperCas();
+      expectTypeOf(id).toEqualTypeOf<string>();
 
-      return { id: shouted, name: yield* Principal };
+      return { id, name: yield* Principal };
     }),
     rename: ({ name }) => Effect.succeed(name),
   });

@@ -432,12 +432,10 @@ describe("ActionRpc internal errors", () => {
               ? effect
               : Effect.die(new Error("middleware secret"));
           }),
+          // @ts-expect-error -- The failure under test: a verifier failing with an error it does not declare.
           Authentication.layer(Login, (token: Redacted.Redacted) =>
             Redacted.value(token) === "broken"
-              ? Effect.fail(
-                  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-                  new UserNotFound({ id: "verifier secret" }) as never
-                )
+              ? Effect.fail(new UserNotFound({ id: "verifier secret" }))
               : verify(token)
           ),
         ])

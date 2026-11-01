@@ -241,7 +241,6 @@ const actionMethodOf = <R>(
   );
 };
 
-/** What sends `http`'s calls and subscriptions over `httpClient`: `client`'s methods and `placed`'s alike. */
 export interface Senders<R> {
   readonly method: (
     action: Action.Any

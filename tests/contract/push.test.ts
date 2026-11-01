@@ -34,16 +34,20 @@ describe("pushed", () => {
         const delivered = yield* Deferred.make<undefined>();
         const sent: string[] = [];
 
-        const pushing = yield* pushed(open, "0", (each) =>
-          Effect.andThen(
-            each._tag === "Occurrence"
-              ? Effect.andThen(
-                  Deferred.succeed(delivering, undefined),
-                  Deferred.await(delivered)
-                )
-              : Effect.void,
-            Effect.sync(() => sent.push(positionOf(each)))
-          )
+        const pushing = yield* pushed(
+          open,
+          "0",
+          (each) =>
+            Effect.andThen(
+              each._tag === "Occurrence"
+                ? Effect.andThen(
+                    Deferred.succeed(delivering, undefined),
+                    Deferred.await(delivered)
+                  )
+                : Effect.void,
+              Effect.sync(() => sent.push(positionOf(each)))
+            ),
+          { positions: "heartbeat" }
         ).pipe(Effect.forkChild);
 
         yield* Deferred.await(delivering);

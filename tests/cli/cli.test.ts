@@ -2292,16 +2292,16 @@ describe("positional arguments", () => {
     );
     expect(() =>
       ActionCli.command(pair, Pair, {
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        positional: ["third"] as never,
+        // @ts-expect-error -- The failure under test: a name no input field has.
+        positional: ["third"],
       })
     ).toThrow(
       "Not an input field: third (positional names fields of the action's input)"
     );
     expect(() =>
       ActionCli.command(scalar, Scalar, {
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        positional: ["length"] as never,
+        // @ts-expect-error -- The failure under test: positional names for an input that is not a struct.
+        positional: ["length"],
       })
     ).toThrow(
       "Positional arguments need named input fields: length (the input is not a struct, so it is one --input flag: drop the option)"

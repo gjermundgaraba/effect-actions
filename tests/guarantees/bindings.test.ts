@@ -773,9 +773,9 @@ describe("serving a binding", () => {
   });
 
   it("refuses an object that only looks like an implementation", () => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const fake = { actions: [identity] } as never;
+    const fake = { actions: [identity] };
 
+    // @ts-expect-error -- The failure under test: an object that only looks like an implementation.
     expect(() => ActionHttp.layer(ActionHttp.make([identity]), fake)).toThrow(
       "Not an implementation made by this Action.implement: pass the value implement returned, not a copy such as a spread; or effect-actions is installed twice"
     );

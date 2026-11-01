@@ -5,10 +5,10 @@ import type { Redacted } from "effect";
 
 import { publicUrl } from "../config.js";
 import { WorkspaceRegistry } from "../workspaces/registry.js";
-import { Tenant } from "../workspaces/tenant.js";
 import { Directory } from "./directory.js";
 import { Login, scopes, Session } from "./Identity.js";
 import type { Member } from "./Identity.js";
+import { WorkspaceHeader } from "./workspace-header.js";
 
 const inService = Effect.gen(function* () {
   const registry = yield* WorkspaceRegistry;
@@ -53,7 +53,7 @@ export const authenticateBearer = Authentication.layer(
       Effect.gen(function* () {
         const memberships = yield* directory.ofToken(token);
 
-        const member = Option.flatMap(yield* Tenant, (slug) =>
+        const member = Option.flatMap(yield* WorkspaceHeader, (slug) =>
           Array.findFirst(memberships, ({ workspace }) => workspace === slug)
         );
 

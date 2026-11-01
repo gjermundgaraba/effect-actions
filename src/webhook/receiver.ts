@@ -11,7 +11,7 @@ import type {
 } from "../contract/receiving.js";
 import { makeRecent } from "../contract/recent.js";
 import type { Recent } from "../contract/recent.js";
-import { constantTimeEqual, signature } from "./signing.js";
+import { constantTimeEqual, standardWebhooksSignature } from "./signing.js";
 
 const timestampToleranceSeconds = 5 * 60;
 
@@ -84,7 +84,13 @@ export const makeReceiver = (path: `/${string}`) =>
       }
 
       const text = yield* Effect.orElseSucceed(request.text, () => "");
-      const expected = yield* signature([place.key], id, timestamp, text);
+
+      const expected = yield* standardWebhooksSignature(
+        [place.key],
+        id,
+        timestamp,
+        text
+      );
 
       if (!signatures.some((each) => constantTimeEqual(each, expected))) {
         return unauthorized;

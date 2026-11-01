@@ -657,10 +657,10 @@ describe("Action.client", () => {
         const unlisted = new Unlisted();
 
         const client = yield* Action.client(
+          // @ts-expect-error -- The failure under test: a cause holding an error the action does not declare.
           Action.implement(Status, () =>
             Effect.failCause(
-              // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-              Cause.combine(Cause.fail(busy), Cause.fail(unlisted as never))
+              Cause.combine(Cause.fail(busy), Cause.fail(unlisted))
             ).pipe(Effect.withSpan("quota"))
           )
         );
@@ -857,7 +857,6 @@ describe("Action.client", () => {
       "Duplicate action: ping"
     );
 
-    // oxlint-disable-next-line typescript/no-misused-spread -- Deliberate nominal-fabrication fixture.
     const copy = { ...ping };
 
     // @ts-expect-error -- A copy of an implementation is not one.

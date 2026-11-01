@@ -1226,17 +1226,12 @@ describe("projection boundaries", () => {
       })
     );
 
-    const exit = await Effect.runPromiseExit(
-      Effect.scoped(
-        Layer.build(beside.pipe(Layer.provide(HttpRouter.layer)))
-      ).pipe(
-        Effect.updateContext(
-          (nothing: Context.Context<never>) =>
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-            nothing as Context.Context<McpServer.McpServer>
-        )
-      )
+    const built = Effect.scoped(
+      Layer.build(beside.pipe(Layer.provide(HttpRouter.layer)))
     );
+
+    // @ts-expect-error -- The failure under test: no McpServer is provided.
+    const exit = await Effect.runPromiseExit(built);
 
     assert(Exit.isFailure(exit));
     expect(String(Cause.squash(exit.cause))).toContain(
@@ -1419,10 +1414,8 @@ describe("projection boundaries", () => {
       reason: new AiError.UnknownError({ description: "secret prompt" }),
     });
 
-    const apps = Action.implement(Leaked, () =>
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      Effect.fail(leakedFromAModel as never)
-    );
+    // @ts-expect-error -- The failure under test: an AiError the action does not declare.
+    const apps = Action.implement(Leaked, () => Effect.fail(leakedFromAModel));
 
     const http = await makeTestHttp(apps).handler(post("/api/leaked"));
     expect(http.status).toBe(500);

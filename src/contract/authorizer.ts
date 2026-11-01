@@ -12,12 +12,10 @@ export type Authorizer<C, RA, EAX, RAX> =
   | ((contract: C) => Effect.Effect<void, Refusal, RA>)
   | Effect.Effect<(contract: C) => Effect.Effect<void, Refusal, RA>, EAX, RAX>;
 
-/** What `implement` takes as `authorize`, erased: the rule, or an Effect building it. */
 export type ErasedAuthorizer<C> =
   | ErasedAuthorize<C>
   | Effect.Effect<ErasedAuthorize<C>, unknown, unknown>;
 
-/** How the messages name what an implementation holds. */
 export interface Holding {
   readonly singular: "action" | "event";
   readonly module: "Action" | "Event";

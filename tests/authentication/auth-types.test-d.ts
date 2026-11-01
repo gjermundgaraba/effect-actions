@@ -10,6 +10,7 @@ import type { SecurityMiddleware } from "../../src/authentication/provider.js";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
+import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Testing from "../../src/testing/Testing.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import { authenticate } from "../support/app/authentication.js";
@@ -338,6 +339,25 @@ export const publicReaderTypes = () => {
   >().toEqualTypeOf<CurrentActor>();
   // @ts-expect-error -- `status` still owes the caller, beside `double`'s authentication.
   void run(Testing.layer(routes));
+
+  const rpc = ActionRpc.layer(
+    ActionRpc.make([Status, Double], { authentication: Login }),
+    publicHandlerReadingIdentity
+  ).pipe(Layer.provide(authenticate));
+
+  expectTypeOf<
+    HttpRouter.Request.Only<"Requires", Layer.Services<typeof rpc>>
+  >().toEqualTypeOf<CurrentActor>();
+
+  const tools = ActionMcp.layerHttp(publicHandlerReadingIdentity, {
+    name: "t",
+    version: "0",
+    authentication: Login,
+  }).pipe(Layer.provide(authenticate));
+
+  expectTypeOf<
+    HttpRouter.Request.Only<"Requires", Layer.Services<typeof tools>>
+  >().toEqualTypeOf<CurrentActor>();
 };
 
 export const securityMiddlewareSpellsEffectsUnexportedMiddlewareMarker = () => {

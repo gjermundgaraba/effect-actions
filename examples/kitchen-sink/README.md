@@ -56,11 +56,11 @@ src/
 │   ├── authenticate.ts    Authentication.layer for both descriptors, OAuth discovery
 │   ├── authorize.ts       the members' rule: readOnly to a scope
 │   ├── quota.ts           the request quota, as HTTP and as RPC middleware
+│   ├── workspace-header.ts  WorkspaceHeader, the X-Workspace header the bearer verifier reads, and its router middleware
 │   └── handlers.ts
 ├── workspaces/            the tenants
 │   ├── Workspaces.ts      contract: Workspace, the public getStatus
 │   ├── registry.ts        WorkspaceRegistry: the workspaces and their suspension
-│   ├── tenant.ts          Tenant, and the router middleware that resolves it per request
 │   └── handlers.ts
 ├── issues/
 │   ├── Issues.ts          contract: schemas, errors, five actions, exportIssues, issue.changed
@@ -119,7 +119,7 @@ test/
 
 | To see | Read |
 | --- | --- |
-| How one request is authenticated, placed in a tenant, authorized | `src/identity/authenticate.ts`, `src/workspaces/tenant.ts`, `src/identity/authorize.ts`, `src/routes.ts` |
+| How one request is authenticated, placed in a tenant, authorized | `src/identity/authenticate.ts`, `src/identity/workspace-header.ts`, `src/identity/authorize.ts`, `src/routes.ts` |
 | Two audiences on two ports over one set of services | `src/server.ts`, `src/routes.ts`, `test/routes.test.ts` |
 | Which actions each surface serves, and why one is no tool | `src/Actions.ts` |
 | A limit before decoding and a limit in the handlers | `src/identity/quota.ts`, `src/issues/write-limit.ts` |
@@ -176,7 +176,7 @@ Each export and option the example uses, and where. A symbol in parentheses is t
 | `layer`, a plain verifier | `src/admin/authenticate.ts` |
 | `layer`: `protectedResource`, an Effect over `Config` | `src/identity/authenticate.ts` (`protectedResource`) |
 | `ProtectedResource` | `src/identity/authenticate.ts` |
-| A request service the verifier reads, and its order | `src/workspaces/tenant.ts`, `src/routes.ts` (`publicRoutes`) |
+| A request service the verifier reads, and its order | `src/identity/workspace-header.ts`, `src/routes.ts` (`publicRoutes`) |
 | `protect`, a route of the host's own, by the cookie descriptor | `src/attachments/download.ts` |
 | A trusted identity no verifier returns | `src/admin/Admin.ts`, `src/admin/authenticate.ts`, `src/ops.ts` |
 | A verifier's declared error over MCP | `test/identity/identity.test.ts` |

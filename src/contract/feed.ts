@@ -354,7 +354,7 @@ const logRun = (
                 fedOf({
                   items,
                   truncated: read.truncated,
-                  from: read.after,
+                  from: read.from,
                   to: read.cursor,
                 })
               )

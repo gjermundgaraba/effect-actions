@@ -12,21 +12,16 @@ import {
 import { uniqueKey } from "./implementation.js";
 import { reported } from "./reported.js";
 
-/** What a log holds: each entry with its sequence number, its cursor and when it arrived. */
 export interface Entry<A> {
   readonly seq: number;
-  /** The position after this entry, which a subscriber resumes from. */
   readonly cursor: string;
   readonly at: number;
   readonly value: A;
 }
 
-/** What a log answers for a cursor: the entries after it, at most `limit`. */
 export interface Read<A> {
   readonly entries: ReadonlyArray<Entry<A>>;
-  /** The position reading resumed from, before these entries. */
-  readonly after: string;
-  /** The position after these entries, or where reading resumed when there are none. */
+  readonly from: string;
   readonly cursor: string;
   readonly truncated: boolean;
   readonly hasMore: boolean;
@@ -259,7 +254,7 @@ export const makeLogStore = <A>(
               at: stored.at,
               value: stored.logged,
             })),
-            after: cursorAt(epoch, after),
+            from: cursorAt(epoch, after),
             cursor: cursorAt(epoch, page.at(-1)?.[0] ?? after),
             truncated,
             hasMore: pending.length > limit,
@@ -269,19 +264,13 @@ export const makeLogStore = <A>(
   };
 };
 
-/** What a log source keeps, appended to by `publish` and its `emit` stream. */
 export interface Log<A> {
   readonly append: (value: A, key: string | undefined) => Effect.Effect<void>;
-  /** Appends each value of `emit` under its key, until it ends or is interrupted. */
   readonly feed: (emit: Stream.Stream<Logged<A>>) => Effect.Effect<void>;
   readonly read: (
     cursor: string | null,
     limit: number
   ) => Effect.Effect<Read<Logged<A> | undefined>>;
-  /**
-   * Every read after `cursor`, then one each time entries arrive: the first from where `cursor`
-   * resumes, entries or not, and each truncated where the follower fell behind what is kept.
-   */
   readonly follow: (
     cursor: string | null,
     limit: number

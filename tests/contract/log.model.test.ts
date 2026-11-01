@@ -126,7 +126,7 @@ it.effect.prop(
 
         const reached = read.entries.at(-1)?.seq ?? resumedAt;
 
-        expect(read.after).toBe(cursorAt(resumedAt));
+        expect(read.from).toBe(cursorAt(resumedAt));
         expect(read.cursor).toBe(cursorAt(reached));
         minted.push({ cursor: read.cursor, seq: reached });
       }

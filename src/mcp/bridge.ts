@@ -506,7 +506,9 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
                 asSubscriber(
                   feed.event,
                   Effect.flatMap(feed.stream(input), (open) =>
-                    pushed(open, cursor ?? null, deliver)
+                    pushed(open, cursor ?? null, deliver, {
+                      positions: "heartbeat",
+                    })
                   )
                 )
             );

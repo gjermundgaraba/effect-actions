@@ -22,6 +22,7 @@ import {
 import { identity } from "./identity/handlers.js";
 import { Login } from "./identity/Identity.js";
 import { HttpQuota, quota, RpcQuota } from "./identity/quota.js";
+import { readWorkspaceHeader } from "./identity/workspace-header.js";
 import { layer as assistantTools } from "./issues/assistant.js";
 import { issueEvents } from "./issues/events.js";
 import { exports } from "./issues/export.js";
@@ -31,7 +32,6 @@ import { IssueChanged } from "./issues/Issues.js";
 import { cors, requestPolicy } from "./request-policy.js";
 import { Rpc } from "./Rpc.js";
 import { status } from "./workspaces/handlers.js";
-import { resolveTenant } from "./workspaces/tenant.js";
 import { GetStatus } from "./workspaces/Workspaces.js";
 
 const implementations = [
@@ -91,7 +91,7 @@ export const publicRoutes = Layer.mergeAll(
   Layer.provide(Webhook.layer()),
   Layer.provide(assistantTools),
   Layer.provide([authenticateBearer, authenticateSession, quota]),
-  Layer.provide(resolveTenant.layer),
+  Layer.provide(readWorkspaceHeader.layer),
   Layer.provide(cors),
   Layer.provide(requestPolicy)
 );

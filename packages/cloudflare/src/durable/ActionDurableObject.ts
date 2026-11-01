@@ -680,12 +680,6 @@ export const handlers = <
  * declares them, returning a promise, and reaches `make`'s through `super`, its `env` the one its
  * `services` function takes.
  */
-/**
- * An instance of a class `make` returns: a Durable Object with the handlers it defines, each
- * taking the runtime's own arguments, so a class extending it overrides them as `Handlers`
- * declares them, returning a promise, and reaches `make`'s through `super`, its `env` the one its
- * `services` function takes.
- */
 export type Instance<S = never, Env = Cloudflare.Env> = Handlers<S> &
   DurableObject<Env>;
 

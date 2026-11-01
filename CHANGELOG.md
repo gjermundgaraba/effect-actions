@@ -6,6 +6,7 @@
 
 - **The core depends on `xstate` `6.0.0-alpha.71` at runtime**, its first dependency besides the `effect` peer. `Webhook.layer` keeps a subscription's delivery health in an `xstate/fsm` transition table. A refresh's `deliveryStatus` and a kept record's `status` keep their shape, and records kept by 0.25.0 restore as before.
 - **The Cloudflare package depends on `xstate` `6.0.0-alpha.71` at runtime**, through the same catalog entry. The object's schedule keeps each owner's alarm in an `xstate/fsm` transition table. `Alarm.set` and `clear`, the times kept under `effect-actions/alarm/` and a failed run's retry are unchanged.
+- `Action.Implementation`'s second type parameter, each action's request-time requirements, has no constraint, and `Action.AnyImplementation` passes `unknown` for it. Both spelled it `{ readonly [name: string]: unknown }`, which a declaration printing an erased implementation now prints as `unknown`. What an erased implementation owes is unchanged.
 
 ## 0.25.0
 

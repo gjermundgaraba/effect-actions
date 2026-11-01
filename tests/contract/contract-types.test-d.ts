@@ -3,6 +3,10 @@ import { Context, Effect, Schema } from "effect";
 import type { Layer } from "effect";
 
 import * as Action from "../../src/contract/Action.js";
+import type {
+  RequestOf,
+  WrittenHandler,
+} from "../../src/contract/implementation.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { GetUser, RenameUser, WhoAmI } from "../support/app/contracts.js";
 import type { User } from "../support/app/contracts.js";
@@ -272,3 +276,18 @@ expectTypeOf<typeof Action.Image.Encoded>().toEqualTypeOf<{
   readonly data: Uint8Array;
   readonly mimeType: string;
 }>();
+
+{
+  const Ping = Action.make("ping", {
+    description: "Ping",
+    readOnly: true,
+    caller: Action.Anyone,
+    success: Schema.String,
+  });
+
+  expectTypeOf<Action.Handler<typeof Ping>>().toExtend<WrittenHandler<never>>();
+
+  expectTypeOf<
+    RequestOf<Action.AnyImplementation<typeof Ping>, typeof Ping>
+  >().toBeUnknown();
+}

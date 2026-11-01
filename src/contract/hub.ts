@@ -16,26 +16,15 @@ export interface KeyOptions {
 
 type ErasedEmitted = Event.Emitted<Event.Any>;
 
-/**
- * How a subscriber of a check source is woken: a waiter for `key`'s wakes, held in the scope,
- * each take completing once it was woken since the last.
- */
+type TakeWake = Effect.Effect<void>;
+
 export type Wakes = (
   key: string | undefined
-) => Effect.Effect<Effect.Effect<void>, never, Scope.Scope>;
+) => Effect.Effect<TakeWake, never, Scope.Scope>;
 
-/**
- * How a check source's subscribers learn to read again: `wakes`, and a timer where `polls`; and
- * a current source's revision for a key, which each `notify` reaching that key moves.
- */
 export interface Checking {
   readonly wakes: Wakes;
-  /** Whether a subscriber also reads again after each page's `nextPoll`. */
   readonly polls: boolean;
-  /**
-   * The revision a subscriber of `key` is at, as a cursor: `<epoch>:<count>`, then `:<key>` for a
-   * key, so a cursor kept for another key is behind every revision of this one.
-   */
   readonly revision: (key: string | undefined) => Effect.Effect<string>;
 }
 
