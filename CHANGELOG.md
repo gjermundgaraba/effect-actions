@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Breaking changes
+
+**Node 26.13 or later.** `engines.node` is `>=26.13.0`, where it accepted Node 26.12.
+
+- Migrate: run on Node 26.13 or a later release.
+
+### Other changes
+
 - MCP serves an action whose input is an identified alias of another identified schema, such as `Schema.suspend(() => One).annotate({ identifier: "Params" })` with `One` an identified struct, as a tool with an object input schema; `ActionMcp` refused it as not one object with keys. Its tool schemas follow such a chain of `$ref`s to the object, as Effect 4.1.2's own MCP tool schemas do.
 
 ## 0.28.0
