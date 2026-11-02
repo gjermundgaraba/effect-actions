@@ -108,11 +108,11 @@ Recheck these on an upgrade of the dependency named.
   - `HttpApiSchema.StreamSse` encodes `data` through `Schema.toCodecJson` since 4.1.1, so `http/events.ts` passes the schema as is.
   - `HttpApiSchema` reads `httpApiStatus` from the checks, last to first and into groups, then the schema's annotations, then its key's, an explicit `undefined` clearing it; that reader is private, so `contract/status.ts` mirrors it.
 - Effect, RPC:
-  - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.1.1 `src/rpc/RpcClient.ts`, which Effect does not export.
+  - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.1.2 `src/rpc/RpcClient.ts`, which Effect does not export.
   - Only the HTTP protocol lacks chunk acknowledgement (`supportsAck: false`), so only it gets a watch's silence rule.
   - The HTTP protocol reads any status's body as frames, and the server answers an unserved tag with `Unknown request tag: <tag>`; `tests/rpc/rpc.test.ts` pins that message, `tests/rpc/events.test.ts` what the client does with both.
   - A protocol buffers a call's writes until a server runs, and `Protocol.make` calls its function as it makes the protocol (the Cloudflare stub and socket protocols rely on both).
-- Effect, MCP (4.1.1):
+- Effect, MCP (4.1.2):
   - `registerToolkit` sends every success as `structuredContent` plus one JSON text block, with no option, so `ActionMcp` registers tools through `addTool`.
   - `addTool` reads the `McpServer.middleware` stacks, `visibility` included, from its `services`, and lays the rest under each request's context, less the request's own keys, so `ActionMcp` passes its build context there.
   - The registry is one layer per layer graph, so each endpoint is `Layer.fresh`.
@@ -124,7 +124,7 @@ Recheck these on an upgrade of the dependency named.
   - The notification sender exists only where subscriptions are allowed.
   - The stdio parser fails on a non-JSON line, and its retry drops the rest of that read; the transport ends by interrupting the fiber that built it.
   - The server is forked with `forkScoped`, so a defect while installing handlers ends only that fiber.
-  - `bridge.ts` reaches an adapter's groups and `handlerRpcs`, off the public interface; `tests/mcp/bridge.test.ts` and `events.test.ts` fail if they move. `toolJsonSchema`, which inlines a top-level `$ref`, is private, so `mcp/protocol.ts` does the same.
+  - `bridge.ts` reaches an adapter's groups and `handlerRpcs`, off the public interface; `tests/mcp/bridge.test.ts` and `events.test.ts` fail if they move. `toolJsonSchema`, which inlines a top-level `$ref` and follows it through a definition that is itself a `$ref`, as an identified alias of an identified schema writes one, is private, so `mcp/protocol.ts` does the same.
 - Effect, elsewhere:
   - `Layer.build` forks the memo map around its caller, so `implementation.ts` builds into the map itself.
   - `Stream.retry` restarts its schedule at the first element after a failure.

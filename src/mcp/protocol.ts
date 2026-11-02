@@ -48,6 +48,60 @@ const definitionsReferenced = (value: Schema.Json): readonly string[] => {
   });
 };
 
+const definitionReferenced = (
+  schema: JsonSchema.JsonSchema
+): string | undefined => {
+  const [scope, key] = Predicate.isString(schema["$ref"])
+    ? (JsonPointer.parseUriFragment(schema["$ref"]) ?? [])
+    : [];
+
+  return scope === "$defs" && key !== undefined ? key : undefined;
+};
+
+const inlineRoot = (
+  schema: JsonSchema.JsonSchema | undefined,
+  definitions: JsonSchema.Definitions,
+  inlined: readonly string[]
+): readonly [JsonSchema.JsonSchema | undefined, readonly string[]] => {
+  const key = schema === undefined ? undefined : definitionReferenced(schema);
+
+  if (key === undefined) {
+    return [schema, inlined];
+  }
+
+  return inlined.includes(key)
+    ? [undefined, inlined]
+    : inlineRoot(definitions[key], definitions, [...inlined, key]);
+};
+
+const withoutUnreferenced = (
+  root: JsonSchema.JsonSchema,
+  definitions: JsonSchema.Definitions,
+  inlined: readonly string[]
+): JsonSchema.Definitions => {
+  const referenced = new Set(
+    [root, ...Object.values(definitions)].flatMap((definition) =>
+      isJson(definition) ? definitionsReferenced(definition) : []
+    )
+  );
+
+  const unreferenced = inlined.filter(
+    (name) => Object.hasOwn(definitions, name) && !referenced.has(name)
+  );
+
+  return unreferenced.length === 0
+    ? definitions
+    : withoutUnreferenced(
+        root,
+        Object.fromEntries(
+          Object.entries(definitions).filter(
+            ([name]) => !unreferenced.includes(name)
+          )
+        ),
+        inlined
+      );
+};
+
 export const toolJsonSchema = (
   schema: Schema.Top,
   strict: boolean
@@ -56,32 +110,13 @@ export const toolJsonSchema = (
     onExcessProperty: strict ? "error" : "ignore",
   });
 
-  const [scope, key] = Predicate.isString(document.schema["$ref"])
-    ? (JsonPointer.parseUriFragment(document.schema["$ref"]) ?? [])
-    : [];
-
-  const inlined = scope === "$defs" && key !== undefined ? key : undefined;
-
-  const root =
-    inlined === undefined ? document.schema : document.definitions[inlined];
+  const [root, inlined] = inlineRoot(document.schema, document.definitions, []);
 
   if (root === undefined) {
     return undefined;
   }
 
-  const definitions =
-    inlined !== undefined &&
-    ![root, ...Object.values(document.definitions)]
-      .flatMap((definition) =>
-        isJson(definition) ? definitionsReferenced(definition) : []
-      )
-      .includes(inlined)
-      ? Object.fromEntries(
-          Object.entries(document.definitions).filter(
-            ([name]) => name !== inlined
-          )
-        )
-      : document.definitions;
+  const definitions = withoutUnreferenced(root, document.definitions, inlined);
 
   return Object.keys(definitions).length === 0
     ? root

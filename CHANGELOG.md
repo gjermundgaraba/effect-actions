@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- MCP serves an action whose input is an identified alias of another identified schema, such as `Schema.suspend(() => One).annotate({ identifier: "Params" })` with `One` an identified struct, as a tool with an object input schema; `ActionMcp` refused it as not one object with keys. Its tool schemas follow such a chain of `$ref`s to the object, as Effect 4.1.2's own MCP tool schemas do.
+
 ## 0.28.0
 
 - `ActionDurableObject.stubFailure(error)` returns the runtime's error a stub call failed with, from the `RpcClientError` a call over `client` or `layerStubClient` fails with, and `Option.none()` for anything else. `isRetryable`, `isOverloaded` and `isReset` read its flags: `isRetryable` holds for a `retryable` error that is not `overloaded`, as Cloudflare's guide says, and gives `Effect.retry` its `while`. They replace reading `error.reason.cause.retryable` by hand, which `client`'s gotcha described. The chat-rooms Worker retries the lobby's previews with it ([ActionDurableObject-stub.md](packages/cloudflare/docs/ActionDurableObject-stub.md)).

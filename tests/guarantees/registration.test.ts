@@ -1087,6 +1087,9 @@ describe("projection boundaries", () => {
       record: Schema.Record(Schema.String, Schema.Finite),
       class: Fields,
       suspended: Schema.suspend(() => One),
+      identifiedAlias: Schema.suspend(() =>
+        One.annotate({ identifier: "Aliased" })
+      ).annotate({ identifier: "Alias" }),
       declared: Declared,
     };
 
