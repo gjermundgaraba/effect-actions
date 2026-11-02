@@ -35,7 +35,7 @@ Where things are, in a project that installs the package: these pages in `node_m
 | [Action.md](Action.md) | define a contract and who may call it, implement it, authorize calls, fail with declared and built-in errors, answer a retried call once, call actions from a job, share one build across servers |
 | [Action-streams.md](Action-streams.md) | report progress while an action runs, answer a stream of elements |
 | [Event.md](Event.md) | define an event type, read it from an upstream you can ask or one that pushes, set up a subscription upstream, watch events in process |
-| [ActionHttp.md](ActionHttp.md) | bind actions to JSON routes, serve them, limit request bodies, split a binding across layers and add middleware, publish OpenAPI, call them from Effect or a browser, serve and watch events |
+| [ActionHttp.md](ActionHttp.md) | bind actions to JSON routes, serve them, limit request bodies, check Host and Origin with `RequestPolicy`, split a binding across layers and add middleware, publish OpenAPI, call them from Effect or a browser, serve and watch events |
 | [ActionMcp.md](ActionMcp.md) | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, serve events, allow browser clients, add prompts and resources, send notifications |
 | [ActionRpc.md](ActionRpc.md) | bind actions to Effect rpcs, serve them on a protocol, call them, add native rpcs, send request context with a call |
 | [ActionRpc-events.md](ActionRpc-events.md) | serve and watch events over rpcs, follow what a request names, such as a room |

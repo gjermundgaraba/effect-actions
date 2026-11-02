@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add `@gjermundgaraba/effect-actions/RequestPolicy`: `make({ publicUrl, allowedOrigins? })` returns a pure `allows({ target, host, origin })` decision and native router `middleware`. It preserves the clankerauth SDK policy: exact Host and Origin checks, absent Origin accepted, `/healthz` unchecked, refusals answered with 403. Existing SDK users can replace the import with the new subpath without changing their policy configuration or wiring.
+
 ## 0.26.1
 
 Development tooling and test dependencies were updated. There are no consumer-facing runtime changes.

@@ -43,6 +43,7 @@
     "./ActionToolkit": "./src/toolkit/ActionToolkit.ts",
     "./Authentication": "./src/authentication/Authentication.ts",
     "./Event": "./src/contract/Event.ts",
+    "./RequestPolicy": "./src/http/RequestPolicy.ts",
     "./Testing": "./src/testing/Testing.ts",
     "./Webhook": "./src/webhook/Webhook.ts",
     "./package.json": "./package.json"
@@ -57,6 +58,7 @@
       "./ActionToolkit": "./dist/ActionToolkit.mjs",
       "./Authentication": "./dist/Authentication.mjs",
       "./Event": "./dist/Event.mjs",
+      "./RequestPolicy": "./dist/RequestPolicy.mjs",
       "./Testing": "./dist/Testing.mjs",
       "./Webhook": "./dist/Webhook.mjs",
       "./package.json": "./package.json"

@@ -4,6 +4,7 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as ActionToolkit from "@gjermundgaraba/effect-actions/ActionToolkit";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
+import * as RequestPolicy from "@gjermundgaraba/effect-actions/RequestPolicy";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
 import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -14,6 +15,21 @@ import { routes } from "./quickstart-server.js";
 import { Greet, Http } from "./quickstart.js";
 
 const packageRoot = "@gjermundgaraba/effect-actions";
+
+const policy = RequestPolicy.make({
+  publicUrl: new URL("https://consumer.example"),
+});
+
+if (
+  !policy.allows({
+    target: "/api",
+    host: "consumer.example",
+    origin: undefined,
+  }) ||
+  policy.allows({ target: "/api", host: "other.example", origin: undefined })
+) {
+  throw new Error("Published request policy failed");
+}
 
 const rootImport = await import(packageRoot).then(
   () => "resolved",

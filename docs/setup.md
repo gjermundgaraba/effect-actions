@@ -41,7 +41,7 @@ Node `>=26.12.0`: the package's `engines`, the Node the library is developed and
 
 ## Entry points
 
-There is no package root. Import one module per subpath, as a namespace, `import * as Action from "@gjermundgaraba/effect-actions/Action"`. The modules: `Action`, `Event`, `ActionHttp`, `ActionMcp`, `ActionRpc`, `ActionToolkit`, `ActionCli`, `Authentication`, `Webhook`, `Testing`.
+There is no package root. Import one module per subpath, as a namespace, `import * as Action from "@gjermundgaraba/effect-actions/Action"`. The modules: `RequestPolicy`, `Action`, `Event`, `ActionHttp`, `ActionMcp`, `ActionRpc`, `ActionToolkit`, `ActionCli`, `Authentication`, `Webhook`, `Testing`.
 
 Effect's own modules are subpaths of `effect` too: `effect/http` (`HttpRouter`, `HttpClient`, `FetchHttpClient`), `effect/http-api` (`OpenApi`, `HttpApiMiddleware`), `effect/rpc` (`RpcServer`, `RpcClient`), `effect/ai` (`LanguageModel`, `Chat`), `effect/cli` (`Command`) and `effect/socket` (`Socket`).
 

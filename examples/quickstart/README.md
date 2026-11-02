@@ -25,3 +25,5 @@ src/
 └── client.ts          entrypoint
 test/routes.test.ts    the routes, called in memory
 ```
+
+To check browser requests against a configured public URL, serve `withRequestPolicy(publicUrl)` from [src/request-policy.ts](src/request-policy.ts). It wraps all the routes and adds an unchecked health probe; [test/request-policy.test.ts](test/request-policy.test.ts) exercises accepted and refused requests.

@@ -110,6 +110,36 @@ Layer.launch(server).pipe(NodeRuntime.runMain());
 
 - A service a verifier, handler or authorizer reads per request is provided by router middleware around the layer ([kitchen-sink/src/identity/workspace-header.ts](../examples/kitchen-sink/src/identity/workspace-header.ts), read by the verifier, provided in [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts)), or, for a handler or authorizer, by `ActionHttp.LayerOptions.middleware`; declaring it, and why not `HttpRouter.provideRequest`, are on `ActionHttp.layer`.
 
+### Check Host and Origin
+
+Import `@gjermundgaraba/effect-actions/RequestPolicy` to check incoming browser requests against the application's public URL. `RequestPolicy.make` returns `allows` for raw requests or WebSocket upgrades and `middleware` for Effect routes; its JSDoc describes the health-probe exemption and middleware scope, and `RequestPolicy.Options` defines the header comparisons. Access control remains the application's or network's responsibility. A proxy must preserve the public Host header.
+
+Build the policy once and provide its middleware to the merged routes before serving them:
+
+```ts example=quickstart/src/request-policy.ts
+import * as RequestPolicy from "@gjermundgaraba/effect-actions/RequestPolicy";
+import { Layer } from "effect";
+import { HttpRouter, HttpServerResponse } from "effect/http";
+
+import { routes } from "./routes.js";
+
+export const withRequestPolicy = (publicUrl: URL) => {
+  const policy = RequestPolicy.make({ publicUrl });
+
+  const health = HttpRouter.add(
+    "GET",
+    "/healthz",
+    HttpServerResponse.text("ok")
+  );
+
+  return Layer.mergeAll(routes, health).pipe(
+    Layer.provide(policy.middleware.layer)
+  );
+};
+```
+
+Pass the deployed public URL from the host's configuration to `withRequestPolicy`, then serve its result as in [quickstart/src/server.ts](../examples/quickstart/src/server.ts). For a raw request, pass its target, Host and Origin to `policy.allows`; use `undefined` for absent headers. Allowing an additional browser origin through `RequestPolicy.Options` does not install CORS response headers; configure `HttpRouter.cors` too when the browser needs them.
+
 ### Split a binding across layers, and add middleware
 
 Serve each action from exactly one layer. Files: [kitchen-sink/src/routes.ts](../examples/kitchen-sink/src/routes.ts) (`api`), [kitchen-sink/src/identity/quota.ts](../examples/kitchen-sink/src/identity/quota.ts). Where a check runs decides what it sees:
