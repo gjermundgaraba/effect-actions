@@ -54,7 +54,16 @@ export {
 
 export { name, State } from "./state.js";
 
-export { client, layerStubClient, type Client, type Stub } from "./stub.js";
+export {
+  client,
+  isOverloaded,
+  isReset,
+  isRetryable,
+  layerStubClient,
+  stubFailure,
+  type Client,
+  type Stub,
+} from "./stub.js";
 
 export { layerHttpClient } from "./fetcher.js";
 

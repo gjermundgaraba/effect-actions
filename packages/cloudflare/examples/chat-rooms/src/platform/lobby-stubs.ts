@@ -1,6 +1,6 @@
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { env } from "cloudflare:workers";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schedule } from "effect";
 
 import { Activity } from "../chat/activity.js";
 import { Room } from "../chat/room.js";
@@ -12,7 +12,18 @@ const lobbyStub = () => env.CHAT_LOBBY.getByName("lobby");
 
 export const layerLobbyHost = Layer.effect(LobbyHost)(
   Effect.map(ActionDurableObject.client(LobbyCalls), (lobby) =>
-    LobbyHost.of({ previews: Effect.orDie(lobby(lobbyStub).previews()) })
+    LobbyHost.of({
+      previews: lobby(lobbyStub)
+        .previews()
+        .pipe(
+          Effect.retry({
+            while: ActionDurableObject.isRetryable,
+            times: 2,
+            schedule: Schedule.exponential("100 millis"),
+          }),
+          Effect.orDie
+        ),
+    })
   )
 );
 

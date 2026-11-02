@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `ActionDurableObject.stubFailure(error)` returns the runtime's error a stub call failed with, from the `RpcClientError` a call over `client` or `layerStubClient` fails with, and `Option.none()` for anything else. `isRetryable`, `isOverloaded` and `isReset` read its flags: `isRetryable` holds for a `retryable` error that is not `overloaded`, as Cloudflare's guide says, and gives `Effect.retry` its `while`. They replace reading `error.reason.cause.retryable` by hand, which `client`'s gotcha described. The chat-rooms Worker retries the lobby's previews with it ([ActionDurableObject-stub.md](packages/cloudflare/docs/ActionDurableObject-stub.md)).
+
 ## 0.27.0
 
 - Add `@gjermundgaraba/effect-actions/RequestPolicy`: `make({ publicUrl, allowedOrigins? })` returns a pure `allows({ target, host, origin })` decision and native router `middleware`. It preserves the clankerauth SDK policy: exact Host and Origin checks, absent Origin accepted, `/healthz` unchecked, refusals answered with 403. Existing SDK users can replace the import with the new subpath without changing their policy configuration or wiring.

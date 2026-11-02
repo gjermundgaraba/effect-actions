@@ -30,6 +30,61 @@ export interface Stub {
 const clientError = (reason: RpcClientError.RpcClientDefect) =>
   new RpcClientError.RpcClientError({ reason });
 
+const REFUSED = "The object's stub refused the call";
+
+const isClientError = Schema.is(RpcClientError.RpcClientError);
+
+/**
+ * The runtime's error a stub call failed with, from the `RpcClientError` a call over `client` or
+ * `layerStubClient` fails with, or `Option.none()` for any other value: a declared error, a
+ * defect, or an `RpcClientError` the object's answer caused, such as one ending before the call
+ * completed. Read its `message` to tell the runtime's errors apart, such as workerd's `limited to
+ * 32MiB`.
+ *
+ * **Gotchas**
+ *
+ * - It is the runtime's error as the stub threw it, whose flags are what Cloudflare sets: `isRetryable`, `isOverloaded` and `isReset` read them.
+ */
+export const stubFailure = (error: unknown): Option.Option<unknown> =>
+  isClientError(error) &&
+  error.reason._tag === "RpcClientDefect" &&
+  error.reason.message === REFUSED
+    ? Option.some(error.reason.cause)
+    : Option.none();
+
+const flagged = (error: unknown, flag: string) =>
+  Option.exists(
+    stubFailure(error),
+    (failure) => Predicate.hasProperty(failure, flag) && failure[flag] === true
+  );
+
+/**
+ * Whether the stub call may be repeated: the runtime's error is `retryable` and not `overloaded`,
+ * as Cloudflare's guide to Durable Object errors says. Give it to `Effect.retry`'s `while`, with a
+ * bounded `times` and a backoff `schedule`.
+ *
+ * **Gotchas**
+ *
+ * - A call that changes the object may have run before the error: repeat one only when repeating it is safe, such as a call carrying its own idempotency key.
+ */
+export const isRetryable = (error: unknown): boolean =>
+  flagged(error, "retryable") && !flagged(error, "overloaded");
+
+/**
+ * Whether the runtime refused the stub call because the object is overloaded: a repeat adds to the
+ * load, so answer the caller instead, such as with a declared error.
+ */
+export const isOverloaded = (error: unknown): boolean =>
+  flagged(error, "overloaded");
+
+/**
+ * Whether the object was reset during the stub call, its runtime's error `durableObjectReset`, as
+ * `ctx.abort` resets it: the stub is broken, and a call over `client` or `layerStubClient` gets a
+ * new one from its `stubOf` for the next call.
+ */
+export const isReset = (error: unknown): boolean =>
+  flagged(error, "durableObjectReset");
+
 const isAnswer = Schema.is(
   Schema.Array(Schema.Struct({ _tag: Schema.String }))
 );
@@ -67,7 +122,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
                 catch: (cause) =>
                   clientError(
                     new RpcClientError.RpcClientDefect({
-                      message: "The object's stub refused the call",
+                      message: REFUSED,
                       cause,
                     })
                   ),
@@ -107,7 +162,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * **Gotchas**
  *
  * - `stubOf` is called as each call is sent, `() => env.ROOM.getByName(name)`, for a new stub each time, since many exceptions leave a stub broken, failing every later call through it with the same error; one that throws is a defect, not an `RpcClientError`, as it is no failure of the stub.
- * - An `RpcClientError`'s `RpcClientDefect` holds the runtime's error as its `cause`: `.retryable` true allows repeating the call, as Cloudflare's guide says, and `.durableObjectReset` true needs a new stub, which the next call's `stubOf` gives.
+ * - The runtime's error reaches the caller inside the `RpcClientError`: read it with `stubFailure`, and its flags with `isRetryable`, `isOverloaded` and `isReset`; a reset object needs a new stub, which the next call's `stubOf` gives.
  * - Workers RPC limits a call's arguments and its answer to 32 MiB, serialized: past it, the call fails with the runtime's `limited to 32MiB` error.
  * - An object serving no `calls`, once built, or a class without the method, fails each call, with the object's or the runtime's message as the error's cause; an object whose build fails fails it with that failure first.
  * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.

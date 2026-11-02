@@ -4,7 +4,16 @@ import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { Cause, Effect, Exit, Layer, Predicate, Schema, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect";
 import {
   Rpc as NativeRpc,
   RpcClient,
@@ -614,6 +623,125 @@ describe("client", () => {
       expect(yield* host(() => plugin("from-pane")).panes()).toStrictEqual([
         "notes/1",
       ]);
+    }).pipe(Effect.scoped)
+  );
+});
+
+const thrown = (flags: Readonly<Record<string, boolean>>) =>
+  Object.assign(new Error("The runtime refused the call"), flags);
+
+const refusedWith = (failure: unknown) =>
+  Effect.flatMap(
+    rawOver({
+      effectActionsRpc: async () => {
+        throw failure;
+      },
+    }),
+    (client) => Effect.flip(client.panes())
+  );
+
+const checks = (error: unknown) => ({
+  retryable: ActionDurableObject.isRetryable(error),
+  overloaded: ActionDurableObject.isOverloaded(error),
+  reset: ActionDurableObject.isReset(error),
+});
+
+describe("stub failures", () => {
+  it.effect(
+    "read the runtime's flags off the error a stub call failed with, an overloaded one never retryable",
+    () =>
+      Effect.gen(function* () {
+        for (const retryable of [false, true]) {
+          for (const overloaded of [false, true]) {
+            for (const durableObjectReset of [false, true]) {
+              const failure = thrown({
+                retryable,
+                overloaded,
+                durableObjectReset,
+              });
+
+              const error = yield* refusedWith(failure);
+
+              expect(checks(error)).toStrictEqual({
+                retryable: retryable && !overloaded,
+                overloaded,
+                reset: durableObjectReset,
+              });
+              expect(ActionDurableObject.stubFailure(error)).toStrictEqual(
+                Option.some(failure)
+              );
+            }
+          }
+        }
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("read a flag only when it is true", () =>
+    Effect.gen(function* () {
+      const error = yield* refusedWith(
+        Object.assign(new Error("flags that are not true"), {
+          retryable: "true",
+          overloaded: 1,
+          durableObjectReset: null,
+        })
+      );
+
+      expect(checks(error)).toStrictEqual({
+        retryable: false,
+        overloaded: false,
+        reset: false,
+      });
+    }).pipe(Effect.scoped)
+  );
+
+  it.effect(
+    "find no stub failure in a declared error, a defect, or an answer that ended early",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* plugins;
+
+        const declared = yield* Effect.flip(
+          host(() => plugin("no-stub-failure")).start()
+        );
+
+        const ended = yield* Effect.flip(
+          Effect.flatMap(
+            rawOver({ effectActionsRpc: async () => [] }),
+            (client) => client.panes()
+          )
+        );
+
+        for (const error of [
+          declared,
+          ended,
+          thrown({ retryable: true }),
+          undefined,
+        ]) {
+          expect(ActionDurableObject.stubFailure(error)).toStrictEqual(
+            Option.none()
+          );
+          expect(checks(error)).toStrictEqual({
+            retryable: false,
+            overloaded: false,
+            reset: false,
+          });
+        }
+      }).pipe(Effect.scoped)
+  );
+
+  it.effect("find the reset of an object aborted during the call", () =>
+    Effect.gen(function* () {
+      const broken = plugin("reset-checked");
+      const client = yield* rawOver(broken);
+
+      yield* abort(broken);
+
+      const error = yield* Effect.flip(client.panes());
+
+      expect(ActionDurableObject.isReset(error)).toBe(true);
+      expect(
+        String(Option.getOrUndefined(ActionDurableObject.stubFailure(error)))
+      ).toContain("aborted");
     }).pipe(Effect.scoped)
   );
 });

@@ -24,12 +24,12 @@ A plain group suits an object's own API, which no page calls. Actions served on 
 
 ## Call it from a Worker or another object
 
-`client(group)` makes one client, in the caller's `Scope`, for every object of a class, and returns `(stubOf) => client`: each call gets a new stub from `stubOf`, as it is sent, and fails with the rpc's declared errors or the stub's own, an `RpcClientError`, which the caller retries or makes a defect. The Worker reads the previews through `layerLobbyHost`, and a room tells the lobby through `tellLobby`, a task, below:
+`client(group)` makes one client, in the caller's `Scope`, for every object of a class, and returns `(stubOf) => client`: each call gets a new stub from `stubOf`, as it is sent, and fails with the rpc's declared errors or the stub's own, an `RpcClientError`. The caller retries a read while `isRetryable` holds, which reads the runtime's flags off the error, and makes the rest a defect, as `layerLobbyHost` does with the previews. The Worker reads the previews through `layerLobbyHost`, and a room tells the lobby through `tellLobby`, a task, below:
 
 ```ts example=chat-rooms/src/platform/lobby-stubs.ts
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
 import { env } from "cloudflare:workers";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schedule } from "effect";
 
 import { Activity } from "../chat/activity.js";
 import { Room } from "../chat/room.js";
@@ -41,7 +41,18 @@ const lobbyStub = () => env.CHAT_LOBBY.getByName("lobby");
 
 export const layerLobbyHost = Layer.effect(LobbyHost)(
   Effect.map(ActionDurableObject.client(LobbyCalls), (lobby) =>
-    LobbyHost.of({ previews: Effect.orDie(lobby(lobbyStub).previews()) })
+    LobbyHost.of({
+      previews: lobby(lobbyStub)
+        .previews()
+        .pipe(
+          Effect.retry({
+            while: ActionDurableObject.isRetryable,
+            times: 2,
+            schedule: Schedule.exponential("100 millis"),
+          }),
+          Effect.orDie
+        ),
+    })
   )
 );
 
