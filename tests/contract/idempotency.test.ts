@@ -234,8 +234,8 @@ describe("an action's idempotencyKey", () => {
 
         const client = yield* Action.client(
           Action.implement(Claim, () =>
-            Effect.suspend(() =>
-              Effect.fail((runs += 1) === 1 ? new Busy() : new Taken())
+            Effect.failSync(() =>
+              (runs += 1) === 1 ? new Busy() : new Taken()
             )
           )
         );
