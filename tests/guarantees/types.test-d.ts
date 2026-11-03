@@ -1793,7 +1793,7 @@ export const voidSuccessTypes = () => {
   expectTypeOf<(typeof Reset)["success"]>().toEqualTypeOf<typeof Schema.Void>();
 
   Action.implement(Reset, () => Effect.void);
-  Action.implement(Reset, () => Effect.undefined);
+  Action.implement(Reset, () => Effect.succeed(undefined));
   Action.implement([Reset], { reset: () => Effect.void });
   Action.implement(
     Reset,

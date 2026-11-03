@@ -265,6 +265,7 @@ const lint: ReturnType<typeof config> = config({
     {
       files: ["tests/guarantees/types.test-d.ts"],
       rules: {
+        "effecttsgo/effect-succeed-with-undefined": "off",
         "effecttsgo/effect-succeed-with-void": "off",
         "typescript/no-misused-spread": "off",
       },
