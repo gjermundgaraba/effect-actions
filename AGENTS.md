@@ -105,6 +105,7 @@ Recheck these on an upgrade of the dependency named.
   - A raw client fails a status with `StatusCodeError`, a native `HttpApiClient` an undeclared one with `DecodeError`; `status.ts` lists the statuses of `HttpClient.isTransientResponse`, which takes a response where `mcp/watch.ts` and `idempotency.ts` hold a number.
   - The native SSE decoder and `Sse.decode` stop at a `retry:` field, so `mcp/reply.ts` feeds the parser by hand.
   - `HttpServerResponse.raw` takes its status from its options, not from the web `Response`.
+  - `HttpEffect.toWebHandlerWith` forks each request with `Effect.runForkWith` on its base context and the request's alone, so a request runs on the default scheduler unless one holds `Scheduler.Scheduler`; `ObjectServer`'s `fetch` passes its caller's.
   - `HttpApiSchema.StreamSse` encodes `data` through `Schema.toCodecJson` since 4.1.1, so `http/events.ts` passes the schema as is.
   - `HttpApiSchema` reads `httpApiStatus` from the checks, last to first and into groups, then the schema's annotations, then its key's, an explicit `undefined` clearing it; that reader is private, so `contract/status.ts` mirrors it.
 - Effect, RPC:

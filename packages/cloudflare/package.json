@@ -30,11 +30,13 @@
   "sideEffects": false,
   "exports": {
     "./ActionDurableObject": "./src/durable/ActionDurableObject.ts",
+    "./ObjectServer": "./src/durable/ObjectServer.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "exports": {
       "./ActionDurableObject": "./dist/ActionDurableObject.mjs",
+      "./ObjectServer": "./dist/ObjectServer.mjs",
       "./package.json": "./package.json"
     },
     "access": "public"

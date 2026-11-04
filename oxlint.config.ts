@@ -108,7 +108,7 @@ const lint: ReturnType<typeof config> = config({
     },
     {
       files: [
-        "packages/cloudflare/src/durable/{ActionDurableObject,stub}.ts",
+        "packages/cloudflare/src/durable/{ActionDurableObject,ObjectServer,stub}.ts",
         "src/authentication/Authentication.ts",
         "src/cli/{ActionCli,commands}.ts",
         "src/contract/{Action,authorizer,call,caller,feed,idempotency,implementation,lease,push,serving,webhooks}.ts",

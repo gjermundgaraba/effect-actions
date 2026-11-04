@@ -19,6 +19,7 @@ import type {
   Raced,
   Retried,
   RetriedAtOnce,
+  Served,
   Room,
   RouterProvided,
   Shelf,
@@ -66,6 +67,7 @@ declare global {
       readonly TASKED: DurableObjectNamespace<Tasked>;
       readonly SLOW_BUILT: DurableObjectNamespace<SlowBuilt>;
       readonly SLOW_BUILT_AGAIN: DurableObjectNamespace<SlowBuiltAgain>;
+      readonly SERVED: DurableObjectNamespace<Served>;
       readonly GREETING: string;
     }
   }

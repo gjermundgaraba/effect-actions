@@ -1,6 +1,6 @@
 # ActionDurableObject in a class of your own
 
-A class with methods, sockets or handlers of its own extends the one `make` returns and overrides them, its `services` a function of its `env` ([ActionDurableObject.md](ActionDurableObject.md)). This page is for a class that cannot, such as one extending another base class: it delegates to the handlers `make` is built from. A message the library throws says its fix; for workerd's, a compiler diagnostic or Effect's own error, search [ActionDurableObject-failures.md](ActionDurableObject-failures.md).
+A class with methods, sockets or handlers of its own extends the one `make` returns and overrides them, its `services` a function of its `env` ([ActionDurableObject.md](ActionDurableObject.md)). This page is for a class that cannot, such as one extending another base class: it delegates to the handlers `make` is built from. A base class that builds the object's services as a Layer serves the routes from that Layer, with `ObjectServer` ([ObjectServer.md](ObjectServer.md)). A message the library throws says its fix; for workerd's, a compiler diagnostic or Effect's own error, search [ActionDurableObject-failures.md](ActionDurableObject-failures.md).
 
 ## Delegate to handlers
 

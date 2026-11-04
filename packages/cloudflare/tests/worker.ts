@@ -1,3 +1,4 @@
+import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import { DurableObject } from "cloudflare:workers";
 import {
   Context,
@@ -7,10 +8,13 @@ import {
   Effect,
   Layer,
   Option,
+  Scheduler,
+  Scope,
 } from "effect";
 import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 
 import * as ActionDurableObject from "../src/durable/ActionDurableObject.js";
+import * as ObjectServer from "../src/durable/ObjectServer.js";
 import {
   alarm,
   Builds,
@@ -52,6 +56,7 @@ import {
   racedCalls,
   yieldsPastTimer,
 } from "./support/raced.js";
+import { eventScheduler, servedRoutes } from "./support/served.js";
 import { versionedRoutes } from "./support/versioned.js";
 import { heldTime, hook, hookedRoutes } from "./support/webhooks.js";
 
@@ -359,6 +364,84 @@ export class Watching extends ActionDurableObject.make({
         })
       )
     );
+  }
+}
+
+const buildScheduler = new Scheduler.MixedScheduler("sync");
+
+export class Served extends DurableObject {
+  readonly #built: Promise<
+    Context.Context<ObjectServer.ObjectServer | Event.Events>
+  >;
+
+  constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
+    super(ctx, env);
+
+    const served = ObjectServer.layer(servedRoutes, {
+      disableLogger: true,
+    }).pipe(
+      Layer.provide(Layer.succeed(ActionDurableObject.State, ctx)),
+      Layer.provide(Layer.succeed(Greeting, "built with the object"))
+    );
+
+    this.#built = ctx.blockConcurrencyWhile(
+      async () =>
+        await Effect.runPromise(
+          Layer.buildWithScope(served, Scope.makeUnsafe()),
+          { scheduler: buildScheduler }
+        )
+    );
+  }
+
+  async #run<A>(
+    effect: Effect.Effect<A, never, ObjectServer.ObjectServer | Event.Events>
+  ) {
+    return await Effect.runPromise(
+      Effect.provideContext(effect, await this.#built),
+      { scheduler: eventScheduler }
+    );
+  }
+
+  override async fetch(request: Request) {
+    return await this.#run(
+      ObjectServer.ObjectServer.use((server) => server.fetch(request))
+    );
+  }
+
+  override async webSocketMessage(
+    socket: WebSocket,
+    message: string | ArrayBuffer
+  ) {
+    await this.#run(
+      ObjectServer.ObjectServer.use((server) =>
+        server.webSocketMessage(socket, message)
+      )
+    );
+  }
+
+  override async webSocketClose(
+    socket: WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean
+  ) {
+    await this.#run(
+      ObjectServer.ObjectServer.use((server) =>
+        server.webSocketClose(socket, code, reason, wasClean)
+      )
+    );
+  }
+
+  override async webSocketError(socket: WebSocket, error: unknown) {
+    await this.#run(
+      ObjectServer.ObjectServer.use((server) =>
+        server.webSocketError(socket, error)
+      )
+    );
+  }
+
+  async say(text: string) {
+    await this.#run(say(text));
   }
 }
 

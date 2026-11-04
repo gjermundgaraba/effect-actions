@@ -1,19 +1,10 @@
-import { describe, expect, it, vi } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import {
-  Cause,
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  Option,
-  Schema,
-  Stream,
-} from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
 import type { Scope } from "effect";
 import { RpcMessage } from "effect/rpc";
 
@@ -28,86 +19,16 @@ import {
   upgradeTo,
   upgradeToRpc,
 } from "../support/socket.js";
+import {
+  bearer,
+  clientOver,
+  collected,
+  keptCursors,
+  until,
+  untilKept,
+} from "../support/watching.js";
 
 const watching = (name: string) => env.WATCHING.getByName(name);
-
-const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
-
-const clientOver = (socket: WebSocket) =>
-  Effect.flatMap(Layer.build(protocolOver(socket)), (protocol) =>
-    ActionRpc.client(Watched).pipe(Effect.provideContext(protocol))
-  );
-
-const Resumed = Schema.Struct({
-  cursor: Schema.optional(Schema.NullOr(Schema.String)),
-});
-
-const resumedOf = Schema.decodeUnknownOption(Resumed);
-
-const keptCursors = (stub: DurableObjectStub) =>
-  Effect.promise(
-    async () =>
-      await runInDurableObject(stub, async (_, state) => {
-        const kept = await state.storage.list({
-          prefix: `${keptPrefix}payload/`,
-        });
-
-        return [...kept.values()];
-      })
-  ).pipe(
-    Effect.map((kept) =>
-      kept.map((value) =>
-        Option.match(resumedOf(value), {
-          onNone: () => "unreadable",
-          onSome: ({ cursor }) => cursor ?? null,
-        })
-      )
-    )
-  );
-
-const until = (check: () => boolean) =>
-  Effect.promise(
-    async () => await vi.waitUntil(check, { timeout: 5000, interval: 10 })
-  );
-
-const untilKept = (
-  stub: DurableObjectStub,
-  check: (cursors: Array<string | null>) => boolean
-) =>
-  Effect.promise(
-    async () =>
-      await vi.waitUntil(
-        async () => check(await Effect.runPromise(keptCursors(stub))),
-        {
-          timeout: 5000,
-          interval: 10,
-        }
-      )
-  );
-
-const collected = <E>(
-  stream: Stream.Stream<
-    | Event.Received<typeof Noted>
-    | Event.Received<typeof Said>
-    | Event.Received<typeof Statused>,
-    E
-  >
-) =>
-  Effect.gen(function* () {
-    const received: string[] = [];
-
-    const fiber = yield* stream.pipe(
-      Stream.runForEach((item) =>
-        Effect.sync(() =>
-          received.push(item._tag === "Gap" ? "gap" : item.data.text)
-        )
-      ),
-      Effect.exit,
-      Effect.forkScoped
-    );
-
-    return { received, fiber };
-  });
 
 const evicted = (stub: DurableObjectStub) =>
   Effect.promise(async () => {

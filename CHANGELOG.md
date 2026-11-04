@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add `@gjermundgaraba/effect-actions-cloudflare/ObjectServer`, for a Durable Object class `ActionDurableObject.make` does not build, such as one whose base class builds its per-object services as a Layer. `ObjectServer.layer(routes)`, given the object's `ActionDurableObject.State`, builds the routes with the object's storage-kept `Event.Events`, `Action.Idempotency` and sockets, and outputs the `ObjectServer` service beside that `Event.Events`, so a service in the same Layer publishes to the sockets watching. The class's `fetch`, `webSocketMessage`, `webSocketClose` and `webSocketError` delegate to the service's Effects, and `fetch` runs the routes on the scheduler of the fiber that runs it ([ObjectServer.md](packages/cloudflare/docs/ObjectServer.md)).
+
 ## 0.29.0
 
 ### Breaking changes

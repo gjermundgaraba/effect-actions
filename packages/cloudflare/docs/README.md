@@ -24,5 +24,7 @@ Where things are, in a project that installs the package: these pages in `node_m
 | [ActionDurableObject-stub.md](ActionDurableObject-stub.md) | serve an object's own API over its stub, call it from a Worker, tell another object of a change until it hears, name the object in errors, call its routes |
 | [ActionDurableObject-placement.md](ActionDurableObject-placement.md) | serve objects' actions and events from the Worker, each call reaching the object its input names |
 | [ActionDurableObject-own-class.md](ActionDurableObject-own-class.md) | serve them from a class that cannot extend `make`'s, delegating to `handlers` |
+| [ObjectServer.md](ObjectServer.md) | serve them from a class whose base class builds its services as a Layer and runs its events as Effects |
 | [ActionDurableObject-testing.md](ActionDurableObject-testing.md) | test an object on the Workers runtime, evict it, run its alarm in a test; what differs between workerd and celld |
 | [ActionDurableObject-failures.md](ActionDurableObject-failures.md) | find what workerd's, the compiler's or Effect's message means, and the fix |
+| [ObjectServer-failures.md](ObjectServer-failures.md) | find what the compiler's message at an `ObjectServer` Layer's build means, and the fix |

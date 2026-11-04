@@ -39,6 +39,7 @@
       { "name": "TASKED", "class_name": "Tasked" },
       { "name": "SLOW_BUILT", "class_name": "SlowBuilt" },
       { "name": "SLOW_BUILT_AGAIN", "class_name": "SlowBuiltAgain" },
+      { "name": "SERVED", "class_name": "Served" },
     ],
   },
   "migrations": [
@@ -76,6 +77,7 @@
         "Tasked",
         "SlowBuilt",
         "SlowBuiltAgain",
+        "Served",
       ],
     },
   ],
