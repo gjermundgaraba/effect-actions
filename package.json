@@ -85,7 +85,6 @@
     "@modelcontextprotocol/client": "2.4.0",
     "@types/node": "26.6.6",
     "effect": "catalog:",
-    "oxfmt": "catalog:",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "ultracite": "catalog:",

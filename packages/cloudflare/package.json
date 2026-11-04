@@ -48,7 +48,8 @@
     "@cloudflare/workers-types": "catalog:",
     "@effect/vitest": "catalog:",
     "@gjermundgaraba/effect-actions": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "vitest": "catalog:"
   },
   "peerDependencies": {
     "@gjermundgaraba/effect-actions": "workspace:^",

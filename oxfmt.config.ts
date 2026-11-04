@@ -1,7 +1,7 @@
-import { defineConfig } from "oxfmt";
 import ultracite from "ultracite/oxfmt";
+import type { OxfmtConfig } from "vite-plus/fmt";
 
-export default defineConfig({
+export default {
   ...ultracite,
   ignorePatterns: [
     ...(ultracite.ignorePatterns ?? []),
@@ -10,4 +10,4 @@ export default defineConfig({
     "tools/oxlint/tests/probe-*/**",
     "AGENTS.md",
   ],
-});
+} satisfies OxfmtConfig;

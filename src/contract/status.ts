@@ -46,9 +46,7 @@ const statusThroughSuspensions = (ast: SchemaAST.AST): number | undefined =>
 export const declaredStatus = (error: Action.Errors[number]): number =>
   statusThroughSuspensions(error.ast) ?? 422;
 
-export const declared = (
-  error: Action.Errors[number]
-): Action.Errors[number] =>
+export const declared = (error: Action.Errors[number]): Action.Errors[number] =>
   httpApiStatusOf(error.ast) === undefined
     ? error.annotate({ httpApiStatus: declaredStatus(error) })
     : error;
