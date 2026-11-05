@@ -5,7 +5,6 @@ import {
   SchemaIssue,
   SchemaTransformation,
 } from "effect";
-import { Base64 } from "effect/encoding";
 
 export const CallbackUrl = Schema.String.annotate({
   description: "The https URL each delivery is POSTed to.",
@@ -26,8 +25,10 @@ export type SigningSecret = typeof SigningSecret.Type;
 
 const secretPrefix = "whsec_";
 
+const encodeBase64 = Schema.encodeSync(Schema.Uint8ArrayFromBase64);
+
 export const signingSecretOf = (key: Uint8Array): SigningSecret => ({
-  text: `${secretPrefix}${Base64.encode(key)}`,
+  text: `${secretPrefix}${encodeBase64(key)}`,
   key,
 });
 

@@ -11,7 +11,6 @@ import {
   acquire,
   answeringWhole,
   Implementation,
-  provideHandlers,
   select,
   toList,
 } from "../contract/implementation.js";
@@ -34,6 +33,7 @@ import type {
 import { liftedFrom, liftOf } from "../contract/lift.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
 import { progressSink } from "../contract/progress.js";
+import { provideServed } from "../contract/serving.js";
 import { toolSuccessOf } from "../contract/stream.js";
 import type { ToolSuccess } from "../contract/stream.js";
 
@@ -332,7 +332,10 @@ export function make(
     )
   );
 
-  return { toolkit, layer: layer.pipe(provideHandlers(served)) };
+  return {
+    toolkit,
+    layer: layer.pipe(provideServed({ apps: served, events: [] })),
+  };
 }
 
 /** A tool call a model asked to have approved, which no answer has resolved yet. */

@@ -685,11 +685,6 @@ export const selectEvents = (
     (own, app) => EventImplementation.share(own, app)
   );
 
-export const feedBuilders = (
-  events: readonly AnyEventImplementation[]
-): ReadonlyArray<Layer.Layer<never, unknown, unknown>> =>
-  events.map((app) => EventImplementation.layerOf(app));
-
 export const acquireFeeds = (
   events: readonly AnyEventImplementation[]
 ): Effect.Effect<readonly Feed[], never, unknown> =>

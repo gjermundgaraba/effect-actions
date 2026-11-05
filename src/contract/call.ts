@@ -21,7 +21,7 @@ const isCallOptions = (options: ErasedValue): options is CallOptions<unknown> =>
   Predicate.hasProperty(options, "onProgress") &&
   Predicate.isFunction(options.onProgress);
 
-export const onProgressOf = (
+const onProgressOf = (
   args: readonly ErasedValue[]
 ): CallOptions<unknown>["onProgress"] => {
   const [, options] = args;
@@ -46,7 +46,7 @@ export const decodeInput = <I extends Codec>(action: {
     Effect.mapError(decode(encoded), InvalidInput.fromSchemaError);
 };
 
-export const inputOf = (
+const inputOf = (
   action: Pick<Action.Any, "input">,
   args: readonly ErasedValue[]
 ): Effect.Effect<ErasedValue, Schema.SchemaError> =>
