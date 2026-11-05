@@ -387,7 +387,14 @@ export const makeWebhooks = (
             schedule: terminatedEnvelopeRetries,
             while: (failure) => !failure.final,
           }),
-          Effect.ignore
+          Effect.catchIf(
+            (failure) => failure.final,
+            () => Effect.void
+          ),
+          Effect.ignore({
+            log: "Warn",
+            message: `Webhook subscription ${subscription.id} ended without its terminated notice delivered`,
+          })
         )
       );
     };

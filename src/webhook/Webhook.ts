@@ -120,6 +120,7 @@ const maxTtlOf = (input: Duration.Input): Duration.Duration => {
  * - An occurrence given up, its body over 256 KiB or its POST answered `410` or `413`, is POSTed as a `gap` at its cursor; one whose admission fails with no refusal is reported and read again, from before it, every 5 seconds.
  * - A refresh restarts its subscription's reading under the refreshed subscriber, from where delivery reached: the subscription hook set up again once the old one is released, and a delivery in flight sent again, which the subscriber drops by its `eventId`.
  * - A refresh its authorizer refuses ends the subscription it names, POSTing `terminated`, though each delivery, admitted as the subscriber of the last grant, would still pass.
+ * - A `terminated` POST is tried four times, and one never accepted is logged as a warning naming the subscription; one answered `410` or `413` is given up at once, unlogged.
  * - A refresh with a new secret signs each POST with both secrets for 5 minutes, `webhook-signature` holding two, so a receiver may switch over; after that, with the new one alone.
  * - A delivery runs in the subscribe request's context without the request: an authorizer or a source reading `HttpServerRequest` fails in a delivery, so read what it needs in middleware, which provides it as a service.
  * - `allowedCallbacks` throws when `layer` is called for an entry that is not an https URL.
@@ -202,6 +203,7 @@ export type DeliveryOptions = ConstructorParameters<
  * - A server refuses a callback that is not globally reachable, so `baseUrl` is a public name of this process, such as a tunnel's in development.
  * - The URL subscribed carries a `watch` query parameter, one per watch, so watches never share a subscription: a proxy in front of the route must pass the query on.
  * - A restarted process subscribes afresh from the cursor `resume` kept, so the server sends again what the last process accepted and never handed on; the old subscription lapses at its grant, each delivery to it answered 410.
+ * - An unsubscribe that fails, or is not answered within 5 seconds, is not reported: the subscription lapses at its grant, as a restarted process's does.
  */
 export const delivery = (options: DeliveryOptions): Event.WebhookDelivery =>
   new Event.WebhookDelivery(options);

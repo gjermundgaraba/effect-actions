@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Other changes
+
+- `Webhook.layer` logs a warning, naming the subscription, when a `terminated` notice is never accepted after its four tries; it dropped the failure silently. A callback answering `410` or `413` gives the notice up at once, unlogged. A watch's failed unsubscribe stays unreported, now documented on `Webhook.delivery`: the subscription lapses at its grant.
+
 ## 0.29.0
 
 ### Breaking changes

@@ -9,6 +9,7 @@ import {
   Exit,
   Fiber,
   Layer,
+  Logger,
   Queue,
   Schema,
   Scope,
@@ -657,17 +658,30 @@ describe("webhook delivery over HTTP", () => {
     }
   );
 
-  it.effect(
-    "tries a terminated envelope its callback fails four times, then gives it up",
-    () => {
+  const warnedOfTerminated = [
+    "Warn",
+    [
+      expect.stringMatching(
+        /^Webhook subscription \S+ ended without its terminated notice delivered$/u
+      ),
+    ],
+  ];
+
+  it.effect.each([
+    { status: 500, tries: 4, logs: [warnedOfTerminated] },
+    { status: 410, tries: 1, logs: [] },
+  ])(
+    "tries a terminated envelope its callback answers $status $tries time(s), then gives it up, logging $logs.length warning(s)",
+    ({ status, tries, logs }) => {
       const { world, server } = makeWorld();
+      const logged: unknown[] = [];
 
       return Effect.gen(function* () {
         yield* subscribed();
 
         world.answer = (body) =>
           body["type"] === "terminated"
-            ? new Response(null, { status: 500 })
+            ? new Response(null, { status })
             : acknowledging(body);
         world.revoked.add("alice");
         world.changes.push({ id: "c1", by: "bob" });
@@ -676,14 +690,26 @@ describe("webhook delivery over HTTP", () => {
           world.received.map(bodyOf).filter(({ type }) => type === "terminated")
             .length;
 
-        yield* until(() => terminated() >= 4);
+        yield* until(() => terminated() >= tries);
 
         const tried = terminated();
 
         yield* passed(10 * 60);
 
-        expect([tried, terminated()]).toStrictEqual([4, 4]);
-      }).pipe(Effect.provide(server));
+        expect([tried, terminated()]).toStrictEqual([tries, tries]);
+        expect(logged).toStrictEqual(logs);
+      }).pipe(
+        Effect.provide(
+          Layer.provideMerge(
+            server,
+            Logger.layer([
+              Logger.make(({ logLevel, message }) => {
+                logged.push([logLevel, message]);
+              }),
+            ])
+          )
+        )
+      );
     }
   );
 
