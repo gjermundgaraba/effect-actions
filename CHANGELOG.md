@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Other changes
+
+- An event subscription over `ActionRpc` whose input and cursor both fail to decode answers `InvalidInput` naming every issue, each by its path in the subscription (`["input", "log"]`, `["cursor"]`), as `ActionHttp` does; RPC named only the cursor's, and an input issue's path lacked its `input` prefix.
+
 ## 0.30.0
 
 ### Breaking changes

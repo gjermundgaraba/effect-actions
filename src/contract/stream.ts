@@ -45,6 +45,28 @@ const isStreamOf = (success: Codec): success is StreamOf<Codec> =>
 export const elementOf = (success: Codec): Codec | undefined =>
   isStreamOf(success) ? success.element : undefined;
 
+/** How a surface carries an action's answer: one value, a value after its progress, or elements. */
+export interface AnswerCases<A> {
+  readonly value: () => A;
+  readonly progressed: (progress: Codec) => A;
+  readonly elements: (element: Codec, progress: Codec | undefined) => A;
+}
+
+export const matchAnswer = <A>(
+  action: { readonly success: Codec; readonly progress: Codec | undefined },
+  cases: AnswerCases<A>
+): A => {
+  const element = elementOf(action.success);
+
+  if (element !== undefined) {
+    return cases.elements(element, action.progress);
+  }
+
+  return action.progress === undefined
+    ? cases.value()
+    : cases.progressed(action.progress);
+};
+
 /** What a handler or a call of an action with success `S` answers: a stream, or one value. */
 export type Answer<S extends Codec, E, R> = [S] extends [never]
   ? Effect.Effect<never, E, R>

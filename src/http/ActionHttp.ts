@@ -74,7 +74,7 @@ import type { Only } from "../contract/listed.js";
 import type { SubscriptionOf } from "../contract/push.js";
 import { provideServed, servingOf } from "../contract/serving.js";
 import { declared } from "../contract/status.js";
-import { elementOf } from "../contract/stream.js";
+import { matchAnswer } from "../contract/stream.js";
 import { offersWebhook, servedWebhooks } from "../contract/webhooks.js";
 import { methods } from "./client.js";
 import type { AnyHttp, Client, Options as ClientOptions } from "./client.js";
@@ -367,20 +367,15 @@ const apiOf = (
     .add(first === undefined ? empty : empty.add(first, ...rest));
 };
 
-const successOf = (action: Action.Any, errors: Action.Errors) => {
-  const element = elementOf(action.success);
-
-  if (element !== undefined) {
-    return elementStreamOf(element, action.progress, errors);
-  }
-
-  return action.progress === undefined
-    ? action.success
-    : [
-        answeredWithProgress(action.success),
-        progressStreamOf(action.progress, action.success, errors),
-      ];
-};
+const successOf = (action: Action.Any, errors: Action.Errors) =>
+  matchAnswer<HttpApiEndpoint.SuccessConstraint>(action, {
+    value: () => action.success,
+    progressed: (progress) => [
+      answeredWithProgress(action.success),
+      progressStreamOf(progress, action.success, errors),
+    ],
+    elements: (element, progress) => elementStreamOf(element, progress, errors),
+  });
 
 const endpointOf = (
   action: Action.Any,
@@ -393,17 +388,16 @@ const endpointOf = (
     error: errors.map(declared),
   });
 
-const answerOf = (action: Action.Any, run: ErasedHandler<unknown>) => {
-  const element = elementOf(action.success);
-
-  if (element !== undefined) {
-    return answeringElements(element, run);
-  }
-
-  return action.progress === undefined
-    ? run
-    : answeringWithProgress(action.success, run);
-};
+const answerOf = (action: Action.Any, run: ErasedHandler<unknown>) =>
+  matchAnswer<
+    | ErasedHandler<unknown>
+    | ReturnType<typeof answeringElements>
+    | ReturnType<typeof answeringWithProgress>
+  >(action, {
+    value: () => run,
+    progressed: () => answeringWithProgress(action.success, run),
+    elements: (element) => answeringElements(element, run),
+  });
 
 type Route = HttpApiEndpoint.HttpApiEndpoint<
   string,

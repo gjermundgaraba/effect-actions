@@ -144,6 +144,11 @@ const checkedBy = (schema: Codec) => {
   return (data: ErasedValue) => Effect.orDie(encode(data));
 };
 
+/** Whether `request` asks for an SSE stream, `text/event-stream` among whatever else it accepts. */
+export const acceptsEventStream = (
+  request: HttpServerRequest.HttpServerRequest
+): boolean => (request.headers["accept"] ?? "").includes("text/event-stream");
+
 export const answeringWithProgress = (
   success: Action.Any["success"],
   run: ErasedHandler<unknown>
@@ -152,7 +157,7 @@ export const answeringWithProgress = (
 
   return (payload: ErasedValue) =>
     Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-      (request.headers["accept"] ?? "").includes("text/event-stream")
+      acceptsEventStream(request)
         ? streamed((reporting, send) =>
             run(payload, reporting).pipe(
               Effect.tap(check),

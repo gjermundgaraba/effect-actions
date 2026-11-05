@@ -23,6 +23,7 @@ import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as ActionCli from "../../src/cli/ActionCli.js";
 import * as Action from "../../src/contract/Action.js";
+import * as Event from "../../src/contract/Event.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
@@ -976,5 +977,56 @@ describe("input with several fields that do not decode", () => {
         }
       }).pipe(Effect.provide(Testing.layer(routes))),
     { arbitrary: { runs: 50 } }
+  );
+});
+
+describe("a subscription whose input and cursor do not decode", () => {
+  const Tailed = Event.make("log.tailed", {
+    description: "A line of one log.",
+    input: { log: Schema.String },
+    payload: { line: Schema.String },
+    caller: Action.Anyone,
+  });
+
+  const tails = Event.implement(Tailed, {
+    check: () => Effect.succeed({ cursor: "0", events: [] }),
+  });
+
+  const routes = Layer.mergeAll(
+    ActionHttp.layer(ActionHttp.make([Tailed]), tails),
+    ActionRpc.layer(ActionRpc.make([Tailed]), tails).pipe(
+      Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+      Layer.provide(RpcSerialization.layerNdjson)
+    )
+  ).pipe(Layer.provide(Event.layerMemory));
+
+  const invalidInput = Schema.decodeUnknownSync(Action.InvalidInput);
+
+  it.effect(
+    "names both by their path in the subscription, over HTTP and RPC",
+    () =>
+      Effect.gen(function* () {
+        const subscription = { input: { log: 7 }, cursor: 7 };
+
+        const http = yield* Effect.flatMap(
+          send(post("/api/events/log.tailed", subscription)),
+          (response) => response.json
+        );
+
+        const { exits } = yield* sendRawNdjson([
+          { tag: "log.tailed", payload: subscription },
+        ]);
+
+        const [rpc] = exits.map(valueOrSquashedCause);
+
+        for (const [surface, failure] of Object.entries({ http, rpc })) {
+          const paths = invalidInput(failure).issues.map(({ path }) => path);
+
+          expect(paths, surface).toHaveLength(2);
+          expect(paths, surface).toStrictEqual(
+            expect.arrayContaining([["input", "log"], ["cursor"]])
+          );
+        }
+      }).pipe(Effect.provide(Testing.layer(routes)))
   );
 });

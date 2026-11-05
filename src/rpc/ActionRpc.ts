@@ -48,7 +48,6 @@ import {
   checked,
   checkedStream,
   decodeInput,
-  inputParseOptions,
   sendingJson,
   watchInput,
 } from "../contract/call.js";
@@ -61,7 +60,7 @@ import { Anyone } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
 import { bindingErrors, bindingOf, eventErrors } from "../contract/declared.js";
 import type { Certain, ErrorsOf } from "../contract/declared.js";
-import { InvalidInput, Unauthenticated } from "../contract/errors.js";
+import { Unauthenticated } from "../contract/errors.js";
 import type { BuiltIn, BuiltIns } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
 import { acquireFeeds } from "../contract/feed.js";
@@ -91,15 +90,10 @@ import type { Only } from "../contract/listed.js";
 import { reservedList, reservedNames } from "../contract/names.js";
 import { answerFrom, elementsFrom } from "../contract/progress.js";
 import type { Reporting, Progressed } from "../contract/progress.js";
-import {
-  PushedOf,
-  queuedPush,
-  Subscription,
-  SubscriptionOf,
-} from "../contract/push.js";
+import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import { concealed } from "../contract/reported.js";
 import { provideServed, servingOf } from "../contract/serving.js";
-import { elementOf } from "../contract/stream.js";
+import { elementOf, matchAnswer } from "../contract/stream.js";
 import type { Answer, StreamOf } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
 import type { WatchArgs } from "../contract/watch.js";
@@ -138,25 +132,12 @@ const elementedOf = (element: Codec, progress: Codec | undefined) =>
       : [Schema.TaggedStruct("Progress", { value: progress })]),
   ]);
 
-const streams = (action: Action.Any) =>
-  action.progress !== undefined || elementOf(action.success) !== undefined;
-
-const streamedOf = (
-  action: Action.Any
-): Schema.Codec<Progressed> | undefined => {
-  const element = elementOf(action.success);
-
-  if (element !== undefined) {
-    return elementedOf(element, action.progress);
-  }
-
-  return action.progress === undefined
-    ? undefined
-    : ProgressedOf(action.progress, action.success);
-};
-
-const sentOf = (action: Action.Any): Codec =>
-  streamedOf(action) ?? action.success;
+const streamedOf = (action: Action.Any): Schema.Codec<Progressed> | undefined =>
+  matchAnswer<Schema.Codec<Progressed> | undefined>(action, {
+    value: () => undefined,
+    progressed: (progress) => ProgressedOf(progress, action.success),
+    elements: elementedOf,
+  });
 
 type RpcOf<
   A extends Action.Any,
@@ -396,13 +377,16 @@ export function make(
   const { actions, events } = listed(contracts);
   const bound = bindingOf("ActionRpc binding", actions, events, options);
 
-  const rpcOf = (action: Action.Any) =>
-    Rpc.make(action.name, {
+  const rpcOf = (action: Action.Any) => {
+    const streamed = streamedOf(action);
+
+    return Rpc.make(action.name, {
       payload: action.input,
-      success: sentOf(action),
+      success: streamed ?? action.success,
       error: Schema.Union(bindingErrors(action, bound)),
-      stream: streams(action),
+      stream: streamed !== undefined,
     });
+  };
 
   const given =
     options.rpcs === undefined ? RpcGroup.make() : nativeOf(options.rpcs);
@@ -652,13 +636,13 @@ const erasedOf = (
 ) =>
   RpcGroup.make(
     ...actions.map((action) =>
-      streams(action)
-        ? streamOf(action.name)
-        : Rpc.make(action.name, {
+      streamedOf(action) === undefined
+        ? Rpc.make(action.name, {
             payload: Schema.Json,
             success: Schema.Json,
             error: Declared,
           })
+        : streamOf(action.name)
     ),
     ...events.map((event) => streamOf(event.name))
   );
@@ -688,6 +672,22 @@ const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
     });
 };
 
+type Boundary = ReturnType<typeof callBoundaryOf>;
+
+const servedCall =
+  <A, R>(
+    steps: readonly Step[],
+    boundary: Boundary,
+    call: (
+      payload: Schema.Json,
+      options: Omit<CallOptions, "payload">
+    ) => Effect.Effect<A, unknown, R>
+  ) =>
+  (payload: Schema.Json, options: Omit<CallOptions, "payload">) =>
+    boundary(
+      throughSteps(steps, call(payload, options), { ...options, payload })
+    );
+
 const handlerOf = (
   action: Action.Any,
   run: ErasedHandler<unknown>,
@@ -697,18 +697,13 @@ const handlerOf = (
   const decode = decodeInput(action);
 
   const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(action.success));
-  const boundary = callBoundaryOf(error);
 
-  return (payload: Schema.Json, options: Omit<CallOptions, "payload">) => {
-    const call = Effect.suspend(() => decode(payload)).pipe(
+  return servedCall(steps, callBoundaryOf(error), (payload) =>
+    Effect.suspend(() => decode(payload)).pipe(
       Effect.flatMap(run),
       Effect.flatMap(encode)
-    );
-
-    const wrapped = throughSteps(steps, call, { ...options, payload });
-
-    return boundary(wrapped);
-  };
+    )
+  );
 };
 
 interface Sent extends Schema.JsonObject {
@@ -735,8 +730,8 @@ const streamingHandlerOf = (
     Schema.toCodecJson(action.progress ?? Schema.Never)
   );
 
-  return (payload: Schema.Json, options: Omit<CallOptions, "payload">) => {
-    const call = Effect.gen(function* () {
+  return servedCall(steps, boundary, (payload) =>
+    Effect.gen(function* () {
       const input = yield* decode(payload);
 
       const sent = yield* Queue.bounded<
@@ -762,12 +757,8 @@ const streamingHandlerOf = (
       );
 
       return sent;
-    });
-
-    const wrapped = throughSteps(steps, call, { ...options, payload });
-
-    return boundary(wrapped);
-  };
+    })
+  );
 };
 
 const sendingAnswer = (
@@ -850,61 +841,53 @@ const subscriptionHandlerOf = (
   error: Schema.Union<Action.Errors>,
   keeper: SubscriptionKeeper | undefined
 ) => {
-  const decode = Schema.decodeUnknownEffect(Subscription, inputParseOptions);
-  const decodeEventInput = decodeInput(feed.event);
+  const subscription = SubscriptionOf(feed.event);
+  const decode = decodeInput({ input: subscription });
+  const encodeResumed = Schema.encodeOption(Schema.toCodecJson(subscription));
 
   const sent = Schema.toCodecJson(PushedOf(feed.event));
   const encode = Schema.encodeEffect(sent);
   const decodeSent = Schema.decodeUnknownOption(sent);
   const boundary = callBoundaryOf(error);
 
-  return (payload: Schema.Json, options: Omit<CallOptions, "payload">) => {
-    const call = Effect.gen(function* () {
-      const { input, cursor } = yield* Effect.mapError(
-        decode(payload),
-        InvalidInput.fromSchemaError
-      );
+  return servedCall(steps, boundary, (payload, options) =>
+    Effect.gen(function* () {
+      const { input, cursor } = yield* decode(payload);
+      const open = yield* feed.stream(input);
 
-      const open = yield* feed.stream(yield* decodeEventInput(input));
+      if (keeper !== undefined) {
+        yield* keeper.keep({
+          clientId: options.client.id,
+          requestId: options.requestId,
+          tag: feed.event.name,
+          payload,
+          headers: Object.entries(options.headers),
+          resumeFrom: (values) => {
+            const reached = values
+              .flatMap((value) => Option.toArray(decodeSent(value)))
+              .map((pushed) =>
+                Match.value(pushed).pipe(
+                  Match.tag("Failed", () => null),
+                  Match.orElse((positioned) => positioned.cursor)
+                )
+              )
+              .findLast(Predicate.isNotNull);
 
-      if (keeper === undefined) {
-        return yield* queuedPush(open, cursor, encode, {
-          ending: boundary,
-          positions: "heartbeat",
+            return reached === undefined
+              ? undefined
+              : Option.getOrUndefined(
+                  encodeResumed({ input, cursor: reached })
+                );
+          },
         });
       }
 
-      yield* keeper.keep({
-        clientId: options.client.id,
-        requestId: options.requestId,
-        tag: feed.event.name,
-        payload,
-        headers: Object.entries(options.headers),
-        resumeFrom: (values) => {
-          const reached = values
-            .flatMap((value) => Option.toArray(decodeSent(value)))
-            .map((pushed) =>
-              Match.value(pushed).pipe(
-                Match.tag("Failed", () => null),
-                Match.orElse((positioned) => positioned.cursor)
-              )
-            )
-            .findLast(Predicate.isNotNull);
-
-          return reached === undefined ? undefined : { input, cursor: reached };
-        },
-      });
-
       return yield* queuedPush(open, cursor, encode, {
         ending: boundary,
-        positions: "watermark",
+        positions: keeper === undefined ? "heartbeat" : "watermark",
       });
-    });
-
-    const wrapped = throughSteps(steps, call, { ...options, payload });
-
-    return boundary(wrapped);
-  };
+    })
+  );
 };
 
 /**
@@ -1018,9 +1001,10 @@ export function layer(
       const keeper = keeperOf(protocol);
 
       if (isUnary(protocol)) {
-        const streamed = [...actions.filter(streams), ...eventTypes].map(
-          ({ name }) => name
-        );
+        const streamed = [
+          ...actions.filter((action) => streamedOf(action) !== undefined),
+          ...eventTypes,
+        ].map(({ name }) => name);
 
         const nativeStreams = natives.flatMap((rpc) =>
           RpcSchema.isStreamSchema(rpc.successSchema) ? [rpc._tag] : []
@@ -1063,25 +1047,16 @@ export function layer(
         steps: readonly Step[],
         error: Schema.Union<Action.Errors>
       ) => {
-        const element = elementOf(action.success);
+        const streaming = (sending: Sending) =>
+          streamingHandlerOf(action, sending, steps, error);
 
-        if (element !== undefined) {
-          return streamingHandlerOf(
-            action,
-            sendingElements(element, run),
-            steps,
-            error
-          );
-        }
-
-        return action.progress === undefined
-          ? handlerOf(action, run, steps, error)
-          : streamingHandlerOf(
-              action,
-              sendingAnswer(action.success, run),
-              steps,
-              error
-            );
+        return matchAnswer<
+          ReturnType<typeof handlerOf> | ReturnType<typeof streamingHandlerOf>
+        >(action, {
+          value: () => handlerOf(action, run, steps, error),
+          progressed: () => streaming(sendingAnswer(action.success, run)),
+          elements: (element) => streaming(sendingElements(element, run)),
+        });
       };
 
       const byName = {

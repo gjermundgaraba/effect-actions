@@ -34,9 +34,9 @@ export const inputParseOptions = {
   onExcessProperty: "error",
 } as const;
 
-export const decodeInput = (
-  action: Pick<Action.Any, "input">
-): ((encoded: ErasedValue) => Effect.Effect<ErasedValue, InvalidInput>) => {
+export const decodeInput = <I extends Codec>(action: {
+  readonly input: I;
+}): ((encoded: ErasedValue) => Effect.Effect<I["Type"], InvalidInput>) => {
   const decode = Schema.decodeUnknownEffect(
     Schema.toCodecJson(action.input),
     inputParseOptions
