@@ -460,7 +460,7 @@ describe("layerStubClient", () => {
   );
 });
 
-describe("client", () => {
+describe("DurableObjectClient.make", () => {
   it.effect(
     "calls an object through its stub, failing with the declared errors alone",
     () =>

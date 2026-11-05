@@ -5,6 +5,7 @@
 ### Other changes
 
 - An event subscription over `ActionRpc` whose input and cursor both fail to decode answers `InvalidInput` naming every issue, each by its path in the subscription (`["input", "log"]`, `["cursor"]`), as `ActionHttp` does; RPC named only the cursor's, and an input issue's path lacked its `input` prefix.
+- `ActionDurableObject.Sockets`' `message`, `close` and `error` succeed with `void`, where they answered whether a protocol held the socket: the handlers dropped that answer, so the event of a socket no protocol accepted reaches nothing, as its JSDoc now says, where it said the caller answered it.
 
 ## 0.30.0
 

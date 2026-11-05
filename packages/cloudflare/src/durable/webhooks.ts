@@ -71,18 +71,21 @@ export const makeWaits = (schedule: Schedule) => {
           );
         }),
     }),
-    wakeDue: Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
+    owners: {
+      [clockOwner]: () =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
 
-      for (const wait of held) {
-        if (wait.at <= now) {
-          held.delete(wait);
-          Deferred.doneUnsafe(wait.woken, Exit.void);
-        }
-      }
+          for (const wait of held) {
+            if (wait.at <= now) {
+              held.delete(wait);
+              Deferred.doneUnsafe(wait.woken, Exit.void);
+            }
+          }
 
-      yield* armForEarliestWait;
-    }),
+          yield* armForEarliestWait;
+        }),
+    },
   };
 };
 

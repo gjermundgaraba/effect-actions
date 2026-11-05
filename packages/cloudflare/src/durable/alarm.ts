@@ -10,7 +10,7 @@ import {
   Semaphore,
 } from "effect";
 
-import { alarmSlot, keptOf, Kept, retryDelay, runOf, slotOf } from "./slot.js";
+import { keptOf, Kept, retryDelay, runOf, slotOf, transition } from "./slot.js";
 import type { Run, SlotEvent } from "./slot.js";
 import { State } from "./state.js";
 
@@ -64,7 +64,7 @@ export const makeSchedule = (state: DurableObjectState) => {
           runs.get(owner)
         );
 
-        const after = alarmSlot.transition(before, event);
+        const after = transition(before, event);
 
         if (after === before) {
           return undefined;
@@ -92,7 +92,6 @@ export const makeSchedule = (state: DurableObjectState) => {
     );
 
   return {
-    rearm,
     restore: lock.withPermits(1)(
       Effect.flatMap(
         Effect.promise(async () => await storage.getAlarm()),

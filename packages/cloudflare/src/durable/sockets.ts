@@ -47,14 +47,14 @@ const replyToClose = (socket: WebSocket, code: number, reason: string) =>
 /**
  * The object's dispatcher for the sockets the protocols of its routes accept, such as
  * `layerWebSocket`'s: each event method hands a socket's event to the protocol whose tag the
- * socket carries, and succeeds with `true` once that protocol has it, or with `false` when no
- * protocol accepted the socket, such as one the object accepted itself, which the caller answers.
+ * socket carries, and drops the event of a socket no protocol accepted, such as one the object
+ * accepted itself.
  * `handlers` and `make` provide one per instance, which the protocols register with as the routes
  * build: a requirement of `layerWebSocket`, named as a type alone.
  *
  * **Gotchas**
  *
- * - A socket accepted by an earlier version of the routes at another `path` carries a tag no protocol holds now, and is answered `false`: close it, or serve that `path` again.
+ * - A socket accepted by an earlier version of the routes at another `path` carries a tag no protocol holds now, so its events reach nothing: close it, or serve that `path` again.
  */
 export class Sockets extends Context.Service<
   Sockets,
@@ -63,7 +63,7 @@ export class Sockets extends Context.Service<
     readonly message: (
       socket: WebSocket,
       data: string | ArrayBuffer
-    ) => Effect.Effect<boolean>;
+    ) => Effect.Effect<void>;
     /**
      * Completes the closing handshake of any socket, replying with the client's `code` and
      * `reason`, as `webSocketClose` receives them, and tells the socket's protocol it closed,
@@ -73,9 +73,9 @@ export class Sockets extends Context.Service<
       socket: WebSocket,
       code: number,
       reason: string
-    ) => Effect.Effect<boolean>;
+    ) => Effect.Effect<void>;
     /** Tells the socket's protocol it failed, which ends it as a close does. */
-    readonly error: (socket: WebSocket) => Effect.Effect<boolean>;
+    readonly error: (socket: WebSocket) => Effect.Effect<void>;
     /**
      * Hands the events of the sockets carrying `tag` to `receiver`, as a protocol builds, or
      * answers `false` when another protocol already holds that tag.
@@ -109,9 +109,7 @@ export class Sockets extends Context.Service<
             .map((tag) => receivers.get(tag))
             .find((found) => found !== undefined);
 
-          return receiver === undefined
-            ? Effect.succeed(false)
-            : Effect.as(event(receiver), true);
+          return receiver === undefined ? Effect.void : event(receiver);
         });
 
       return Sockets.of({

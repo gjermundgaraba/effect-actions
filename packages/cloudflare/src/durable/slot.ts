@@ -215,7 +215,7 @@ const fromRunningCleared = (
   }
 };
 
-const transition = (slot: AlarmSlot, event: SlotEvent): AlarmSlot => {
+export const transition = (slot: AlarmSlot, event: SlotEvent): AlarmSlot => {
   switch (slot.value) {
     case "Idle": {
       return event.type === "Replace" || event.type === "NoLaterThan"
@@ -244,8 +244,6 @@ const transition = (slot: AlarmSlot, event: SlotEvent): AlarmSlot => {
     }
   }
 };
-
-export const alarmSlot = { transition };
 
 export const slotOf = (
   kept: Kept | undefined,
