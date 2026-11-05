@@ -18,7 +18,7 @@ import { AiError, McpSchema, McpServer } from "effect/ai";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 import type { Headers, HttpServerResponse } from "effect/http";
 
-import { promote, providerOf } from "../authentication/provider.js";
+import { providerOf } from "../authentication/provider.js";
 import type {
   Any as Authentication,
   ProviderOf,
@@ -27,7 +27,6 @@ import type {
   Required as RequiredAuthentication,
   ServerBuildServices,
 } from "../authentication/provider.js";
-import { recordStepUp } from "../authentication/refusal.js";
 import type * as Action from "../contract/Action.js";
 import { inputParseOptions } from "../contract/call.js";
 import { Anyone, assertAuthentication } from "../contract/caller.js";
@@ -68,7 +67,7 @@ import { provideServed, selectFrom } from "../contract/serving.js";
 import { toolSuccessOf } from "../contract/stream.js";
 import { servingFeeds } from "../contract/webhooks.js";
 import { withStderrConsole } from "../stdio/console.js";
-import { eventSchemasOf, withEvents } from "./bridge.js";
+import { asCallerOf, eventSchemasOf, withEvents } from "./bridge.js";
 import type { Serving } from "./bridge.js";
 import { progressNotifier } from "./progress.js";
 import {
@@ -365,11 +364,8 @@ const registerTools = Effect.fnUntraced(function* (
             (sink) => run(input, sink)
           );
 
-    const call =
-      authentication === undefined || action.caller === Anyone
-        ? reported
-        : (input: ErasedValue) =>
-            recordStepUp(promote(authentication, reported(input)));
+    const asCaller = asCallerOf(authentication, action);
+    const call = (input: ErasedValue) => asCaller(reported(input));
 
     const liftedFieldNames = new Set(media?.fields.map(({ name }) => name));
 

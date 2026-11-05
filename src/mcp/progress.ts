@@ -3,7 +3,8 @@ import { McpSchema } from "effect/ai";
 import type { McpServer } from "effect/ai";
 
 import type { Codec } from "../contract/codec.js";
-import type { Reporting } from "../contract/progress.js";
+import { progressSink } from "../contract/progress.js";
+import type { CallOptions, Reporting } from "../contract/progress.js";
 
 const progressKey = "effect-actions/progress";
 
@@ -57,3 +58,25 @@ export const progressOf = (data: string): Option.Option<Schema.Json> =>
     notifiedOf(data),
     (notified) => notified.params._meta[progressKey]
   );
+
+export const decodedSink = (
+  progress: Codec | undefined,
+  onProgress: CallOptions<unknown>["onProgress"]
+): Reporting | undefined => {
+  const sink = progressSink(onProgress);
+
+  if (progress === undefined || sink === undefined) {
+    return undefined;
+  }
+
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(progress));
+
+  return {
+    progress: (json) =>
+      Effect.matchEffect(decode(json), {
+        onFailure: (error) =>
+          Effect.logWarning("A progress value did not decode", error),
+        onSuccess: sink.progress,
+      }),
+  };
+};

@@ -27,12 +27,12 @@ import type * as Event from "../contract/Event.js";
 import { liftOf } from "../contract/lift.js";
 import { split } from "../contract/listed.js";
 import { assertOnce } from "../contract/names.js";
-import { progressSink } from "../contract/progress.js";
 import type { CallOptions, Reporting } from "../contract/progress.js";
 import { elementOf } from "../contract/stream.js";
 import type { Answer } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
 import type { WatchArgs, WatchRequirement } from "../contract/watch.js";
+import { decodedSink } from "./progress.js";
 import { defaultPath, unliftedFrom } from "./protocol.js";
 import {
   bodyOf,
@@ -145,28 +145,6 @@ const ToolCallReply = Schema.Union([
 const decodeReply = Schema.decodeUnknownOption(
   Schema.fromJsonString(ToolCallReply)
 );
-
-const decodedSink = (
-  progress: Action.Any["progress"],
-  onProgress: CallOptions<unknown>["onProgress"]
-): Reporting | undefined => {
-  const sink = progressSink(onProgress);
-
-  if (progress === undefined || sink === undefined) {
-    return undefined;
-  }
-
-  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(progress));
-
-  return {
-    progress: (json) =>
-      Effect.matchEffect(decode(json), {
-        onFailure: (error) =>
-          Effect.logWarning("A progress value did not decode", error),
-        onSuccess: sink.progress,
-      }),
-  };
-};
 
 const callTool = <S extends Action.Any["success"]>(
   client: Pick<HttpClient.HttpClient.With<unknown, unknown>, "execute">,

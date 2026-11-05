@@ -111,6 +111,16 @@ export interface Serving {
   readonly authentication: Authentication | undefined;
 }
 
+export const asCallerOf =
+  (
+    authentication: Authentication | undefined,
+    { caller }: Pick<Event.Any, "caller">
+  ) =>
+  <A, E, R>(run: Effect.Effect<A, E, R>) =>
+    authentication === undefined || caller === Anyone
+      ? run
+      : recordStepUp(promote(authentication, run));
+
 export const eventSchemasOf = (
   event: Event.Any
 ): Pick<EventDescriptor, "inputSchema" | "payloadSchema"> => {
@@ -323,14 +333,6 @@ const delivered = (
 export const withEvents = (base: Adapter, serving: Serving): Adapter => {
   const { authentication } = serving;
 
-  const asSubscriber = <A, E, R>(
-    event: Event.Any,
-    run: Effect.Effect<A, E, R>
-  ) =>
-    authentication === undefined || event.caller === Anyone
-      ? run
-      : recordStepUp(promote(authentication, run));
-
   const installHandlers = (
     core: Installing[0],
     lifecycle: Installing[1],
@@ -384,8 +386,10 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
         run: (subscriber: Subscriber) => Effect.Effect<A, unknown, R>
       ) =>
         Effect.catchCause(
-          asSubscriber(
-            feed.event,
+          asCallerOf(
+            authentication,
+            feed.event
+          )(
             Effect.flatMap(
               webhookSubscriber(feed, authentication, webhooks),
               run
@@ -414,8 +418,10 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
             const input = yield* decode(args);
 
             const { page, events } = yield* Effect.gen(function* () {
-              const polled = yield* asSubscriber(
-                feed.event,
+              const polled = yield* asCallerOf(
+                authentication,
+                feed.event
+              )(
                 Effect.flatMap(
                   principalOf(feed.event, authentication),
                   (subscriber) =>
@@ -468,8 +474,10 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
                 _meta: yield* meta,
               },
               (deliver) =>
-                asSubscriber(
-                  feed.event,
+                asCallerOf(
+                  authentication,
+                  feed.event
+                )(
                   Effect.flatMap(feed.stream(input), (open) =>
                     pushed(open, cursor ?? null, deliver, {
                       positions: "heartbeat",
