@@ -66,13 +66,9 @@ import type { Lift, Lifted } from "../contract/lift.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
 import { provideServed, selectFrom } from "../contract/serving.js";
 import { toolSuccessOf } from "../contract/stream.js";
+import { servingFeeds } from "../contract/webhooks.js";
 import { withStderrConsole } from "../stdio/console.js";
-import {
-  eventSchemasOf,
-  refuseUnservable,
-  serveWebhooks,
-  withEvents,
-} from "./bridge.js";
+import { eventSchemasOf, withEvents } from "./bridge.js";
 import type { Serving } from "./bridge.js";
 import { progressNotifier } from "./progress.js";
 import {
@@ -522,8 +518,7 @@ const server = <Out, E, R>(
       );
     }
 
-    yield* refuseUnservable(serving);
-    yield* serveWebhooks(serving);
+    yield* servingFeeds("MCP", serving.events, serving.authentication);
     yield* registerTools(apps, authentication);
   });
 

@@ -4,6 +4,16 @@ import { CallbackUrl, WebhookSecret } from "./callback.js";
 import * as Event from "./Event.js";
 import { SubscriptionOf } from "./push.js";
 
+/** The error for `event` that is not delivered by `mode` where it is asked for. */
+export const deliveryUnsupported = (
+  event: string,
+  mode: "poll" | "push" | "webhook"
+): Event.SubscriptionError =>
+  Event.SubscriptionError.of(
+    event,
+    new Event.Unsupported({ feature: "deliveryMode", value: mode })
+  );
+
 export const WebhookCallback = Schema.Struct({
   url: CallbackUrl,
   secret: WebhookSecret,

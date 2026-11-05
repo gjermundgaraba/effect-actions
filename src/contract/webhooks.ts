@@ -2,8 +2,10 @@ import { Context, Effect, Option } from "effect";
 
 import { Anyone, isNamed } from "./caller.js";
 import type { Keyed, Named } from "./caller.js";
-import * as Event from "./Event.js";
-import type { Feed } from "./feed.js";
+import type * as Event from "./Event.js";
+import { acquireFeeds } from "./feed.js";
+import type { AnyEventImplementation, Feed } from "./feed.js";
+import { deliveryUnsupported } from "./subscribe.js";
 import type {
   AnyWebhookCancellation,
   AnyWebhookSubscription,
@@ -108,12 +110,7 @@ export const webhookSubscriber = (
   const { event } = feed;
 
   if (Option.isNone(webhooks) || !isNamed(keyed) || !isProtected(event)) {
-    return Effect.fail(
-      Event.SubscriptionError.of(
-        event.name,
-        new Event.Unsupported({ feature: "deliveryMode", value: "webhook" })
-      )
-    );
+    return Effect.fail(deliveryUnsupported(event.name, "webhook"));
   }
 
   const service = webhooks.value;
@@ -125,3 +122,33 @@ export const webhookSubscriber = (
     principal: keyed.principal(identity),
   }));
 };
+
+/**
+ * The feeds of `events` a surface's layer serves, and the webhooks it offers, served: run as the
+ * layer builds, dying where a protected event's subscription hook has no principal to key it by.
+ */
+export const servingFeeds = Effect.fnUntraced(function* (
+  surface: string,
+  events: readonly AnyEventImplementation[],
+  keyed: Keyed | undefined
+) {
+  const feeds = yield* acquireFeeds(events);
+
+  const unkeyed =
+    keyed?.principal === undefined
+      ? feeds.find(
+          ({ event, release }) =>
+            release !== undefined && event.caller !== Anyone
+        )
+      : undefined;
+
+  if (unkeyed !== undefined) {
+    return yield* Effect.die(
+      new Error(
+        `${surface} event "${unkeyed.event.name}" is protected and has a subscription hook, so its authentication needs principal to tell poll subscribers apart (give Authentication.make a principal, such as (user) => user.id)`
+      )
+    );
+  }
+
+  return { feeds, ...(yield* servedWebhooks(feeds, keyed)) };
+});

@@ -5,6 +5,7 @@ import { RpcClientError } from "effect/rpc";
 import * as Event from "../contract/Event.js";
 import { readOn } from "../contract/push.js";
 import type { Pushed } from "../contract/push.js";
+import { deliveryUnsupported } from "../contract/subscribe.js";
 import { isTransientReason, receivedFrom } from "../contract/transient.js";
 import type { Transport } from "../contract/watch.js";
 
@@ -76,13 +77,7 @@ export const transportOf = (
 
   return {
     name: event.name,
-    poll: () =>
-      Effect.fail(
-        Event.SubscriptionError.of(
-          event.name,
-          new Event.Unsupported({ feature: "deliveryMode", value: "poll" })
-        )
-      ),
+    poll: () => Effect.fail(deliveryUnsupported(event.name, "poll")),
     stream: (cursor) =>
       stream(cursor).pipe(
         Stream.catchCauseIf(unknownTag, () => notServed),

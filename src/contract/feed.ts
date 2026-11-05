@@ -669,24 +669,6 @@ export class EventImplementation<
 export type AnyEventImplementation<E extends Event.Any = Event.Any> =
   EventImplementation<E, unknown, unknown, unknown, unknown, unknown, unknown>;
 
-export const unkeyedHook = (
-  surface: string,
-  feeds: readonly Feed[],
-  keyed: boolean
-): string | undefined =>
-  keyed
-    ? undefined
-    : Arr.findFirst(
-        feeds,
-        ({ event, release }) => release !== undefined && event.caller !== Anyone
-      ).pipe(
-        Option.map(
-          ({ event }) =>
-            `${surface} event "${event.name}" is protected and has a subscription hook, so its authentication needs principal to tell poll subscribers apart (give Authentication.make a principal, such as (user) => user.id)`
-        ),
-        Option.getOrUndefined
-      );
-
 export const eventsOf = (served: Served): readonly AnyEventImplementation[] =>
   Arr.ensure(served).filter((app): app is AnyEventImplementation =>
     Predicate.isTagged(app, "EventImplementation")

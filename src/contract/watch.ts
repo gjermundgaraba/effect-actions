@@ -18,6 +18,7 @@ import type { Fed, Page } from "./pages.js";
 import { watchParameter } from "./receiving.js";
 import type { Delivered, Receiving } from "./receiving.js";
 import { makeRecent } from "./recent.js";
+import { deliveryUnsupported } from "./subscribe.js";
 import type {
   AnyWebhookCancellation,
   AnyWebhookSubscription,
@@ -76,8 +77,6 @@ const pushRefused = Predicate.compose(
     reason.feature === "deliveryMode" &&
     reason.value === "push"
 );
-
-const dedupeWindow = 1000;
 
 const capacity = 16;
 
@@ -199,13 +198,7 @@ export const watching = <E, R, SE = never>(
         const { webhook } = transport;
 
         if (webhook === undefined) {
-          return yield* Event.SubscriptionError.of(
-            transport.name,
-            new Event.Unsupported({
-              feature: "deliveryMode",
-              value: "webhook",
-            })
-          );
+          return yield* deliveryUnsupported(transport.name, "webhook");
         }
 
         const base = yield* Schema.decodeEffect(CallbackUrl)(baseUrl);
@@ -249,7 +242,7 @@ export const watching = <E, R, SE = never>(
     );
 
   return Stream.suspend(() => {
-    const seen = makeRecent(dedupeWindow);
+    const seen = makeRecent();
     let keptOnNextPull: string | null = null;
 
     const keep = (cursor: string | null): Effect.Effect<void, SE> =>

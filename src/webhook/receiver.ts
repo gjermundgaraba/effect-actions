@@ -15,8 +15,6 @@ import { constantTimeEqual, standardWebhooksSignature } from "./signing.js";
 
 const timestampToleranceSeconds = 5 * 60;
 
-const dedupeWindow = 1000;
-
 const Body = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json));
 
 const decodeBody = Schema.decodeUnknownOption(Body);
@@ -46,7 +44,7 @@ export const makeReceiver = (path: `/${string}`) =>
 
           const key = crypto.getRandomValues(new Uint8Array(32));
 
-          places.set(id, { key, deliver, seen: makeRecent(dedupeWindow) });
+          places.set(id, { key, deliver, seen: makeRecent() });
 
           return { id, secret: { text: `whsec_${Base64.encode(key)}`, key } };
         }),
