@@ -289,9 +289,7 @@ describe("refusal", () => {
         authentication: Session,
         protectedResource: resource,
       })
-    ).toThrow(
-      "A protected resource is published only for a Bearer scheme: drop `protectedResource`, or authenticate with a Bearer descriptor"
-    );
+    ).toThrow("A protected resource is published only for a Bearer scheme");
   });
 });
 

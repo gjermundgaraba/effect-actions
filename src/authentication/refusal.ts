@@ -13,25 +13,21 @@ import { HttpServerResponse } from "effect/http";
 import type * as Action from "../contract/Action.js";
 import { errorSchemas } from "../contract/declared.js";
 import { Forbidden, Refusal, Unauthenticated } from "../contract/errors.js";
-import { declared, httpApiStatusOf } from "../contract/status.js";
+import { declaredStatus } from "../contract/status.js";
 
 type Declared = Action.Errors[number];
 
 const responseOf = (schema: Declared, error: Declared["Type"]) =>
   HttpServerResponse.jsonUnsafe(
     Schema.encodeUnknownSync(Schema.toCodecJson(schema))(error),
-    {
-      status: httpApiStatusOf(schema.ast) ?? 422,
-    }
+    { status: declaredStatus(schema) }
   );
 
 export const declaredResponse = (
   errors: readonly Declared[],
   error: Declared["Type"]
 ): HttpServerResponse.HttpServerResponse | undefined => {
-  const schema = errorSchemas(errors)
-    .map(declared)
-    .find((each) => Schema.is(each)(error));
+  const schema = errorSchemas(errors).find((each) => Schema.is(each)(error));
 
   return schema === undefined ? undefined : responseOf(schema, error);
 };

@@ -2,7 +2,6 @@ import {
   Cause,
   Clock,
   Context,
-  DateTime,
   Deferred,
   Duration,
   Effect,
@@ -41,7 +40,14 @@ import type {
 } from "../contract/webhooks.js";
 import { checkedHost } from "./address.js";
 import { attempt, challenged } from "./attempt.js";
-import { deliveryHealth, failingForMs, healthOf, statusOf } from "./health.js";
+import {
+  delivering,
+  failingForMs,
+  healthOf,
+  healthTransition,
+  iso,
+  statusOf,
+} from "./health.js";
 import type { Health, HealthEvent } from "./health.js";
 import { randomToken, subscriptionId } from "./signing.js";
 import type { Storage, Stored } from "./stored.js";
@@ -87,8 +93,6 @@ interface Confirmed {
   readonly cursor: string | null;
   readonly truncated: boolean;
 }
-
-const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 
 const grantOf = (ttlMs: number | null | undefined, policy: Policy) =>
   Duration.clamp(
@@ -191,11 +195,11 @@ export const makeWebhooks = (
       lookup: (_id: string) => Semaphore.make(1),
     });
 
-    const health = deliveryHealth(Duration.toMillis(policy.retryFor));
+    const transition = healthTransition(Duration.toMillis(policy.retryFor));
 
     const transitioned = (subscription: Held, event: HealthEvent) =>
       Effect.suspend(() => {
-        const next = health.transition(subscription.health, event);
+        const next = transition(subscription.health, event);
 
         if (next === subscription.health) {
           return Effect.void;
@@ -221,7 +225,7 @@ export const makeWebhooks = (
 
     const retrying = (subscription: Held) => ({
       schedule: waitingAsLongAsFailing(subscription),
-      while: () => subscription.health.value === "Failing",
+      while: () => subscription.health._tag === "Failing",
     });
 
     const locked =
@@ -270,7 +274,7 @@ export const makeWebhooks = (
         Effect.tapError(({ category, final }) =>
           Effect.flatMap(Clock.currentTimeMillis, (at) =>
             transitioned(subscription, {
-              type: "AttemptFailed",
+              _tag: "AttemptFailed",
               category,
               final,
               at,
@@ -282,12 +286,12 @@ export const makeWebhooks = (
           onSuccess: () =>
             Effect.as(
               Effect.flatMap(Clock.currentTimeMillis, (at) =>
-                transitioned(subscription, { type: "Delivered", at })
+                transitioned(subscription, { _tag: "Delivered", at })
               ),
               true
             ),
           onFailure: () =>
-            subscription.health.value === "Suspended"
+            subscription.health._tag === "Suspended"
               ? Effect.never
               : Effect.succeed(false),
         })
@@ -549,7 +553,7 @@ export const makeWebhooks = (
                   until: now + Duration.toMillis(rotationGrace),
                 },
               }),
-          health: health.transition(before, { type: "Refreshed" }),
+          health: transition(before, { _tag: "Refreshed" }),
         };
 
         const confirmation = yield* confirmedAt(watermark);
@@ -679,7 +683,7 @@ export const makeWebhooks = (
         yield* swapHeldWorker(
           current,
           subscription,
-          restoredHealth.value === "Suspended"
+          restoredHealth._tag === "Suspended"
             ? Effect.andThen(expired(subscription), finished(subscription))
             : workerOf(subscription, input, record.watermark, confirmation)
         );
@@ -807,7 +811,7 @@ export const makeWebhooks = (
               url,
               feed,
               principal,
-              health: health.initialState,
+              health: delivering,
               watermark: cursor,
             });
 

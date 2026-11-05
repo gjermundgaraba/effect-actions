@@ -11,44 +11,45 @@ interface Failed {
 
 export type Health =
   | {
-      readonly value: "Delivering";
+      readonly _tag: "Delivering";
       readonly lastDeliveryAt: number | null;
       readonly lastError: CallbackCategory | null;
     }
-  | (Failed & { readonly value: "Failing" })
-  | (Failed & { readonly value: "Suspended" });
+  | (Failed & { readonly _tag: "Failing" })
+  | (Failed & { readonly _tag: "Suspended" });
 
 export type HealthEvent =
-  | { readonly type: "Delivered"; readonly at: number }
+  | { readonly _tag: "Delivered"; readonly at: number }
   | {
-      readonly type: "AttemptFailed";
+      readonly _tag: "AttemptFailed";
       readonly category: CallbackCategory;
       readonly final: boolean;
       readonly at: number;
     }
-  | { readonly type: "Refreshed" };
+  | { readonly _tag: "Refreshed" };
 
-interface DeliveryHealth {
-  readonly initialState: Health;
-  readonly transition: (health: Health, event: HealthEvent) => Health;
-}
+export const delivering: Health = {
+  _tag: "Delivering",
+  lastDeliveryAt: null,
+  lastError: null,
+};
 
-export const deliveryHealth = (retryForMs: number): DeliveryHealth => {
+export const healthTransition = (retryForMs: number) => {
   const spent = (failedSince: number, at: number) =>
     at - failedSince >= retryForMs;
 
-  const transition = (health: Health, event: HealthEvent): Health => {
+  return (health: Health, event: HealthEvent): Health => {
     const { lastDeliveryAt } = health;
 
-    switch (health.value) {
+    switch (health._tag) {
       case "Delivering": {
-        if (event.type === "Refreshed") {
+        if (event._tag === "Refreshed") {
           return health;
         }
 
-        if (event.type === "Delivered") {
+        if (event._tag === "Delivered") {
           return {
-            value: "Delivering",
+            _tag: "Delivering",
             lastDeliveryAt: event.at,
             lastError: null,
           };
@@ -61,7 +62,7 @@ export const deliveryHealth = (retryForMs: number): DeliveryHealth => {
         }
 
         return {
-          value: spent(event.at, event.at) ? "Suspended" : "Failing",
+          _tag: spent(event.at, event.at) ? "Suspended" : "Failing",
           lastDeliveryAt,
           lastError: event.category,
           failedSince: event.at,
@@ -69,13 +70,13 @@ export const deliveryHealth = (retryForMs: number): DeliveryHealth => {
       }
 
       case "Failing": {
-        if (event.type === "Refreshed") {
+        if (event._tag === "Refreshed") {
           return health;
         }
 
-        if (event.type === "Delivered") {
+        if (event._tag === "Delivered") {
           return {
-            value: "Delivering",
+            _tag: "Delivering",
             lastDeliveryAt: event.at,
             lastError: null,
           };
@@ -83,14 +84,14 @@ export const deliveryHealth = (retryForMs: number): DeliveryHealth => {
 
         if (event.final) {
           return {
-            value: "Delivering",
+            _tag: "Delivering",
             lastDeliveryAt,
             lastError: event.category,
           };
         }
 
         if (spent(health.failedSince, event.at)) {
-          return { ...health, value: "Suspended", lastError: event.category };
+          return { ...health, _tag: "Suspended", lastError: event.category };
         }
 
         return event.category === health.lastError
@@ -99,23 +100,16 @@ export const deliveryHealth = (retryForMs: number): DeliveryHealth => {
       }
 
       case "Suspended": {
-        return event.type === "Refreshed"
-          ? { value: "Delivering", lastDeliveryAt, lastError: health.lastError }
+        return event._tag === "Refreshed"
+          ? { _tag: "Delivering", lastDeliveryAt, lastError: health.lastError }
           : health;
       }
     }
   };
-
-  const initialState: Health = {
-    value: "Delivering",
-    lastDeliveryAt: null,
-    lastError: null,
-  };
-
-  return { initialState, transition };
 };
 
-const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
+export const iso = (millis: number) =>
+  DateTime.formatIso(DateTime.makeUnsafe(millis));
 
 const millisOf = (text: string) => {
   const millis = Date.parse(text);
@@ -127,12 +121,12 @@ export const statusOf = (health: Health): DeliveryStatus => {
   const lastDeliveryAt =
     health.lastDeliveryAt === null ? null : iso(health.lastDeliveryAt);
 
-  if (health.value === "Delivering") {
+  if (health._tag === "Delivering") {
     return { active: true, lastDeliveryAt, lastError: health.lastError };
   }
 
   return {
-    active: health.value === "Failing",
+    active: health._tag === "Failing",
     lastDeliveryAt,
     lastError: health.lastError,
     failedSince: iso(health.failedSince),
@@ -152,14 +146,14 @@ export const healthOf = (status: DeliveryStatus): Option.Option<Health> =>
       }
 
       return {
-        value: "Delivering",
+        _tag: "Delivering",
         lastDeliveryAt,
         lastError: status.lastError,
       } satisfies Health;
     }
 
     return {
-      value: status.active ? "Failing" : "Suspended",
+      _tag: status.active ? "Failing" : "Suspended",
       lastDeliveryAt,
       lastError: yield* Option.fromNullOr(status.lastError),
       failedSince: yield* millisOf(status.failedSince),
@@ -167,4 +161,4 @@ export const healthOf = (status: DeliveryStatus): Option.Option<Health> =>
   });
 
 export const failingForMs = (health: Health, now: number) =>
-  health.value === "Failing" ? now - health.failedSince : 0;
+  health._tag === "Failing" ? now - health.failedSince : 0;

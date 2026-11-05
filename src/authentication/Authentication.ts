@@ -122,17 +122,6 @@ const namedOf = (options: ProtectedResource | undefined): Named => ({
   metadataUrl: options === undefined ? undefined : metadataUrlOf(options).href,
 });
 
-const presentsBearerToken = (
-  authorization: string | null | undefined
-): boolean => Option.isSome(bearerTokenOf(authorization));
-
-const bearerChallengeOf = (named: Named, presented: boolean): string =>
-  bearer([
-    ["error", presented ? "invalid_token" : undefined],
-    ["scope", named.scope],
-    ["resource_metadata", named.metadataUrl],
-  ]);
-
 const assertPublishableResource = (
   oauth: boolean,
   options:
@@ -232,6 +221,43 @@ export interface RefusalResponseOptions<D extends Any = Any> {
   readonly authorization?: string | null | undefined;
 }
 
+interface Refusing {
+  readonly metadataUrl: string | undefined;
+  readonly challenge: (presented: boolean) => string | undefined;
+  readonly response: (
+    error: unknown
+  ) => HttpServerResponse.HttpServerResponse | undefined;
+}
+
+const refusingOf = (
+  authentication: Pick<Any, "error" | "name" | "security"> | undefined,
+  resource: ProtectedResource | undefined
+): Refusing => {
+  const oauth =
+    authentication === undefined || isBearer(authentication.security);
+
+  const named = namedOf(resource);
+
+  return {
+    metadataUrl: named.metadataUrl,
+    challenge: (presented) =>
+      authentication !== undefined && !oauth
+        ? nonBearerChallengeOf(authentication.security, authentication.name)
+        : bearer([
+            ["error", presented ? "invalid_token" : undefined],
+            ["scope", named.scope],
+            ["resource_metadata", named.metadataUrl],
+          ]),
+    response: (error) => {
+      if (!isRefusal(error)) {
+        return declaredResponse(authentication?.error ?? [], error);
+      }
+
+      return oauth ? answer(error, named.metadataUrl) : plain(error);
+    },
+  };
+};
+
 type DeclaredOf<D> = D extends { readonly error: infer E extends Errors }
   ? E[number]["Type"]
   : never;
@@ -250,33 +276,23 @@ export const refusalResponse = <D extends Any = never>(
 ): HttpServerResponse.HttpServerResponse => {
   const authentication = options?.authentication;
 
-  const oauth =
-    authentication === undefined || isBearer(authentication.security);
+  assertPublishableResource(
+    authentication === undefined || isBearer(authentication.security),
+    options?.protectedResource
+  );
 
-  assertPublishableResource(oauth, options?.protectedResource);
+  const refusing = refusingOf(authentication, options?.protectedResource);
+  const response = refusing.response(error);
 
-  const named = namedOf(options?.protectedResource);
-
-  const wwwAuthenticate =
-    authentication !== undefined && !oauth
-      ? nonBearerChallengeOf(authentication.security, authentication.name)
-      : bearerChallengeOf(named, presentsBearerToken(options?.authorization));
-
-  if (!isRefusal(error)) {
-    const response = declaredResponse(authentication?.error ?? [], error);
-
-    if (response === undefined) {
-      throw new Error(
-        "Not a refusal, nor an error the authentication declares: pass the descriptor declaring it as `authentication`, or answer the error yourself"
-      );
-    }
-
-    return withNoStoreAndChallenge(response, wwwAuthenticate);
+  if (response === undefined) {
+    throw new Error(
+      "Not a refusal, nor an error the authentication declares: pass the descriptor declaring it as `authentication`, or answer the error yourself"
+    );
   }
 
   return withNoStoreAndChallenge(
-    oauth ? answer(error, named.metadataUrl) : plain(error),
-    wwwAuthenticate
+    response,
+    refusing.challenge(Option.isSome(bearerTokenOf(options?.authorization)))
   );
 };
 
@@ -336,17 +352,6 @@ const discoveryMiddleware = (options: ProtectedResource) => {
 
       return next;
     });
-};
-
-const resourceAnswersOf = (options: ProtectedResource | undefined) => {
-  const named = namedOf(options);
-
-  return {
-    metadataUrl: named.metadataUrl,
-    invalid: bearerChallengeOf(named, true),
-    anonymous: bearerChallengeOf(named, false),
-    published: options === undefined ? undefined : discoveryMiddleware(options),
-  };
 };
 
 /** What `make` takes besides the name and the identity `A`. */
@@ -584,13 +589,18 @@ export function layer(
   const { protectedResource } = options;
   assertPublishableResource(oauth, protectedResource);
 
+  const published = (built: ProtectedResource | undefined) => ({
+    refusing: refusingOf(authentication, built),
+    discovery: built === undefined ? undefined : discoveryMiddleware(built),
+  });
+
   const resource = Effect.isEffect(protectedResource)
     ? Effect.map(protectedResource, (built) => {
         assertPublishableResource(oauth, built);
 
-        return resourceAnswersOf(built);
+        return published(built);
       })
-    : Effect.succeed(resourceAnswersOf(protectedResource));
+    : Effect.succeed(published(protectedResource));
 
   const missing = new Unauthenticated({
     message: oauth
@@ -601,11 +611,12 @@ export function layer(
   return Layer.effect(
     authentication["~provider"],
     Effect.gen(function* () {
-      const { metadataUrl, invalid, anonymous, published } = yield* resource;
+      const { refusing, discovery } = yield* resource;
+      const { metadataUrl } = refusing;
 
-      if (published !== undefined) {
+      if (discovery !== undefined) {
         const router = yield* HttpRouter.HttpRouter;
-        yield* router.addGlobalMiddleware(published);
+        yield* router.addGlobalMiddleware(discovery);
       }
 
       const verifier = Effect.isEffect(verify) ? yield* verify : verify;
@@ -628,24 +639,14 @@ export function layer(
           )
       );
 
-      const challengeOf = (credential: Credential) => {
-        if (!oauth) {
-          return nonBearerChallengeOf(security, authentication.name);
-        }
-
-        return presented(credential) ? invalid : anonymous;
-      };
-
       const refuse = (error: VerifierFailure) =>
-        isRefusal(error)
-          ? Effect.succeed(oauth ? answer(error, metadataUrl) : plain(error))
-          : Effect.suspend(() => {
-              const response = declaredResponse(authentication.error, error);
+        Effect.suspend(() => {
+          const response = refusing.response(error);
 
-              return response === undefined
-                ? Effect.die(error)
-                : Effect.succeed(response);
-            });
+          return response === undefined
+            ? Effect.die(error)
+            : Effect.succeed(response);
+        });
 
       const verified = (
         credential: Credential,
@@ -656,7 +657,7 @@ export function layer(
         >,
         slot: Context.Key<unknown, unknown>
       ) => {
-        const wwwAuthenticate = challengeOf(credential);
+        const wwwAuthenticate = refusing.challenge(presented(credential));
 
         return Effect.matchEffect(authenticate(credential), {
           onFailure: refuse,

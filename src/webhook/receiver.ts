@@ -1,8 +1,9 @@
 import { Clock, Effect, Option, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
-import { Base64, Base64Url } from "effect/encoding";
+import { Base64Url } from "effect/encoding";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 
+import { signingSecretOf } from "../contract/callback.js";
 import { watchParameter } from "../contract/receiving.js";
 import type {
   Delivered,
@@ -46,7 +47,7 @@ export const makeReceiver = (path: `/${string}`) =>
 
           places.set(id, { key, deliver, seen: makeRecent() });
 
-          return { id, secret: { text: `whsec_${Base64.encode(key)}`, key } };
+          return { id, secret: signingSecretOf(key) };
         }),
         ({ id }) => Effect.sync(() => places.delete(id))
       );
