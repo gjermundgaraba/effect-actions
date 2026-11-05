@@ -20,14 +20,15 @@ export const LobbyCalls = RpcGroup.make(
 
 Its handlers read the store the instance built ([chat-rooms/src/lobby/handlers.ts](../examples/chat-rooms/src/lobby/handlers.ts)), and `RpcServer.layer(LobbyCalls)` over them is the object's `calls`, beside its routes ([chat-rooms/src/routes.ts](../examples/chat-rooms/src/routes.ts)), given to `make` in [chat-rooms/src/worker.ts](../examples/chat-rooms/src/worker.ts). `make` gives the calls their protocol; what crosses it, as values and not JSON, what it refuses and what the calls may require are on `ActionDurableObject.Options`' `calls`.
 
-A plain group suits an object's own API, which no page calls. Actions served on other surfaces too are served the same way, `calls: ActionRpc.layer(RoomRpc, room)`, and called with `ActionRpc.client(RoomRpc)` over `layerStubClient(() => env.CHAT_ROOM.getByName(room))`: their values cross as JSON, and a protected action authenticates each call from its headers, so the caller forwards the user's credential with `RpcClient.withHeaders`.
+A plain group suits an object's own API, which no page calls. Actions served on other surfaces too are served the same way, `calls: ActionRpc.layer(RoomRpc, room)`, and called with `ActionRpc.client(RoomRpc)` over `DurableObjectClient.layerStubClient(() => env.CHAT_ROOM.getByName(room))`: their values cross as JSON, and a protected action authenticates each call from its headers, so the caller forwards the user's credential with `RpcClient.withHeaders`.
 
 ## Call it from a Worker or another object
 
-`client(group)` makes one client, in the caller's `Scope`, for every object of a class, and returns `(stubOf) => client`: each call gets a new stub from `stubOf`, as it is sent, and fails with the rpc's declared errors or the stub's own, an `RpcClientError`. The caller retries a read while `isRetryable` holds, which reads the runtime's flags off the error, and makes the rest a defect, as `layerLobbyHost` does with the previews. The Worker reads the previews through `layerLobbyHost`, and a room tells the lobby through `tellLobby`, a task, below:
+Import `@gjermundgaraba/effect-actions-cloudflare/DurableObjectClient` to call an object: it imports no workerd module, so code that only calls objects loads in Node too, and is tested there. Its `make(group)` makes one client, in the caller's `Scope`, for every object of a class, and returns `(stubOf) => client`: each call gets a new stub from `stubOf`, as it is sent, and fails with the rpc's declared errors or the stub's own, an `RpcClientError`. The caller retries a read while `isRetryable` holds, which reads the runtime's flags off the error, and makes the rest a defect, as `layerLobbyHost` does with the previews; a test builds a refused call with `refused`. The Worker reads the previews through `layerLobbyHost`, and a room tells the lobby through `tellLobby`, a task, below:
 
 ```ts example=chat-rooms/src/platform/lobby-stubs.ts
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import * as DurableObjectClient from "@gjermundgaraba/effect-actions-cloudflare/DurableObjectClient";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Schedule } from "effect";
 
@@ -40,13 +41,13 @@ import { LobbyHost } from "../lobby/host.js";
 const lobbyStub = () => env.CHAT_LOBBY.getByName("lobby");
 
 export const layerLobbyHost = Layer.effect(LobbyHost)(
-  Effect.map(ActionDurableObject.client(LobbyCalls), (lobby) =>
+  Effect.map(DurableObjectClient.make(LobbyCalls), (lobby) =>
     LobbyHost.of({
       previews: lobby(lobbyStub)
         .previews()
         .pipe(
           Effect.retry({
-            while: ActionDurableObject.isRetryable,
+            while: DurableObjectClient.isRetryable,
             times: 2,
             schedule: Schedule.exponential("100 millis"),
           }),
@@ -59,7 +60,7 @@ export const layerLobbyHost = Layer.effect(LobbyHost)(
 export const tellLobby = Effect.gen(function* () {
   const room = yield* Room;
   const latest = yield* MessageStore.use((store) => store.latest);
-  const lobby = yield* ActionDurableObject.client(LobbyCalls);
+  const lobby = yield* DurableObjectClient.make(LobbyCalls);
 
   yield* lobby(lobbyStub).roomChanged({ room, latestAt: latest?.at ?? null });
 });
@@ -71,7 +72,7 @@ export const layerActivity = Layer.effect(Activity)(
 );
 ```
 
-Why no stub is held, when one breaks and when a call may be repeated are on `ActionDurableObject.client`. `RpcClient.make` requires a `Scope` natively, so no client without one is offered. Where a Worker builds a client, as each request or once as the module loads, and why one built lazily inside a request strands, are on `ActionDurableObject.layerStubClient`'s gotchas: chat-rooms' `worker.ts` builds its handler as the module loads. In a Durable Object, `make` and `handlers` run every Effect under the scheduler that does not strand it, as `handlers` says.
+Why no stub is held, when one breaks and when a call may be repeated are on `DurableObjectClient.make`. `RpcClient.make` requires a `Scope` natively, so no client without one is offered. Where a Worker builds a client, as each request or once as the module loads, and why one built lazily inside a request strands, are on `DurableObjectClient.layerStubClient`'s gotchas: chat-rooms' `worker.ts` builds its handler as the module loads. In a Durable Object, `make` and `handlers` run every Effect under the scheduler that does not strand it, as `handlers` says.
 
 A Worker's entrypoint that is no Effect program, such as a `WorkerEntrypoint` method or a queue consumer, runs each call as its own program. chat-rooms' `RoomsEntrypoint`, which `worker.ts` exports, serves the rooms' activity to another Worker:
 
@@ -115,4 +116,4 @@ An object reached by `get(idFromString(id))` has no name: its caller sends the k
 
 ## Call an object's routes
 
-For the object's routes, `ActionHttp.client`, `ActionMcp.client`, or `ActionRpc.client` over `RpcClient.layerProtocolHttp`, give the client `layerHttpClient(stub)`: every request goes to the object's `fetch` in place of the network, as the example's tests call the Worker ([chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)). Its URL and credentials are on `ActionDurableObject.layerHttpClient`. To pass a page's request on, forward the `Request` itself, as `worker.ts` does.
+For the object's routes, `ActionHttp.client`, `ActionMcp.client`, or `ActionRpc.client` over `RpcClient.layerProtocolHttp`, give the client `layerHttpClient(stub)`: every request goes to the object's `fetch` in place of the network, as the example's tests call the Worker ([chat-rooms/test/worker.test.ts](../examples/chat-rooms/test/worker.test.ts)). Its URL and credentials are on `DurableObjectClient.layerHttpClient`. To pass a page's request on, forward the `Request` itself, as `worker.ts` does.

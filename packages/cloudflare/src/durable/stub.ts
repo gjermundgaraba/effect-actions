@@ -35,17 +35,31 @@ const REFUSED = "The object's stub refused the call";
 const isClientError = Schema.is(RpcClientError.RpcClientError);
 
 /**
- * The runtime's error a stub call failed with, from the `RpcClientError` a call over `client` or
- * `layerStubClient` fails with, or `Option.none()` for any other value: a declared error, a
- * defect, or an `RpcClientError` the object's answer caused, such as one ending before the call
- * completed. Read its `message` to tell the runtime's errors apart, such as workerd's `limited to
- * 32MiB`.
+ * The error a call over `make` or `layerStubClient` fails with when the runtime refuses the stub
+ * call, given the runtime's error: an `RpcClientError` that `runtimeError` reads it back from. Build
+ * one to stand for a refused call in a test, such as
+ * `refused(Object.assign(new Error("overloaded"), { overloaded: true }))`.
+ */
+export const refused = (runtimeError: unknown): RpcClientError.RpcClientError =>
+  clientError(
+    new RpcClientError.RpcClientDefect({
+      message: REFUSED,
+      cause: runtimeError,
+    })
+  );
+
+/**
+ * The runtime's error a stub call failed with, from the `RpcClientError` a call over `make` or
+ * `layerStubClient` fails with, as `refused` builds it, or `Option.none()` for any other value: a
+ * declared error, a defect, or an `RpcClientError` the object's answer caused, such as one ending
+ * before the call completed. Read its `message` to tell the runtime's errors apart, such as
+ * workerd's `limited to 32MiB`.
  *
  * **Gotchas**
  *
  * - It is the runtime's error as the stub threw it, whose flags are what Cloudflare sets: `isRetryable`, `isOverloaded` and `isReset` read them.
  */
-export const stubFailure = (error: unknown): Option.Option<unknown> =>
+export const runtimeError = (error: unknown): Option.Option<unknown> =>
   isClientError(error) &&
   error.reason._tag === "RpcClientDefect" &&
   error.reason.message === REFUSED
@@ -54,7 +68,7 @@ export const stubFailure = (error: unknown): Option.Option<unknown> =>
 
 const flagged = (error: unknown, flag: string) =>
   Option.exists(
-    stubFailure(error),
+    runtimeError(error),
     (failure) => Predicate.hasProperty(failure, flag) && failure[flag] === true
   );
 
@@ -79,7 +93,7 @@ export const isOverloaded = (error: unknown): boolean =>
 
 /**
  * Whether the object was reset during the stub call, its runtime's error `durableObjectReset`, as
- * `ctx.abort` resets it: the stub is broken, and a call over `client` or `layerStubClient` gets a
+ * `ctx.abort` resets it: the stub is broken, and a call over `make` or `layerStubClient` gets a
  * new one from its `stubOf` for the next call.
  */
 export const isReset = (error: unknown): boolean =>
@@ -119,13 +133,7 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
 
               const answer = yield* Effect.tryPromise({
                 try: async () => await stub.effectActionsRpc([request]),
-                catch: (cause) =>
-                  clientError(
-                    new RpcClientError.RpcClientDefect({
-                      message: REFUSED,
-                      cause,
-                    })
-                  ),
+                catch: refused,
               });
 
               if (!(isAnswer(answer) && completesCall(answer, request))) {
@@ -162,11 +170,11 @@ const makeProtocol = (target: Effect.Effect<Stub>) =>
  * **Gotchas**
  *
  * - `stubOf` is called as each call is sent, `() => env.ROOM.getByName(name)`, for a new stub each time, since many exceptions leave a stub broken, failing every later call through it with the same error; one that throws is a defect, not an `RpcClientError`, as it is no failure of the stub.
- * - The runtime's error reaches the caller inside the `RpcClientError`: read it with `stubFailure`, and its flags with `isRetryable`, `isOverloaded` and `isReset`; a reset object needs a new stub, which the next call's `stubOf` gives.
+ * - The runtime's error reaches the caller inside the `RpcClientError`: read it with `runtimeError`, and its flags with `isRetryable`, `isOverloaded` and `isReset`; a reset object needs a new stub, which the next call's `stubOf` gives.
  * - Workers RPC limits a call's arguments and its answer to 32 MiB, serialized: past it, the call fails with the runtime's `limited to 32MiB` error.
  * - An object serving no `calls`, once built, or a class without the method, fails each call, with the object's or the runtime's message as the error's cause; an object whose build fails fails it with that failure first.
  * - A call's interruption does not reach the object, as a stub call cannot be cancelled: its answer is dropped.
- * - Unary: an rpc that streams fails with a defect at its first chunk, so a handler returning a stream that never emits leaves the call waiting for good; `client` gives such an rpc no method.
+ * - Unary: an rpc that streams fails with a defect at its first chunk, so a handler returning a stream that never emits leaves the call waiting for good; `make` gives such an rpc no method.
  * - `RpcClient.make` over it forks a fiber started on a timer of the request that builds it, which workerd drops when that request ends: a client first built lazily inside a Worker's request that ends without waiting on I/O never starts it, and every later call waits until workerd cancels it as hung; build the client per request or, shared, at module scope under Effect's sync scheduler, as `HttpRouter.toWebHandler`'s gotchas show, where a `ManagedRuntime.make` builds only at its first run, so one made at module scope is still built inside a request; an object's build, under the microtask scheduler, did not strand it in the tests.
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
@@ -232,7 +240,7 @@ export type Client<Group> = RpcClient.RpcClient<
  *
  * Guide: `docs/ActionDurableObject-stub.md` in this package.
  */
-export const client = <Rpcs extends Rpc.Any>(
+export const make = <Rpcs extends Rpc.Any>(
   group: RpcGroup.RpcGroup<Rpcs>
 ): Effect.Effect<
   (stubOf: () => Stub) => Client<RpcGroup.RpcGroup<Rpcs>>,

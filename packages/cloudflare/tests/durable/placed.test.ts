@@ -7,6 +7,7 @@ import { env } from "cloudflare:workers";
 import { Effect, Fiber, Layer, Stream } from "effect";
 
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 import {
   ShelfCalls,
   ShelfChanged,
@@ -78,7 +79,7 @@ describe("ActionDurableObject.placed", () => {
           ActionHttp.client(ShelfHttp, { baseUrl: "https://object" }),
           (client) =>
             Effect.flip(client.putBook({ onto: "placed-d", title: "Dune" }))
-        ).pipe(Effect.provide(ActionDurableObject.layerHttpClient(stub)));
+        ).pipe(Effect.provide(DurableObjectClient.layerHttpClient(stub)));
 
         const protocol = yield* Layer.build(
           protocolOver(yield* upgradeToRpc(stub))
@@ -94,7 +95,7 @@ describe("ActionDurableObject.placed", () => {
           ActionRpc.client(ShelfCalls),
           (client) =>
             Effect.flip(client.putBook({ onto: "placed-d", title: "Dune" }))
-        ).pipe(Effect.provide(ActionDurableObject.layerStubClient(() => stub)));
+        ).pipe(Effect.provide(DurableObjectClient.layerStubClient(() => stub)));
 
         expect([overHttp, overSocket, overStub]).toStrictEqual([
           refused,

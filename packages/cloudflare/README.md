@@ -34,7 +34,7 @@ Call an object's own API, an Effect `RpcGroup` it serves as its `calls`, from a 
 
 ```ts
 Effect.gen(function* () {
-  const lobby = yield* ActionDurableObject.client(LobbyCalls);
+  const lobby = yield* DurableObjectClient.make(LobbyCalls);
 
   return yield* lobby(() => env.CHAT_LOBBY.getByName("lobby")).previews();
 });
@@ -45,7 +45,7 @@ Call an object's routes from a Worker with the core's own clients, through the s
 ```ts
 ActionHttp.client(RoomHttp, { baseUrl: "https://room" }).pipe(
   Effect.provide(
-    ActionDurableObject.layerHttpClient(env.CHAT_ROOM.getByName("design"))
+    DurableObjectClient.layerHttpClient(env.CHAT_ROOM.getByName("design"))
   )
 );
 ```

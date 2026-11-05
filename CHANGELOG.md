@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Breaking changes
+
+**Calling an object moves to `@gjermundgaraba/effect-actions-cloudflare/DurableObjectClient`.** `client`, `layerStubClient`, `layerHttpClient`, `Stub`, `Client`, `isRetryable`, `isOverloaded` and `isReset` leave `ActionDurableObject` for it, unchanged otherwise, `client` named `make` there, as Effect's `RpcClient.make`, and `stubFailure` `runtimeError`. `ActionDurableObject` imports `cloudflare:workers`, which only workerd provides, so code that only called objects, such as a Worker's retry policy, could not load in Node, nor be tested there; `DurableObjectClient` imports no workerd module. It adds `refused(runtimeError)`, the error a call the runtime refuses fails with, for a test to stand for one, where a test built that error by hand from the library's message. `ActionDurableObject` keeps what runs in an object.
+
+- Migrate: import `* as DurableObjectClient from "@gjermundgaraba/effect-actions-cloudflare/DurableObjectClient"`, then replace `ActionDurableObject.layerStubClient`, `layerHttpClient`, `Stub`, `Client`, `isRetryable`, `isOverloaded` and `isReset` with `DurableObjectClient`'s, `ActionDurableObject.client` with `DurableObjectClient.make`, and `ActionDurableObject.stubFailure` with `DurableObjectClient.runtimeError`.
+
 ### Other changes
 
 - `Webhook.layer` logs a warning, naming the subscription, when a `terminated` notice is never accepted after its four tries; it dropped the failure silently. A callback answering `410` or `413` gives the notice up at once, unlogged. A watch's failed unsubscribe stays unreported, now documented on `Webhook.delivery`: the subscription lapses at its grant.

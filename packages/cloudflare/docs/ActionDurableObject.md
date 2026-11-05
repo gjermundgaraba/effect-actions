@@ -182,7 +182,7 @@ Give `make` an `alarm`, and set when it runs from a handler or a store with the 
 
 ## Call an object from a Worker
 
-Call its `calls` with `client`, the declared errors typed, and its routes with the core's clients over `layerHttpClient(stub)`: [ActionDurableObject-stub.md](ActionDurableObject-stub.md).
+Call its `calls` with `DurableObjectClient.make`, the declared errors typed, and its routes with the core's clients over `DurableObjectClient.layerHttpClient(stub)`: [ActionDurableObject-stub.md](ActionDurableObject-stub.md).
 
 ## Test and deploy
 

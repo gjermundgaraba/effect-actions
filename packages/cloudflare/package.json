@@ -30,11 +30,13 @@
   "sideEffects": false,
   "exports": {
     "./ActionDurableObject": "./src/durable/ActionDurableObject.ts",
+    "./DurableObjectClient": "./src/durable/DurableObjectClient.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "exports": {
       "./ActionDurableObject": "./dist/ActionDurableObject.mjs",
+      "./DurableObjectClient": "./dist/DurableObjectClient.mjs",
       "./package.json": "./package.json"
     },
     "access": "public"

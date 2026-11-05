@@ -6,7 +6,7 @@ import { Effect, Layer } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 
-import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 import { Http, Overdrawn, Rpc } from "../support/app.js";
 
 const signedIn = (token: string) =>
@@ -29,7 +29,7 @@ describe("layerHttpClient", () => {
         );
       }).pipe(
         Effect.provide(
-          ActionDurableObject.layerHttpClient(env.PLAIN.getByName("http"))
+          DurableObjectClient.layerHttpClient(env.PLAIN.getByName("http"))
         )
       )
   );
@@ -48,7 +48,7 @@ describe("layerHttpClient", () => {
       Effect.provide(
         RpcClient.layerProtocolHttp({ url: "https://object/rpc" }).pipe(
           Layer.provide([
-            ActionDurableObject.layerHttpClient(env.PLAIN.getByName("rpc")),
+            DurableObjectClient.layerHttpClient(env.PLAIN.getByName("rpc")),
             RpcSerialization.layerJson,
           ])
         )

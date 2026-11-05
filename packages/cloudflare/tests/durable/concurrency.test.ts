@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { env } from "cloudflare:workers";
 import { Effect, Fiber } from "effect";
 
-import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 import { latch } from "../support/latch.js";
 import { RacedRpcs } from "../support/raced.js";
 
@@ -10,9 +10,9 @@ const calls = 20;
 
 const rounds = 5;
 
-const bumpedAtOnce = (stubOf: (round: number) => ActionDurableObject.Stub) =>
+const bumpedAtOnce = (stubOf: (round: number) => DurableObjectClient.Stub) =>
   Effect.gen(function* () {
-    const host = yield* ActionDurableObject.client(RacedRpcs);
+    const host = yield* DurableObjectClient.make(RacedRpcs);
 
     return yield* Effect.forEach(
       Array.from({ length: rounds }, (_, round) => round),
@@ -41,9 +41,7 @@ describe("an object's Effects", () => {
       Effect.gen(function* () {
         const stub = env.RACED.getByName("yielding");
 
-        const raced = (yield* ActionDurableObject.client(RacedRpcs))(
-          () => stub
-        );
+        const raced = (yield* DurableObjectClient.make(RacedRpcs))(() => stub);
 
         expect(yield* raced.yieldsPastTimer()).toBe(false);
         expect(
@@ -60,9 +58,7 @@ describe("a call arriving while a failed build is built again", () => {
       Effect.gen(function* () {
         const stub = env.BUILT_AGAIN_RACED.getByName("called-back");
 
-        const raced = (yield* ActionDurableObject.client(RacedRpcs))(
-          () => stub
-        );
+        const raced = (yield* DurableObjectClient.make(RacedRpcs))(() => stub);
 
         expect(yield* raced.callsBack()).toBe(404);
       }).pipe(Effect.scoped)
@@ -91,9 +87,7 @@ describe("calls in flight on one object, each reading then writing storage", () 
       Effect.gen(function* () {
         const stub = env.LATCHED_RACED.getByName("held");
 
-        const raced = (yield* ActionDurableObject.client(RacedRpcs))(
-          () => stub
-        );
+        const raced = (yield* DurableObjectClient.make(RacedRpcs))(() => stub);
 
         const bumps = yield* Effect.forkChild(
           Effect.all([raced.bump(), raced.bump()], { concurrency: "unbounded" })

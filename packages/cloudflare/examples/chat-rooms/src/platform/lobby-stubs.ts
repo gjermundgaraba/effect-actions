@@ -1,4 +1,5 @@
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import * as DurableObjectClient from "@gjermundgaraba/effect-actions-cloudflare/DurableObjectClient";
 import { env } from "cloudflare:workers";
 import { Effect, Layer, Schedule } from "effect";
 
@@ -11,13 +12,13 @@ import { LobbyHost } from "../lobby/host.js";
 const lobbyStub = () => env.CHAT_LOBBY.getByName("lobby");
 
 export const layerLobbyHost = Layer.effect(LobbyHost)(
-  Effect.map(ActionDurableObject.client(LobbyCalls), (lobby) =>
+  Effect.map(DurableObjectClient.make(LobbyCalls), (lobby) =>
     LobbyHost.of({
       previews: lobby(lobbyStub)
         .previews()
         .pipe(
           Effect.retry({
-            while: ActionDurableObject.isRetryable,
+            while: DurableObjectClient.isRetryable,
             times: 2,
             schedule: Schedule.exponential("100 millis"),
           }),
@@ -30,7 +31,7 @@ export const layerLobbyHost = Layer.effect(LobbyHost)(
 export const tellLobby = Effect.gen(function* () {
   const room = yield* Room;
   const latest = yield* MessageStore.use((store) => store.latest);
-  const lobby = yield* ActionDurableObject.client(LobbyCalls);
+  const lobby = yield* DurableObjectClient.make(LobbyCalls);
 
   yield* lobby(lobbyStub).roomChanged({ room, latestAt: latest?.at ?? null });
 });

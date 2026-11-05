@@ -17,6 +17,7 @@ import {
 } from "effect/http";
 
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 import { dueNow, runAlarmDue } from "../support/alarm.js";
 import {
   alarmBuildsKey,
@@ -106,7 +107,7 @@ describe("handlers", () => {
         expect(yield* client.whoami()).toBe("ada");
         expect(yield* client.alarms()).toBe(0);
       }).pipe(
-        Effect.provide(ActionDurableObject.layerHttpClient(room("fetch")))
+        Effect.provide(DurableObjectClient.layerHttpClient(room("fetch")))
       )
   );
 
@@ -479,7 +480,7 @@ describe("handlers", () => {
         expect(yield* client.alarms()).toBe(1);
         expect(yield* client.spend({ amount: 9 })).toStrictEqual({ left: 0 });
       }).pipe(
-        Effect.provide(ActionDurableObject.layerHttpClient(room("alarm")))
+        Effect.provide(DurableObjectClient.layerHttpClient(room("alarm")))
       )
   );
 

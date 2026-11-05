@@ -55,19 +55,6 @@ export {
 export { name, State } from "./state.js";
 
 export {
-  client,
-  isOverloaded,
-  isReset,
-  isRetryable,
-  layerStubClient,
-  stubFailure,
-  type Client,
-  type Stub,
-} from "./stub.js";
-
-export { layerHttpClient } from "./fetcher.js";
-
-export {
   placed,
   reaching,
   type AnyPlacement,
@@ -204,9 +191,9 @@ export interface Options<
    * - Unary: a call answers once every request it carries has its exit, so an rpc that streams is answered with a defect at its first chunk, naming it: stream over `layerWebSocket`.
    * - An `ActionRpc.layer` here fails its build when the binding serves a streaming action or an event type: list the others in its `actions`.
    * - A defect Effect's server sends as fatal to the whole client, such as a handler's die, is answered as the exit of each request of the call still without one, a die: the call fails with that defect alone, and the client's next call is answered.
-   * - In a raw `effectActionsRpc` call batching several requests, a handler's die before another request's answer gives that request two exits, the defect first, which Effect's client takes, then its own; `layerStubClient` sends one request per call and never meets it.
+   * - In a raw `effectActionsRpc` call batching several requests, a handler's die before another request's answer gives that request two exits, the defect first, which Effect's client takes, then its own; `DurableObjectClient.layerStubClient` sends one request per call and never meets it.
    * - Nothing authenticates a call: a stub is reachable only through a binding, so the caller is the Worker or another object of the deployment, and one acting for a principal forwards it in a header, with `RpcClient.withHeaders`, read by an `RpcMiddleware` or an `ActionRpc` binding's authentication, or in the payload.
-   * - A plain group suits an object's own API, which only its Worker and other objects call; an `ActionRpc.layer` suits actions served on other surfaces too, called with `ActionRpc.client` over `layerStubClient`.
+   * - A plain group suits an object's own API, which only its Worker and other objects call; an `ActionRpc.layer` suits actions served on other surfaces too, called with `ActionRpc.client` over `DurableObjectClient.layerStubClient`.
    */
   readonly calls?: Layer.Layer<CA, CE, CR> | undefined;
   /**
@@ -288,7 +275,7 @@ export interface Handlers<S = never> {
     ...args: Parameters<HandlerOf<"webSocketError">>
   ): Promise<void>;
   /**
-   * Answers one call over the object's stub, the messages `layerStubClient` sends, with its
+   * Answers one call over the object's stub, the messages `DurableObjectClient.layerStubClient` sends, with its
    * responses, as values, through the `calls` option's server, once every request it carries
    * has its exit, or rejects without `calls`. Workers RPC calls it by this name, the package's,
    * so it does not collide with the class's own methods.
@@ -741,7 +728,7 @@ export function make<
  * A Durable Object class delegating every handler, and `run`, to `handlers` over its own `ctx`,
  * with the services `services` returns for its `env`: it serves `routes` on `fetch`, the
  * sockets their protocols accept on `webSocketMessage`, `webSocketClose` and `webSocketError`,
- * and `calls` on `effectActionsRpc`, the method a caller's `layerStubClient` or `client` calls
+ * and `calls` on `effectActionsRpc`, the method a caller's `DurableObjectClient.layerStubClient` or `DurableObjectClient.make` calls
  * over the stub, and runs `alarm`. Export it, or a class extending it, under the name the
  * Wrangler configuration binds; a class extending it overrides only the handlers it has reason
  * to write, and reaches `make`'s through `super`.

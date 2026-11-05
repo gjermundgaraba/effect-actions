@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import * as DurableObjectClient from "@gjermundgaraba/effect-actions-cloudflare/DurableObjectClient";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
@@ -21,7 +22,7 @@ import { pageSocket, roomSocket } from "./support/socket.js";
 
 const day = 24 * 60 * 60 * 1000;
 
-const worker = ActionDurableObject.layerHttpClient(exports.default);
+const worker = DurableObjectClient.layerHttpClient(exports.default);
 
 const jsonAs = (token?: string) =>
   ActionHttp.client(RoomHttp, {

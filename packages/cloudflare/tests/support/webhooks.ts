@@ -13,6 +13,7 @@ import {
 import { TestClock } from "effect/testing";
 
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 import { appended, textsIn, textsSince } from "./texts.js";
 
 export class Subscriber extends Context.Service<Subscriber, string>()(
@@ -93,7 +94,7 @@ export const hookedRoutes = ActionHttp.layer(HookHttp, [hooked]).pipe(
   Layer.provide(
     Layer.unwrap(
       Effect.map(ActionDurableObject.State, ({ storage }) =>
-        ActionDurableObject.layerHttpClient(callbackRecordingIn(storage))
+        DurableObjectClient.layerHttpClient(callbackRecordingIn(storage))
       )
     )
   ),

@@ -1,4 +1,5 @@
 import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import * as DurableObjectClient from "@gjermundgaraba/effect-actions-cloudflare/DurableObjectClient";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -22,14 +23,14 @@ export const Http = ActionHttp.make([Ping]);
 export const toObject = (
   stub: DurableObjectStub
 ): Layer.Layer<HttpClient.HttpClient> =>
-  ActionDurableObject.layerHttpClient(stub);
+  DurableObjectClient.layerHttpClient(stub);
 
 export const checkLayerTypes = (stub: DurableObjectStub) => {
   // @ts-expect-error -- Published declarations must type what the layer provides.
-  const wrong: Layer.Layer<number> = ActionDurableObject.layerHttpClient(stub);
+  const wrong: Layer.Layer<number> = DurableObjectClient.layerHttpClient(stub);
 
   // @ts-expect-error -- Published declarations must take only something that fetches.
-  ActionDurableObject.layerHttpClient({});
+  DurableObjectClient.layerHttpClient({});
 
   return wrong;
 };
@@ -144,11 +145,11 @@ export const checkCallsTypes = () =>
 export const toHost = (
   stub: DurableObjectStub<Host>
 ): Layer.Layer<RpcClient.Protocol> =>
-  ActionDurableObject.layerStubClient(() => stub);
+  DurableObjectClient.layerStubClient(() => stub);
 
 export const checkStubTypes = (stub: DurableObjectStub<Hosted>) =>
   // @ts-expect-error -- Published declarations must refuse a stub of a class without the method.
-  ActionDurableObject.layerStubClient(() => stub);
+  DurableObjectClient.layerStubClient(() => stub);
 
 export const start = (
   stub: DurableObjectStub<Host>,
@@ -158,7 +159,7 @@ export const start = (
   NotFound | RpcClientError.RpcClientError,
   Scope.Scope
 > =>
-  Effect.flatMap(ActionDurableObject.client(Hosts), (host) =>
+  Effect.flatMap(DurableObjectClient.make(Hosts), (host) =>
     host(() => stub).start({ id })
   );
 

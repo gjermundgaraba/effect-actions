@@ -24,6 +24,7 @@ import {
 
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import { makeStubProtocol } from "../../src/durable/calls.js";
+import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 import { noteHeader, Overdrawn, Rpc } from "../support/app.js";
 import {
   PaneRpcs,
@@ -35,14 +36,14 @@ import {
 
 const plugin = (id: string) => env.PLUGIN_HOST.getByName(id);
 
-const plugins = ActionDurableObject.client(PluginRpcs);
+const plugins = DurableObjectClient.make(PluginRpcs);
 
 const rawOver = (
-  stub: ActionDurableObject.Stub | (() => ActionDurableObject.Stub)
+  stub: DurableObjectClient.Stub | (() => DurableObjectClient.Stub)
 ) =>
   RpcClient.make(PluginRpcs).pipe(
     Effect.provide(
-      ActionDurableObject.layerStubClient(
+      DurableObjectClient.layerStubClient(
         Predicate.isFunction(stub) ? stub : () => stub
       )
     )
@@ -345,7 +346,7 @@ describe("layerStubClient", () => {
       Effect.gen(function* () {
         const client = yield* RpcClient.make(StreamRpcs).pipe(
           Effect.provide(
-            ActionDurableObject.layerStubClient(() =>
+            DurableObjectClient.layerStubClient(() =>
               env.STREAMED.getByName("streams")
             )
           )
@@ -451,7 +452,7 @@ describe("layerStubClient", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          ActionDurableObject.layerStubClient(() =>
+          DurableObjectClient.layerStubClient(() =>
             env.STUBBED.getByName("contract")
           )
         )
@@ -590,7 +591,7 @@ describe("client", () => {
     "calls a group's unary rpcs, an rpc that streams having no method",
     () =>
       Effect.gen(function* () {
-        const streams = (yield* ActionDurableObject.client(StreamRpcs))(() =>
+        const streams = (yield* DurableObjectClient.make(StreamRpcs))(() =>
           env.STREAMED.getByName("client-streams")
         );
 
@@ -605,7 +606,7 @@ describe("client", () => {
 
       const pane = yield* RpcClient.make(PaneRpcs).pipe(
         Effect.provide(
-          ActionDurableObject.layerStubClient(() =>
+          DurableObjectClient.layerStubClient(() =>
             env.PANE_HOST.getByName("pane")
           )
         )
@@ -641,56 +642,57 @@ const refusedWith = (failure: unknown) =>
   );
 
 const checks = (error: unknown) => ({
-  retryable: ActionDurableObject.isRetryable(error),
-  overloaded: ActionDurableObject.isOverloaded(error),
-  reset: ActionDurableObject.isReset(error),
+  retryable: DurableObjectClient.isRetryable(error),
+  overloaded: DurableObjectClient.isOverloaded(error),
+  reset: DurableObjectClient.isReset(error),
 });
 
 describe("stub failures", () => {
-  it.effect(
-    "read the runtime's flags off the error a stub call failed with, an overloaded one never retryable",
-    () =>
-      Effect.gen(function* () {
-        for (const retryable of [false, true]) {
-          for (const overloaded of [false, true]) {
-            for (const durableObjectReset of [false, true]) {
-              const failure = thrown({
-                retryable,
-                overloaded,
-                durableObjectReset,
-              });
+  it("read the runtime's flags off a refused call, an overloaded one never retryable", () => {
+    for (const retryable of [false, true]) {
+      for (const overloaded of [false, true]) {
+        for (const durableObjectReset of [false, true]) {
+          const failure = thrown({ retryable, overloaded, durableObjectReset });
+          const error = DurableObjectClient.refused(failure);
 
-              const error = yield* refusedWith(failure);
-
-              expect(checks(error)).toStrictEqual({
-                retryable: retryable && !overloaded,
-                overloaded,
-                reset: durableObjectReset,
-              });
-              expect(ActionDurableObject.stubFailure(error)).toStrictEqual(
-                Option.some(failure)
-              );
-            }
-          }
+          expect(checks(error)).toStrictEqual({
+            retryable: retryable && !overloaded,
+            overloaded,
+            reset: durableObjectReset,
+          });
+          expect(DurableObjectClient.runtimeError(error)).toStrictEqual(
+            Option.some(failure)
+          );
         }
-      }).pipe(Effect.scoped)
-  );
+      }
+    }
+  });
 
-  it.effect("read a flag only when it is true", () =>
+  it("read a flag only when it is true", () => {
+    const error = DurableObjectClient.refused(
+      Object.assign(new Error("flags that are not true"), {
+        retryable: "true",
+        overloaded: 1,
+        durableObjectReset: null,
+      })
+    );
+
+    expect(checks(error)).toStrictEqual({
+      retryable: false,
+      overloaded: false,
+      reset: false,
+    });
+  });
+
+  it.effect("fail a stub call the runtime refuses as refused builds it", () =>
     Effect.gen(function* () {
-      const error = yield* refusedWith(
-        Object.assign(new Error("flags that are not true"), {
-          retryable: "true",
-          overloaded: 1,
-          durableObjectReset: null,
-        })
-      );
+      const failure = thrown({ retryable: true });
+      const error = yield* refusedWith(failure);
 
-      expect(checks(error)).toStrictEqual({
-        retryable: false,
-        overloaded: false,
-        reset: false,
-      });
+      expect(DurableObjectClient.runtimeError(error)).toStrictEqual(
+        Option.some(failure)
+      );
+      expect(DurableObjectClient.isRetryable(error)).toBe(true);
     }).pipe(Effect.scoped)
   );
 
@@ -717,7 +719,7 @@ describe("stub failures", () => {
           thrown({ retryable: true }),
           undefined,
         ]) {
-          expect(ActionDurableObject.stubFailure(error)).toStrictEqual(
+          expect(DurableObjectClient.runtimeError(error)).toStrictEqual(
             Option.none()
           );
           expect(checks(error)).toStrictEqual({
@@ -738,9 +740,9 @@ describe("stub failures", () => {
 
       const error = yield* Effect.flip(client.panes());
 
-      expect(ActionDurableObject.isReset(error)).toBe(true);
+      expect(DurableObjectClient.isReset(error)).toBe(true);
       expect(
-        String(Option.getOrUndefined(ActionDurableObject.stubFailure(error)))
+        String(Option.getOrUndefined(DurableObjectClient.runtimeError(error)))
       ).toContain("aborted");
     }).pipe(Effect.scoped)
   );

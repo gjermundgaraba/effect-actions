@@ -281,6 +281,8 @@ try {
   ]);
 
   refuseInternalKeys(path.join(consumer, "cloudflare", "worker.d.ts"));
+
+  run(process.execPath, [path.join(consumer, "cloudflare", "node.js")]);
 } finally {
   rmSync(consumer, { recursive: true, force: true });
 }

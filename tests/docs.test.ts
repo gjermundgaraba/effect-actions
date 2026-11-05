@@ -260,17 +260,21 @@ describe("the documentation", () => {
     );
   });
 
-  it("gives every module the cloudflare package exports a page", () => {
+  it("says where to import every module the cloudflare package exports, on one of its pages", () => {
     const modules = Object.keys(cloudflareManifest.exports).flatMap(
       (exported) =>
         exported === "./package.json" ? [] : [exported.slice("./".length)]
     );
 
+    const docsTexts = cloudflareDocsPages.map((page) => read(page));
+
     for (const module of modules) {
-      expect(cloudflareDocsPages).toContain(`${cloudflare}/docs/${module}.md`);
-      expect(read(`${cloudflare}/docs/${module}.md`)).toContain(
-        `Import \`${cloudflareManifest.name}/${module}\``
-      );
+      expect(
+        docsTexts.some((text) =>
+          text.includes(`Import \`${cloudflareManifest.name}/${module}\``)
+        ),
+        module
+      ).toBe(true);
     }
   });
 

@@ -10,6 +10,7 @@ import { RpcClient, RpcServer } from "effect/rpc";
 import type { RpcClientError, RpcMessage } from "effect/rpc";
 
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 import {
   Actions,
   Builds,
@@ -324,22 +325,22 @@ declare const plainStub: DurableObjectStub<Plain>;
 declare const hostedStub: DurableObjectStub<Hosted>;
 
 expectTypeOf(
-  ActionDurableObject.layerStubClient(() => pluginStub)
+  DurableObjectClient.layerStubClient(() => pluginStub)
 ).toEqualTypeOf<Layer.Layer<RpcClient.Protocol>>();
 
 // @ts-expect-error -- A stub of a class without the method has nothing to call.
-ActionDurableObject.layerStubClient(() => plainStub);
+DurableObjectClient.layerStubClient(() => plainStub);
 
 // @ts-expect-error -- A class delegating to handlers serves calls only if it defines the method.
-ActionDurableObject.layerStubClient(() => hostedStub);
+DurableObjectClient.layerStubClient(() => hostedStub);
 
-const plugins = ActionDurableObject.client(PluginRpcs);
+const plugins = DurableObjectClient.make(PluginRpcs);
 
 expectTypeOf(plugins).toEqualTypeOf<
   Effect.Effect<
     (
-      stubOf: () => ActionDurableObject.Stub
-    ) => ActionDurableObject.Client<typeof PluginRpcs>,
+      stubOf: () => DurableObjectClient.Stub
+    ) => DurableObjectClient.Client<typeof PluginRpcs>,
     never,
     Scope.Scope
   >
@@ -353,7 +354,7 @@ void Effect.map(plugins, (plugin) => plugin(() => plainStub));
 // @ts-expect-error -- A client takes a factory of stubs, never a stub it would hold.
 void Effect.map(plugins, (plugin) => plugin(pluginStub));
 
-declare const plugin: ActionDurableObject.Client<typeof PluginRpcs>;
+declare const plugin: DurableObjectClient.Client<typeof PluginRpcs>;
 
 expectTypeOf(plugin.start()).toEqualTypeOf<
   Effect.Effect<
@@ -363,7 +364,7 @@ expectTypeOf(plugin.start()).toEqualTypeOf<
 >();
 
 const raw = RpcClient.make(PluginRpcs).pipe(
-  Effect.provide(ActionDurableObject.layerStubClient(() => pluginStub))
+  Effect.provide(DurableObjectClient.layerStubClient(() => pluginStub))
 );
 
 expectTypeOf<
@@ -372,7 +373,7 @@ expectTypeOf<
   PluginNotFound | PluginHasNoPane | RpcClientError.RpcClientError
 >();
 
-declare const streams: ActionDurableObject.Client<typeof StreamRpcs>;
+declare const streams: DurableObjectClient.Client<typeof StreamRpcs>;
 
 expectTypeOf(streams.head()).toEqualTypeOf<
   Effect.Effect<string, RpcClientError.RpcClientError>

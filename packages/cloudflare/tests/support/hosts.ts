@@ -3,6 +3,7 @@ import { Context, Effect, Layer, Schema, Stream } from "effect";
 import { Rpc, RpcGroup, RpcServer } from "effect/rpc";
 
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 
 export class PluginNotFound extends Schema.TaggedError<
   PluginNotFound,
@@ -112,11 +113,11 @@ export class Hosts extends Context.Service<
   {
     readonly plugin: (
       id: string
-    ) => ActionDurableObject.Client<typeof PluginRpcs>;
+    ) => DurableObjectClient.Client<typeof PluginRpcs>;
   }
 >()("test/Hosts") {
   static readonly layer = Layer.effect(Hosts)(
-    Effect.map(ActionDurableObject.client(PluginRpcs), (plugin) =>
+    Effect.map(DurableObjectClient.make(PluginRpcs), (plugin) =>
       Hosts.of({ plugin: (id) => plugin(() => env.PLUGIN_HOST.getByName(id)) })
     )
   );

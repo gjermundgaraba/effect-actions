@@ -3,12 +3,12 @@ import { env } from "cloudflare:workers";
 import { Cause, Effect, Exit, Option, Predicate, Schema } from "effect";
 import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
 
-import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
+import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 import { Expired, Instant, NativeRpcs } from "../support/native.js";
 
 const native = RpcClient.make(NativeRpcs).pipe(
   Effect.provide(
-    ActionDurableObject.layerStubClient(() => env.NATIVE.getByName("native"))
+    DurableObjectClient.layerStubClient(() => env.NATIVE.getByName("native"))
   )
 );
 
@@ -50,7 +50,7 @@ describe("values over the stub", () => {
         const sent: unknown[] = [];
         const answered: unknown[] = [];
 
-        const recording: ActionDurableObject.Stub = {
+        const recording: DurableObjectClient.Stub = {
           effectActionsRpc: async (request) => {
             sent.push(request);
 
@@ -63,7 +63,7 @@ describe("values over the stub", () => {
         };
 
         const client = yield* RpcClient.make(NativeRpcs).pipe(
-          Effect.provide(ActionDurableObject.layerStubClient(() => recording))
+          Effect.provide(DurableObjectClient.layerStubClient(() => recording))
         );
 
         yield* client.echo({ values });
@@ -135,12 +135,10 @@ describe("values over the stub", () => {
         const stub = env.NATIVE.getByName("crashed");
 
         const client = yield* RpcClient.make(NativeRpcs).pipe(
-          Effect.provide(ActionDurableObject.layerStubClient(() => stub))
+          Effect.provide(DurableObjectClient.layerStubClient(() => stub))
         );
 
-        const calls = (yield* ActionDurableObject.client(NativeRpcs))(
-          () => stub
-        );
+        const calls = (yield* DurableObjectClient.make(NativeRpcs))(() => stub);
 
         for (const crashing of [client, calls]) {
           const crashed = yield* Effect.exit(
@@ -152,7 +150,7 @@ describe("values over the stub", () => {
         }
 
         const fresh = yield* RpcClient.make(NativeRpcs).pipe(
-          Effect.provide(ActionDurableObject.layerStubClient(() => stub))
+          Effect.provide(DurableObjectClient.layerStubClient(() => stub))
         );
 
         expect(yield* fresh.maybe({ value: "fresh" })).toBe("fresh");
@@ -167,7 +165,7 @@ describe("values over the stub", () => {
         const sent: Array<string | number> = [];
         const answered: unknown[] = [];
 
-        const recording: ActionDurableObject.Stub = {
+        const recording: DurableObjectClient.Stub = {
           effectActionsRpc: async (request) => {
             for (const message of request) {
               if (Predicate.isTagged(message, "Request")) {
@@ -184,7 +182,7 @@ describe("values over the stub", () => {
         };
 
         const client = yield* RpcClient.make(NativeRpcs).pipe(
-          Effect.provide(ActionDurableObject.layerStubClient(() => recording))
+          Effect.provide(DurableObjectClient.layerStubClient(() => recording))
         );
 
         yield* Effect.exit(client.crash({ message: "boom" }));
