@@ -125,14 +125,6 @@ export interface Options<A extends Action.Any> {
   ) => boolean | Effect.Effect<boolean, unknown>;
 }
 
-interface ErasedOptions {
-  readonly actions?: readonly Action.Any[] | undefined;
-  readonly needsApproval?: (
-    call: ToolCall,
-    context: Tool.NeedsApprovalContext
-  ) => boolean | Effect.Effect<boolean, unknown>;
-}
-
 const annotateIfGiven = <I, S>(
   tool: Tool.Any,
   key: Context.Key<I, S>,
@@ -273,7 +265,7 @@ export function make<
 >;
 export function make(
   apps: ServedActions,
-  options?: ErasedOptions
+  options?: Options<Action.Any>
 ): ErasedTools {
   const served = select(toList(apps), options?.actions);
 
