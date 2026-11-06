@@ -19,7 +19,7 @@ export class PluginHasNoPane extends Schema.TaggedError<
   plugin: Schema.String,
 }) {}
 
-export const Code = Schema.Struct({
+const Code = Schema.Struct({
   plugin: Schema.String,
   pane: Schema.Boolean,
 });

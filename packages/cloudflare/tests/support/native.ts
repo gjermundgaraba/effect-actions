@@ -8,11 +8,11 @@ export class Expired extends Schema.TaggedError<
   at: Schema.Date,
 }) {}
 
-export class Unclonable {
+class Unclonable {
   readonly field = 1;
 }
 
-export const Values = Schema.Struct({
+const Values = Schema.Struct({
   maybe: Schema.UndefinedOr(Schema.String),
   at: Schema.Date,
   bytes: Schema.Uint8Array,

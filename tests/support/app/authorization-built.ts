@@ -18,7 +18,7 @@ export class Permissions extends Context.Service<
   });
 }
 
-export const authorizeStored = Effect.gen(function* () {
+const authorizeStored = Effect.gen(function* () {
   const permissions = yield* Permissions;
 
   return (action: Action.Any) =>

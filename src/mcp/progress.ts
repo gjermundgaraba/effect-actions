@@ -5,7 +5,7 @@ import type { McpServer } from "effect/ai";
 import type { Codec } from "../contract/codec.js";
 import type { Reporting } from "../contract/progress.js";
 
-export const progressKey = "effect-actions/progress";
+const progressKey = "effect-actions/progress";
 
 const tokenOf = Schema.decodeUnknownOption(McpSchema.ProgressToken);
 

@@ -70,7 +70,7 @@ const subscription = {
   maxAgeMs: Schema.optional(Schema.Finite),
 };
 
-export class ListEvents extends Rpc.make("events/list", {
+class ListEvents extends Rpc.make("events/list", {
   payload: { _meta: Meta, cursor: Schema.optional(Schema.String) },
   success: Schema.Struct({
     resultType: Schema.Literal("complete"),
@@ -94,7 +94,7 @@ export class PollEvents extends Rpc.make("events/poll", {
   error: EventsError,
 }) {}
 
-export class StreamEvents extends Rpc.make("events/stream", {
+class StreamEvents extends Rpc.make("events/stream", {
   payload: subscription,
   success: Schema.Struct({
     resultType: Schema.Literal("complete"),

@@ -35,11 +35,11 @@ export class Overdrawn extends Schema.TaggedError<
 
 export const noteHeader = "x-note";
 
-export class CurrentNote extends Context.Service<CurrentNote, string>()(
+class CurrentNote extends Context.Service<CurrentNote, string>()(
   "test/CurrentNote"
 ) {}
 
-export class ResolveNote extends RpcMiddleware.Service<
+class ResolveNote extends RpcMiddleware.Service<
   ResolveNote,
   { provides: CurrentNote }
 >()("test/ResolveNote") {}
@@ -48,14 +48,14 @@ const resolveNote = Layer.succeed(ResolveNote, (call, { headers }) =>
   Effect.provideService(call, CurrentNote, headers[noteHeader] ?? "none")
 );
 
-export const Whoami = Action.make("whoami", {
+const Whoami = Action.make("whoami", {
   description: "The signed-in user",
   readOnly: true,
   caller: CurrentUser,
   success: Schema.String,
 });
 
-export const Spend = Action.make("spend", {
+const Spend = Action.make("spend", {
   description: "Spend from the instance's balance of 10",
   readOnly: false,
   caller: CurrentUser,
@@ -64,33 +64,33 @@ export const Spend = Action.make("spend", {
   error: Overdrawn,
 });
 
-export const ReadNote = Action.make("readNote", {
+const ReadNote = Action.make("readNote", {
   description: "The note the call's headers carry",
   readOnly: true,
   caller: Action.Anyone,
   success: Schema.String,
 });
 
-export const Schedule = Action.make("schedule", {
+const Schedule = Action.make("schedule", {
   description: "Set the object's alarm",
   readOnly: false,
   caller: Action.Anyone,
 });
 
-export const Alarms = Action.make("alarms", {
+const Alarms = Action.make("alarms", {
   description: "How many alarms ran on the object",
   readOnly: true,
   caller: Action.Anyone,
   success: Schema.Int,
 });
 
-export const Pause = Action.make("pause", {
+const Pause = Action.make("pause", {
   description: "Answer after a tenth of a second",
   readOnly: true,
   caller: Action.Anyone,
 });
 
-export const Hold = Action.make("hold", {
+const Hold = Action.make("hold", {
   description: "Answer never, until interrupted",
   readOnly: true,
   caller: Action.Anyone,
@@ -122,19 +122,17 @@ const users = ["ada", "grace"] as const;
 const isUser = (name: string): name is (typeof users)[number] =>
   users.some((user) => user === name);
 
-export const authenticate = Authentication.layer(
-  Login,
-  (token: Redacted.Redacted) =>
-    isUser(Redacted.value(token))
-      ? Effect.succeed(Redacted.value(token))
-      : Effect.fail(
-          new Action.Unauthenticated({ message: "Unknown test token." })
-        )
+const authenticate = Authentication.layer(Login, (token: Redacted.Redacted) =>
+  isUser(Redacted.value(token))
+    ? Effect.succeed(Redacted.value(token))
+    : Effect.fail(
+        new Action.Unauthenticated({ message: "Unknown test token." })
+      )
 );
 
 const alarmsKey = "alarms";
 
-export class StartupRead extends Context.Service<StartupRead, undefined>()(
+class StartupRead extends Context.Service<StartupRead, undefined>()(
   "test/StartupRead"
 ) {
   static readonly layer = Layer.effect(StartupRead)(
@@ -356,7 +354,7 @@ export const ownSocketRoutes = Layer.mergeAll(socketRoutes, ownSocketRoute);
 
 export const readyKey = "ready";
 
-export class NotReady extends Data.TaggedError("NotReady")<{
+class NotReady extends Data.TaggedError("NotReady")<{
   readonly key: string;
 }> {}
 

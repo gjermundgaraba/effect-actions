@@ -6,7 +6,7 @@ import { Effect, Layer, Option, Schema } from "effect";
 
 import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 
-export const PutBook = Action.make("putBook", {
+const PutBook = Action.make("putBook", {
   description: "Put a book on a shelf.",
   input: { onto: Schema.String, title: Schema.String },
   success: Schema.Int,

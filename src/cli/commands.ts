@@ -91,7 +91,7 @@ export interface Options<A extends Action.Any> {
   readonly stdin?: StdinField<A>;
 }
 
-export const kebab = (name: string): string => {
+const kebab = (name: string): string => {
   const kebabbed = name
     .replaceAll(/(?<upper>[A-Z]+)(?<word>[A-Z][a-z])/gu, "$<upper>-$<word>")
     .replaceAll(/(?<lower>[a-z0-9])(?<upper>[A-Z])/gu, "$<lower>-$<upper>")

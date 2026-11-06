@@ -10,9 +10,7 @@ import type { Actor } from "./authorization.js";
 import { Http, Login } from "./binding.js";
 import { userActions } from "./handlers.js";
 
-export class Tenant extends Context.Service<Tenant, string>()(
-  "example/Tenant"
-) {}
+class Tenant extends Context.Service<Tenant, string>()("example/Tenant") {}
 
 const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
   Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
@@ -24,7 +22,7 @@ const resolveTenant = HttpRouter.middleware<{ provides: Tenant }>()((route) =>
   )
 );
 
-export class LogCaller extends HttpApiMiddleware.Service<
+class LogCaller extends HttpApiMiddleware.Service<
   LogCaller,
   { requires: CurrentActor }
 >()("example/LogCaller") {}
@@ -35,7 +33,7 @@ const LogCallerLive = Layer.succeed(LogCaller, (route) =>
   )
 );
 
-export class Verifier extends Context.Service<
+class Verifier extends Context.Service<
   Verifier,
   {
     readonly verify: (

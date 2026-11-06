@@ -16,7 +16,7 @@ import * as ActionDurableObject from "../../src/durable/ActionDurableObject.js";
 import * as DurableObjectClient from "../../src/durable/DurableObjectClient.js";
 import { appended, textsIn, textsSince } from "./texts.js";
 
-export class Subscriber extends Context.Service<Subscriber, string>()(
+class Subscriber extends Context.Service<Subscriber, string>()(
   "test/Subscriber"
 ) {}
 

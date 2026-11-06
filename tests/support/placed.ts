@@ -13,7 +13,7 @@ import { double, userActions } from "./app/handlers.js";
 import { Users } from "./app/users.js";
 import { serve } from "./serve.js";
 
-export const Bump = Action.make("bump", {
+const Bump = Action.make("bump", {
   description: "Count one more.",
   success: Schema.Int,
   readOnly: false,
@@ -26,7 +26,7 @@ export const Counted = Event.make("count.changed", {
   caller: CurrentActor,
 });
 
-export const Countdown = Action.make("countdown", {
+const Countdown = Action.make("countdown", {
   description: "Count down to one, one number at a time.",
   input: { from: Schema.Int },
   success: Action.Stream(Schema.Int),
@@ -34,7 +34,7 @@ export const Countdown = Action.make("countdown", {
   caller: Action.Anyone,
 });
 
-export const Fill = Action.make("fill", {
+const Fill = Action.make("fill", {
   description: "Fill slots, reporting each one filled.",
   input: { slots: Schema.Int },
   success: { filled: Schema.Int },
