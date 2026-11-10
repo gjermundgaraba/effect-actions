@@ -1,7 +1,8 @@
 import { assert, describe, expect, it } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Schema, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { OpenApi } from "effect/http-api";
+import { TestClock } from "effect/testing";
 
 import * as Action from "../../src/contract/Action.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
@@ -135,6 +136,35 @@ describe("HTTP element streams", () => {
           4,
         ]);
       }).pipe(Effect.provide(served()))
+  );
+
+  it.effect(
+    "writes a keepalive comment every 15 seconds from the first element",
+    () =>
+      Effect.gen(function* () {
+        const release = yield* Deferred.make<undefined>();
+
+        const waits = Action.implement(Tail, () =>
+          Stream.concat(
+            lines(1),
+            Stream.drain(Stream.fromEffect(Deferred.await(release)))
+          )
+        );
+
+        return yield* Effect.gen(function* () {
+          const response = yield* call("tail", { count: 1 });
+          const body = yield* Effect.forkChild(response.text);
+
+          yield* TestClock.adjust("15 seconds");
+          yield* Deferred.succeed(release, undefined);
+
+          expect(yield* Fiber.join(body)).toBe(
+            'event: element\ndata: {"n":1}\n\n: keepalive\n\n'
+          );
+        }).pipe(
+          Effect.provide(Testing.layer(ActionHttp.layer(Http, [waits, builds])))
+        );
+      })
   );
 
   it("lists the route's event stream alone", () => {

@@ -3,7 +3,7 @@
 `@gjermundgaraba/effect-actions-cloudflare` serves Effect RPC from Cloudflare Durable Objects, over WebSockets the runtime holds while an object hibernates and over an object's stub, and calls it from a Worker: any plain `RpcGroup`, with no action at all, served by Effect's own `RpcServer`. [effect-actions](https://github.com/gjermundgaraba/effect-actions) bindings are the option: the same routes `ActionRpc.layer`, `ActionHttp.layer` and `ActionMcp.layerHttp` serve elsewhere, in an object, with events followed over its sockets, over MCP or by webhook across its hibernation. It is released with `@gjermundgaraba/effect-actions`, at the same version, and requires it.
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflare effect@~4.1.1
+pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflare effect@~4.1.3
 ```
 
 Its declarations name the Workers runtime's types, such as `Fetcher`: generate them with `wrangler types`, or install `@cloudflare/workers-types`, as a Worker project does.

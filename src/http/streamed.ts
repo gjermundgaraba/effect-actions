@@ -1,4 +1,12 @@
-import { Cause, Effect, ErrorReporter, Queue, Schema, Stream } from "effect";
+import {
+  Cause,
+  Duration,
+  Effect,
+  ErrorReporter,
+  Queue,
+  Schema,
+  Stream,
+} from "effect";
 import { HttpServerRequest } from "effect/http";
 import { HttpApiSchema } from "effect/http-api";
 
@@ -58,6 +66,8 @@ export type SuccessOf<A extends Action.Any, E extends Schema.Top> =
             >
       : Schema.toCodecJson<A["success"]>;
 
+const keepAliveEvery = Duration.seconds(15);
+
 export const answeredWithProgress = (success: Action.Any["success"]) =>
   HttpApiSchema.isNoContent(success.ast) ? HttpApiSchema.NoContent : success;
 
@@ -72,6 +82,7 @@ export const progressStreamOf = (
       eventOf("final", success),
     ]),
     error: Schema.Union(errors),
+    keepAlive: keepAliveEvery,
   });
 
 export const elementStreamOf = (
@@ -86,6 +97,7 @@ export const elementStreamOf = (
         : [eventOf("element", element), eventOf("progress", progress)]
     ),
     error: Schema.Union(errors),
+    keepAlive: keepAliveEvery,
   });
 
 const gatedOnFirst = (sent: Queue.Queue<Sent, unknown>) =>

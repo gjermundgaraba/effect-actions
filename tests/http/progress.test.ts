@@ -1,6 +1,16 @@
 import { assert, describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, ErrorReporter, Exit, Layer, Schema } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  ErrorReporter,
+  Exit,
+  Fiber,
+  Layer,
+  Schema,
+} from "effect";
 import { OpenApi } from "effect/http-api";
+import { TestClock } from "effect/testing";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
@@ -278,6 +288,53 @@ describe("HTTP progress", () => {
           204,
         ]);
       }).pipe(Effect.provide(served()))
+  );
+
+  it.effect(
+    "writes a keepalive comment every 15 seconds from the first event, which ActionHttp.client skips",
+    () =>
+      Effect.gen(function* () {
+        const release = yield* Deferred.make<undefined>();
+
+        const waits = Action.implement(Touch, (_input, { progress }) =>
+          Effect.andThen(progress({ touched: true }), Deferred.await(release))
+        );
+
+        return yield* Effect.gen(function* () {
+          const response = yield* call("touch", {});
+          const body = yield* Effect.forkChild(response.text);
+
+          const client = yield* ActionHttp.client(Http);
+          const progressed = yield* Deferred.make<boolean>();
+
+          const answer = yield* Effect.forkChild(
+            client.touch(
+              {},
+              {
+                onProgress: ({ touched }) =>
+                  Deferred.succeed(progressed, touched),
+              }
+            )
+          );
+
+          yield* Deferred.await(progressed);
+          yield* TestClock.adjust("15 seconds");
+          yield* TestClock.adjust("15 seconds");
+          yield* Deferred.succeed(release, undefined);
+
+          expect([
+            yield* Fiber.join(body),
+            yield* Fiber.join(answer),
+          ]).toStrictEqual([
+            'event: progress\ndata: {"touched":true}\n\n: keepalive\n\n: keepalive\n\nevent: final\ndata: null\n\n',
+            undefined,
+          ]);
+        }).pipe(
+          Effect.provide(
+            Testing.layer(ActionHttp.layer(Http, [imports, waits]))
+          )
+        );
+      })
   );
 
   it("lists the route's JSON answer and its event stream", () => {
