@@ -800,7 +800,8 @@ export interface KeptSubscription {
   readonly headers: ReadonlyArray<readonly [string, string]>;
   /**
    * The payload that resumes the subscription after `values`, a chunk sent for it, or
-   * `undefined` where they reach no position.
+   * `undefined` where they reach no position. It never throws, being called as the protocol
+   * sends: an input that does not encode fails its subscription as it is admitted instead.
    */
   readonly resumeFrom: (
     values: RpcMessage.ResponseChunkEncoded["values"]
@@ -841,9 +842,8 @@ const subscriptionHandlerOf = (
   error: Schema.Union<Action.Errors>,
   keeper: SubscriptionKeeper | undefined
 ) => {
-  const subscription = SubscriptionOf(feed.event);
-  const decode = decodeInput({ input: subscription });
-  const encodeResumed = Schema.encodeOption(Schema.toCodecJson(subscription));
+  const decode = decodeInput({ input: SubscriptionOf(feed.event) });
+  const encodeInput = Schema.encodeEffect(Schema.toCodecJson(feed.event.input));
 
   const sent = Schema.toCodecJson(PushedOf(feed.event));
   const encode = Schema.encodeEffect(sent);
@@ -856,6 +856,8 @@ const subscriptionHandlerOf = (
       const open = yield* feed.stream(input);
 
       if (keeper !== undefined) {
+        const resumed = yield* Effect.orDie(encodeInput(input));
+
         yield* keeper.keep({
           clientId: options.client.id,
           requestId: options.requestId,
@@ -875,9 +877,7 @@ const subscriptionHandlerOf = (
 
             return reached === undefined
               ? undefined
-              : Option.getOrUndefined(
-                  encodeResumed({ input, cursor: reached })
-                );
+              : { input: resumed, cursor: reached };
           },
         });
       }
