@@ -12,6 +12,7 @@ import {
   Stream,
   Tracer,
 } from "effect";
+import { Toolkit } from "effect/ai";
 import { HttpRouter, HttpServerResponse } from "effect/http";
 import {
   HttpApi,
@@ -894,8 +895,7 @@ const callCount = async (
 describe.each(["HTTP", "MCP"] as const)(
   "request logging and tracing: %s",
   (transport) => {
-    const requestSpan =
-      transport === "HTTP" ? /^POST$/u : /^McpServer\..*tools\/call$/u;
+    const requestSpan = transport === "HTTP" ? /^POST$/u : /^tools\/call /u;
 
     const Guarded = Action.make("guarded", {
       description: "Signed in only",
@@ -1030,7 +1030,7 @@ describe.each(["HTTP", "MCP"] as const)(
 );
 
 describe("a call's spans", () => {
-  it("keeps a tool call's arguments off its spans over MCP, as HTTP keeps its body, where Effect's toolkit records them, a Schema.Redacted value included", async () => {
+  it("keeps a tool call's arguments off its spans over MCP, as HTTP keeps its body, where Effect's toolkit records them when asked, a Schema.Redacted value included", async () => {
     const SignIn = Action.make("login", {
       description: "",
       readOnly: false,
@@ -1073,6 +1073,7 @@ describe("a call's spans", () => {
       ).pipe(
         Effect.withSpan("caller"),
         Effect.provide(tools.layer),
+        Effect.provideService(Toolkit.RecordToolArguments, true),
         Effect.provideService(Tracer.Tracer, tracer),
         Effect.runPromise
       );
@@ -1082,7 +1083,7 @@ describe("a call's spans", () => {
     expect(mcp).toContain("login");
     expect(JSON.stringify(http)).not.toContain("hunter2");
     expect(JSON.stringify(mcp)).not.toContain("hunter2");
-    expect(toolkit).toContainEqual(sent);
+    expect(toolkit).toContain(JSON.stringify(sent));
   });
 
   it("opens no action span for input that does not decode, which HTTP answers with a 400", async () => {

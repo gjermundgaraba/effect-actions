@@ -368,10 +368,19 @@ const makeProtocol = (
                   return write(clientId, message);
                 }
 
+                const namedByTheMessage = new Set(
+                  message.headers.map(([name]) => name.toLowerCase())
+                );
+
                 return kept
                   ? write(clientId, {
                       ...message,
-                      headers: [...headers, ...message.headers],
+                      headers: [
+                        ...headers.filter(
+                          ([name]) => !namedByTheMessage.has(name)
+                        ),
+                        ...message.headers,
+                      ],
                     })
                   : send(
                       clientId,

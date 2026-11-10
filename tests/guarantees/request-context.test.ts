@@ -783,7 +783,7 @@ describe("what the routes were built with", () => {
       );
 
       expect(parents.get("level")).toMatch(
-        transport === "HTTP" ? /^POST$/u : /^McpServer\..*tools\/call$/u
+        transport === "HTTP" ? /^POST$/u : /^tools\/call /u
       );
     }
   );

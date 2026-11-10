@@ -148,6 +148,8 @@ describe("MCP registration without media", () => {
     call("find", { id: 1 }),
   ];
 
+  const resetCall = call("reset");
+
   const requests = [
     { method: "tools/list" },
     call("ready"),
@@ -155,12 +157,17 @@ describe("MCP registration without media", () => {
     call("find", { id: "n1" }),
     call("greeting"),
     call("count"),
-    call("reset"),
+    resetCall,
     call("fail"),
     call("boom"),
     call("broken"),
     ...invalidArgumentCalls,
   ];
+
+  const voidAnswer = requests.indexOf(resetCall);
+
+  const besidesRegisterToolkitsEmptyVoidAnswer = (answers: readonly string[]) =>
+    answers.filter((_, index) => index !== voidAnswer);
 
   it.effect(
     "lists and answers as Effect's registerToolkit does, over HTTP",
@@ -181,8 +188,17 @@ describe("MCP registration without media", () => {
           )
         );
 
-        expect(ours).toStrictEqual(theirs);
+        expect(besidesRegisterToolkitsEmptyVoidAnswer(ours)).toStrictEqual(
+          besidesRegisterToolkitsEmptyVoidAnswer(theirs)
+        );
 
+        expect(replyOf(ours[voidAnswer] ?? "")).toStrictEqual({
+          result: {
+            isError: false,
+            structuredContent: null,
+            content: [{ type: "text", text: "null" }],
+          },
+        });
         expect(replyOf(ours[1] ?? "")).toStrictEqual({
           result: {
             isError: false,
@@ -221,7 +237,17 @@ describe("MCP registration without media", () => {
           requests
         );
 
-        expect(ours).toStrictEqual(theirs);
+        expect(besidesRegisterToolkitsEmptyVoidAnswer(ours)).toStrictEqual(
+          besidesRegisterToolkitsEmptyVoidAnswer(theirs)
+        );
+
+        expect(replyOf(ours[voidAnswer] ?? "")).toStrictEqual({
+          result: {
+            isError: false,
+            ...(revision === "2026-07-28" ? { structuredContent: null } : {}),
+            content: [{ type: "text", text: "null" }],
+          },
+        });
 
         if (revision !== "2026-07-28") {
           expect(replyOf(ours[4] ?? "")).toStrictEqual({

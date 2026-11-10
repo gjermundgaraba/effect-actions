@@ -10,6 +10,7 @@
 
 ### Other changes
 
+- `ActionDurableObject.layerWebSocket` lets a message's own header replace the upgrade's of that name, its token included, under effect 4.1.3 as before it: that release's `RpcServer` joins a repeated header's values, so a message with its own token on a socket upgraded with another was refused as unauthenticated.
 - An event subscription over `ActionRpc` whose input and cursor both fail to decode answers `InvalidInput` naming every issue, each by its path in the subscription (`["input", "log"]`, `["cursor"]`), as `ActionHttp` does; RPC named only the cursor's, and an input issue's path lacked its `input` prefix.
 - An event subscription over `ActionRpc` kept by its protocol, as `layerWebSocket` keeps one, resumes from its input encoded again from the decoded value, where it kept the input as sent. An input whose schema does not encode it again fails that subscription alone as it is admitted, reported as a defect.
 
