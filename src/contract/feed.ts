@@ -17,13 +17,9 @@ import { Unauthenticated } from "./errors.js";
 import type * as Event from "./Event.js";
 import { attachmentsOf, Events, reaches } from "./hub.js";
 import type { Checking } from "./hub.js";
-import {
-  builderLayer,
-  memoized,
-  notMadeHere,
-  selectHeld,
-} from "./implementation.js";
+import { builderLayer, memoized, notMadeHere } from "./implementation.js";
 import type {
+  ContractKind,
   ErasedAuthorize,
   ErasedValue,
   Memoized,
@@ -674,16 +670,11 @@ export const eventsOf = (served: Served): readonly AnyEventImplementation[] =>
     Predicate.isTagged(app, "EventImplementation")
   );
 
-export const selectEvents = (
-  apps: readonly AnyEventImplementation[],
-  listed: readonly Event.Any[] | undefined
-): readonly AnyEventImplementation[] =>
-  selectHeld(
-    apps,
-    listed,
-    (app) => app.events,
-    (own, app) => EventImplementation.share(own, app)
-  );
+export const eventKind: ContractKind<AnyEventImplementation, Event.Any> = {
+  noun: "event",
+  holds: (app) => app.events,
+  share: (own, app) => EventImplementation.share(own, app),
+};
 
 export const acquireFeeds = (
   events: readonly AnyEventImplementation[]

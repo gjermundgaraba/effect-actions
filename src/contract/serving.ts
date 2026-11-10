@@ -4,7 +4,7 @@ import type * as Action from "./Action.js";
 import { Anyone, assertAuthentication } from "./caller.js";
 import type { Proving } from "./caller.js";
 import type * as Event from "./Event.js";
-import { EventImplementation, eventsOf, selectEvents } from "./feed.js";
+import { EventImplementation, eventKind, eventsOf } from "./feed.js";
 import type { AnyEventImplementation } from "./feed.js";
 import {
   assertHeld,
@@ -14,8 +14,13 @@ import {
   provideBuilders,
   select,
   toList,
+  actionKind,
 } from "./implementation.js";
-import type { AnyImplementation, Served } from "./implementation.js";
+import type {
+  AnyImplementation,
+  ContractKind,
+  Served,
+} from "./implementation.js";
 import { selection } from "./listed.js";
 import { assertDistinct, assertOnce, heldOnce } from "./names.js";
 
@@ -26,20 +31,20 @@ export const selectFrom = (
   const listed = selection(actions);
 
   return {
-    apps: select(toList(served), listed.actions),
-    events: selectEvents(eventsOf(served), listed.events),
+    apps: select(actionKind, toList(served), listed.actions),
+    events: select(eventKind, eventsOf(served), listed.events),
   };
 };
 
 const servedBy = <App, C extends Pick<Action.Any, "name">>(
-  noun: "action" | "event",
+  kind: ContractKind<App, C>,
   what: string,
   bound: readonly C[],
   apps: readonly App[],
-  listed: readonly C[] | undefined,
-  holds: (app: App) => readonly C[],
-  selected: (apps: readonly App[], listed: readonly C[]) => readonly App[]
+  listed: readonly C[] | undefined
 ): readonly App[] => {
+  const { noun, holds } = kind;
+
   if (listed !== undefined) {
     assertHeld(notHeld.byBinding, listed, bound);
   }
@@ -58,7 +63,8 @@ const servedBy = <App, C extends Pick<Action.Any, "name">>(
     );
   }
 
-  const served = selected(
+  const served = select(
+    kind,
     apps,
     listed ?? bound.filter((contract) => held.includes(contract))
   );
@@ -84,25 +90,21 @@ export const servingOf = <D extends Proving>(
   const listed = selection(options.actions);
 
   const apps = servedBy(
-    "action",
+    actionKind,
     what,
     binding.actions,
     toList(served),
-    listed.actions,
-    (app) => app.actions,
-    select
+    listed.actions
   );
 
   const actions = apps.flatMap((app) => app.actions);
 
   const events = servedBy(
-    "event",
+    eventKind,
     what,
     binding.events,
     eventsOf(served),
-    listed.events,
-    (app) => app.events,
-    selectEvents
+    listed.events
   );
 
   const eventTypes = events.flatMap((app) => app.events);

@@ -9,6 +9,7 @@ import type { BuiltIns } from "../contract/errors.js";
 import { hintsOf } from "../contract/hints.js";
 import {
   acquire,
+  actionKind,
   answeringWhole,
   Implementation,
   select,
@@ -267,7 +268,7 @@ export function make(
   apps: ServedActions,
   options?: Options<Action.Any>
 ): ErasedTools {
-  const served = select(toList(apps), options?.actions);
+  const served = select(actionKind, toList(apps), options?.actions);
 
   const needsApproval = options?.needsApproval;
 

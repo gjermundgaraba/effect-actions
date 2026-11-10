@@ -574,11 +574,23 @@ export const assertHeld = <C extends Pick<Action.Any, "name">>(
   }
 };
 
-export const selectHeld = <App, C extends Pick<Action.Any, "name">>(
+/** One kind of contract an implementation holds, and how to narrow an implementation to some. */
+export interface ContractKind<App, C> {
+  readonly noun: "action" | "event";
+  readonly holds: (app: App) => readonly C[];
+  readonly share: (own: readonly C[], app: App) => App;
+}
+
+export const actionKind: ContractKind<AnyImplementation, Action.Any> = {
+  noun: "action",
+  holds: (app) => app.actions,
+  share: (own, app) => Implementation.share(own, app),
+};
+
+export const select = <App, C extends Pick<Action.Any, "name">>(
+  { holds, share }: ContractKind<App, C>,
   apps: readonly App[],
-  listed: readonly C[] | undefined,
-  holds: (app: App) => readonly C[],
-  share: (own: readonly C[], app: App) => App
+  listed: readonly C[] | undefined
 ): readonly App[] => {
   if (listed === undefined) {
     return apps;
@@ -597,17 +609,6 @@ export const selectHeld = <App, C extends Pick<Action.Any, "name">>(
     return own.length === held.length ? [app] : [share(own, app)];
   });
 };
-
-export const select = (
-  apps: readonly AnyImplementation[],
-  listed: readonly Action.Any[] | undefined
-): readonly AnyImplementation[] =>
-  selectHeld(
-    apps,
-    listed,
-    (app) => app.actions,
-    (own, app) => Implementation.share(own, app)
-  );
 
 /** The protected members of a contract union, of actions or of events. */
 export type Protected<A extends Pick<Action.Any, "caller">> = A extends unknown
