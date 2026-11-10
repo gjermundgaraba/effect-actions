@@ -27,6 +27,7 @@ import type {
   Required as RequiredAuthentication,
   ServerBuildServices,
 } from "../authentication/provider.js";
+import { asCaller } from "../authentication/refusal.js";
 import type * as Action from "../contract/Action.js";
 import { inputParseOptions } from "../contract/call.js";
 import { Anyone, assertAuthentication } from "../contract/caller.js";
@@ -67,7 +68,7 @@ import { provideServed, selectFrom } from "../contract/serving.js";
 import { toolSuccessOf } from "../contract/stream.js";
 import { servingFeeds } from "../contract/webhooks.js";
 import { withStderrConsole } from "../stdio/console.js";
-import { asCallerOf, eventSchemasOf, withEvents } from "./bridge.js";
+import { eventSchemasOf, withEvents } from "./bridge.js";
 import type { Serving } from "./bridge.js";
 import { progressNotifier } from "./progress.js";
 import {
@@ -364,8 +365,8 @@ const registerTools = Effect.fnUntraced(function* (
             (sink) => run(input, sink)
           );
 
-    const asCaller = asCallerOf(authentication, action);
-    const call = (input: ErasedValue) => asCaller(reported(input));
+    const call = (input: ErasedValue) =>
+      asCaller(authentication, action, reported(input));
 
     const liftedFieldNames = new Set(media?.fields.map(({ name }) => name));
 

@@ -15,11 +15,10 @@ import type { McpProtocol } from "effect/ai";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/http";
 import type { Rpc, RpcGroup, RpcMessage } from "effect/rpc";
 
-import { promote } from "../authentication/provider.js";
 import type { Any as Authentication } from "../authentication/provider.js";
-import { recordStepUp } from "../authentication/refusal.js";
+import { asCaller } from "../authentication/refusal.js";
 import { inputParseOptions } from "../contract/call.js";
-import { Anyone, principalOf } from "../contract/caller.js";
+import { principalOf } from "../contract/caller.js";
 import { sentError } from "../contract/codes.js";
 import * as Event from "../contract/Event.js";
 import { acquireFeeds } from "../contract/feed.js";
@@ -110,16 +109,6 @@ export interface Serving {
   readonly events: readonly AnyEventImplementation[];
   readonly authentication: Authentication | undefined;
 }
-
-export const asCallerOf =
-  (
-    authentication: Authentication | undefined,
-    { caller }: Pick<Event.Any, "caller">
-  ) =>
-  <A, E, R>(run: Effect.Effect<A, E, R>) =>
-    authentication === undefined || caller === Anyone
-      ? run
-      : recordStepUp(promote(authentication, run));
 
 export const eventSchemasOf = (
   event: Event.Any
@@ -386,10 +375,9 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
         run: (subscriber: Subscriber) => Effect.Effect<A, unknown, R>
       ) =>
         Effect.catchCause(
-          asCallerOf(
+          asCaller(
             authentication,
-            feed.event
-          )(
+            feed.event,
             Effect.flatMap(
               webhookSubscriber(feed, authentication, webhooks),
               run
@@ -418,10 +406,9 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
             const input = yield* decode(args);
 
             const { page, events } = yield* Effect.gen(function* () {
-              const polled = yield* asCallerOf(
+              const polled = yield* asCaller(
                 authentication,
-                feed.event
-              )(
+                feed.event,
                 Effect.flatMap(
                   principalOf(feed.event, authentication),
                   (subscriber) =>
@@ -474,10 +461,9 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
                 _meta: yield* meta,
               },
               (deliver) =>
-                asCallerOf(
+                asCaller(
                   authentication,
-                  feed.event
-                )(
+                  feed.event,
                   Effect.flatMap(feed.stream(input), (open) =>
                     pushed(open, cursor ?? null, deliver, {
                       positions: "heartbeat",

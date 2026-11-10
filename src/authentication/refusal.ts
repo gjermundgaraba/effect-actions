@@ -11,9 +11,13 @@ import {
 import { HttpServerResponse } from "effect/http";
 
 import type * as Action from "../contract/Action.js";
+import { Anyone } from "../contract/caller.js";
+import type { Called } from "../contract/caller.js";
 import { errorSchemas } from "../contract/declared.js";
 import { Forbidden, Refusal, Unauthenticated } from "../contract/errors.js";
 import { declaredStatus } from "../contract/status.js";
+import { promote } from "./provider.js";
+import type { Any } from "./provider.js";
 
 type Declared = Action.Errors[number];
 
@@ -113,6 +117,19 @@ export const recordStepUp = <A, E, R>(
         )
       : Effect.void
   );
+
+/**
+ * `run` as the caller of `called`: unchanged where it is public or nothing authenticates, and
+ * otherwise with the identity its request verified, a step-up it fails with recorded.
+ */
+export const asCaller = <A, E, R>(
+  authentication: Any | undefined,
+  called: Pick<Called, "caller">,
+  run: Effect.Effect<A, E, R>
+) =>
+  authentication === undefined || called.caller === Anyone
+    ? run
+    : recordStepUp(promote(authentication, run));
 
 export const answerStepUp = <E, R>(
   route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
