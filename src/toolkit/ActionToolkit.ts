@@ -327,7 +327,7 @@ export function make(
 
   return {
     toolkit,
-    layer: layer.pipe(provideServed({ apps: served, events: [] })),
+    layer: layer.pipe(provideServed(served)),
   };
 }
 

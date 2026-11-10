@@ -748,7 +748,7 @@ export function layer(
         buildInEmptyContext
       );
     })
-  ).pipe(provideServed(selected));
+  ).pipe(provideServed(selected.apps, selected.events));
 
   return HttpApiBuilder.layer(api).pipe(
     Layer.provide(handlers),

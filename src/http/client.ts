@@ -16,11 +16,7 @@ import {
   sendingValue,
   watchInput,
 } from "../contract/call.js";
-import type {
-  Call,
-  ErasedMethod,
-  ErasedStreamMethod,
-} from "../contract/call.js";
+import type { Call, CheckedMethod } from "../contract/call.js";
 import type { Codec } from "../contract/codec.js";
 import type { BuiltIns } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
@@ -177,10 +173,7 @@ type ErasedWatch<R> = (
 ) => Stream.Stream<Event.Received<Event.Any>, unknown, R | Receiving>;
 
 export interface Methods<R> {
-  readonly [name: string]:
-    | ErasedMethod<R>
-    | ErasedStreamMethod<R>
-    | ErasedWatch<R>;
+  readonly [name: string]: CheckedMethod<R> | ErasedWatch<R>;
 }
 
 const methodOf = <M>(
@@ -217,7 +210,7 @@ const nativeOf = <E, R>(
 const actionMethodOf = <R>(
   action: Action.Any,
   native: NativeClient<NativeMethod<R>>
-): ErasedMethod<R> | ErasedStreamMethod<R> => {
+): CheckedMethod<R> => {
   const method = methodOf(native, action.name, "action");
 
   return Answering.$match(answeringOf(action), {
@@ -241,9 +234,7 @@ const actionMethodOf = <R>(
 };
 
 export interface Senders<R> {
-  readonly method: (
-    action: Action.Any
-  ) => ErasedMethod<R> | ErasedStreamMethod<R>;
+  readonly method: (action: Action.Any) => CheckedMethod<R>;
   readonly transport: (
     event: Event.Any,
     input: ErasedValue

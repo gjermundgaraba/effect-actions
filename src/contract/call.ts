@@ -129,6 +129,9 @@ export type ErasedStreamMethod<R = never> = (
   ...input: readonly ErasedValue[]
 ) => Stream.Stream<ErasedValue, unknown, R>;
 
+/** What `checked` or `checkedStream` makes of an action: one value, or a stream of elements. */
+export type CheckedMethod<R = never> = ErasedMethod<R> | ErasedStreamMethod<R>;
+
 export const checkedStream = <S, R>(
   action: Action.Any,
   check: CheckedInput<S>,

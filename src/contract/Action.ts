@@ -13,12 +13,7 @@ import type { Scope, Context } from "effect";
 import { authorizerOf } from "./authorizer.js";
 import type { Authorizer, Deferred, ErasedAuthorizer } from "./authorizer.js";
 import { checked, checkedStream, jsonRoundTrip, watchInput } from "./call.js";
-import type {
-  Call,
-  CheckedInput,
-  ErasedMethod as Erased,
-  ErasedStreamMethod,
-} from "./call.js";
+import type { Call, CheckedInput, CheckedMethod } from "./call.js";
 import { Anyone, assertCaller } from "./caller.js";
 import { codecOf } from "./codec.js";
 import type { Codec, CodecOf, Fields, NoInput } from "./codec.js";
@@ -787,10 +782,7 @@ export function layer(
   implementations: Served
 ): Layer.Layer<never, unknown, unknown> {
   return Layer.empty.pipe(
-    provideServed({
-      apps: toList(implementations),
-      events: eventsOf(implementations),
-    })
+    provideServed(toList(implementations), eventsOf(implementations))
   );
 }
 
@@ -838,8 +830,6 @@ type Watching<App, Listed extends Event.Any> = [
   ? unknown
   : { readonly watch: Watch<App, Listed> };
 
-type ErasedMethod = Erased<unknown> | ErasedStreamMethod<unknown>;
-
 const received = <S extends Codec>(schema: S) => {
   const sent = jsonRoundTrip(schema);
 
@@ -878,7 +868,10 @@ const mapFailuresInPlace = (
 const receivedInput: CheckedInput<ErasedValue> = (action) =>
   received(action.input);
 
-const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
+const methodOf = (
+  action: Any,
+  run: ErasedHandler<unknown>
+): CheckedMethod<unknown> => {
   const element = elementOf(action.success);
   const success = received(element ?? action.success);
   const failure = received(Schema.Union(projectedErrors(action)));
@@ -1023,7 +1016,7 @@ export function client(
   served: Served,
   options?: { readonly actions?: ReadonlyArray<Any | Event.Any> | undefined }
 ): Effect.Effect<
-  { readonly [name: string]: ErasedMethod | ErasedWatch },
+  { readonly [name: string]: CheckedMethod<unknown> | ErasedWatch },
   unknown,
   unknown
 > {
@@ -1042,7 +1035,7 @@ export function client(
 
   return Effect.map(
     builtWith(
-      buildersOf({ apps, events }),
+      buildersOf(apps, events),
       Effect.all([acquire(apps, undefined), acquireFeeds(events)])
     ),
     ([bound, feeds]) => ({

@@ -524,7 +524,7 @@ const server = <Out, E, R>(
       transport(Layer.effectDiscard(register).pipe(Layer.provide(features)))
     ),
     Layer.fresh,
-    provideServed({ apps, events })
+    provideServed(apps, events)
   );
 };
 

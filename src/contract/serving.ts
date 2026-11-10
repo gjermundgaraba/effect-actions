@@ -128,20 +128,15 @@ export const servingOf = <D extends Proving>(
   };
 };
 
-interface ServedImplementations {
-  readonly apps: readonly AnyImplementation[];
-  readonly events: readonly AnyEventImplementation[];
-}
-
-export const buildersOf = ({
-  apps,
-  events,
-}: ServedImplementations): ReadonlyArray<
-  Layer.Layer<never, unknown, unknown>
-> => [
+export const buildersOf = (
+  apps: readonly AnyImplementation[],
+  events: readonly AnyEventImplementation[] = []
+): ReadonlyArray<Layer.Layer<never, unknown, unknown>> => [
   ...apps.map((app) => Implementation.layerOf(app)),
   ...events.map((app) => EventImplementation.layerOf(app)),
 ];
 
-export const provideServed = (served: ServedImplementations) =>
-  provideBuilders(buildersOf(served));
+export const provideServed = (
+  apps: readonly AnyImplementation[],
+  events: readonly AnyEventImplementation[] = []
+) => provideBuilders(buildersOf(apps, events));

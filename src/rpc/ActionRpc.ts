@@ -51,11 +51,7 @@ import {
   sendingJson,
   watchInput,
 } from "../contract/call.js";
-import type {
-  Call,
-  ErasedMethod,
-  ErasedStreamMethod,
-} from "../contract/call.js";
+import type { Call, CheckedMethod } from "../contract/call.js";
 import { Anyone } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
 import { bindingErrors, bindingOf, eventErrors } from "../contract/declared.js";
@@ -1110,7 +1106,7 @@ export function layer(
         Layer.succeed(authenticated)(authenticate)
       );
     })
-  ).pipe(provideServed(selected));
+  ).pipe(provideServed(selected.apps, selected.events));
 
   return RpcServer.layer(jsonGroup.merge(binding.rpcs), {
     disableFatalDefects: true,
@@ -1200,7 +1196,7 @@ const actionMethodOf = (
   action: Action.Any,
   binding: Any,
   method: JsonMethod | JsonStreamMethod
-): ErasedMethod | ErasedStreamMethod => {
+): CheckedMethod => {
   const failed = failedOf(Schema.Union(bindingErrors(action, binding)));
   const streamed = streamedOf(action);
 
