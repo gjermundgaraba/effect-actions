@@ -26,7 +26,7 @@ import type { BuiltIns } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
 import type { ErasedValue } from "../contract/implementation.js";
 import type { Receiving } from "../contract/receiving.js";
-import { matchAnswer } from "../contract/stream.js";
+import { Answering, answeringOf } from "../contract/stream.js";
 import type { Answer, StreamOf } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
 import type {
@@ -220,16 +220,16 @@ const actionMethodOf = <R>(
 ): ErasedMethod<R> | ErasedStreamMethod<R> => {
   const method = methodOf(native, action.name, "action");
 
-  return matchAnswer<ErasedMethod<R> | ErasedStreamMethod<R>>(action, {
-    value: () =>
+  return Answering.$match(answeringOf(action), {
+    Value: () =>
       checked(action, sendingValue, (payload) => method({ payload })),
-    progressed: () =>
+    Progressed: () =>
       checked(action, sendingValue, (payload, onProgress) =>
         Effect.flatMap(method({ payload }), (answer) =>
           readWithProgress(answer, onProgress)
         )
       ),
-    elements: () =>
+    Elements: () =>
       checkedStream(action, sendingValue, (payload, onProgress) =>
         Stream.unwrap(
           Effect.map(method({ payload }), (answer) =>

@@ -93,7 +93,7 @@ import type { Reporting, Progressed } from "../contract/progress.js";
 import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import { concealed } from "../contract/reported.js";
 import { provideServed, servingOf } from "../contract/serving.js";
-import { elementOf, matchAnswer } from "../contract/stream.js";
+import { Answering, answeringOf, elementOf } from "../contract/stream.js";
 import type { Answer, StreamOf } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
 import type { WatchArgs } from "../contract/watch.js";
@@ -132,11 +132,14 @@ const elementedOf = (element: Codec, progress: Codec | undefined) =>
       : [Schema.TaggedStruct("Progress", { value: progress })]),
   ]);
 
+const streams = (action: Action.Any) =>
+  !Answering.$is("Value")(answeringOf(action));
+
 const streamedOf = (action: Action.Any): Schema.Codec<Progressed> | undefined =>
-  matchAnswer<Schema.Codec<Progressed> | undefined>(action, {
-    value: () => undefined,
-    progressed: (progress) => ProgressedOf(progress, action.success),
-    elements: elementedOf,
+  Answering.$match(answeringOf(action), {
+    Value: () => undefined,
+    Progressed: ({ success, progress }) => ProgressedOf(progress, success),
+    Elements: ({ element, progress }) => elementedOf(element, progress),
   });
 
 type RpcOf<
@@ -636,13 +639,13 @@ const erasedOf = (
 ) =>
   RpcGroup.make(
     ...actions.map((action) =>
-      streamedOf(action) === undefined
-        ? Rpc.make(action.name, {
+      streams(action)
+        ? streamOf(action.name)
+        : Rpc.make(action.name, {
             payload: Schema.Json,
             success: Schema.Json,
             error: Declared,
           })
-        : streamOf(action.name)
     ),
     ...events.map((event) => streamOf(event.name))
   );
@@ -1001,10 +1004,9 @@ export function layer(
       const keeper = keeperOf(protocol);
 
       if (isUnary(protocol)) {
-        const streamed = [
-          ...actions.filter((action) => streamedOf(action) !== undefined),
-          ...eventTypes,
-        ].map(({ name }) => name);
+        const streamed = [...actions.filter(streams), ...eventTypes].map(
+          ({ name }) => name
+        );
 
         const nativeStreams = natives.flatMap((rpc) =>
           RpcSchema.isStreamSchema(rpc.successSchema) ? [rpc._tag] : []
@@ -1050,12 +1052,10 @@ export function layer(
         const streaming = (sending: Sending) =>
           streamingHandlerOf(action, sending, steps, error);
 
-        return matchAnswer<
-          ReturnType<typeof handlerOf> | ReturnType<typeof streamingHandlerOf>
-        >(action, {
-          value: () => handlerOf(action, run, steps, error),
-          progressed: () => streaming(sendingAnswer(action.success, run)),
-          elements: (element) => streaming(sendingElements(element, run)),
+        return Answering.$match(answeringOf(action), {
+          Value: () => handlerOf(action, run, steps, error),
+          Progressed: ({ success }) => streaming(sendingAnswer(success, run)),
+          Elements: ({ element }) => streaming(sendingElements(element, run)),
         });
       };
 

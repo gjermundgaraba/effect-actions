@@ -1,4 +1,4 @@
-import { Predicate, Schema, Stream as Elements } from "effect";
+import { Data, Predicate, Schema, Stream as Elements } from "effect";
 import type { Effect } from "effect";
 
 import { codecOf } from "./codec.js";
@@ -46,25 +46,33 @@ export const elementOf = (success: Codec): Codec | undefined =>
   isStreamOf(success) ? success.element : undefined;
 
 /** How a surface carries an action's answer: one value, a value after its progress, or elements. */
-export interface AnswerCases<A> {
-  readonly value: () => A;
-  readonly progressed: (progress: Codec) => A;
-  readonly elements: (element: Codec, progress: Codec | undefined) => A;
-}
+export type Answering = Data.TaggedEnum<{
+  readonly Value: { readonly success: Codec };
+  readonly Progressed: { readonly success: Codec; readonly progress: Codec };
+  readonly Elements: {
+    readonly element: Codec;
+    readonly progress: Codec | undefined;
+  };
+}>;
 
-export const matchAnswer = <A>(
-  action: { readonly success: Codec; readonly progress: Codec | undefined },
-  cases: AnswerCases<A>
-): A => {
-  const element = elementOf(action.success);
+export const Answering = Data.taggedEnum<Answering>();
+
+export const answeringOf = ({
+  success,
+  progress,
+}: {
+  readonly success: Codec;
+  readonly progress: Codec | undefined;
+}): Answering => {
+  const element = elementOf(success);
 
   if (element !== undefined) {
-    return cases.elements(element, action.progress);
+    return Answering.Elements({ element, progress });
   }
 
-  return action.progress === undefined
-    ? cases.value()
-    : cases.progressed(action.progress);
+  return progress === undefined
+    ? Answering.Value({ success })
+    : Answering.Progressed({ success, progress });
 };
 
 /** What a handler or a call of an action with success `S` answers: a stream, or one value. */
