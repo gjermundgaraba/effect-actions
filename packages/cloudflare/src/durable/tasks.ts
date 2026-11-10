@@ -35,7 +35,7 @@ export const makeTasks = <E, R>(
   schedule: Schedule,
   tasks: { readonly [name: string]: Effect.Effect<void, E, R> }
 ) => ({
-  tasks: Tasks.of({
+  service: Tasks.of({
     runAfter: (name, change) =>
       Effect.gen(function* () {
         if (!Object.hasOwn(tasks, name)) {

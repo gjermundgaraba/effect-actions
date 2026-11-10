@@ -52,7 +52,7 @@ export const makeWaits = (schedule: Schedule) => {
   );
 
   return {
-    waits: Waits.of({
+    service: Waits.of({
       until: (at) =>
         Effect.suspend(() => {
           const wait: Wait = { at, woken: Deferred.makeUnsafe() };

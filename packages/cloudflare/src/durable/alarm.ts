@@ -104,10 +104,10 @@ export const makeSchedule = (state: DurableObjectState) => {
       )
     ),
     set: (owner: string, at: number) =>
-      Effect.asVoid(stepped(owner, { type: "Replace", at })),
+      Effect.asVoid(stepped(owner, { _tag: "Replace", at })),
     setBy: (owner: string, at: number) =>
-      Effect.asVoid(stepped(owner, { type: "NoLaterThan", at })),
-    clear: (owner: string) => Effect.asVoid(stepped(owner, { type: "Clear" })),
+      Effect.asVoid(stepped(owner, { _tag: "NoLaterThan", at })),
+    clear: (owner: string) => Effect.asVoid(stepped(owner, { _tag: "Clear" })),
     runDue: <E, R>(owners: Owners<E, R>) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
@@ -121,7 +121,7 @@ export const makeSchedule = (state: DurableObjectState) => {
             return Effect.acquireUseRelease(
               Effect.flatMap(Clock.currentTimeMillis, (startedAt) =>
                 stepped(owner, {
-                  type: "Due",
+                  _tag: "Due",
                   now,
                   startedAt,
                   served: run !== undefined,
@@ -129,7 +129,7 @@ export const makeSchedule = (state: DurableObjectState) => {
               ),
               (slot) =>
                 Effect.gen(function* () {
-                  if (slot?.value !== "Running" || run === undefined) {
+                  if (slot?._tag !== "Running" || run === undefined) {
                     return;
                   }
 
@@ -155,13 +155,13 @@ export const makeSchedule = (state: DurableObjectState) => {
                   yield* stepped(
                     owner,
                     Exit.isSuccess(exit)
-                      ? { type: "Succeeded" }
-                      : { type: "Failed", endedAt }
+                      ? { _tag: "Succeeded" }
+                      : { _tag: "Failed", endedAt }
                   );
                 }),
               (slot) =>
                 Effect.sync(() => {
-                  if (slot?.value === "Running") {
+                  if (slot?._tag === "Running") {
                     runs.delete(owner);
                   }
                 })

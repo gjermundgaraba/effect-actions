@@ -367,8 +367,8 @@ const handlersOf = <S>(
           Layer.provideMerge(
             Layer.mergeAll(
               Layer.succeed(Alarm)(alarmOf(schedule)),
-              Layer.succeed(Waits)(waits.waits),
-              Layer.succeed(Tasks)(tasks.tasks),
+              Layer.succeed(Waits)(waits.service),
+              Layer.succeed(Tasks)(tasks.service),
               layerEvents,
               layerIdempotency(ctx)
             )

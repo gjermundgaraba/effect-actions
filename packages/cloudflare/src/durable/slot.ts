@@ -11,20 +11,20 @@ export interface Run {
 }
 
 export type AlarmSlot =
-  | { readonly value: "Idle" }
-  | { readonly value: "Scheduled"; readonly at: number }
+  | { readonly _tag: "Idle" }
+  | { readonly _tag: "Scheduled"; readonly at: number }
   | {
-      readonly value: "Retrying";
+      readonly _tag: "Retrying";
       readonly at: number;
       readonly failures: number;
     }
-  | { readonly value: "Running"; readonly run: Run }
+  | { readonly _tag: "Running"; readonly run: Run }
   | {
-      readonly value: "RunningRescheduled";
+      readonly _tag: "RunningRescheduled";
       readonly run: Run;
       readonly at: number;
     }
-  | { readonly value: "RunningCleared"; readonly run: Run };
+  | { readonly _tag: "RunningCleared"; readonly run: Run };
 
 interface Due {
   readonly now: number;
@@ -33,12 +33,12 @@ interface Due {
 }
 
 export type SlotEvent =
-  | { readonly type: "Replace"; readonly at: number }
-  | { readonly type: "NoLaterThan"; readonly at: number }
-  | { readonly type: "Clear" }
-  | (Due & { readonly type: "Due" })
-  | { readonly type: "Succeeded" }
-  | { readonly type: "Failed"; readonly endedAt: number };
+  | { readonly _tag: "Replace"; readonly at: number }
+  | { readonly _tag: "NoLaterThan"; readonly at: number }
+  | { readonly _tag: "Clear" }
+  | (Due & { readonly _tag: "Due" })
+  | { readonly _tag: "Succeeded" }
+  | { readonly _tag: "Failed"; readonly endedAt: number };
 
 const backoffRetries = 6;
 
@@ -58,13 +58,13 @@ const dueAt = (
   }
 
   if (!event.served) {
-    return { value: "Idle" };
+    return { _tag: "Idle" };
   }
 
   const failures = retryCount + 1;
 
   return {
-    value: "Running",
+    _tag: "Running",
     run: {
       retryCount,
       scheduledTime: at,
@@ -78,13 +78,10 @@ const retryOf = ({ mark }: Run, endedAt: number) => ({
   failures: mark.failures,
 });
 
-type In<V extends AlarmSlot["value"]> = Extract<
-  AlarmSlot,
-  { readonly value: V }
->;
+type In<V extends AlarmSlot["_tag"]> = Extract<AlarmSlot, { readonly _tag: V }>;
 
 const fromScheduled = (slot: In<"Scheduled">, event: SlotEvent): AlarmSlot => {
-  switch (event.type) {
+  switch (event._tag) {
     case "Replace": {
       return event.at === slot.at ? slot : { ...slot, at: event.at };
     }
@@ -94,7 +91,7 @@ const fromScheduled = (slot: In<"Scheduled">, event: SlotEvent): AlarmSlot => {
     }
 
     case "Clear": {
-      return { value: "Idle" };
+      return { _tag: "Idle" };
     }
 
     case "Due": {
@@ -109,17 +106,17 @@ const fromScheduled = (slot: In<"Scheduled">, event: SlotEvent): AlarmSlot => {
 };
 
 const fromRetrying = (slot: In<"Retrying">, event: SlotEvent): AlarmSlot => {
-  switch (event.type) {
+  switch (event._tag) {
     case "Replace": {
-      return { value: "Scheduled", at: event.at };
+      return { _tag: "Scheduled", at: event.at };
     }
 
     case "NoLaterThan": {
-      return event.at < slot.at ? { value: "Scheduled", at: event.at } : slot;
+      return event.at < slot.at ? { _tag: "Scheduled", at: event.at } : slot;
     }
 
     case "Clear": {
-      return { value: "Idle" };
+      return { _tag: "Idle" };
     }
 
     case "Due": {
@@ -134,22 +131,22 @@ const fromRetrying = (slot: In<"Retrying">, event: SlotEvent): AlarmSlot => {
 };
 
 const fromRunning = (slot: In<"Running">, event: SlotEvent): AlarmSlot => {
-  switch (event.type) {
+  switch (event._tag) {
     case "Replace":
     case "NoLaterThan": {
-      return { value: "RunningRescheduled", run: slot.run, at: event.at };
+      return { _tag: "RunningRescheduled", run: slot.run, at: event.at };
     }
 
     case "Clear": {
-      return { value: "RunningCleared", run: slot.run };
+      return { _tag: "RunningCleared", run: slot.run };
     }
 
     case "Succeeded": {
-      return { value: "Idle" };
+      return { _tag: "Idle" };
     }
 
     case "Failed": {
-      return { value: "Retrying", ...retryOf(slot.run, event.endedAt) };
+      return { _tag: "Retrying", ...retryOf(slot.run, event.endedAt) };
     }
 
     case "Due": {
@@ -162,7 +159,7 @@ const fromRunningRescheduled = (
   slot: In<"RunningRescheduled">,
   event: SlotEvent
 ): AlarmSlot => {
-  switch (event.type) {
+  switch (event._tag) {
     case "Replace": {
       return event.at === slot.at ? slot : { ...slot, at: event.at };
     }
@@ -172,19 +169,19 @@ const fromRunningRescheduled = (
     }
 
     case "Clear": {
-      return { value: "RunningCleared", run: slot.run };
+      return { _tag: "RunningCleared", run: slot.run };
     }
 
     case "Succeeded": {
-      return { value: "Scheduled", at: slot.at };
+      return { _tag: "Scheduled", at: slot.at };
     }
 
     case "Failed": {
       const retry = retryOf(slot.run, event.endedAt);
 
       return retry.at < slot.at
-        ? { value: "Retrying", ...retry }
-        : { value: "Scheduled", at: slot.at };
+        ? { _tag: "Retrying", ...retry }
+        : { _tag: "Scheduled", at: slot.at };
     }
 
     case "Due": {
@@ -197,15 +194,15 @@ const fromRunningCleared = (
   slot: In<"RunningCleared">,
   event: SlotEvent
 ): AlarmSlot => {
-  switch (event.type) {
+  switch (event._tag) {
     case "Replace":
     case "NoLaterThan": {
-      return { value: "RunningRescheduled", run: slot.run, at: event.at };
+      return { _tag: "RunningRescheduled", run: slot.run, at: event.at };
     }
 
     case "Succeeded":
     case "Failed": {
-      return { value: "Idle" };
+      return { _tag: "Idle" };
     }
 
     case "Clear":
@@ -216,10 +213,10 @@ const fromRunningCleared = (
 };
 
 export const transition = (slot: AlarmSlot, event: SlotEvent): AlarmSlot => {
-  switch (slot.value) {
+  switch (slot._tag) {
     case "Idle": {
-      return event.type === "Replace" || event.type === "NoLaterThan"
-        ? { value: "Scheduled", at: event.at }
+      return event._tag === "Replace" || event._tag === "NoLaterThan"
+        ? { _tag: "Scheduled", at: event.at }
         : slot;
     }
 
@@ -251,25 +248,25 @@ export const slotOf = (
 ): AlarmSlot => {
   if (run !== undefined) {
     if (kept === undefined) {
-      return { value: "RunningCleared", run };
+      return { _tag: "RunningCleared", run };
     }
 
     return kept.at === run.mark.at && kept.failures === run.mark.failures
-      ? { value: "Running", run }
-      : { value: "RunningRescheduled", run, at: kept.at };
+      ? { _tag: "Running", run }
+      : { _tag: "RunningRescheduled", run, at: kept.at };
   }
 
   if (kept === undefined) {
-    return { value: "Idle" };
+    return { _tag: "Idle" };
   }
 
   return kept.failures > 0
-    ? { value: "Retrying", at: kept.at, failures: kept.failures }
-    : { value: "Scheduled", at: kept.at };
+    ? { _tag: "Retrying", at: kept.at, failures: kept.failures }
+    : { _tag: "Scheduled", at: kept.at };
 };
 
 export const keptOf = (slot: AlarmSlot): Kept | undefined => {
-  switch (slot.value) {
+  switch (slot._tag) {
     case "Idle":
     case "RunningCleared": {
       return undefined;
@@ -291,8 +288,8 @@ export const keptOf = (slot: AlarmSlot): Kept | undefined => {
 };
 
 export const runOf = (slot: AlarmSlot): Run | undefined =>
-  slot.value === "Running" ||
-  slot.value === "RunningRescheduled" ||
-  slot.value === "RunningCleared"
+  slot._tag === "Running" ||
+  slot._tag === "RunningRescheduled" ||
+  slot._tag === "RunningCleared"
     ? slot.run
     : undefined;

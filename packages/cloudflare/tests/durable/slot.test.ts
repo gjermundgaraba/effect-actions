@@ -34,7 +34,7 @@ const failedRetry = (retryCount: number) =>
   step(
     { at: 0, failures: retryCount + 1 },
     { retryCount, scheduledTime: 0, mark: { at: 0, failures: retryCount + 1 } },
-    { type: "Failed", endedAt: 10_000 }
+    { _tag: "Failed", endedAt: 10_000 }
   );
 
 describe("an owner's slot outside a run", () => {
@@ -42,53 +42,53 @@ describe("an owner's slot outside a run", () => {
     [
       "nothing kept",
       undefined,
-      { type: "Replace", at: 5000 },
+      { _tag: "Replace", at: 5000 },
       { at: 5000, failures: 0 },
     ],
     [
       "nothing kept",
       undefined,
-      { type: "NoLaterThan", at: 5000 },
+      { _tag: "NoLaterThan", at: 5000 },
       { at: 5000, failures: 0 },
     ],
     [
       "a time",
       scheduled,
-      { type: "Replace", at: 5000 },
+      { _tag: "Replace", at: 5000 },
       { at: 5000, failures: 0 },
     ],
     [
       "a time",
       scheduled,
-      { type: "Replace", at: 500 },
+      { _tag: "Replace", at: 500 },
       { at: 500, failures: 0 },
     ],
     [
       "a time",
       scheduled,
-      { type: "NoLaterThan", at: 500 },
+      { _tag: "NoLaterThan", at: 500 },
       { at: 500, failures: 0 },
     ],
     [
       "a retry",
       retrying,
-      { type: "Replace", at: 5000 },
+      { _tag: "Replace", at: 5000 },
       { at: 5000, failures: 0 },
     ],
     [
       "a retry",
       retrying,
-      { type: "Replace", at: 1000 },
+      { _tag: "Replace", at: 1000 },
       { at: 1000, failures: 0 },
     ],
     [
       "a retry",
       retrying,
-      { type: "NoLaterThan", at: 500 },
+      { _tag: "NoLaterThan", at: 500 },
       { at: 500, failures: 0 },
     ],
-    ["a time", scheduled, { type: "Clear" }, undefined],
-    ["a retry", retrying, { type: "Clear" }, undefined],
+    ["a time", scheduled, { _tag: "Clear" }, undefined],
+    ["a retry", retrying, { _tag: "Clear" }, undefined],
   ] as const)("keeps for %s and %o: %o", (_, kept, event, next) => {
     expect(step(kept, undefined, event)).toStrictEqual({
       kept: next,
@@ -97,12 +97,12 @@ describe("an owner's slot outside a run", () => {
   });
 
   it.each([
-    ["nothing kept", undefined, { type: "Clear" }],
-    ["a time", scheduled, { type: "Replace", at: 1000 }],
-    ["a time", scheduled, { type: "NoLaterThan", at: 1000 }],
-    ["a time", scheduled, { type: "NoLaterThan", at: 5000 }],
-    ["a retry", retrying, { type: "NoLaterThan", at: 1000 }],
-    ["a retry", retrying, { type: "NoLaterThan", at: hour }],
+    ["nothing kept", undefined, { _tag: "Clear" }],
+    ["a time", scheduled, { _tag: "Replace", at: 1000 }],
+    ["a time", scheduled, { _tag: "NoLaterThan", at: 1000 }],
+    ["a time", scheduled, { _tag: "NoLaterThan", at: 5000 }],
+    ["a retry", retrying, { _tag: "NoLaterThan", at: 1000 }],
+    ["a retry", retrying, { _tag: "NoLaterThan", at: hour }],
   ] as const)("leaves %s as it is on %o", (_, kept, event) => {
     expect(step(kept, undefined, event)).toBe("unchanged");
   });
@@ -112,27 +112,27 @@ describe("an owner's slot as this instance runs it", () => {
   const rescheduled = { kept: setDuringRun, run };
 
   it.each([
-    ["its mark", run.mark, { type: "Replace", at: 50_000 }, rescheduled],
-    ["its mark", run.mark, { type: "NoLaterThan", at: 50_000 }, rescheduled],
-    ["its mark", run.mark, { type: "Clear" }, { kept: undefined, run }],
+    ["its mark", run.mark, { _tag: "Replace", at: 50_000 }, rescheduled],
+    ["its mark", run.mark, { _tag: "NoLaterThan", at: 50_000 }, rescheduled],
+    ["its mark", run.mark, { _tag: "Clear" }, { kept: undefined, run }],
     [
       "a time set",
       setDuringRun,
-      { type: "Replace", at: 60_000 },
+      { _tag: "Replace", at: 60_000 },
       { kept: { at: 60_000, failures: 0 }, run },
     ],
     [
       "a time set",
       setDuringRun,
-      { type: "NoLaterThan", at: 40_000 },
+      { _tag: "NoLaterThan", at: 40_000 },
       { kept: { at: 40_000, failures: 0 }, run },
     ],
-    ["a time set", setDuringRun, { type: "Clear" }, { kept: undefined, run }],
-    ["nothing kept", undefined, { type: "Replace", at: 50_000 }, rescheduled],
+    ["a time set", setDuringRun, { _tag: "Clear" }, { kept: undefined, run }],
+    ["nothing kept", undefined, { _tag: "Replace", at: 50_000 }, rescheduled],
     [
       "nothing kept",
       undefined,
-      { type: "NoLaterThan", at: 50_000 },
+      { _tag: "NoLaterThan", at: 50_000 },
       rescheduled,
     ],
   ] as const)("keeps for %s and %o: %o", (_, kept, event, next) => {
@@ -140,9 +140,9 @@ describe("an owner's slot as this instance runs it", () => {
   });
 
   it.each([
-    ["a time set", setDuringRun, { type: "NoLaterThan", at: 60_000 }],
-    ["a time set", setDuringRun, { type: "Replace", at: 50_000 }],
-    ["nothing kept", undefined, { type: "Clear" }],
+    ["a time set", setDuringRun, { _tag: "NoLaterThan", at: 60_000 }],
+    ["a time set", setDuringRun, { _tag: "Replace", at: 50_000 }],
+    ["nothing kept", undefined, { _tag: "Clear" }],
   ] as const)("leaves %s as it is on %o", (_, kept, event) => {
     expect(step(kept, run, event)).toBe("unchanged");
   });
@@ -154,7 +154,7 @@ describe("an owner's slot as this instance runs it", () => {
   ] as const)(
     "ends a run that succeeds with %s kept, keeping %o",
     (_, kept, next) => {
-      expect(step(kept, run, { type: "Succeeded" })).toStrictEqual({
+      expect(step(kept, run, { _tag: "Succeeded" })).toStrictEqual({
         kept: next,
         run: undefined,
       });
@@ -179,7 +179,7 @@ describe("an owner's slot as this instance runs it", () => {
     "ends a run that fails at 10000 with %s kept, keeping %o",
     (_, kept, next) => {
       expect(
-        step(kept, run, { type: "Failed", endedAt: 10_000 })
+        step(kept, run, { _tag: "Failed", endedAt: 10_000 })
       ).toStrictEqual({
         kept: next,
         run: undefined,
@@ -199,7 +199,7 @@ describe("an owner's slot as this instance runs it", () => {
 
 describe("an owner's slot when the alarm fires", () => {
   const due = {
-    type: "Due",
+    _tag: "Due",
     now: 1000,
     startedAt: 1500,
     served: true,
@@ -298,7 +298,7 @@ describe("an owner's slot read back from storage", () => {
 
   it("reads a run cut off with its instance as a retry, run as the next", () => {
     const running = transition(slotOf(scheduled, undefined), {
-      type: "Due",
+      _tag: "Due",
       now: 1000,
       startedAt: 1000,
       served: true,
@@ -306,7 +306,7 @@ describe("an owner's slot read back from storage", () => {
 
     expect(
       step(keptOf(running), undefined, {
-        type: "Due",
+        _tag: "Due",
         now: 3000,
         startedAt: 3000,
         served: true,
