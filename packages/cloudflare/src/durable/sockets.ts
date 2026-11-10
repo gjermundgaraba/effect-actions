@@ -55,6 +55,7 @@ const replyToClose = (socket: WebSocket, code: number, reason: string) =>
  * **Gotchas**
  *
  * - A socket accepted by an earlier version of the routes at another `path` carries a tag no protocol holds now, so its events reach nothing: close it, or serve that `path` again.
+ * - A socket the object accepts itself gets nothing from these methods, which answer `void` either way: answer its events in the class's own `webSocketMessage`, `webSocketClose` and `webSocketError`, by the tag it was accepted with, and hand the others to `handlers`.
  */
 export class Sockets extends Context.Service<
   Sockets,
