@@ -31,7 +31,7 @@ import type { AnyPlacement } from "./placed.js";
 import { Sockets } from "./sockets.js";
 import { State } from "./state.js";
 import { makeTasks, Tasks } from "./tasks.js";
-import { clockOwner, makeWaits, Waits } from "./webhooks.js";
+import { makeWaits, Waits } from "./webhooks.js";
 
 export { Alarm } from "./alarm.js";
 
@@ -353,7 +353,7 @@ const handlersOf = <S>(
 
   const schedule = makeSchedule(ctx);
 
-  const { waits, wakeDue } = makeWaits(schedule);
+  const waits = makeWaits(schedule);
 
   const tasks = makeTasks(schedule, options.tasks ?? {});
 
@@ -367,8 +367,8 @@ const handlersOf = <S>(
           Layer.provideMerge(
             Layer.mergeAll(
               Layer.succeed(Alarm)(alarmOf(schedule)),
-              Layer.succeed(Waits)(waits),
-              Layer.succeed(Tasks)(tasks.tasks),
+              Layer.succeed(Waits)(waits.service),
+              Layer.succeed(Tasks)(tasks.service),
               layerEvents,
               layerIdempotency(ctx)
             )
@@ -570,10 +570,10 @@ const handlersOf = <S>(
     );
 
   const dispatch = async (
-    event: (sockets: Sockets["Service"]) => Effect.Effect<boolean>
+    event: (sockets: Sockets["Service"]) => Effect.Effect<void>
   ) => {
     await withBuilt(async ({ sockets }) => {
-      await Effect.runPromise(Effect.asVoid(event(sockets)));
+      await Effect.runPromise(event(sockets));
     });
   };
 
@@ -595,7 +595,7 @@ const handlersOf = <S>(
       await run(
         schedule.runDue({
           [applicationOwner]: (info) => options.alarm?.(info) ?? Effect.void,
-          [clockOwner]: () => wakeDue,
+          ...waits.owners,
           ...tasks.owners,
         })
       );

@@ -1,8 +1,9 @@
 import { Clock, Effect, Option, Predicate, Schema } from "effect";
 import type { Scope } from "effect";
-import { Base64, Base64Url } from "effect/encoding";
+import { Base64Url } from "effect/encoding";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 
+import { signingSecretOf } from "../contract/callback.js";
 import { watchParameter } from "../contract/receiving.js";
 import type {
   Delivered,
@@ -14,8 +15,6 @@ import type { Recent } from "../contract/recent.js";
 import { constantTimeEqual, standardWebhooksSignature } from "./signing.js";
 
 const timestampToleranceSeconds = 5 * 60;
-
-const dedupeWindow = 1000;
 
 const Body = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json));
 
@@ -46,9 +45,9 @@ export const makeReceiver = (path: `/${string}`) =>
 
           const key = crypto.getRandomValues(new Uint8Array(32));
 
-          places.set(id, { key, deliver, seen: makeRecent(dedupeWindow) });
+          places.set(id, { key, deliver, seen: makeRecent() });
 
-          return { id, secret: { text: `whsec_${Base64.encode(key)}`, key } };
+          return { id, secret: signingSecretOf(key) };
         }),
         ({ id }) => Effect.sync(() => places.delete(id))
       );

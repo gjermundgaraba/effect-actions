@@ -12,17 +12,16 @@ import type { Scope, Context } from "effect";
 
 import { authorizerOf } from "./authorizer.js";
 import type { Authorizer, Deferred, ErasedAuthorizer } from "./authorizer.js";
-import { inputOf, jsonRoundTrip, onProgressOf, watchInput } from "./call.js";
-import type { Call } from "./call.js";
+import { checked, checkedStream, jsonRoundTrip, watchInput } from "./call.js";
+import type { Call, CheckedInput, CheckedMethod } from "./call.js";
 import { Anyone, assertCaller } from "./caller.js";
 import { codecOf } from "./codec.js";
 import type { Codec, CodecOf, Fields, NoInput } from "./codec.js";
 import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
-import { InvalidInput } from "./errors.js";
 import type { BuiltIn } from "./errors.js";
 import type * as Event from "./Event.js";
 import { NotServed, SubscriptionError } from "./Event.js";
-import { acquireFeeds, eventsOf, feedBuilders } from "./feed.js";
+import { acquireFeeds, eventsOf } from "./feed.js";
 import type {
   EventBuildError,
   EventBuildServices,
@@ -39,7 +38,6 @@ import {
   elementsOf,
   Implementation,
   memoized,
-  provideBuilders,
   toList,
   uniqueKey,
 } from "./implementation.js";
@@ -69,7 +67,7 @@ import { assertKnown, assertName, assertOnce, heldOnce } from "./names.js";
 import { progressSink } from "./progress.js";
 import type { ReportingOf } from "./progress.js";
 import { polledOn, queuedPush, readOn } from "./push.js";
-import { selectFrom } from "./serving.js";
+import { buildersOf, provideServed, selectFrom } from "./serving.js";
 import { elementOf } from "./stream.js";
 import type { Answer } from "./stream.js";
 import { watching } from "./watch.js";
@@ -784,10 +782,7 @@ export function layer(
   implementations: Served
 ): Layer.Layer<never, unknown, unknown> {
   return Layer.empty.pipe(
-    provideBuilders([
-      ...toList(implementations).map((app) => Implementation.layerOf(app)),
-      ...feedBuilders(eventsOf(implementations)),
-    ])
+    provideServed(toList(implementations), eventsOf(implementations))
   );
 }
 
@@ -835,12 +830,6 @@ type Watching<App, Listed extends Event.Any> = [
   ? unknown
   : { readonly watch: Watch<App, Listed> };
 
-type ErasedMethod = (
-  ...input: readonly ErasedValue[]
-) =>
-  | Effect.Effect<ErasedValue, unknown, unknown>
-  | Elements.Stream<ErasedValue, unknown, unknown>;
-
 const received = <S extends Codec>(schema: S) => {
   const sent = jsonRoundTrip(schema);
 
@@ -876,8 +865,13 @@ const mapFailuresInPlace = (
     (causes) => Cause.fromReasons(causes.flatMap(({ reasons }) => reasons))
   );
 
-const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
-  const input = received(action.input);
+const receivedInput: CheckedInput<ErasedValue> = (action) =>
+  received(action.input);
+
+const methodOf = (
+  action: Any,
+  run: ErasedHandler<unknown>
+): CheckedMethod<unknown> => {
   const element = elementOf(action.success);
   const success = received(element ?? action.success);
   const failure = received(Schema.Union(projectedErrors(action)));
@@ -885,26 +879,20 @@ const methodOf = (action: Any, run: ErasedHandler<unknown>): ErasedMethod => {
   const declared = (cause: Cause.Cause<ErasedValue>) =>
     Effect.flatMap(mapFailuresInPlace(cause, failure), Effect.failCause);
 
-  const called = (args: readonly ErasedValue[]) =>
-    inputOf(action, args).pipe(
-      Effect.flatMap(input),
-      Effect.mapError(InvalidInput.fromSchemaError),
-      Effect.map((value) => run(value, progressSink(onProgressOf(args))))
-    );
-
   if (element !== undefined) {
-    return (...args) =>
-      Elements.unwrap(Effect.map(called(args), elementsOf)).pipe(
+    return checkedStream(action, receivedInput, (input, onProgress) =>
+      elementsOf(run(input, progressSink(onProgress))).pipe(
         Elements.catchCause((cause) => Elements.fromEffect(declared(cause))),
         Elements.mapEffect((value) => Effect.orDie(success(value)))
-      );
+      )
+    );
   }
 
-  return (...args) =>
-    called(args).pipe(
-      Effect.flatMap((answer) => Effect.catchCause(answer, declared)),
+  return checked(action, receivedInput, (input, onProgress) =>
+    Effect.catchCause(run(input, progressSink(onProgress)), declared).pipe(
       Effect.flatMap((value) => Effect.orDie(success(value)))
-    );
+    )
+  );
 };
 
 /** What `client` takes: the actions to call and the event types to watch. */
@@ -1028,7 +1016,7 @@ export function client(
   served: Served,
   options?: { readonly actions?: ReadonlyArray<Any | Event.Any> | undefined }
 ): Effect.Effect<
-  { readonly [name: string]: ErasedMethod | ErasedWatch },
+  { readonly [name: string]: CheckedMethod<unknown> | ErasedWatch },
   unknown,
   unknown
 > {
@@ -1047,10 +1035,7 @@ export function client(
 
   return Effect.map(
     builtWith(
-      [
-        ...apps.map((app) => Implementation.layerOf(app)),
-        ...feedBuilders(events),
-      ],
+      buildersOf(apps, events),
       Effect.all([acquire(apps, undefined), acquireFeeds(events)])
     ),
     ([bound, feeds]) => ({

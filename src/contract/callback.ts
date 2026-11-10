@@ -25,6 +25,13 @@ export type SigningSecret = typeof SigningSecret.Type;
 
 const secretPrefix = "whsec_";
 
+const encodeBase64 = Schema.encodeSync(Schema.Uint8ArrayFromBase64);
+
+export const signingSecretOf = (key: Uint8Array): SigningSecret => ({
+  text: `${secretPrefix}${encodeBase64(key)}`,
+  key,
+});
+
 const decodeBase64 = Schema.decodeUnknownOption(Schema.Uint8ArrayFromBase64);
 
 const keyOf = (text: string): Option.Option<Uint8Array> =>

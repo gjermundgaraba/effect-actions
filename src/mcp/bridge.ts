@@ -15,22 +15,21 @@ import type { McpProtocol } from "effect/ai";
 import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/http";
 import type { Rpc, RpcGroup, RpcMessage } from "effect/rpc";
 
-import { promote } from "../authentication/provider.js";
 import type { Any as Authentication } from "../authentication/provider.js";
-import { recordStepUp } from "../authentication/refusal.js";
+import { asCaller } from "../authentication/refusal.js";
 import { inputParseOptions } from "../contract/call.js";
-import { Anyone, principalOf } from "../contract/caller.js";
+import { principalOf } from "../contract/caller.js";
 import { sentError } from "../contract/codes.js";
 import * as Event from "../contract/Event.js";
-import { acquireFeeds, unkeyedHook } from "../contract/feed.js";
+import { acquireFeeds } from "../contract/feed.js";
 import type { AnyEventImplementation, Feed } from "../contract/feed.js";
 import { encodeUntaggedOf } from "../contract/occurrence.js";
 import { pushed, refusalIn } from "../contract/push.js";
 import type { Pushed } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
+import { deliveryUnsupported } from "../contract/subscribe.js";
 import {
   offersWebhook,
-  servedWebhooks,
   Webhooks,
   webhookSubscriber,
 } from "../contract/webhooks.js";
@@ -239,33 +238,6 @@ const servedOf = (
   };
 };
 
-export const refuseUnservable = ({
-  events,
-  authentication,
-}: Serving): Effect.Effect<void, never, unknown> =>
-  authentication === undefined
-    ? Effect.void
-    : Effect.flatMap(acquireFeeds(events), (feeds) => {
-        const refusal = unkeyedHook(
-          "MCP",
-          feeds,
-          authentication.principal !== undefined
-        );
-
-        return refusal === undefined
-          ? Effect.void
-          : Effect.die(new Error(refusal));
-      });
-
-export const serveWebhooks = (
-  serving: Serving
-): Effect.Effect<void, never, unknown> =>
-  Effect.asVoid(
-    Effect.flatMap(acquireFeeds(serving.events), (feeds) =>
-      servedWebhooks(feeds, serving.authentication)
-    )
-  );
-
 const delivered = (
   {
     send,
@@ -350,14 +322,6 @@ const delivered = (
 export const withEvents = (base: Adapter, serving: Serving): Adapter => {
   const { authentication } = serving;
 
-  const asSubscriber = <A, E, R>(
-    event: Event.Any,
-    run: Effect.Effect<A, E, R>
-  ) =>
-    authentication === undefined || event.caller === Anyone
-      ? run
-      : recordStepUp(promote(authentication, run));
-
   const installHandlers = (
     core: Installing[0],
     lifecycle: Installing[1],
@@ -411,7 +375,8 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
         run: (subscriber: Subscriber) => Effect.Effect<A, unknown, R>
       ) =>
         Effect.catchCause(
-          asSubscriber(
+          asCaller(
+            authentication,
             feed.event,
             Effect.flatMap(
               webhookSubscriber(feed, authentication, webhooks),
@@ -441,7 +406,8 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
             const input = yield* decode(args);
 
             const { page, events } = yield* Effect.gen(function* () {
-              const polled = yield* asSubscriber(
+              const polled = yield* asCaller(
+                authentication,
                 feed.event,
                 Effect.flatMap(
                   principalOf(feed.event, authentication),
@@ -482,15 +448,7 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
 
             if (send === undefined) {
               return yield* new EventsError(
-                sentError(
-                  Event.SubscriptionError.of(
-                    name,
-                    new Event.Unsupported({
-                      feature: "deliveryMode",
-                      value: "push",
-                    })
-                  )
-                )
+                sentError(deliveryUnsupported(name, "push"))
               );
             }
 
@@ -503,7 +461,8 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
                 _meta: yield* meta,
               },
               (deliver) =>
-                asSubscriber(
+                asCaller(
+                  authentication,
                   feed.event,
                   Effect.flatMap(feed.stream(input), (open) =>
                     pushed(open, cursor ?? null, deliver, {

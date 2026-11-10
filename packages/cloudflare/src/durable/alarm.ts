@@ -10,7 +10,7 @@ import {
   Semaphore,
 } from "effect";
 
-import { alarmSlot, keptOf, Kept, retryDelay, runOf, slotOf } from "./slot.js";
+import { keptOf, Kept, retryDelay, runOf, slotOf, transition } from "./slot.js";
 import type { Run, SlotEvent } from "./slot.js";
 import { State } from "./state.js";
 
@@ -64,7 +64,7 @@ export const makeSchedule = (state: DurableObjectState) => {
           runs.get(owner)
         );
 
-        const after = alarmSlot.transition(before, event);
+        const after = transition(before, event);
 
         if (after === before) {
           return undefined;
@@ -92,7 +92,6 @@ export const makeSchedule = (state: DurableObjectState) => {
     );
 
   return {
-    rearm,
     restore: lock.withPermits(1)(
       Effect.flatMap(
         Effect.promise(async () => await storage.getAlarm()),
@@ -105,10 +104,10 @@ export const makeSchedule = (state: DurableObjectState) => {
       )
     ),
     set: (owner: string, at: number) =>
-      Effect.asVoid(stepped(owner, { type: "Replace", at })),
+      Effect.asVoid(stepped(owner, { _tag: "Replace", at })),
     setBy: (owner: string, at: number) =>
-      Effect.asVoid(stepped(owner, { type: "NoLaterThan", at })),
-    clear: (owner: string) => Effect.asVoid(stepped(owner, { type: "Clear" })),
+      Effect.asVoid(stepped(owner, { _tag: "NoLaterThan", at })),
+    clear: (owner: string) => Effect.asVoid(stepped(owner, { _tag: "Clear" })),
     runDue: <E, R>(owners: Owners<E, R>) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
@@ -122,7 +121,7 @@ export const makeSchedule = (state: DurableObjectState) => {
             return Effect.acquireUseRelease(
               Effect.flatMap(Clock.currentTimeMillis, (startedAt) =>
                 stepped(owner, {
-                  type: "Due",
+                  _tag: "Due",
                   now,
                   startedAt,
                   served: run !== undefined,
@@ -130,7 +129,7 @@ export const makeSchedule = (state: DurableObjectState) => {
               ),
               (slot) =>
                 Effect.gen(function* () {
-                  if (slot?.value !== "Running" || run === undefined) {
+                  if (slot?._tag !== "Running" || run === undefined) {
                     return;
                   }
 
@@ -156,13 +155,13 @@ export const makeSchedule = (state: DurableObjectState) => {
                   yield* stepped(
                     owner,
                     Exit.isSuccess(exit)
-                      ? { type: "Succeeded" }
-                      : { type: "Failed", endedAt }
+                      ? { _tag: "Succeeded" }
+                      : { _tag: "Failed", endedAt }
                   );
                 }),
               (slot) =>
                 Effect.sync(() => {
-                  if (slot?.value === "Running") {
+                  if (slot?._tag === "Running") {
                     runs.delete(owner);
                   }
                 })

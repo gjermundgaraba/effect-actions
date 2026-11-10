@@ -9,9 +9,9 @@ import type { BuiltIns } from "../contract/errors.js";
 import { hintsOf } from "../contract/hints.js";
 import {
   acquire,
+  actionKind,
   answeringWhole,
   Implementation,
-  provideHandlers,
   select,
   toList,
 } from "../contract/implementation.js";
@@ -34,6 +34,7 @@ import type {
 import { liftedFrom, liftOf } from "../contract/lift.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
 import { progressSink } from "../contract/progress.js";
+import { provideServed } from "../contract/serving.js";
 import { toolSuccessOf } from "../contract/stream.js";
 import type { ToolSuccess } from "../contract/stream.js";
 
@@ -121,14 +122,6 @@ export interface Options<A extends Action.Any> {
    */
   readonly needsApproval?: (
     call: ToolCall<A>,
-    context: Tool.NeedsApprovalContext
-  ) => boolean | Effect.Effect<boolean, unknown>;
-}
-
-interface ErasedOptions {
-  readonly actions?: readonly Action.Any[] | undefined;
-  readonly needsApproval?: (
-    call: ToolCall,
     context: Tool.NeedsApprovalContext
   ) => boolean | Effect.Effect<boolean, unknown>;
 }
@@ -273,9 +266,9 @@ export function make<
 >;
 export function make(
   apps: ServedActions,
-  options?: ErasedOptions
+  options?: Options<Action.Any>
 ): ErasedTools {
-  const served = select(toList(apps), options?.actions);
+  const served = select(actionKind, toList(apps), options?.actions);
 
   const needsApproval = options?.needsApproval;
 
@@ -332,7 +325,10 @@ export function make(
     )
   );
 
-  return { toolkit, layer: layer.pipe(provideHandlers(served)) };
+  return {
+    toolkit,
+    layer: layer.pipe(provideServed(served)),
+  };
 }
 
 /** A tool call a model asked to have approved, which no answer has resolved yet. */

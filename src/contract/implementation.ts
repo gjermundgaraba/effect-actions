@@ -22,7 +22,6 @@ import type { Refusal } from "./errors.js";
 import type * as Event from "./Event.js";
 import type { AnyEventImplementation, EventOf } from "./feed.js";
 import { checkInput } from "./input-check.js";
-import { assertOnce, heldOnce } from "./names.js";
 import { reportedTo, streamReportedTo } from "./progress.js";
 import type { Reporting } from "./progress.js";
 import { elementOf } from "./stream.js";
@@ -575,11 +574,23 @@ export const assertHeld = <C extends Pick<Action.Any, "name">>(
   }
 };
 
-export const selectHeld = <App, C extends Pick<Action.Any, "name">>(
+/** One kind of contract an implementation holds, and how to narrow an implementation to some. */
+export interface ContractKind<App, C> {
+  readonly noun: "action" | "event";
+  readonly holds: (app: App) => readonly C[];
+  readonly share: (own: readonly C[], app: App) => App;
+}
+
+export const actionKind: ContractKind<AnyImplementation, Action.Any> = {
+  noun: "action",
+  holds: (app) => app.actions,
+  share: (own, app) => Implementation.share(own, app),
+};
+
+export const select = <App, C extends Pick<Action.Any, "name">>(
+  { holds, share }: ContractKind<App, C>,
   apps: readonly App[],
-  listed: readonly C[] | undefined,
-  holds: (app: App) => readonly C[],
-  share: (own: readonly C[], app: App) => App
+  listed: readonly C[] | undefined
 ): readonly App[] => {
   if (listed === undefined) {
     return apps;
@@ -597,49 +608,6 @@ export const selectHeld = <App, C extends Pick<Action.Any, "name">>(
 
     return own.length === held.length ? [app] : [share(own, app)];
   });
-};
-
-export const select = (
-  apps: readonly AnyImplementation[],
-  listed: readonly Action.Any[] | undefined
-): readonly AnyImplementation[] =>
-  selectHeld(
-    apps,
-    listed,
-    (app) => app.actions,
-    (own, app) => Implementation.share(own, app)
-  );
-
-export const servedBy = (
-  what: string,
-  bound: readonly Action.Any[],
-  apps: readonly AnyImplementation[],
-  listed: readonly Action.Any[] | undefined
-): readonly AnyImplementation[] => {
-  if (listed !== undefined) {
-    assertHeld(notHeld.byBinding, listed, bound);
-  }
-
-  const held = apps.flatMap((app) => app.actions);
-
-  const served = select(
-    apps,
-    listed ?? bound.filter((action) => held.includes(action))
-  );
-
-  const actions = served.flatMap((app) => app.actions);
-
-  if (actions.length === 0 && listed === undefined && apps.length > 0) {
-    const names = new Set(bound.map(({ name }) => name));
-
-    throw new Error(
-      `No action of these implementations is in this ${what}: ${markingOthers(held, names) || "none"} (pass an implementation of a bound action, or bind one of these)`
-    );
-  }
-
-  assertOnce("served action", actions, heldOnce);
-
-  return served;
 };
 
 /** The protected members of a contract union, of actions or of events. */
@@ -716,9 +684,6 @@ export const provideBuilders =
       ? layer
       : Layer.provide(layer, Layer.mergeAll(first, ...rest));
   };
-
-export const provideHandlers = (apps: readonly AnyImplementation[]) =>
-  provideBuilders(apps.map((app) => Implementation.layerOf(app)));
 
 export const acquire = (
   apps: readonly AnyImplementation[],

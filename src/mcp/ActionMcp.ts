@@ -18,7 +18,7 @@ import { AiError, McpSchema, McpServer } from "effect/ai";
 import { HttpRouter, HttpServerRequest } from "effect/http";
 import type { Headers, HttpServerResponse } from "effect/http";
 
-import { promote, providerOf } from "../authentication/provider.js";
+import { providerOf } from "../authentication/provider.js";
 import type {
   Any as Authentication,
   ProviderOf,
@@ -27,7 +27,7 @@ import type {
   Required as RequiredAuthentication,
   ServerBuildServices,
 } from "../authentication/provider.js";
-import { recordStepUp } from "../authentication/refusal.js";
+import { asCaller } from "../authentication/refusal.js";
 import type * as Action from "../contract/Action.js";
 import { inputParseOptions } from "../contract/call.js";
 import { Anyone, assertAuthentication } from "../contract/caller.js";
@@ -66,13 +66,9 @@ import type { Lift, Lifted } from "../contract/lift.js";
 import { assertOnce, heldOnce } from "../contract/names.js";
 import { provideServed, selectFrom } from "../contract/serving.js";
 import { toolSuccessOf } from "../contract/stream.js";
+import { servingFeeds } from "../contract/webhooks.js";
 import { withStderrConsole } from "../stdio/console.js";
-import {
-  eventSchemasOf,
-  refuseUnservable,
-  serveWebhooks,
-  withEvents,
-} from "./bridge.js";
+import { eventSchemasOf, withEvents } from "./bridge.js";
 import type { Serving } from "./bridge.js";
 import { progressNotifier } from "./progress.js";
 import {
@@ -369,11 +365,8 @@ const registerTools = Effect.fnUntraced(function* (
             (sink) => run(input, sink)
           );
 
-    const call =
-      authentication === undefined || action.caller === Anyone
-        ? reported
-        : (input: ErasedValue) =>
-            recordStepUp(promote(authentication, reported(input)));
+    const call = (input: ErasedValue) =>
+      asCaller(authentication, action, reported(input));
 
     const liftedFieldNames = new Set(media?.fields.map(({ name }) => name));
 
@@ -522,8 +515,7 @@ const server = <Out, E, R>(
       );
     }
 
-    yield* refuseUnservable(serving);
-    yield* serveWebhooks(serving);
+    yield* servingFeeds("MCP", serving.events, serving.authentication);
     yield* registerTools(apps, authentication);
   });
 
@@ -532,7 +524,7 @@ const server = <Out, E, R>(
       transport(Layer.effectDiscard(register).pipe(Layer.provide(features)))
     ),
     Layer.fresh,
-    provideServed({ apps, events })
+    provideServed(apps, events)
   );
 };
 

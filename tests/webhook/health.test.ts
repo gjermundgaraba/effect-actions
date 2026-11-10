@@ -4,16 +4,17 @@ import { Option, Schema } from "effect";
 import { CallbackCategory } from "../../src/contract/Event.js";
 import type { DeliveryStatus } from "../../src/contract/subscribe.js";
 import {
-  deliveryHealth,
+  delivering,
   failingForMs,
   healthOf,
+  healthTransition,
   statusOf,
 } from "../../src/webhook/health.js";
 import type { Health, HealthEvent } from "../../src/webhook/health.js";
 
 const retryForMs = 10_000;
 
-const machine = deliveryHealth(retryForMs);
+const transition = healthTransition(retryForMs);
 
 const iso = (millis: number) => new Date(millis).toISOString();
 
@@ -21,7 +22,7 @@ const after = (health: Health, ...events: readonly HealthEvent[]) => {
   let current = health;
 
   for (const event of events) {
-    current = machine.transition(current, event);
+    current = transition(current, event);
   }
 
   return current;
@@ -31,18 +32,18 @@ const failed = (
   at: number,
   category: CallbackCategory = "http_5xx",
   final = false
-): HealthEvent => ({ type: "AttemptFailed", category, final, at });
+): HealthEvent => ({ _tag: "AttemptFailed", category, final, at });
 
-const delivered = (at: number): HealthEvent => ({ type: "Delivered", at });
+const delivered = (at: number): HealthEvent => ({ _tag: "Delivered", at });
 
-const refreshed: HealthEvent = { type: "Refreshed" };
+const refreshed: HealthEvent = { _tag: "Refreshed" };
 
 const restored = (status: DeliveryStatus) =>
   Option.getOrThrow(healthOf(status));
 
 describe("a subscription's delivery health", () => {
   it("starts its retry budget at a first failure, keeps that start through repeat failures, and clears it at a delivery", () => {
-    const failing = after(machine.initialState, failed(1000));
+    const failing = after(delivering, failed(1000));
     const repeated = after(failing, failed(3000, "timeout"));
 
     expect(statusOf(failing)).toStrictEqual({
@@ -67,7 +68,7 @@ describe("a subscription's delivery health", () => {
   });
 
   it("suspends at the failure that reaches retryFor, which only a refresh resumes, with a fresh budget", () => {
-    const failing = after(machine.initialState, failed(0), failed(9999));
+    const failing = after(delivering, failed(0), failed(9999));
     const suspended = after(failing, failed(retryForMs));
     const resumed = after(suspended, refreshed);
 
@@ -92,13 +93,13 @@ describe("a subscription's delivery health", () => {
 
   it("resets the budget at a final failure, keeping its category, from delivering and from failing", () => {
     const fromDelivering = after(
-      machine.initialState,
+      delivering,
       delivered(500),
       failed(1000, "http_4xx", true)
     );
 
     const fromFailing = after(
-      machine.initialState,
+      delivering,
       failed(0),
       failed(2000, "http_4xx", true)
     );
@@ -119,11 +120,7 @@ describe("a subscription's delivery health", () => {
   });
 
   it("refuses a delivery or a failure while suspended, answering the same snapshot", () => {
-    const suspended = after(
-      machine.initialState,
-      failed(0),
-      failed(retryForMs)
-    );
+    const suspended = after(delivering, failed(0), failed(retryForMs));
 
     expect(after(suspended, delivered(retryForMs + 1))).toBe(suspended);
     expect(after(suspended, failed(retryForMs + 1, "timeout"))).toBe(suspended);
@@ -206,7 +203,7 @@ interface Modeled {
 }
 
 const modeled = (model: Modeled, event: HealthEvent): Modeled => {
-  if (event.type === "Refreshed") {
+  if (event._tag === "Refreshed") {
     return model.active
       ? model
       : { ...model, active: true, failedSince: undefined };
@@ -216,7 +213,7 @@ const modeled = (model: Modeled, event: HealthEvent): Modeled => {
     return model;
   }
 
-  if (event.type === "Delivered") {
+  if (event._tag === "Delivered") {
     return {
       active: true,
       lastDeliveryAt: event.at,
@@ -255,7 +252,7 @@ it.prop(
   "answers the status an independent model of active, lastError and failedSince reaches through any sequence of deliveries, outages, final failures and refreshes, and goes on alike from that status restored at any step",
   { steps: Steps },
   ({ steps }) => {
-    let health = machine.initialState;
+    let health = delivering;
 
     let model: Modeled = {
       active: true,

@@ -11,27 +11,27 @@ import {
 import { HttpServerResponse } from "effect/http";
 
 import type * as Action from "../contract/Action.js";
+import { Anyone } from "../contract/caller.js";
+import type { Called } from "../contract/caller.js";
 import { errorSchemas } from "../contract/declared.js";
 import { Forbidden, Refusal, Unauthenticated } from "../contract/errors.js";
-import { declared, httpApiStatusOf } from "../contract/status.js";
+import { declaredStatus } from "../contract/status.js";
+import { promote } from "./provider.js";
+import type { Any } from "./provider.js";
 
 type Declared = Action.Errors[number];
 
 const responseOf = (schema: Declared, error: Declared["Type"]) =>
   HttpServerResponse.jsonUnsafe(
     Schema.encodeUnknownSync(Schema.toCodecJson(schema))(error),
-    {
-      status: httpApiStatusOf(schema.ast) ?? 422,
-    }
+    { status: declaredStatus(schema) }
   );
 
 export const declaredResponse = (
   errors: readonly Declared[],
   error: Declared["Type"]
 ): HttpServerResponse.HttpServerResponse | undefined => {
-  const schema = errorSchemas(errors)
-    .map(declared)
-    .find((each) => Schema.is(each)(error));
+  const schema = errorSchemas(errors).find((each) => Schema.is(each)(error));
 
   return schema === undefined ? undefined : responseOf(schema, error);
 };
@@ -117,6 +117,19 @@ export const recordStepUp = <A, E, R>(
         )
       : Effect.void
   );
+
+/**
+ * `run` as the caller of `called`: unchanged where it is public or nothing authenticates, and
+ * otherwise with the identity its request verified, a step-up it fails with recorded.
+ */
+export const asCaller = <A, E, R>(
+  authentication: Any | undefined,
+  called: Pick<Called, "caller">,
+  run: Effect.Effect<A, E, R>
+) =>
+  authentication === undefined || called.caller === Anyone
+    ? run
+    : recordStepUp(promote(authentication, run));
 
 export const answerStepUp = <E, R>(
   route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,

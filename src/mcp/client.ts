@@ -14,11 +14,7 @@ import {
   sendingJson,
   watchInput,
 } from "../contract/call.js";
-import type {
-  Call,
-  ErasedMethod,
-  ErasedStreamMethod,
-} from "../contract/call.js";
+import type { Call, CheckedMethod } from "../contract/call.js";
 import { Anyone } from "../contract/caller.js";
 import { projectedErrors } from "../contract/declared.js";
 import { Refusal } from "../contract/errors.js";
@@ -27,12 +23,12 @@ import type * as Event from "../contract/Event.js";
 import { liftOf } from "../contract/lift.js";
 import { split } from "../contract/listed.js";
 import { assertOnce } from "../contract/names.js";
-import { progressSink } from "../contract/progress.js";
 import type { CallOptions, Reporting } from "../contract/progress.js";
 import { elementOf } from "../contract/stream.js";
 import type { Answer } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
 import type { WatchArgs, WatchRequirement } from "../contract/watch.js";
+import { decodedSink } from "./progress.js";
 import { defaultPath, unliftedFrom } from "./protocol.js";
 import {
   bodyOf,
@@ -145,28 +141,6 @@ const ToolCallReply = Schema.Union([
 const decodeReply = Schema.decodeUnknownOption(
   Schema.fromJsonString(ToolCallReply)
 );
-
-const decodedSink = (
-  progress: Action.Any["progress"],
-  onProgress: CallOptions<unknown>["onProgress"]
-): Reporting | undefined => {
-  const sink = progressSink(onProgress);
-
-  if (progress === undefined || sink === undefined) {
-    return undefined;
-  }
-
-  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(progress));
-
-  return {
-    progress: (json) =>
-      Effect.matchEffect(decode(json), {
-        onFailure: (error) =>
-          Effect.logWarning("A progress value did not decode", error),
-        onSuccess: sink.progress,
-      }),
-  };
-};
 
 const callTool = <S extends Action.Any["success"]>(
   client: Pick<HttpClient.HttpClient.With<unknown, unknown>, "execute">,
@@ -334,49 +308,42 @@ export function client(
 
     return {
       ...Object.fromEntries(
-        actions.map(
-          (
-            action
-          ): readonly [
-            string,
-            ErasedMethod<unknown> | ErasedStreamMethod<unknown>,
-          ] => {
-            const call = <S extends Action.Any["success"]>(
-              success: S,
-              input: Schema.Json,
-              onProgress: CallOptions<unknown>["onProgress"]
-            ) =>
-              callTool(
-                http,
-                url,
-                action,
-                success,
-                refusedWith(action),
-                input,
-                decodedSink(action.progress, onProgress)
-              );
+        actions.map((action): readonly [string, CheckedMethod<unknown>] => {
+          const call = <S extends Action.Any["success"]>(
+            success: S,
+            input: Schema.Json,
+            onProgress: CallOptions<unknown>["onProgress"]
+          ) =>
+            callTool(
+              http,
+              url,
+              action,
+              success,
+              refusedWith(action),
+              input,
+              decodedSink(action.progress, onProgress)
+            );
 
-            const element = elementOf(action.success);
+          const element = elementOf(action.success);
 
-            if (element !== undefined) {
-              const elements = Schema.Array(element);
-
-              return [
-                action.name,
-                checkedStream(action, sendingJson, (input, onProgress) =>
-                  Stream.fromIterableEffect(call(elements, input, onProgress))
-                ),
-              ];
-            }
+          if (element !== undefined) {
+            const elements = Schema.Array(element);
 
             return [
               action.name,
-              checked(action, sendingJson, (input, onProgress) =>
-                call(action.success, input, onProgress)
+              checkedStream(action, sendingJson, (input, onProgress) =>
+                Stream.fromIterableEffect(call(elements, input, onProgress))
               ),
             ];
           }
-        )
+
+          return [
+            action.name,
+            checked(action, sendingJson, (input, onProgress) =>
+              call(action.success, input, onProgress)
+            ),
+          ];
+        })
       ),
       ...(events.length === 0 ? {} : { watch }),
     };

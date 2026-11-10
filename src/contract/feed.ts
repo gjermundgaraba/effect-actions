@@ -17,13 +17,9 @@ import { Unauthenticated } from "./errors.js";
 import type * as Event from "./Event.js";
 import { attachmentsOf, Events, reaches } from "./hub.js";
 import type { Checking } from "./hub.js";
-import {
-  builderLayer,
-  memoized,
-  notMadeHere,
-  selectHeld,
-} from "./implementation.js";
+import { builderLayer, memoized, notMadeHere } from "./implementation.js";
 import type {
+  ContractKind,
   ErasedAuthorize,
   ErasedValue,
   Memoized,
@@ -669,44 +665,16 @@ export class EventImplementation<
 export type AnyEventImplementation<E extends Event.Any = Event.Any> =
   EventImplementation<E, unknown, unknown, unknown, unknown, unknown, unknown>;
 
-export const unkeyedHook = (
-  surface: string,
-  feeds: readonly Feed[],
-  keyed: boolean
-): string | undefined =>
-  keyed
-    ? undefined
-    : Arr.findFirst(
-        feeds,
-        ({ event, release }) => release !== undefined && event.caller !== Anyone
-      ).pipe(
-        Option.map(
-          ({ event }) =>
-            `${surface} event "${event.name}" is protected and has a subscription hook, so its authentication needs principal to tell poll subscribers apart (give Authentication.make a principal, such as (user) => user.id)`
-        ),
-        Option.getOrUndefined
-      );
-
 export const eventsOf = (served: Served): readonly AnyEventImplementation[] =>
   Arr.ensure(served).filter((app): app is AnyEventImplementation =>
     Predicate.isTagged(app, "EventImplementation")
   );
 
-export const selectEvents = (
-  apps: readonly AnyEventImplementation[],
-  listed: readonly Event.Any[] | undefined
-): readonly AnyEventImplementation[] =>
-  selectHeld(
-    apps,
-    listed,
-    (app) => app.events,
-    (own, app) => EventImplementation.share(own, app)
-  );
-
-export const feedBuilders = (
-  events: readonly AnyEventImplementation[]
-): ReadonlyArray<Layer.Layer<never, unknown, unknown>> =>
-  events.map((app) => EventImplementation.layerOf(app));
+export const eventKind: ContractKind<AnyEventImplementation, Event.Any> = {
+  noun: "event",
+  holds: (app) => app.events,
+  share: (own, app) => EventImplementation.share(own, app),
+};
 
 export const acquireFeeds = (
   events: readonly AnyEventImplementation[]

@@ -1,4 +1,4 @@
-import { Predicate, Schema, Stream as Elements } from "effect";
+import { Data, Predicate, Schema, Stream as Elements } from "effect";
 import type { Effect } from "effect";
 
 import { codecOf } from "./codec.js";
@@ -44,6 +44,36 @@ const isStreamOf = (success: Codec): success is StreamOf<Codec> =>
 
 export const elementOf = (success: Codec): Codec | undefined =>
   isStreamOf(success) ? success.element : undefined;
+
+/** How a surface carries an action's answer: one value, a value after its progress, or elements. */
+export type Answering = Data.TaggedEnum<{
+  readonly Value: { readonly success: Codec };
+  readonly Progressed: { readonly success: Codec; readonly progress: Codec };
+  readonly Elements: {
+    readonly element: Codec;
+    readonly progress: Codec | undefined;
+  };
+}>;
+
+export const Answering = Data.taggedEnum<Answering>();
+
+export const answeringOf = ({
+  success,
+  progress,
+}: {
+  readonly success: Codec;
+  readonly progress: Codec | undefined;
+}): Answering => {
+  const element = elementOf(success);
+
+  if (element !== undefined) {
+    return Answering.Elements({ element, progress });
+  }
+
+  return progress === undefined
+    ? Answering.Value({ success })
+    : Answering.Progressed({ success, progress });
+};
 
 /** What a handler or a call of an action with success `S` answers: a stream, or one value. */
 export type Answer<S extends Codec, E, R> = [S] extends [never]

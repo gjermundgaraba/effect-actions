@@ -551,25 +551,6 @@ const wholeInputFlag = (encoded: SchemaAST.AST) =>
 
 type Render = Options<Action.Any>["render"];
 
-const printedOutput = (
-  action: Action.Any,
-  value: ErasedValue,
-  render: Render
-): Effect.Effect<Option.Option<string>> =>
-  Effect.map(
-    Effect.orDie(
-      Schema.encodeEffect(Schema.toCodecJson(action.success))(value)
-    ),
-    (encoded) =>
-      render === undefined && SchemaAST.isVoid(action.success.ast)
-        ? Option.none()
-        : Option.some(
-            render === undefined
-              ? JSON.stringify(encoded, null, 2)
-              : render(value)
-          )
-  );
-
 /**
  * What a command fails with when its action fails: Effect CLI's `UserError`, typed with the
  * action's failure as its `cause` and `reason`, and whose `userMessage` is its JSON, or for a
@@ -849,20 +830,24 @@ const printedOf = (action: Action.Any) => {
   const element = elementOf(action.success);
 
   if (element === undefined) {
+    const encode = Schema.encodeEffect(Schema.toCodecJson(action.success));
+    const silent = SchemaAST.isVoid(action.success.ast);
+
     return (
       value: ErasedValue,
       render: Render,
       print: (line: string) => void
     ) =>
-      Effect.flatMap(
-        printedOutput(action, value, render),
-        Option.match({
-          onNone: () => Effect.void,
-          onSome: (line) =>
-            Effect.sync(() => {
-              print(line);
-            }),
-        })
+      Effect.flatMap(Effect.orDie(encode(value)), (encoded) =>
+        render === undefined && silent
+          ? Effect.void
+          : Effect.sync(() => {
+              print(
+                render === undefined
+                  ? JSON.stringify(encoded, null, 2)
+                  : render(value)
+              );
+            })
       );
   }
 

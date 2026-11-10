@@ -3,7 +3,9 @@ export interface Recent {
   readonly add: (id: string) => void;
 }
 
-export const makeRecent = (size: number): Recent => {
+const keptIds = 1000;
+
+export const makeRecent = (): Recent => {
   const ids = new Set<string>();
 
   return {
@@ -11,7 +13,7 @@ export const makeRecent = (size: number): Recent => {
     add: (id) => {
       ids.add(id);
 
-      if (ids.size > size) {
+      if (ids.size > keptIds) {
         ids.delete(ids.values().next().value ?? id);
       }
     },

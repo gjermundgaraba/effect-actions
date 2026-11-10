@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**`ActionDurableObject.Sockets`' `message`, `close` and `error` succeed with `void`.** They answered whether a protocol held the socket, which the handlers dropped, so the event of a socket no protocol accepted reaches nothing, as their JSDoc now says, where it said the caller answered it.
+
+- Migrate: drop any use of the boolean. Answer a socket the object accepts itself in the class's own `webSocketMessage`, `webSocketClose` and `webSocketError`, by the tag it was accepted with, and hand the others to `handlers`.
+
+### Other changes
+
+- An event subscription over `ActionRpc` whose input and cursor both fail to decode answers `InvalidInput` naming every issue, each by its path in the subscription (`["input", "log"]`, `["cursor"]`), as `ActionHttp` does; RPC named only the cursor's, and an input issue's path lacked its `input` prefix.
+- An event subscription over `ActionRpc` kept by its protocol, as `layerWebSocket` keeps one, resumes from its input encoded again from the decoded value, where it kept the input as sent. An input whose schema does not encode it again fails that subscription alone as it is admitted, reported as a defect.
+
 ## 0.30.0
 
 ### Breaking changes

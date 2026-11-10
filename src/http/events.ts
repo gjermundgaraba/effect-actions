@@ -25,6 +25,7 @@ import type {
 } from "../contract/subscribe.js";
 import { webhookSubscriber } from "../contract/webhooks.js";
 import type { Webhooks } from "../contract/webhooks.js";
+import { acceptsEventStream } from "./streamed.js";
 
 export const pageOf = <E extends Event.Any>(event: E) =>
   Schema.Struct({
@@ -127,7 +128,7 @@ export const answering = (
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
 
-      if ((request.headers["accept"] ?? "").includes("text/event-stream")) {
+      if (acceptsEventStream(request)) {
         const open = yield* feed.stream(input);
 
         return Stream.fromQueue(

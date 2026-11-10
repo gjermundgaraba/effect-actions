@@ -48,7 +48,6 @@ import {
 import type { Certain, ErrorsOf } from "../contract/declared.js";
 import type { BuiltIn, BuiltIns } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
-import { acquireFeeds, unkeyedHook } from "../contract/feed.js";
 import type {
   EventBuildError,
   EventBuildServices,
@@ -74,8 +73,8 @@ import type { Only } from "../contract/listed.js";
 import type { SubscriptionOf } from "../contract/push.js";
 import { provideServed, servingOf } from "../contract/serving.js";
 import { declared } from "../contract/status.js";
-import { elementOf } from "../contract/stream.js";
-import { offersWebhook, servedWebhooks } from "../contract/webhooks.js";
+import { Answering, answeringOf } from "../contract/stream.js";
+import { offersWebhook, servingFeeds } from "../contract/webhooks.js";
 import { methods } from "./client.js";
 import type { AnyHttp, Client, Options as ClientOptions } from "./client.js";
 import {
@@ -367,20 +366,16 @@ const apiOf = (
     .add(first === undefined ? empty : empty.add(first, ...rest));
 };
 
-const successOf = (action: Action.Any, errors: Action.Errors) => {
-  const element = elementOf(action.success);
-
-  if (element !== undefined) {
-    return elementStreamOf(element, action.progress, errors);
-  }
-
-  return action.progress === undefined
-    ? action.success
-    : [
-        answeredWithProgress(action.success),
-        progressStreamOf(action.progress, action.success, errors),
-      ];
-};
+const successOf = (action: Action.Any, errors: Action.Errors) =>
+  Answering.$match(answeringOf(action), {
+    Value: ({ success }) => success,
+    Progressed: ({ success, progress }) => [
+      answeredWithProgress(success),
+      progressStreamOf(progress, success, errors),
+    ],
+    Elements: ({ element, progress }) =>
+      elementStreamOf(element, progress, errors),
+  });
 
 const endpointOf = (
   action: Action.Any,
@@ -393,17 +388,12 @@ const endpointOf = (
     error: errors.map(declared),
   });
 
-const answerOf = (action: Action.Any, run: ErasedHandler<unknown>) => {
-  const element = elementOf(action.success);
-
-  if (element !== undefined) {
-    return answeringElements(element, run);
-  }
-
-  return action.progress === undefined
-    ? run
-    : answeringWithProgress(action.success, run);
-};
+const answerOf = (action: Action.Any, run: ErasedHandler<unknown>) =>
+  Answering.$match(answeringOf(action), {
+    Value: () => run,
+    Progressed: ({ success }) => answeringWithProgress(success, run),
+    Elements: ({ element }) => answeringElements(element, run),
+  });
 
 type Route = HttpApiEndpoint.HttpApiEndpoint<
   string,
@@ -676,20 +666,10 @@ export function layer(
   const handlers = Layer.unwrap(
     Effect.gen(function* () {
       const bound = yield* acquire(apps, authentication);
-      const feeds = yield* acquireFeeds(events);
 
-      const refusal = unkeyedHook(
+      const { feeds, webhooks, offered } = yield* servingFeeds(
         "ActionHttp",
-        feeds,
-        authentication?.principal !== undefined
-      );
-
-      if (refusal !== undefined) {
-        return yield* Effect.die(new Error(refusal));
-      }
-
-      const { webhooks, offered } = yield* servedWebhooks(
-        feeds,
+        events,
         authentication
       );
 
@@ -768,7 +748,7 @@ export function layer(
         buildInEmptyContext
       );
     })
-  ).pipe(provideServed(selected));
+  ).pipe(provideServed(selected.apps, selected.events));
 
   return HttpApiBuilder.layer(api).pipe(
     Layer.provide(handlers),

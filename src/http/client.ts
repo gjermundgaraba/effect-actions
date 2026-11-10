@@ -16,17 +16,13 @@ import {
   sendingValue,
   watchInput,
 } from "../contract/call.js";
-import type {
-  Call,
-  ErasedMethod,
-  ErasedStreamMethod,
-} from "../contract/call.js";
+import type { Call, CheckedMethod } from "../contract/call.js";
 import type { Codec } from "../contract/codec.js";
 import type { BuiltIns } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
 import type { ErasedValue } from "../contract/implementation.js";
 import type { Receiving } from "../contract/receiving.js";
-import { elementOf } from "../contract/stream.js";
+import { Answering, answeringOf } from "../contract/stream.js";
 import type { Answer, StreamOf } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
 import type {
@@ -177,10 +173,7 @@ type ErasedWatch<R> = (
 ) => Stream.Stream<Event.Received<Event.Any>, unknown, R | Receiving>;
 
 export interface Methods<R> {
-  readonly [name: string]:
-    | ErasedMethod<R>
-    | ErasedStreamMethod<R>
-    | ErasedWatch<R>;
+  readonly [name: string]: CheckedMethod<R> | ErasedWatch<R>;
 }
 
 const methodOf = <M>(
@@ -217,34 +210,31 @@ const nativeOf = <E, R>(
 const actionMethodOf = <R>(
   action: Action.Any,
   native: NativeClient<NativeMethod<R>>
-): ErasedMethod<R> | ErasedStreamMethod<R> => {
+): CheckedMethod<R> => {
   const method = methodOf(native, action.name, "action");
 
-  if (elementOf(action.success) !== undefined) {
-    return checkedStream(action, sendingValue, (payload, onProgress) =>
-      Stream.unwrap(
-        Effect.map(method({ payload }), (answer) =>
-          readElements(answer, onProgress)
+  return Answering.$match(answeringOf(action), {
+    Value: () =>
+      checked(action, sendingValue, (payload) => method({ payload })),
+    Progressed: () =>
+      checked(action, sendingValue, (payload, onProgress) =>
+        Effect.flatMap(method({ payload }), (answer) =>
+          readWithProgress(answer, onProgress)
         )
-      )
-    );
-  }
-
-  if (action.progress === undefined) {
-    return checked(action, sendingValue, (payload) => method({ payload }));
-  }
-
-  return checked(action, sendingValue, (payload, onProgress) =>
-    Effect.flatMap(method({ payload }), (answer) =>
-      readWithProgress(answer, onProgress)
-    )
-  );
+      ),
+    Elements: () =>
+      checkedStream(action, sendingValue, (payload, onProgress) =>
+        Stream.unwrap(
+          Effect.map(method({ payload }), (answer) =>
+            readElements(answer, onProgress)
+          )
+        )
+      ),
+  });
 };
 
 export interface Senders<R> {
-  readonly method: (
-    action: Action.Any
-  ) => ErasedMethod<R> | ErasedStreamMethod<R>;
+  readonly method: (action: Action.Any) => CheckedMethod<R>;
   readonly transport: (
     event: Event.Any,
     input: ErasedValue

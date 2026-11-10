@@ -1,13 +1,11 @@
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { Clock, Effect, Layer, Option, Schema } from "effect";
 
-import { deleted } from "./batches.js";
+import { batchSize, deleted } from "./batches.js";
 
 const keptPrefix = "effect-actions/idempotency/";
 
 const hour = 60 * 60 * 1000;
-
-const page = 128;
 
 const keptOf = Schema.decodeUnknownOption(Action.Idempotency.Kept);
 
@@ -31,7 +29,7 @@ export const layerIdempotency = (
       do {
         const options = {
           prefix: keptPrefix,
-          limit: page,
+          limit: batchSize,
           ...(after === undefined ? {} : { startAfter: after }),
         };
 
@@ -53,7 +51,7 @@ export const layerIdempotency = (
           )
         );
 
-        after = listed.length === page ? listed.at(-1)?.[0] : undefined;
+        after = listed.length === batchSize ? listed.at(-1)?.[0] : undefined;
       } while (after !== undefined);
     });
 

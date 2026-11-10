@@ -51,9 +51,9 @@ const tellingOver = <E>(
   tell: Effect.Effect<void, E>
 ) => {
   const schedule = makeSchedule(state);
-  const { tasks, owners } = makeTasks(schedule, { tell });
+  const { service, owners } = makeTasks(schedule, { tell });
 
-  return { tasks, alarm: schedule.runDue(owners) };
+  return { tasks: service, alarm: schedule.runDue(owners) };
 };
 
 describe("an object's tasks", () => {

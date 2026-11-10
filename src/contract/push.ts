@@ -25,9 +25,9 @@ export type Pushed = Event.Occurrence<Event.Any> | Gap | Checked | Failed;
 export const PushedOf = <E extends Event.Any>(event: E) =>
   Schema.Union([OccurrenceOf(event), Gap, Checked, Failed]);
 
-const subscriptionWith = <I extends Schema.Top>(input: I) =>
+export const SubscriptionOf = <E extends Event.Any>(event: E) =>
   Schema.Struct({
-    input,
+    input: event.input,
     cursor: Schema.NullOr(Schema.String)
       .annotate({
         description:
@@ -35,11 +35,6 @@ const subscriptionWith = <I extends Schema.Top>(input: I) =>
       })
       .pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
   });
-
-export const SubscriptionOf = <E extends Event.Any>(event: E) =>
-  subscriptionWith(event.input);
-
-export const Subscription = subscriptionWith(Schema.Json);
 
 export type AnySubscription = ReturnType<
   typeof SubscriptionOf<Event.Any>

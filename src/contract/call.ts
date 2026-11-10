@@ -21,7 +21,7 @@ const isCallOptions = (options: ErasedValue): options is CallOptions<unknown> =>
   Predicate.hasProperty(options, "onProgress") &&
   Predicate.isFunction(options.onProgress);
 
-export const onProgressOf = (
+const onProgressOf = (
   args: readonly ErasedValue[]
 ): CallOptions<unknown>["onProgress"] => {
   const [, options] = args;
@@ -34,9 +34,9 @@ export const inputParseOptions = {
   onExcessProperty: "error",
 } as const;
 
-export const decodeInput = (
-  action: Pick<Action.Any, "input">
-): ((encoded: ErasedValue) => Effect.Effect<ErasedValue, InvalidInput>) => {
+export const decodeInput = <I extends Codec>(action: {
+  readonly input: I;
+}): ((encoded: ErasedValue) => Effect.Effect<I["Type"], InvalidInput>) => {
   const decode = Schema.decodeUnknownEffect(
     Schema.toCodecJson(action.input),
     inputParseOptions
@@ -46,7 +46,7 @@ export const decodeInput = (
     Effect.mapError(decode(encoded), InvalidInput.fromSchemaError);
 };
 
-export const inputOf = (
+const inputOf = (
   action: Pick<Action.Any, "input">,
   args: readonly ErasedValue[]
 ): Effect.Effect<ErasedValue, Schema.SchemaError> =>
@@ -128,6 +128,9 @@ export const checked = <S, R, A = ErasedValue>(
 export type ErasedStreamMethod<R = never> = (
   ...input: readonly ErasedValue[]
 ) => Stream.Stream<ErasedValue, unknown, R>;
+
+/** What `checked` or `checkedStream` makes of an action: one value, or a stream of elements. */
+export type CheckedMethod<R = never> = ErasedMethod<R> | ErasedStreamMethod<R>;
 
 export const checkedStream = <S, R>(
   action: Action.Any,

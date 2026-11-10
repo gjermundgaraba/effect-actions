@@ -56,11 +56,8 @@ const lint: ReturnType<typeof config> = config({
         "packages/cloudflare/src/durable/ActionDurableObject.ts",
         "src/authentication/provider.ts",
         "src/cli/commands.ts",
+        "src/contract/implementation.ts",
       ],
-      rules: { "typescript/method-signature-style": "off" },
-    },
-    {
-      files: ["src/contract/implementation.ts"],
       rules: { "typescript/method-signature-style": "off" },
     },
     {
@@ -238,6 +235,7 @@ const lint: ReturnType<typeof config> = config({
     {
       files: ["tests/cli/cli.test.ts"],
       rules: {
+        "anti-slop/no-shape-in-symbol-names": "off",
         "effecttsgo/schema-number": "off",
         "typescript/no-misused-spread": "off",
       },
@@ -245,10 +243,6 @@ const lint: ReturnType<typeof config> = config({
     {
       files: ["tests/stdio/console.model.test.ts"],
       rules: { "effecttsgo/schema-number": "off" },
-    },
-    {
-      files: ["tests/cli/cli.test.ts"],
-      rules: { "anti-slop/no-shape-in-symbol-names": "off" },
     },
     {
       files: ["tests/contract/implement.test.ts"],

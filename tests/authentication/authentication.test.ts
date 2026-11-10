@@ -690,9 +690,7 @@ describe("Authentication.layer's refusals", () => {
 
     expect(() =>
       Authentication.layer(Login, verify, { protectedResource: bad })
-    ).toThrow(
-      `Invalid scope in scopesSupported: "has space", not an OAuth scope token: give each scope as its own element, of printable ASCII without a space, '"' or '\\'`
-    );
+    ).toThrow(`Invalid scope in scopesSupported: "has space"`);
   });
 
   it("leaves a request whose URL does not parse to the host, not a 500", async () => {

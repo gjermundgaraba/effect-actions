@@ -1,8 +1,10 @@
+import type { Layer } from "effect";
+
 import type * as Action from "./Action.js";
 import { Anyone, assertAuthentication } from "./caller.js";
 import type { Proving } from "./caller.js";
 import type * as Event from "./Event.js";
-import { eventsOf, feedBuilders, selectEvents } from "./feed.js";
+import { EventImplementation, eventKind, eventsOf } from "./feed.js";
 import type { AnyEventImplementation } from "./feed.js";
 import {
   assertHeld,
@@ -11,10 +13,14 @@ import {
   notHeld,
   provideBuilders,
   select,
-  servedBy,
   toList,
+  actionKind,
 } from "./implementation.js";
-import type { AnyImplementation, Served } from "./implementation.js";
+import type {
+  AnyImplementation,
+  ContractKind,
+  Served,
+} from "./implementation.js";
 import { selection } from "./listed.js";
 import { assertDistinct, assertOnce, heldOnce } from "./names.js";
 
@@ -25,56 +31,47 @@ export const selectFrom = (
   const listed = selection(actions);
 
   return {
-    apps: select(toList(served), listed.actions),
-    events: selectEvents(eventsOf(served), listed.events),
+    apps: select(actionKind, toList(served), listed.actions),
+    events: select(eventKind, eventsOf(served), listed.events),
   };
 };
 
-const eventsServedBy = (
+const servedBy = <App, C extends Pick<Action.Any, "name">>(
+  kind: ContractKind<App, C>,
   what: string,
-  bound: readonly Event.Any[],
-  served: Served,
-  listed: readonly Event.Any[] | undefined
-): readonly AnyEventImplementation[] => {
-  const apps = eventsOf(served);
+  bound: readonly C[],
+  apps: readonly App[],
+  listed: readonly C[] | undefined
+): readonly App[] => {
+  const { noun, holds } = kind;
 
   if (listed !== undefined) {
     assertHeld(notHeld.byBinding, listed, bound);
   }
 
-  const unbound = apps.filter(
-    (app) => !app.events.some((event) => bound.includes(event))
-  );
+  const held = apps.flatMap(holds);
 
   if (
     listed === undefined &&
-    unbound.length > 0 &&
-    unbound.length === apps.length
+    apps.length > 0 &&
+    !held.some((contract) => bound.includes(contract))
   ) {
     const names = new Set(bound.map(({ name }) => name));
 
     throw new Error(
-      `No event of these implementations is in this ${what}: ${markingOthers(
-        unbound.flatMap((app) => app.events),
-        names
-      )} (pass an implementation of a bound event, or bind one of these)`
+      `No ${noun} of these implementations is in this ${what}: ${markingOthers(held, names) || "none"} (pass an implementation of a bound ${noun}, or bind one of these)`
     );
   }
 
-  const held = new Set(apps.flatMap((app) => app.events));
-
-  const selected = selectEvents(
+  const served = select(
+    kind,
     apps,
-    listed ?? bound.filter((event) => held.has(event))
+    listed ?? bound.filter((contract) => held.includes(contract))
   );
 
-  assertOnce(
-    "served event",
-    selected.flatMap((app) => app.events),
-    heldOnce
-  );
+  assertOnce(`served ${noun}`, served.flatMap(holds), heldOnce);
 
-  return selected;
+  return served;
 };
 
 export const servingOf = <D extends Proving>(
@@ -91,10 +88,25 @@ export const servingOf = <D extends Proving>(
   }
 ) => {
   const listed = selection(options.actions);
-  const apps = servedBy(what, binding.actions, toList(served), listed.actions);
+
+  const apps = servedBy(
+    actionKind,
+    what,
+    binding.actions,
+    toList(served),
+    listed.actions
+  );
 
   const actions = apps.flatMap((app) => app.actions);
-  const events = eventsServedBy(what, binding.events, served, listed.events);
+
+  const events = servedBy(
+    eventKind,
+    what,
+    binding.events,
+    eventsOf(served),
+    listed.events
+  );
+
   const eventTypes = events.flatMap((app) => app.events);
 
   assertAuthentication(actions, binding.authentication);
@@ -116,11 +128,15 @@ export const servingOf = <D extends Proving>(
   };
 };
 
-export const provideServed = (served: {
-  readonly apps: readonly AnyImplementation[];
-  readonly events: readonly AnyEventImplementation[];
-}) =>
-  provideBuilders([
-    ...served.apps.map((app) => Implementation.layerOf(app)),
-    ...feedBuilders(served.events),
-  ]);
+export const buildersOf = (
+  apps: readonly AnyImplementation[],
+  events: readonly AnyEventImplementation[] = []
+): ReadonlyArray<Layer.Layer<never, unknown, unknown>> => [
+  ...apps.map((app) => Implementation.layerOf(app)),
+  ...events.map((app) => EventImplementation.layerOf(app)),
+];
+
+export const provideServed = (
+  apps: readonly AnyImplementation[],
+  events: readonly AnyEventImplementation[] = []
+) => provideBuilders(buildersOf(apps, events));

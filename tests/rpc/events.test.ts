@@ -2,11 +2,14 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Effect,
+  ErrorReporter,
+  Exit,
   Fiber,
   Layer,
   Predicate,
   Queue,
   Schema,
+  SchemaGetter,
   Stream,
 } from "effect";
 import {
@@ -15,7 +18,13 @@ import {
   HttpClientRequest,
   HttpClientResponse,
 } from "effect/http";
-import { RpcClient, RpcClientError, RpcSerialization } from "effect/rpc";
+import {
+  Rpc as NativeRpc,
+  RpcClient,
+  RpcClientError,
+  RpcGroup,
+  RpcSerialization,
+} from "effect/rpc";
 import type { RpcMessage } from "effect/rpc";
 import { Socket } from "effect/socket";
 import { TestClock } from "effect/testing";
@@ -29,6 +38,7 @@ import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { makeMessages, Posted, settle } from "../support/events.js";
+import { recorder } from "../support/reporter.js";
 import { overHttp, rpcRoutes } from "../support/rpc.js";
 import { serve } from "../support/serve.js";
 import { inMemoryValuesProtocolTo } from "../support/values.js";
@@ -484,6 +494,132 @@ describe("an RPC watch over a protocol keeping subscriptions", () => {
         expect(received).toMatchObject([{ _tag: "Occurrence", eventId: "m1" }]);
         expect(kept).toHaveLength(2);
       })
+  );
+});
+
+const quietCheck = () => Effect.succeed({ cursor: "0", events: [] });
+
+describe("a kept RPC subscription", () => {
+  const Tallied = Event.make("tally.counted", {
+    description: "A tally counted.",
+    input: { from: Schema.FiniteFromString },
+    payload: { n: Schema.Int },
+    caller: Action.Anyone,
+  });
+
+  const Sealed = Event.make("seal.noted", {
+    description: "A note under a seal that does not encode.",
+    input: {
+      seal: Schema.String.pipe(
+        Schema.decodeTo(Schema.String, {
+          decode: SchemaGetter.passthrough(),
+          encode: SchemaGetter.forbiddenEncoding,
+        })
+      ),
+    },
+    payload: { n: Schema.Int },
+    caller: Action.Anyone,
+  });
+
+  const raw = {
+    payload: Schema.Json,
+    success: Schema.Json,
+    error: Schema.Json,
+    stream: true,
+  } as const;
+
+  const Raw = RpcGroup.make(
+    NativeRpc.make(Posted.name, raw),
+    NativeRpc.make(Tallied.name, raw),
+    NativeRpc.make(Sealed.name, raw)
+  );
+
+  const keptBy = (
+    log: ReturnType<typeof makeMessages>,
+    kept: ActionRpc.KeptSubscription[],
+    reported: string[]
+  ) =>
+    inMemoryValuesProtocolTo(
+      ActionRpc.layer(ActionRpc.make([Posted, Tallied, Sealed]), [
+        log.implementation,
+        Event.implement(Tallied, { check: quietCheck }),
+        Event.implement(Sealed, { check: quietCheck }),
+      ]).pipe(Layer.provide(ErrorReporter.layer([recorder(reported)]))),
+      {
+        acknowledges: true,
+        keeper: {
+          keep: (subscription) => Effect.sync(() => kept.push(subscription)),
+        },
+      }
+    ).pipe(Layer.provide(Event.layerMemory));
+
+  it.effect(
+    "resumes from its input in its encoded form, not as it decoded",
+    () => {
+      const kept: ActionRpc.KeptSubscription[] = [];
+
+      return Effect.gen(function* () {
+        const client = yield* RpcClient.make(Raw);
+
+        yield* client[Tallied.name]({ input: { from: "5" }, cursor: "0" }).pipe(
+          Stream.runDrain,
+          Effect.forkChild
+        );
+
+        yield* settle;
+
+        expect(
+          kept.map(({ resumeFrom }) =>
+            resumeFrom([{ _tag: "Checked", cursor: "2" }])
+          )
+        ).toStrictEqual([{ input: { from: "5" }, cursor: "2" }]);
+      }).pipe(Effect.scoped, Effect.provide(keptBy(makeMessages(), kept, [])));
+    }
+  );
+
+  it.effect(
+    "fails alone and reported where its input does not encode, as the others on its protocol go on",
+    () => {
+      const log = makeMessages();
+      const kept: ActionRpc.KeptSubscription[] = [];
+      const reported: string[] = [];
+
+      return Effect.gen(function* () {
+        const client = yield* RpcClient.make(Raw);
+
+        const posted = yield* client[Posted.name]({
+          input: {},
+          cursor: "0",
+        }).pipe(
+          Stream.filter(Predicate.isTagged("Occurrence")),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild
+        );
+
+        yield* settle;
+
+        const sealed = yield* Effect.exit(
+          Stream.runDrain(
+            client[Sealed.name]({ input: { seal: "x" }, cursor: null })
+          )
+        );
+
+        log.post("general", "after the seal");
+        yield* TestClock.adjust("5 seconds");
+
+        expect(Exit.isFailure(sealed) && Cause.hasDies(sealed.cause)).toBe(
+          true
+        );
+        expect(yield* Fiber.join(posted)).toMatchObject([
+          { _tag: "Occurrence", data: { text: "after the seal" } },
+        ]);
+        expect(reported).toStrictEqual([
+          expect.stringContaining("Encoding is not supported"),
+        ]);
+        expect(kept.map(({ tag }) => tag)).toStrictEqual([Posted.name]);
+      }).pipe(Effect.scoped, Effect.provide(keptBy(log, kept, reported)));
+    }
   );
 });
 
