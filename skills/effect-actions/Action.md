@@ -23,7 +23,7 @@ export const Greet = Action.make("greet", {
 
 [notes-service/src/notes/Notes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/notes/Notes.ts) adds declared errors with their statuses, described fields and the list; [kitchen-sink/src/issues/Issues.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/Issues.ts) uses every option. The rules of each option, `input`'s optional fields and `error`'s tags included, are on `Action.Options`; where an action must be listed to be served, and matching by object identity, are on `Action.make`. The list each surface takes lives in one file beside the contracts ([kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts)).
 
-- **List an action as a tool only where a model may hold what it takes and returns.** A tool call passes both through the model's context, and `ActionToolkit`, through Effect's toolkit, records its arguments on the current span, a `Schema.Redacted` value included: always before effect 4.1.3, and from it where `Toolkit.RecordToolArguments` is `true`, which also records an MCP tool call's arguments on its request span.
+- **List an action as a tool only where a model may hold what it takes and returns.** A tool call passes both through the model's context, and `ActionToolkit`, through Effect's toolkit, records its arguments on the current span, a `Schema.Redacted` value included, where `Toolkit.RecordToolArguments` is `true`, which also records an MCP tool call's arguments on its request span.
 
 ## Say who may call an action
 
