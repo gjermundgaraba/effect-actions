@@ -148,6 +148,8 @@ Recheck these on an upgrade of the dependency named.
   - The runtime retries a failed alarm 2 seconds later, doubling, six times, then drops it, and gives up on a handler that crashes, so `alarm.ts` retries each owner itself and an instance's build sets the alarm again.
   - workerd refuses a second `close()` of a closing socket and a frame sent to one, so `frames.ts` ignores both.
   - Close codes 4000 to 4999 are private use (RFC 6455 §7.4.2 reserves 1000 to 3999), so a refusal closes with one.
+- Vitest and `@cloudflare/vitest-plugin`:
+  - With `fsModuleCache` on, Vitest 5 answers a fresh worker's first module fetch with every module of its file's import graph already on disk (`fetchWarmModules`), and the plugin (1.6.1) inlines all their code, Effect's source maps included, into one message on the runner's socket; workerd closes a socket at a message over 32 MiB with 1009, and Vitest reports the file as "Worker exited unexpectedly". The package's durable tests' graphs came within 0.3 MiB of that with effect 4.1.3 and crossed it on CI's longer checkout path, so both workerd projects, the package and chat-rooms, set `fsModuleCache: false`.
 - Web platform:
   - fetch follows redirects unless told not to, so a webhook POST runs with `redirect: "manual"`.
   - `EventSource` sends no body or headers, so a browser watches with `fetchClient`.

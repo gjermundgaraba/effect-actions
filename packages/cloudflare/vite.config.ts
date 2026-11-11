@@ -9,6 +9,7 @@ export default defineConfig({
   ],
   test: {
     include: ["tests/**/*.test.ts"],
+    fsModuleCache: false,
   },
   pack: pack("tsconfig.build.json"),
 });
