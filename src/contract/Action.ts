@@ -763,7 +763,8 @@ export function implement(
  * The builders of `implementations`, as one layer providing nothing. Surfaces build them
  * themselves, once per layer graph, but routes under `HttpRouter.serve` or `Testing.layer`
  * are built in a graph of their own, sharing nothing they build: provided above the server and
- * its siblings, it runs each builder once for every surface, with the services it is given.
+ * its siblings, it runs each builder once, with the services it is given, for every surface but
+ * `ActionEntity.layer`, each of whose entity ids builds its own.
  *
  * **Gotchas**
  *

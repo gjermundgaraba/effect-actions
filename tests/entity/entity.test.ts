@@ -96,7 +96,7 @@ const otherThanLobby = Arbitrary.schema(Schema.String).pipe(
 
 describe("ActionEntity on Entity.makeTestClient", () => {
   it.effect(
-    "answers an action, and refuses an input naming another entity with Forbidden",
+    "answers an action, refuses an input naming another entity with Forbidden, and one that does not decode with InvalidInput",
     () => {
       const rooms = makeRooms();
 
@@ -114,17 +114,24 @@ describe("ActionEntity on Entity.makeTestClient", () => {
 
         const answered = read({ room: "lobby" });
         const refusedCall = read({ room: "kitchen" });
+        const invalidCall = read({ room: 5 });
 
-        if (!Effect.isEffect(answered) || !Effect.isEffect(refusedCall)) {
+        if (
+          !Effect.isEffect(answered) ||
+          !Effect.isEffect(refusedCall) ||
+          !Effect.isEffect(invalidCall)
+        ) {
           return yield* Effect.die(new Error("a streamed read"));
         }
 
         const answer = yield* answered;
         const refused = yield* Effect.flip(refusedCall);
+        const invalid = yield* Effect.flip(invalidCall);
 
         expect(answer).toStrictEqual({ entity: "lobby", texts: [] });
         expect(refused).toBeInstanceOf(DeclaredFailure);
         expect(refused).toMatchObject({ json: { _tag: "Forbidden" } });
+        expect(invalid).toMatchObject({ json: { _tag: "InvalidInput" } });
         expect(rooms.ran.read).toBe(1);
       }).pipe(
         Effect.scoped,
@@ -174,6 +181,56 @@ describe("ActionEntity's streaming action on Entity.makeTestClient", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide([ShardingConfig.layer(), signIn, Event.layerMemory])
+      );
+    }
+  );
+});
+
+const Count = Action.make("count", {
+  description: "Answer how many builds its implementation ran.",
+  input: { room: Schema.String },
+  success: Schema.Int,
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+const Counter = ActionEntity.make("Counter", ActionRpc.make([Count]), {
+  key: { count: ({ room }) => room },
+});
+
+describe("ActionEntity under Action.layer", () => {
+  it.live(
+    "builds each entity id's implementations itself, sharing no build with Action.layer above it",
+    () => {
+      let builds = 0;
+
+      const counting = Action.implement(
+        Count,
+        Effect.sync(() => {
+          builds += 1;
+
+          return () => Effect.succeed(builds);
+        })
+      );
+
+      return Effect.gen(function* () {
+        const clientOf = yield* ActionEntity.client(Counter);
+        const before = builds;
+
+        yield* clientOf("a").count({ room: "a" });
+        yield* clientOf("b").count({ room: "b" });
+        yield* clientOf("a").count({ room: "a" });
+
+        expect(before).toBe(1);
+        expect(builds).toBe(3);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ActionEntity.layer(Counter, counting).pipe(
+            Layer.provideMerge(TestRunner.layer),
+            Layer.provideMerge(Action.layer(counting))
+          )
+        )
       );
     }
   );

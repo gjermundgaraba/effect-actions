@@ -1,8 +1,9 @@
 import { expectTypeOf } from "@effect/vitest";
 import { Context, Effect, Redacted, Schema } from "effect";
-import type { Stream, Layer } from "effect";
+import type { Layer, Scope, Stream } from "effect";
 import { Entity } from "effect/cluster";
 import type { ClusterError, Sharding } from "effect/cluster";
+import type { HttpServerRequest } from "effect/http";
 import { Rpc as NativeRpc, RpcGroup } from "effect/rpc";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
@@ -77,12 +78,13 @@ const notes = Action.implement(
   Effect.gen(function* () {
     const { entityId } = yield* Entity.CurrentAddress;
     const rooms = yield* Rooms;
+    const tenant = yield* Tenant;
 
     return {
       get: ({ id }) =>
         Effect.map(
-          Tenant,
-          (tenant) => `${tenant}/${rooms.get(entityId) ?? ""}/${id}`
+          Actor,
+          (actor) => `${tenant}/${rooms.get(entityId) ?? ""}/${id}/${actor}`
         ),
       open: () => Effect.succeed(entityId),
     };
@@ -94,15 +96,59 @@ const changes = Event.implement(Changed, { log: {} });
 
 const served = ActionEntity.layer(Room, [notes, changes]);
 
+type Services = Layer.Services<typeof served>;
+
 expectTypeOf<Layer.Error<typeof served>>().toEqualTypeOf<never>();
 
-expectTypeOf<Layer.Services<typeof served>>().toEqualTypeOf<
-  | Rooms
-  | Tenant
-  | Event.Events
-  | Layer.Success<typeof signIn>
-  | Sharding.Sharding
->();
+expectTypeOf<Rooms>().toExtend<Services>();
+
+expectTypeOf<Tenant>().toExtend<Services>();
+
+expectTypeOf<Event.Events>().toExtend<Services>();
+
+expectTypeOf<Layer.Success<typeof signIn>>().toExtend<Services>();
+
+expectTypeOf<Sharding.Sharding>().toExtend<Services>();
+
+expectTypeOf<Actor>().not.toExtend<Services>();
+
+expectTypeOf<Entity.CurrentAddress>().not.toExtend<Services>();
+
+expectTypeOf<Scope.Scope>().not.toExtend<Services>();
+
+expectTypeOf<HttpServerRequest.HttpServerRequest>().not.toExtend<Services>();
+
+expectTypeOf<
+  Exclude<
+    Services,
+    | Rooms
+    | Tenant
+    | Event.Events
+    | Layer.Success<typeof signIn>
+    | Sharding.Sharding
+  >
+>().toBeNever();
+
+const readingPerCall = Action.implement(
+  [Get, Open],
+  {
+    get: ({ id }) => Effect.map(Tenant, (tenant) => `${tenant}/${id}`),
+    open: () => Effect.succeed(""),
+  },
+  { authorize: () => Effect.void }
+);
+
+// @ts-expect-error -- an entity provides no service per call, so a handler reads none.
+ActionEntity.layer(Room, [readingPerCall, changes]);
+
+const authorizingPerCall = Action.implement(
+  [Get, Open],
+  { get: () => Effect.succeed(""), open: () => Effect.succeed("") },
+  { authorize: () => Effect.asVoid(Tenant) }
+);
+
+// @ts-expect-error -- an entity provides no service per call, so an authorizer reads none.
+ActionEntity.layer(Room, [authorizingPerCall, changes]);
 
 const clientOf = ActionEntity.client(Room);
 

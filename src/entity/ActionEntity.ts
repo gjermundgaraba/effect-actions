@@ -96,7 +96,7 @@ export interface MakeOptions<B extends ActionRpc.Any> {
  *
  * - Every rpc is volatile, as `ClusterSchema.Persisted` defaults: annotating them persisted writes each envelope, its caller's headers and credential included, into `cluster_messages`, kept until a `MessageRetention` layer deletes it, and replays it with them.
  * - A binding with native rpcs throws: serve them from an `Entity` of their own.
- * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc that holds the entity's one concurrency slot until its stream ends.
+ * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers; it holds the entity's one concurrency slot until its stream ends.
  * - `annotate` and its kin return a plain `Entity`, without `binding` and `key`, which `layer` and `client` do not take.
  */
 export const make = <const Type extends string, const B extends ActionRpc.Any>(
@@ -143,11 +143,32 @@ export type LayerOptions = Omit<
 >;
 
 type Activation =
-  | HttpServerRequest.HttpServerRequest
-  | HttpServerRequest.ParsedSearchParams
   | Cluster.CurrentAddress
   | Cluster.CurrentRunnerAddress
   | Scope.Scope;
+
+type PerCall<
+  B extends ActionRpc.Any,
+  Apps extends Served,
+  A extends Action.Any = B["actions"][number],
+  E extends Event.Any = B["events"][number],
+> = Exclude<
+  RemoteRequest<Member<Apps>, A> | EventServedRequest<Member<Apps>, E>,
+  | Activation
+  | HttpServerRequest.HttpServerRequest
+  | HttpServerRequest.ParsedSearchParams
+>;
+
+type NoPerCall<B extends ActionRpc.Any, Apps extends Served> = [
+  PerCall<B, Apps>,
+] extends [never]
+  ? unknown
+  : {
+      readonly "An entity provides no service per call: yield it in the implementation's builder, where it is a startup service": PerCall<
+        B,
+        Apps
+      >;
+    };
 
 type EntityLayer<
   B extends ActionRpc.Any,
@@ -159,9 +180,7 @@ type EntityLayer<
   never,
   | Exclude<
       | ServerBuildServices<Holding<Member<Apps>, A>, A>
-      | EventBuildServices<HoldingEvents<Member<Apps>, E>, E>
-      | RemoteRequest<Member<Apps>, A>
-      | EventServedRequest<Member<Apps>, E>,
+      | EventBuildServices<HoldingEvents<Member<Apps>, E>, E>,
       Activation
     >
   | ServedProvider<
@@ -176,14 +195,17 @@ type EntityLayer<
 /**
  * Register `entity` with the cluster's `Sharding`, serving its binding's actions and event types
  * from `implementations`, which implement every one. Each entity id builds the implementations
- * itself as it activates, so a builder may read `Entity.CurrentAddress`; each message of a
- * protected one authenticates from its envelope's headers with the binding's descriptor, as
- * `ActionRpc.layer`'s does; then the input decodes, an input whose key names another entity is
- * refused with `Forbidden`, and the implementation's `authorize` and the handler run.
+ * itself as it activates, so a builder may read `Entity.CurrentAddress`; each call of a
+ * protected one authenticates from the headers its client sent with the binding's descriptor, as
+ * `ActionRpc.layer`'s does; then the input decodes, failing `InvalidInput` where it does not, an
+ * input whose key names another entity or none is refused with `Forbidden`, and the
+ * implementation's `authorize` and the handler run; a declared error is the call's typed failure.
  *
  * **Gotchas**
  *
  * - What the application provides to this layer is shared by every entity of the runner; what an implementation builds, each entity id builds for itself: state held in a builder is that entity's alone.
+ * - A handler or authorizer reading a service other than its caller is a type error naming that service: an entity provides nothing per call, so yield it in the builder, where it is a startup service, one value for every caller and entity id.
+ * - `Action.layer` above it shares no build with it: each entity id runs its implementations' builders again, beside the run `Action.layer` made for the other surfaces.
  * - A builder that fails or dies is a defect of the entity's activation, logged and retried by `defectRetryPolicy` while its calls wait: it never fails the layer.
  * - A handler's defect or undeclared failure ends that call with an `Error` whose message is `Internal server error`, as on `ActionRpc.layer`; the entity is neither restarted nor its call replayed, so its next call runs on the same handlers.
  * - An implementation missing for one of the binding's actions or event types throws as the layer is made: an entity serves its whole binding.
@@ -194,7 +216,7 @@ export function layer<
   const Apps extends Served,
 >(
   entity: Entity<Type, B>,
-  implementations: Apps,
+  implementations: Apps & NoPerCall<B, Apps>,
   options?: LayerOptions
 ): EntityLayer<B, Apps>;
 export function layer<Type extends string, B extends ActionRpc.Any>(
