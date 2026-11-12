@@ -1,4 +1,12 @@
-import { Context, Effect, Layer, Predicate, Schema, Stream } from "effect";
+import {
+  Context,
+  Duration,
+  Effect,
+  Layer,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect";
 import type { Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
@@ -48,6 +56,8 @@ import {
   nativeOf,
   polledTransport,
   pollOf,
+  releaseOf,
+  releaseTag,
   streams,
 } from "../rpc/erased.js";
 import type { ErasedCall } from "../rpc/erased.js";
@@ -115,9 +125,11 @@ export interface MakeOptions<B extends ActionRpc.Any> {
 /**
  * The cluster entity of type `type` serving the actions and event types of `binding`, an
  * `ActionRpc` binding, each call and subscription in the entity its contract's `key` names for
- * its input. Each event type is a unary rpc named after it, taking `{ input, cursor, maxEvents }`
- * and answering a page, `{ events, cursor, truncated, hasMore, nextPollMs }`, as an HTTP poll
- * does. Guide: `docs/ActionEntity.md` in this package.
+ * its input. Each event type is a unary rpc named after it, taking
+ * `{ input, cursor, maxEvents, watch }` and answering a page,
+ * `{ events, cursor, truncated, hasMore, nextPollMs }`, as an HTTP poll does, and one named
+ * `<event>/release`, taking `{ input, watch }`: polls naming a `watch` hold a subscription hook of
+ * their own, which its release frees. Guide: `docs/ActionEntity.md` in this package.
  *
  * **Gotchas**
  *
@@ -437,6 +449,8 @@ const Reached = Context.Reference<string | undefined>(
   { defaultValue: () => undefined }
 );
 
+const releaseTimeout = Duration.seconds(5);
+
 const reachedCall = (
   clientFor: Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>,
   streaming: ReadonlySet<string>
@@ -477,6 +491,7 @@ const reachedCall = (
  * - The caller's credential is verified twice, by the surface serving these and by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity, and a credential expiring between the two is refused by the entity.
  * - Every header of the caller's request is sent on but its connection's, its body's, what it accepts and an MCP request's routing headers (`mcp-*`); a call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends none, so the entity refuses a protected one with `Unauthenticated`.
  * - A stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface, at once while a page has more and otherwise at its `nextPollMs`, a second at least: it holds the caller's request open but no entity, and an occurrence arrives up to that interval late.
+ * - A stream's polls hold a subscription hook of their own in the entity, which its end releases; a poll, MCP's `events/poll` included, holds the subscriber's until its source's `lease` lapses, as on any surface.
  * - An event served through these is offered no webhook delivery, whose deliveries run outside any request, with no headers to send on: `events/list` names no `webhook`, and a webhook subscription fails with `Event.SubscriptionError`, reason `Unsupported`, a 409 over HTTP, before any callback is sent.
  * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's failure, which no action declares: a surface answers it as any undeclared failure, a 500 over HTTP and a defect through `Action.client`, never as a typed error.
  * - An error the entity declares beyond the action's own and the built-in ones, its binding's `error` or its verifier's, is undeclared where the serving surface's binding does not declare it too.
@@ -552,20 +567,16 @@ export const reaching = <
     const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(event.input));
     const poll = pollOf(event, binding, (payload) => call(event.name, payload));
 
-    const pollFrom = (
+    const release = releaseOf((payload) =>
+      call(releaseTag(event.name), payload)
+    );
+
+    const sent = <A, E>(
       input: ErasedValue,
-      cursor: string | null,
-      maxEvents?: number
+      send: (json: Schema.Json) => Effect.Effect<A, E>
     ) =>
       Effect.flatMap(to(event, input), (entityId) =>
-        Effect.orDie(encode(input)).pipe(
-          Effect.flatMap((json) =>
-            poll({
-              input: json,
-              cursor,
-              ...(maxEvents === undefined ? {} : { maxEvents }),
-            })
-          ),
+        Effect.flatMap(Effect.orDie(encode(input)), send).pipe(
           Effect.provideService(Reached, entityId)
         )
       );
@@ -573,8 +584,32 @@ export const reaching = <
     return {
       requestBound: true,
       poll: (input, cursor, { maxEvents }) =>
-        pollFrom(input, cursor, maxEvents),
-      stream: (input, cursor) => paged((at) => pollFrom(input, at), cursor),
+        sent(input, (json) =>
+          poll({
+            input: json,
+            cursor,
+            ...(maxEvents === undefined ? {} : { maxEvents }),
+          })
+        ),
+      stream: (input, cursor) =>
+        Stream.unwrap(
+          Effect.sync(() => {
+            const watch = globalThis.crypto.randomUUID();
+
+            return paged(
+              (at) =>
+                sent(input, (json) => poll({ input: json, cursor: at, watch })),
+              cursor
+            ).pipe(
+              Stream.ensuring(
+                sent(input, (json) => release({ input: json, watch })).pipe(
+                  Effect.timeout(releaseTimeout),
+                  Effect.ignore
+                )
+              )
+            );
+          })
+        ),
     };
   };
 

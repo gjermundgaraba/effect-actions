@@ -158,6 +158,8 @@ const unaryOf = (name: string) =>
 
 export type Delivery = "stream" | "poll";
 
+export const releaseTag = (name: string) => `${name}/release`;
+
 export const erasedOf = (
   actions: readonly Action.Any[],
   events: readonly Event.Any[],
@@ -167,8 +169,11 @@ export const erasedOf = (
     ...actions.map((action) =>
       streams(action) ? streamOf(action.name) : unaryOf(action.name)
     ),
-    ...events.map((event) =>
-      delivery === "stream" ? streamOf(event.name) : unaryOf(event.name)
+    ...events.flatMap(
+      (event): ReadonlyArray<ReturnType<typeof streamOf | typeof unaryOf>> =>
+        delivery === "stream"
+          ? [streamOf(event.name)]
+          : [unaryOf(event.name), unaryOf(releaseTag(event.name))]
     )
   );
 
@@ -176,7 +181,14 @@ const PollOf = (event: Event.Any) =>
   Schema.Struct({
     ...SubscriptionOf(event).fields,
     maxEvents: Schema.optionalKey(Schema.Finite),
+    watch: Schema.optionalKey(Schema.String),
   });
+
+const ReleaseOf = (event: Event.Any) =>
+  Schema.Struct({ input: event.input, watch: Schema.String });
+
+const watcherOf = (principal: string | undefined, watch: string) =>
+  JSON.stringify([principal ?? null, watch]);
 
 const PageOf = (event: Event.Any) =>
   Schema.Struct({
@@ -340,12 +352,19 @@ export const pollOf = (
     readonly input: Schema.Json;
     readonly cursor: string | null;
     readonly maxEvents?: number;
+    readonly watch?: string;
   }) =>
     call(payload).pipe(
       Effect.catchIf(isDeclared, failed),
       Effect.flatMap((json) => Effect.orDie(decode(json)))
     );
 };
+
+export const releaseOf =
+  (method: ErasedMethod) =>
+  (payload: { readonly input: Schema.Json; readonly watch: string }) =>
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    Effect.asVoid((method as JsonMethod)(payload));
 
 export const polledTransport =
   (transient: (error: unknown) => boolean): EventTransport =>
@@ -662,11 +681,37 @@ const pollHandlerOf = (
 
   return servedCall(steps, callBoundaryOf(error), (payload) =>
     Effect.gen(function* () {
-      const { input, cursor, maxEvents } = yield* decode(payload);
-      const subscriber = yield* principalOf(feed.event, authentication);
+      const { input, cursor, maxEvents, watch } = yield* decode(payload);
+
+      const principal = yield* principalOf(feed.event, authentication);
+
+      const subscriber =
+        watch === undefined ? principal : watcherOf(principal, watch);
+
       const page = yield* feed.poll(input, cursor, { subscriber, maxEvents });
 
       return yield* encode(page);
+    })
+  );
+};
+
+const releaseHandlerOf = (
+  feed: Feed,
+  steps: readonly Step[],
+  error: Schema.Union<Action.Errors>,
+  authentication: Authentication | undefined
+) => {
+  const decode = decodeInput({ input: ReleaseOf(feed.event) });
+
+  return servedCall(steps, callBoundaryOf(error), (payload) =>
+    Effect.gen(function* () {
+      const { input, watch } = yield* decode(payload);
+
+      const principal = yield* principalOf(feed.event, authentication);
+
+      yield* feed.release?.(input, watcherOf(principal, watch)) ?? Effect.void;
+
+      return null;
     })
   );
 };
@@ -771,6 +816,22 @@ export const handlersOf = Effect.fnUntraced(function* (
                 ),
           ] as const
       )
+    ),
+    ...Object.fromEntries(
+      delivery === "stream"
+        ? []
+        : feeds.map(
+            (feed) =>
+              [
+                releaseTag(feed.event.name),
+                releaseHandlerOf(
+                  feed,
+                  stepsOf(feed.event.caller),
+                  Schema.Union(eventErrors(feed.event, binding)),
+                  authentication
+                ),
+              ] as const
+          )
     ),
   };
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Fiber, Layer, Schedule, Schema, Stream } from "effect";
 import { TestRunner } from "effect/cluster";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { Dns } from "effect/net";
@@ -38,7 +38,7 @@ const Ticker = ActionEntity.make(
 const TickerHttp = ActionHttp.make([Ticked], { authentication: Principal });
 
 const makeTicker = () => {
-  const counted = { checks: 0, callbacks: 0 };
+  const counted = { checks: 0, callbacks: 0, hooked: 0, unhooked: 0 };
 
   const ticking = Event.implement(
     Ticked,
@@ -47,8 +47,18 @@ const makeTicker = () => {
         Effect.sync(() => {
           counted.checks += 1;
 
-          return { cursor: "0", events: [] };
+          return { cursor: "0", events: [], nextPoll: "1 second" };
         }),
+      subscription: () =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            counted.hooked += 1;
+          }),
+          () =>
+            Effect.sync(() => {
+              counted.unhooked += 1;
+            })
+        ),
     },
     { authorize: Event.allowAll }
   );
@@ -145,8 +155,64 @@ describe("ActionEntity.reaching's events by webhook", () => {
           _tag: "SubscriptionError",
           reason: { _tag: "Unsupported", value: "webhook" },
         });
-        expect(counted).toStrictEqual({ checks: 0, callbacks: 0 });
+        expect(counted).toMatchObject({ checks: 0, callbacks: 0, hooked: 0 });
       }).pipe(Effect.scoped, Effect.provide(server));
     }
+  );
+});
+
+const until = (done: () => boolean) =>
+  Effect.sync(done).pipe(
+    Effect.repeat({
+      until: (held) => held,
+      schedule: Schedule.spaced("20 millis"),
+      times: 500,
+    }),
+    Effect.flatMap((held) =>
+      held ? Effect.void : Effect.die(new Error(`Never held: ${String(done)}`))
+    )
+  );
+
+describe("ActionEntity.reaching's event streams", () => {
+  it.live(
+    "release the subscription hook their polls hold in the entity as each closes, leaving another stream's of the same input held",
+    () => {
+      const { counted, server } = makeTicker();
+
+      return Effect.gen(function* () {
+        const http = yield* ActionHttp.client(TickerHttp, {
+          transformClient: HttpClient.mapRequest(
+            HttpClientRequest.bearerToken("alice")
+          ),
+        });
+
+        const opened = Effect.forkScoped(
+          Stream.runDrain(http.watch(Ticked, { room: "a" }))
+        );
+
+        const first = yield* opened;
+
+        yield* until(() => counted.hooked === 1);
+
+        const second = yield* opened;
+
+        yield* until(() => counted.hooked === 2);
+        yield* Fiber.interrupt(first);
+        yield* until(() => counted.unhooked === 1);
+
+        const checked = counted.checks;
+
+        yield* until(() => counted.checks > checked);
+
+        const whileSecondOpen = { ...counted };
+
+        yield* Fiber.interrupt(second);
+        yield* until(() => counted.unhooked === 2);
+
+        expect(whileSecondOpen).toMatchObject({ hooked: 2, unhooked: 1 });
+        expect(counted).toMatchObject({ hooked: 2, unhooked: 2 });
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 30_000 }
   );
 });
