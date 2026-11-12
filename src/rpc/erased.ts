@@ -29,7 +29,7 @@ import {
   watchInput,
 } from "../contract/call.js";
 import type { CheckedMethod } from "../contract/call.js";
-import { Anyone } from "../contract/caller.js";
+import { Anyone, principalOf } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
 import { bindingErrors, eventErrors } from "../contract/declared.js";
 import type { Declaring } from "../contract/declared.js";
@@ -42,14 +42,15 @@ import type {
   ErasedHandler,
   ErasedValue,
 } from "../contract/implementation.js";
+import { OccurrenceOf } from "../contract/occurrence.js";
 import { answerFrom, elementsFrom } from "../contract/progress.js";
 import type { Reporting, Progressed } from "../contract/progress.js";
 import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import { concealed } from "../contract/reported.js";
 import { answeringOf, Answering, elementOf } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
-import { transportOf } from "./watch.js";
-import type { StreamMethod } from "./watch.js";
+import type { Transport } from "../contract/watch.js";
+import { polledTransportOf, transportOf } from "./watch.js";
 
 export const streams = (action: Action.Any) =>
   !Answering.$is("Value")(answeringOf(action));
@@ -148,22 +149,47 @@ const streamOf = (name: string) =>
     stream: true,
   });
 
+const unaryOf = (name: string) =>
+  Rpc.make(name, {
+    payload: Schema.Json,
+    success: Schema.Json,
+    error: Declared,
+  });
+
+/**
+ * How an event type is served: `stream`, one stream rpc pushing what it reads, or `poll`, one
+ * unary rpc answering a page past a cursor.
+ */
+export type Delivery = "stream" | "poll";
+
 export const erasedOf = (
   actions: readonly Action.Any[],
-  events: readonly Event.Any[]
+  events: readonly Event.Any[],
+  delivery: Delivery
 ) =>
   RpcGroup.make(
     ...actions.map((action) =>
-      streams(action)
-        ? streamOf(action.name)
-        : Rpc.make(action.name, {
-            payload: Schema.Json,
-            success: Schema.Json,
-            error: Declared,
-          })
+      streams(action) ? streamOf(action.name) : unaryOf(action.name)
     ),
-    ...events.map((event) => streamOf(event.name))
+    ...events.map((event) =>
+      delivery === "stream" ? streamOf(event.name) : unaryOf(event.name)
+    )
   );
+
+const PollOf = (event: Event.Any) =>
+  Schema.Struct({
+    ...SubscriptionOf(event).fields,
+    maxEvents: Schema.optionalKey(Schema.Finite),
+  });
+
+const PageOf = (event: Event.Any) =>
+  Schema.Struct({
+    events: Schema.Array(OccurrenceOf(event)),
+    cursor: Schema.NullOr(Schema.String),
+    truncated: Schema.Boolean,
+    hasMore: Schema.Boolean,
+    nextPoll: Schema.DurationFromMillis,
+  }).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
 
 /**
  * A client function speaking the group `ActionRpc.layer` serves: one rpc of JSON per action and
@@ -275,30 +301,65 @@ const actionMethodOf = (
       );
 };
 
-type EventMethod = (input: Schema.Json) => StreamMethod;
-
-const eventMethodOf = (
+/**
+ * What a client watches an event type through, given the event's erased method: per input, the
+ * transport its watch reads.
+ */
+export type EventTransport = (
   event: Event.Any,
   binding: Declaring,
   method: ErasedMethod
-): EventMethod => {
-  const decode = Schema.decodeUnknownEffect(
-    Schema.toCodecJson(PushedOf(event))
-  );
+) => (input: Schema.Json) => Transport<unknown, never>;
 
-  const failed = failedOf(Schema.Union(eventErrors(event, binding)));
-
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const call = method as JsonStreamMethod;
-
-  return (input) => (cursor) =>
-    call({ input, cursor }).pipe(
-      Stream.catchIf(isDeclared, (failure) =>
-        Stream.fromEffect(failed(failure))
-      ),
-      Stream.mapEffect((json) => Effect.orDie(decode(json)))
+export const streamedTransport =
+  (silenceEnds: boolean): EventTransport =>
+  (event, binding, method) => {
+    const decode = Schema.decodeUnknownEffect(
+      Schema.toCodecJson(PushedOf(event))
     );
-};
+
+    const failed = failedOf(Schema.Union(eventErrors(event, binding)));
+
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const call = method as JsonStreamMethod;
+
+    return (input) =>
+      transportOf(
+        event,
+        (cursor) =>
+          call({ input, cursor }).pipe(
+            Stream.catchIf(isDeclared, (failure) =>
+              Stream.fromEffect(failed(failure))
+            ),
+            Stream.mapEffect((json) => Effect.orDie(decode(json)))
+          ),
+        silenceEnds
+      );
+  };
+
+export const polledTransport =
+  (transient: (error: unknown) => boolean): EventTransport =>
+  (event, binding, method) => {
+    const decode = Schema.decodeUnknownEffect(
+      Schema.toCodecJson(PageOf(event))
+    );
+
+    const failed = failedOf(Schema.Union(eventErrors(event, binding)));
+
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const call = method as JsonMethod;
+
+    return (input) =>
+      polledTransportOf(
+        event,
+        (cursor) =>
+          call({ input, cursor }).pipe(
+            Effect.catchIf(isDeclared, failed),
+            Effect.flatMap((json) => Effect.orDie(decode(json)))
+          ),
+        transient
+      );
+  };
 
 interface ClientBinding extends Declaring {
   readonly actions: readonly Action.Any[];
@@ -309,7 +370,7 @@ interface ClientBinding extends Declaring {
 export const methodsOf = (
   binding: ClientBinding,
   call: ErasedCall,
-  silenceEnds: boolean
+  transport: EventTransport
 ) => {
   const calling =
     (tag: string): ErasedMethod =>
@@ -341,10 +402,7 @@ export const methodsOf = (
   const feeds = new Map(
     binding.events.map(
       (event) =>
-        [
-          event.name,
-          eventMethodOf(event, binding, calling(event.name)),
-        ] as const
+        [event.name, transport(event, binding, calling(event.name))] as const
     )
   );
 
@@ -365,7 +423,7 @@ export const methodsOf = (
 
     return Stream.unwrap(
       Effect.map(watchInput(event, input), ({ json }) =>
-        watching(transportOf(event, feed(json), silenceEnds), watchOptions)
+        watching(feed(json), watchOptions)
       )
     );
   };
@@ -598,6 +656,26 @@ const subscriptionHandlerOf = (
   );
 };
 
+const pollHandlerOf = (
+  feed: Feed,
+  steps: readonly Step[],
+  error: Schema.Union<Action.Errors>,
+  authentication: Authentication | undefined
+) => {
+  const decode = decodeInput({ input: PollOf(feed.event) });
+  const encode = Schema.encodeEffect(Schema.toCodecJson(PageOf(feed.event)));
+
+  return servedCall(steps, callBoundaryOf(error), (payload) =>
+    Effect.gen(function* () {
+      const { input, cursor, maxEvents } = yield* decode(payload);
+      const subscriber = yield* principalOf(feed.event, authentication);
+      const page = yield* feed.poll(input, cursor, { subscriber, maxEvents });
+
+      return yield* encode(page);
+    })
+  );
+};
+
 export const verifyingNative = (
   verify: Verification,
   { headers }: CallOptions
@@ -615,11 +693,19 @@ interface HandlersOptions {
   readonly authentication: Authentication | undefined;
   readonly middleware: readonly RpcMiddleware.AnyService[];
   readonly keeper: SubscriptionKeeper | undefined;
+  readonly delivery: Delivery;
 }
 
 export const handlersOf = Effect.fnUntraced(function* (
   binding: Declaring,
-  { apps, events, authentication, middleware, keeper }: HandlersOptions
+  {
+    apps,
+    events,
+    authentication,
+    middleware,
+    keeper,
+    delivery,
+  }: HandlersOptions
 ) {
   const listedMiddleware: readonly Step[] = yield* Effect.forEach(
     middleware,
@@ -675,12 +761,19 @@ export const handlersOf = Effect.fnUntraced(function* (
         (feed) =>
           [
             feed.event.name,
-            subscriptionHandlerOf(
-              feed,
-              stepsOf(feed.event.caller),
-              Schema.Union(eventErrors(feed.event, binding)),
-              keeper
-            ),
+            delivery === "stream"
+              ? subscriptionHandlerOf(
+                  feed,
+                  stepsOf(feed.event.caller),
+                  Schema.Union(eventErrors(feed.event, binding)),
+                  keeper
+                )
+              : pollHandlerOf(
+                  feed,
+                  stepsOf(feed.event.caller),
+                  Schema.Union(eventErrors(feed.event, binding)),
+                  authentication
+                ),
           ] as const
       )
     ),

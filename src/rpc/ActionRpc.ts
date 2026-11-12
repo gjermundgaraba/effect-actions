@@ -65,6 +65,7 @@ import {
   methodsOf,
   nativeOf,
   streamedOf,
+  streamedTransport,
   streams,
   verifyingNative,
 } from "./erased.js";
@@ -575,7 +576,7 @@ export function layer(
 
   const middleware = options.middleware ?? [];
 
-  const jsonGroup = erasedOf(actions, eventTypes);
+  const jsonGroup = erasedOf(actions, eventTypes, "stream");
 
   const natives = [...nativeOf(binding.rpcs).requests.values()];
 
@@ -624,6 +625,7 @@ export function layer(
         authentication,
         middleware,
         keeper,
+        delivery: "stream",
       });
 
       const servedActions = jsonGroup.toLayer(byName);
@@ -748,7 +750,9 @@ export function client(
   return Effect.map(
     Effect.all([
       RpcClient.make(
-        erasedOf(binding.actions, binding.events).merge(nativeOf(binding.rpcs)),
+        erasedOf(binding.actions, binding.events, "stream").merge(
+          nativeOf(binding.rpcs)
+        ),
         { ...options, flatten: true }
       ),
       Effect.map(
@@ -756,7 +760,8 @@ export function client(
         ({ supportsAck }) => !supportsAck
       ),
     ]),
-    ([call, silenceEnds]) => methodsOf(binding, call, silenceEnds)
+    ([call, silenceEnds]) =>
+      methodsOf(binding, call, streamedTransport(silenceEnds))
   );
 }
 

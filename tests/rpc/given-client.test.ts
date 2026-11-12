@@ -4,7 +4,11 @@ import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as Action from "../../src/contract/Action.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import { erasedOf, methodsOf } from "../../src/rpc/erased.js";
+import {
+  erasedOf,
+  methodsOf,
+  streamedTransport,
+} from "../../src/rpc/erased.js";
 import type { ErasedCall } from "../../src/rpc/erased.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { authenticate } from "../support/app/authentication.js";
@@ -44,7 +48,7 @@ function clientThrough<const B extends ActionRpc.Any>(
   call: ErasedCall
 ): ActionRpc.Client<B>;
 function clientThrough(binding: ActionRpc.Any, call: ErasedCall): object {
-  return methodsOf(binding, call, false);
+  return methodsOf(binding, call, streamedTransport(false));
 }
 
 class Unreachable extends Schema.TaggedError<
@@ -57,9 +61,12 @@ describe("methodsOf over a given client function", () => {
     "answers through the function, with each call's headers and declared errors",
     () =>
       Effect.gen(function* () {
-        const call = yield* RpcClient.make(erasedOf(Rpc.actions, Rpc.events), {
-          flatten: true,
-        });
+        const call = yield* RpcClient.make(
+          erasedOf(Rpc.actions, Rpc.events, "stream"),
+          {
+            flatten: true,
+          }
+        );
 
         const client = clientThrough(Rpc, call);
 

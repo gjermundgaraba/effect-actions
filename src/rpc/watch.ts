@@ -3,6 +3,7 @@ import { HttpClientError } from "effect/http";
 import { RpcClientError } from "effect/rpc";
 
 import * as Event from "../contract/Event.js";
+import type { Page } from "../contract/pages.js";
 import { readOn } from "../contract/push.js";
 import type { Pushed } from "../contract/push.js";
 import { deliveryUnsupported } from "../contract/subscribe.js";
@@ -86,5 +87,27 @@ export const transportOf = (
           : readOn("RPC", event.name)
       ),
     transient: isRpcTransient,
+  };
+};
+
+export const polledTransportOf = (
+  event: Event.Any,
+  poll: (cursor: string | null) => Effect.Effect<Page, unknown>,
+  transient: (error: unknown) => boolean
+): Transport<unknown, never> => {
+  const unknownTag = isUnknownTag(event.name);
+
+  return {
+    name: event.name,
+    poll: (cursor) =>
+      poll(cursor).pipe(
+        Effect.catchCauseIf(unknownTag, () =>
+          Effect.fail(
+            Event.SubscriptionError.of(event.name, new Event.NotServed())
+          )
+        )
+      ),
+    stream: () => Stream.fail(deliveryUnsupported(event.name, "push")),
+    transient,
   };
 };

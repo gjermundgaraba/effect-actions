@@ -111,7 +111,7 @@ const lint: ReturnType<typeof config> = config({
         "src/contract/{Action,authorizer,call,caller,feed,idempotency,implementation,lease,push,serving,webhooks}.ts",
         "src/http/{ActionHttp,client,events,placed,streamed,watch}.ts",
         "src/mcp/{ActionMcp,bridge,client,reply,watch}.ts",
-        "src/rpc/{ActionRpc,erased}.ts",
+        "src/rpc/{ActionRpc,erased,watch}.ts",
         "src/testing/Testing.ts",
         "src/toolkit/ActionToolkit.ts",
         "src/webhook/subscriptions.ts",

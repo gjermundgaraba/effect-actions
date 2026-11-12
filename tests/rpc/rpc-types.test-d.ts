@@ -17,7 +17,7 @@ import type { SocketServer } from "effect/socket";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import { methodsOf } from "../../src/rpc/erased.js";
+import { methodsOf, streamedTransport } from "../../src/rpc/erased.js";
 
 class Actor extends Context.Service<Actor, string>()("rpc-types/Actor") {}
 
@@ -168,7 +168,7 @@ export const clientTypes = Effect.gen(function* () {
 });
 
 // @ts-expect-error -- A client function answers through the binding's group, not any function.
-methodsOf(Rpc, (tag: string) => tag, false);
+methodsOf(Rpc, (tag: string) => tag, streamedTransport(false));
 
 type OwedPerRequest<L extends Layer.Any> = HttpRouter.Request.Only<
   "Requires",
