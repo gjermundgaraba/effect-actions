@@ -348,24 +348,20 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
   );
 }
 
-type ClusterFailure =
-  | ClusterError.MailboxFull
-  | ClusterError.AlreadyProcessingMessage
-  | ClusterError.PersistenceError
-  | ClusterError.EntityNotAssignedToRunner;
+const ClusterFailures = Schema.Union([
+  ClusterError.MailboxFull,
+  ClusterError.AlreadyProcessingMessage,
+  ClusterError.PersistenceError,
+  ClusterError.EntityNotAssignedToRunner,
+]);
+
+type ClusterFailure = typeof ClusterFailures.Type;
+
+const isClusterFailure = Schema.is(ClusterFailures);
 
 const isTransient = Schema.is(
   Schema.Union([
     ClusterError.MailboxFull,
-    ClusterError.PersistenceError,
-    ClusterError.EntityNotAssignedToRunner,
-  ])
-);
-
-const isClusterFailure = Schema.is(
-  Schema.Union([
-    ClusterError.MailboxFull,
-    ClusterError.AlreadyProcessingMessage,
     ClusterError.PersistenceError,
     ClusterError.EntityNotAssignedToRunner,
   ])
@@ -509,6 +505,7 @@ const reachedCall = (
  * - The caller's credential is verified by the surface serving these and again by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity.
  * - A refusal by the entity, a credential expired since the surface verified it included, ends a stream after it answered 200, where the surface's own refusal would have answered its 401 or 403.
  * - Every header of the caller's request is sent on but its connection's, its body's, what it accepts and an MCP request's routing headers (`mcp-*`).
+ * - A credential in the query, an API key the serving surface's binding reads `in: "query"`, never reaches the entity, which refuses the call with `Unauthenticated`: read the key from a header on both bindings.
  * - A call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends only the headers `RpcClient.withHeaders` sets around it: without them the entity refuses a protected one with `Unauthenticated`.
  * - A call to an entity no runner is assigned waits without an answer, an HTTP request without a response, as Effect's entity client retries `EntityNotAssignedToRunner` every 100 milliseconds without limit: bound it with a timeout, such as the host's request timeout.
  * - A stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface, at once while a page has more and otherwise at its `nextPollMs`, a second at least: it holds the caller's request open but no entity, and an occurrence arrives up to that interval late.
