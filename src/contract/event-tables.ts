@@ -87,13 +87,9 @@ export const sqlStorage = <A>(
           )
         );
 
-        yield* sql.withTransaction(
-          Effect.andThen(
-            upsertPosition(position),
-            sql`INSERT INTO ${entries} (event, seq, at, key, value)
-              VALUES (${name}, ${entry.seq}, ${at}, ${logged.key ?? null}, ${value})`
-          )
-        );
+        yield* upsertPosition(position);
+        yield* sql`INSERT INTO ${entries} (event, seq, at, key, value)
+          VALUES (${name}, ${entry.seq}, ${at}, ${logged.key ?? null}, ${value})`;
       }).pipe(Effect.orDie),
     list: (from, limit) =>
       sql`SELECT seq, at, key, value FROM ${entries}
@@ -130,6 +126,7 @@ export const sqlStorage = <A>(
           sql`DELETE FROM ${entries} WHERE event = ${name} AND ${sql.in("seq", chunk)}`,
         { discard: true }
       ).pipe(Effect.orDie),
+    transaction: (operation) => Effect.orDie(sql.withTransaction(operation)),
   };
 };
 

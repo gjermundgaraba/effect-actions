@@ -72,7 +72,7 @@ export interface Listed<A> {
 export interface LogStorage<A> {
   /** The position `put` last kept, or `undefined` for a storage never written or emptied. */
   readonly position: Effect.Effect<Position | undefined>;
-  /** Keeps `position`, and `entry` with it where given, at once. */
+  /** Keeps `position`, and `entry` with it where given, at once, inside `transaction` where given. */
   readonly put: (
     position: Position,
     entry?: { readonly seq: number; readonly stored: Stored<A> }
@@ -83,6 +83,15 @@ export interface LogStorage<A> {
     limit: number
   ) => Effect.Effect<ReadonlyArray<readonly [seq: number, listed: Listed<A>]>>;
   readonly delete: (seqs: readonly number[]) => Effect.Effect<void>;
+  /**
+   * Runs one whole append or read of the log, every call above inside it, holding what those
+   * calls wait on, such as a SQL transaction holding the connection: the log takes its own lock
+   * inside it, so a fiber holding that lock never waits for the storage. Without it, an append or
+   * read runs as it is.
+   */
+  readonly transaction?:
+    | (<X>(operation: Effect.Effect<X>) => Effect.Effect<X>)
+    | undefined;
 }
 
 export const memoryStorage = <A>(): LogStorage<A> => {
@@ -176,6 +185,14 @@ export const makeLogStore = <A>(
 
   const turn = Semaphore.makeUnsafe(1);
 
+  const inTurn = <X>(operation: Effect.Effect<X>) => {
+    const locked = turn.withPermit(operation);
+
+    return storage.transaction === undefined
+      ? locked
+      : storage.transaction(locked);
+  };
+
   const positioned = Effect.flatMap(storage.position, (found) => {
     if (found !== undefined) {
       return Effect.succeed(found);
@@ -211,7 +228,7 @@ export const makeLogStore = <A>(
 
   return {
     append: (logged) =>
-      turn.withPermit(
+      inTurn(
         Effect.gen(function* () {
           const { epoch, last } = yield* positioned;
           const seq = last + 1;
@@ -228,7 +245,7 @@ export const makeLogStore = <A>(
         })
       ),
     read: (cursor, limit) =>
-      turn.withPermit(
+      inTurn(
         Effect.gen(function* () {
           const { epoch, last } = yield* positioned;
 

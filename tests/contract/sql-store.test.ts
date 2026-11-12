@@ -360,7 +360,7 @@ describe("Stored.layerEvents on a database file", () => {
   const logged = Event.implement(Posted, { log: {} });
 
   it.effect(
-    "resumes a watch from a cursor after a restart on the same file, receiving every occurrence past it",
+    "resumes a watch from a cursor after a restart on the same file, receiving every occurrence past it the log still keeps",
     () =>
       Effect.gen(function* () {
         const onFile = Stored.layerEvents.pipe(
@@ -510,6 +510,41 @@ describe("Stored.layerEvents on a database file", () => {
             .map(({ value }) => value?.value.eventId ?? "")
             .toSorted((left, right) => left.localeCompare(right))
         ).toStrictEqual(["inside", "outside"]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.provideMerge(Stored.layerEvents, sqliteAt(":memory:"))
+        )
+      )
+  );
+
+  it.effect(
+    "keeps no occurrence published in a transaction that rolls back",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const events = yield* Event.Events;
+        const attachments = yield* attachmentsOf(events);
+        const log = yield* attachments.log(Posted, undefined, undefined);
+
+        const publishing = (id: string) =>
+          events.publish(Posted, {
+            data: { id, channel: "general", text: id },
+            eventId: id,
+          });
+
+        yield* Effect.exit(
+          sql.withTransaction(
+            Effect.andThen(publishing("rolled back"), Effect.fail("abandoned"))
+          )
+        );
+        yield* publishing("committed");
+
+        const { entries } = yield* log.read("elsewhere:0", 10);
+
+        expect(
+          entries.map(({ seq, value }) => [seq, value?.value.eventId])
+        ).toStrictEqual([[1, "committed"]]);
       }).pipe(
         Effect.scoped,
         Effect.provide(

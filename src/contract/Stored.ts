@@ -14,7 +14,7 @@ import { Idempotency, Kept, keptFor } from "./idempotency.js";
  * each `notify` moves a counter in `effect_actions_event_revision`, the event's name counting
  * every one. For a host whose subscribers outlive it, such as a cluster entity on its own
  * SQLite: a watch resumed from a cursor after a restart on the same database receives every
- * occurrence past it.
+ * occurrence past it within the log's bounds, `maxAge` (10 minutes by default) and `maxEvents`.
  *
  * **Gotchas**
  *
@@ -23,6 +23,7 @@ import { Idempotency, Kept, keptFor } from "./idempotency.js";
  * - Logs are kept by their event's name: two event types of one name attached to one build die, naming it.
  * - A `key` holding a lone surrogate, not well-formed UTF-16, is kept with U+FFFD in its place: its occurrences no longer reach that key's subscribers.
  * - A query that fails dies: the database is the host's own, and nothing else can answer for it.
+ * - Each append and read of a log is a transaction, joining the caller's: on a Durable Object, build `DurableObjectSqlClient` with `storage`, not `db` alone, or every one dies; an occurrence published in a transaction that rolls back is not kept, though its subscribers are woken to read nothing.
  */
 export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
   Layer.effect(Events)(

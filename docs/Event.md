@@ -227,9 +227,9 @@ export const deployEvents = Event.implement(
 );
 ```
 
-The action publishes each request with `Event.Events`' `publish`, in [build-events/src/deploys/handlers.ts](../examples/build-events/src/deploys/handlers.ts). An upstream that is a stream, such as a message bus, gives it as `log.emit`, each occurrence with the `key` `publish` would take, which the library consumes from the start of a surface serving its event type: kitchen-sink's [issues/events.ts](../examples/kitchen-sink/src/issues/events.ts). How much the log keeps, and what a cursor from another process or a restart reads as, are on `Event.Log`.
+The action publishes each request with `Event.Events`' `publish`, in [build-events/src/deploys/handlers.ts](../examples/build-events/src/deploys/handlers.ts). An upstream that is a stream, such as a message bus, gives it as `log.emit`, each occurrence with the `key` `publish` would take, which the library consumes from the start of a surface serving its event type: kitchen-sink's [issues/events.ts](../examples/kitchen-sink/src/issues/events.ts). How much the log keeps, and what a cursor from another process or a restart reads as under each `Event.Events`, are on `Event.Log`.
 
-- **Prefer `check` wherever the upstream keeps a cursor of its own**: a subscriber then resumes after a restart without a gap.
+- **Prefer `check` wherever the upstream keeps a cursor of its own**: a subscriber then resumes after a restart without a gap, whichever `Event.Events` the host provides.
 
 ## Set up a subscription upstream
 
@@ -237,7 +237,7 @@ When each subscription needs something set up upstream while it lasts, such as j
 
 ## Announce to the subscribers
 
-`Event.Events` is where occurrences are announced as they happen: `notify` for a check source, `publish` for a log source. Domain code yields it as it yields a store, and the entrypoint provides one, `Event.layerMemory`, around both the handlers that announce and the surfaces that serve, as [build-events/src/server.ts](../examples/build-events/src/server.ts) does. A host whose subscribers must outlive a restart, such as a cluster entity on its own SQLite, provides `Stored.layerEvents` over its `SqlClient` instead: logs, their cursors and check and current sources' revisions are kept in tables there, and a watch resumed from a cursor after a restart receives every occurrence past it. A host keeping logs elsewhere builds its own with `Event.makeEvents`, as the Cloudflare package's `ActionDurableObject.make` does. A source's `key`, such as the room a subscriber follows, lets an announcement given that key reach that room's subscribers alone, as [live-rpc/src/chat/events.ts](../examples/live-rpc/src/chat/events.ts) keys its messages by room. The rules are on `Event.Events`.
+`Event.Events` is where occurrences are announced as they happen: `notify` for a check source, `publish` for a log source. Domain code yields it as it yields a store, and the entrypoint provides one, `Event.layerMemory`, around both the handlers that announce and the surfaces that serve, as [build-events/src/server.ts](../examples/build-events/src/server.ts) does. A host whose subscribers must outlive a restart, such as a cluster entity on its own SQLite, provides `Stored.layerEvents` over its `SqlClient` instead: logs, their cursors and check and current sources' revisions are kept in tables there, and a watch resumed from a cursor after a restart receives every occurrence past it within the log's bounds, `maxAge` (10 minutes by default) and `maxEvents`. A host keeping logs elsewhere builds its own with `Event.makeEvents`, as the Cloudflare package's `ActionDurableObject.make` does. A source's `key`, such as the room a subscriber follows, lets an announcement given that key reach that room's subscribers alone, as [live-rpc/src/chat/events.ts](../examples/live-rpc/src/chat/events.ts) keys its messages by room. The rules are on `Event.Events`.
 
 ## Watch in process
 
