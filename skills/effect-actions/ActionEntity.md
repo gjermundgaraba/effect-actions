@@ -26,11 +26,11 @@ A protected action authenticates each call from the headers its envelope carries
 
 ## Reach it from any surface
 
-`ActionEntity.reaching(entity)` returns implementations of the entity's actions and event types that any surface serves beside its own: `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, such as one HTTP endpoint in front of every room. Give the surface a binding of the same contracts. Each call goes through `Entity.client` to the entity its input's key names, with the caller's headers, so one HTTP or MCP endpoint serves every room. Building them requires `Sharding`, as the client does.
+`ActionEntity.reaching(entity)` returns implementations of the entity's actions and event types that any surface serves beside its own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, given a binding of the same contracts: each call goes through `Entity.client` to the entity its input's key names, with the caller's headers, so one HTTP or MCP endpoint serves every room.
 
-The surface authenticates a protected call with its own binding's descriptor, so a caller without a credential is refused before any entity is reached, and the entity authenticates the same headers again: provide the authentication provider to both. A call with no HTTP request behind it, such as one through `Action.client` in process, sends no headers on.
+The surface authenticates a protected call with its own binding's descriptor and the entity authenticates it again, so provide the authentication provider to both.
 
-An event is followed through the entity's poll rpc, so no watcher holds an entity open. A poll, over HTTP or MCP's `events/poll`, is one call of that rpc. A stream, an HTTP `text/event-stream` watch or an RPC subscription, polls the entity from the surface at each page's `nextPollMs`, a second apart at least: it holds the caller's request open, but no entity, and an occurrence arrives up to that interval late. An MCP endpoint served `requestScoped`, as on a serverless host, answers `events/poll` alone. What else crosses the two hops, a cluster failure and an error only the entity declares among them, is on `ActionEntity.reaching`.
+An event is followed through the entity's poll rpc, so no watcher holds an entity open; a stream polls it from the surface. An MCP endpoint served `requestScoped`, as on a serverless host, answers `events/poll` alone. What crosses the two hops, and what does not, is on `ActionEntity.reaching`.
 
 ## Watch an event
 

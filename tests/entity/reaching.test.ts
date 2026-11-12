@@ -1,7 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Arbitrary, Effect, Layer, Logger, Schema, Stream } from "effect";
-import { Entity, TestRunner } from "effect/cluster";
+import {
+  Arbitrary,
+  Cause,
+  Effect,
+  Exit,
+  Layer,
+  Logger,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect";
+import { ClusterError, Entity, Sharding, TestRunner } from "effect/cluster";
 import { HttpClient, HttpClientRequest, HttpServerRequest } from "effect/http";
+import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
@@ -118,7 +129,7 @@ describe("ActionEntity.reaching on a TestRunner", () => {
   );
 
   it.live(
-    "refuses a protected call without credentials at the edge, reaching no entity",
+    "refuses at the edge, reaching no entity, a protected call without credentials and an input whose key does not decode",
     () => {
       const rooms = makeRooms();
 
@@ -129,8 +140,16 @@ describe("ActionEntity.reaching on a TestRunner", () => {
           http.post({ room: "a", text: "hi" })
         );
 
+        const invalid = yield* HttpClient.execute(
+          HttpClientRequest.post("/api/read").pipe(
+            HttpClientRequest.bodyJsonUnsafe({ room: 5 })
+          )
+        );
+
         expect(refused).toBeInstanceOf(Action.Unauthenticated);
-        expect(rooms.ran).toMatchObject({ post: 0, builds: 0 });
+        expect(invalid.status).toBe(400);
+        expect(yield* invalid.json).toMatchObject({ _tag: "InvalidInput" });
+        expect(rooms.ran).toMatchObject({ post: 0, read: 0, builds: 0 });
       }).pipe(Effect.scoped, Effect.provide(edge(rooms)));
     }
   );
@@ -211,26 +230,174 @@ const Whoami = Action.make("whoami", {
   caller: CurrentActor,
 });
 
-const Seer = ActionEntity.make(
-  "Seer",
-  ActionRpc.make([Whoami], { authentication: Login }),
-  {
-    key: { whoami: ({ room }) => room },
-  }
+const Seen = Event.make("seen", {
+  description: "The authorization header the entity received.",
+  input: { room: Schema.String },
+  payload: { by: Schema.String },
+  caller: CurrentActor,
+});
+
+const SeerRpc = ActionRpc.make([Whoami, Seen], { authentication: Login });
+
+const SeerHttp = ActionHttp.make([Whoami, Seen], { authentication: Login });
+
+const Seer = ActionEntity.make("Seer", SeerRpc, {
+  key: { whoami: ({ room }) => room, seen: ({ room }) => room },
+});
+
+const seeing = [
+  Action.implement(
+    Whoami,
+    Effect.map(
+      Event.Events,
+      (events) =>
+        ({ room }, { progress }) =>
+          Effect.gen(function* () {
+            yield* progress({ step: 1 });
+
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const by = request.headers["authorization"] ?? "none";
+
+            yield* events.publish(Seen, { data: { by } }, { key: room });
+
+            return by;
+          })
+    ),
+    { authorize }
+  ),
+  Event.implement(
+    Seen,
+    { log: {}, key: ({ room }) => room },
+    { authorize: Event.allowAll }
+  ),
+];
+
+const seers = ActionEntity.layer(Seer, seeing).pipe(
+  Layer.provideMerge(TestRunner.layer),
+  Layer.provide([signIn, Event.layerMemory])
 );
 
-const seeing = Action.implement(
-  Whoami,
-  (_, { progress }) =>
-    Effect.gen(function* () {
-      yield* progress({ step: 1 });
+const reachedSeer = ActionEntity.reaching(Seer);
 
-      const request = yield* HttpServerRequest.HttpServerRequest;
-
-      return request.headers["authorization"] ?? "none";
+const seerEdge = Testing.layer(
+  Layer.mergeAll(
+    ActionHttp.layer(SeerHttp, reachedSeer),
+    ActionMcp.layerHttp(reachedSeer, {
+      name: "worker",
+      version: "0.0.0",
+      authentication: Login,
+      requestScoped: true,
     }),
-  { authorize }
+    ActionRpc.layer(SeerRpc, reachedSeer).pipe(
+      Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+      Layer.provide(RpcSerialization.layerNdjson)
+    )
+  ).pipe(Layer.provide(authenticate))
+).pipe(Layer.provideMerge(seers));
+
+const overRpc = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+  Layer.provide(RpcSerialization.layerNdjson),
+  Layer.provideMerge(seerEdge)
 );
+
+const asAlice = RpcClient.withHeaders({ authorization: "Bearer alice" });
+
+const seenFrom = (room: string) =>
+  Effect.gen(function* () {
+    const raw = yield* Seer.client;
+    const poll = raw(room)["seen"];
+
+    if (poll === undefined) {
+      return yield* Effect.die(new Error("no poll rpc"));
+    }
+
+    const answer = poll({ input: { room }, cursor: null });
+
+    if (!Effect.isEffect(answer)) {
+      return yield* Effect.die(new Error("a streamed poll"));
+    }
+
+    const { cursor } = yield* Schema.decodeUnknownEffect(
+      Schema.Struct({ cursor: Schema.String })
+    )(yield* asAlice(answer));
+
+    return cursor;
+  });
+
+const byOf = (received: ReadonlyArray<Event.Received<typeof Seen>>) =>
+  received.map((item) => (item._tag === "Occurrence" ? item.data.by : "gap"));
+
+const outcome = <A, E>(effect: Effect.Effect<A, E>) =>
+  Effect.match(effect, {
+    onFailure: (error) =>
+      Predicate.isTagged(error, "Unauthenticated")
+        ? "Unauthenticated"
+        : "failed",
+    onSuccess: (value) => value,
+  });
+
+const watched = <E>(watch: Stream.Stream<Event.Received<typeof Seen>, E>) =>
+  outcome(
+    watch.pipe(
+      Stream.take(2),
+      Stream.runCollect,
+      Effect.map(byOf),
+      Effect.timeout("10 seconds")
+    )
+  );
+
+describe("ActionEntity.reaching's protected calls and watches", () => {
+  it.live(
+    "reach the entity with the caller's credential through an HTTP, an MCP and an RPC edge",
+    () =>
+      Effect.gen(function* () {
+        const http = yield* ActionHttp.client(SeerHttp, {
+          transformClient: bearer("alice"),
+        });
+
+        const mcp = yield* ActionMcp.client([Whoami, Seen], {
+          transformClient: bearer("alice"),
+        });
+
+        const rpc = yield* ActionRpc.client(SeerRpc);
+        const from = yield* seenFrom("a");
+
+        const direct = (yield* ActionEntity.client(Seer))("a");
+
+        for (let at = 0; at < 2; at += 1) {
+          yield* asAlice(direct.whoami({ room: "a" }));
+        }
+
+        const seen = [
+          yield* outcome(http.whoami({ room: "a" })),
+          yield* outcome(mcp.whoami({ room: "a" })),
+          yield* outcome(asAlice(rpc.whoami({ room: "a" }))),
+          yield* watched(http.watch(Seen, { room: "a" }, { cursor: from })),
+          yield* watched(
+            http.watch(Seen, { room: "a" }, { cursor: from, mode: "poll" })
+          ),
+          yield* watched(
+            mcp.watch(Seen, { room: "a" }, { cursor: from, mode: "poll" })
+          ),
+          yield* asAlice(
+            watched(rpc.watch(Seen, { room: "a" }, { cursor: from }))
+          ),
+        ];
+
+        const twice = ["Bearer alice", "Bearer alice"];
+
+        expect(seen).toStrictEqual([
+          "Bearer alice",
+          "Bearer alice",
+          "Bearer alice",
+          twice,
+          twice,
+          twice,
+          twice,
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(overRpc))
+  );
+});
 
 interface Owner {
   id: string | undefined;
@@ -336,10 +503,70 @@ describe("ActionEntity.reaching's headers", () => {
           ])
         ),
         Effect.scoped,
+        Effect.provide(seers)
+      );
+    }
+  );
+});
+
+const unreachable = Layer.effect(
+  Sharding.Sharding,
+  Effect.map(Sharding.Sharding, (sharding) =>
+    Sharding.Sharding.of({
+      ...sharding,
+      makeClient: (entity) =>
+        Effect.map(
+          sharding.makeClient(entity),
+          (clientFor) => (entityId: string) =>
+            new Proxy(clientFor(entityId), {
+              get: () => () =>
+                Effect.fail(
+                  new ClusterError.PersistenceError({
+                    cause: new Error("storage down"),
+                  })
+                ),
+            })
+        ),
+    })
+  )
+);
+
+describe("ActionEntity.reaching's cluster failures", () => {
+  it.live(
+    "answers Entity.client's PersistenceError as an undeclared failure, a defect in process and a 500 over HTTP",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const inProcess = yield* Action.client(reached);
+        const http = yield* ActionHttp.client(RoomHttp);
+
+        const failed = yield* Effect.exit(inProcess.read({ room: "a" }));
+        const answered = yield* Effect.exit(http.read({ room: "a" }));
+
+        const died =
+          Exit.isFailure(failed) &&
+          failed.cause.reasons.some(
+            (reason) =>
+              Cause.isDieReason(reason) &&
+              reason.defect instanceof ClusterError.PersistenceError
+          );
+
+        expect(died).toBe(true);
+        expect(Exit.isFailure(answered) && String(answered.cause)).toContain(
+          "undeclared status code (500"
+        );
+        expect(rooms.ran.read).toBe(0);
+      }).pipe(
+        Effect.scoped,
         Effect.provide(
-          ActionEntity.layer(Seer, seeing).pipe(
-            Layer.provideMerge(TestRunner.layer),
-            Layer.provide(signIn)
+          Testing.layer(
+            ActionHttp.layer(RoomHttp, reached).pipe(
+              Layer.provide(authenticate)
+            )
+          ).pipe(
+            Layer.provideMerge(unreachable),
+            Layer.provideMerge(entities(rooms))
           )
         )
       );

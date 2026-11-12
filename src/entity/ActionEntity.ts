@@ -87,6 +87,17 @@ interface ErasedKeys {
   readonly [name: string]: (input: Action.Any["input"]["Type"]) => string;
 }
 
+const namedBy =
+  (keys: ErasedKeys) =>
+  (
+    contract: Action.Any | Event.Any,
+    input: Action.Any["input"]["Type"]
+  ): string | undefined => {
+    const named: unknown = keys[contract.name]?.(input);
+
+    return Predicate.isString(named) ? named : undefined;
+  };
+
 type WithoutNatives<B extends ActionRpc.Any> = [
   RpcGroup.Rpcs<B["rpcs"]>,
 ] extends [never]
@@ -242,7 +253,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
   options: LayerOptions = {}
 ): Layer.Layer<never, never, unknown> {
   const { binding } = entity;
-  const key: ErasedKeys = entity.key;
+  const named = namedBy(entity.key);
 
   const { apps, events, authentication } = servingOf(
     "ActionEntity binding",
@@ -281,13 +292,13 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
       contract: Action.Any | Event.Any,
       input: Action.Any["input"]["Type"]
     ) => {
-      const named: unknown = key[contract.name]?.(input);
+      const entityId = named(contract, input);
 
-      return named === address.entityId
+      return entityId === address.entityId
         ? Effect.void
         : Effect.fail(
             new Action.Forbidden({
-              message: `This entity is ${address.entityType}/${address.entityId}, and the input of ${contract.name} names ${Predicate.isString(named) ? named : "none"}`,
+              message: `This entity is ${address.entityType}/${address.entityId}, and the input of ${contract.name} names ${entityId ?? "none"}`,
             })
           );
     };
@@ -465,18 +476,15 @@ const reachedCall = (
  * own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`: each call sent through
  * `Entity.client` to the entity its contract's key names for its input, with the caller's
  * headers, and its answer, declared errors and progress passed back; each event followed through
- * the entity's poll rpc. The surface authenticates a protected one as its own and authorizes every
- * caller; the entity reached authenticates and authorizes again. Building them requires
- * `Sharding`.
+ * the entity's poll rpc.
  *
  * **Gotchas**
  *
  * - The caller's credential is verified twice, by the surface serving these and by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity, and a credential expiring between the two is refused by the entity.
  * - Every header of the caller's request is sent on but its connection's, its body's, what it accepts and an MCP request's routing headers (`mcp-*`); a call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends none, so the entity refuses a protected one with `Unauthenticated`.
- * - The headers are sent with `Headers.CurrentRedactedNames` empty around the entity's client call alone, since a transport that `JSON.stringify`s them, as `@effect/platform-cloudflare`'s does, would send `authorization`, `cookie`, `set-cookie` and `x-api-key` as `<redacted>`; the caller's own logs still redact them.
- * - An input whose key answers no string is refused with `Forbidden` before any entity is reached.
- * - A poll, over HTTP or MCP's `events/poll`, is one call of the event's poll rpc; a stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface at each page's `nextPollMs`, a second apart at least, holding the caller's request open but no entity, so an occurrence arrives up to that interval late.
- * - What `Entity.client` fails with, `MailboxFull`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's failure, which no action declares: a surface answers it as any undeclared failure.
+ * - The entity receives `authorization`, `cookie`, `set-cookie` and `x-api-key` as sent, whatever the transport; the caller's own logs still redact them.
+ * - A stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface, at once while a page has more and otherwise at its `nextPollMs`, a second at least: it holds the caller's request open but no entity, and an occurrence arrives up to that interval late.
+ * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's failure, which no action declares: a surface answers it as any undeclared failure, a 500 over HTTP and a defect through `Action.client`, never as a typed error.
  * - An error the entity declares beyond the action's own and the built-in ones, its binding's `error` or its verifier's, is undeclared where the serving surface's binding does not declare it too.
  */
 export const reaching = <
@@ -499,7 +507,7 @@ export const reaching = <
     >
 > => {
   const { binding } = entity;
-  const key: ErasedKeys = entity.key;
+  const named = namedBy(entity.key);
 
   const calls = Effect.map(entity.client, (clientFor) =>
     reachedCall(
@@ -509,15 +517,15 @@ export const reaching = <
   );
 
   const to = (contract: Action.Any | Event.Any, input: ErasedValue) => {
-    const named: unknown = key[contract.name]?.(input);
+    const entityId = named(contract, input);
 
-    return Predicate.isString(named)
-      ? Effect.succeed(named)
-      : Effect.fail(
+    return entityId === undefined
+      ? Effect.fail(
           new Action.Forbidden({
             message: `The input of ${contract.name} names no entity of ${entity.type}`,
           })
-        );
+        )
+      : Effect.succeed(entityId);
   };
 
   const handlerOf = (
