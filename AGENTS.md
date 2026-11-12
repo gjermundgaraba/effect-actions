@@ -128,12 +128,15 @@ Recheck these on an upgrade of the dependency named.
   - The stdio parser fails on a non-JSON line, and its retry drops the rest of that read; the transport ends by interrupting the fiber that built it.
   - The server is forked with `forkScoped`, so a defect while installing handlers ends only that fiber.
   - `bridge.ts` reaches an adapter's groups and `handlerRpcs`, off the public interface; `tests/mcp/bridge.test.ts` and `events.test.ts` fail if they move. `toolJsonSchema`, which inlines a top-level `$ref` and follows it through a definition that is itself a `$ref`, as an identified alias of an identified schema writes one, is private, so `mcp/protocol.ts` does the same.
+- Effect, SQL:
+  - A SQLite client shares one connection through a semaphore, which `withTransaction` holds until it ends and each statement outside one takes, so a log's `transaction` in `log.ts` takes the connection before the log's own lock: taken the other way, a publish in a handler's transaction deadlocks with a read or publish outside it.
+  - `@effect/sql-sqlite-do` 4.1.4's client runs `withTransaction` through `storage.transaction()`, which closes the object's input gate, only when built with `storage`, and fails it when given `db` alone, so `Stored.layerEvents`, whose every log append and read is a transaction, needs `storage`.
 - Effect, elsewhere:
   - `Layer.build` forks the memo map around its caller, so `implementation.ts` builds into the map itself.
   - `Stream.retry` restarts its schedule at the first element after a failure.
   - `Effect.provideContext` merges, so a webhook worker forked from the subscribe request replaces its context instead.
   - A request's `Scope` closes with its response, so a webhook delivery runs in the subscribe request's context but not the request itself.
-  - `Webhook.layer`'s store lists its records once as it builds, with `KeyValueStore.keys` under its prefix; `keys` scans the whole backing store, `SELECT id FROM` the table on SQL and a directory read on the file store, whose `keys` lists `.DS_Store` and subdirectories but fails on a file name that is not percent-encoding, such as `100%.txt`.
+  - `Webhook.layer`'s store lists its records once as it builds, and `Stored.layerIdempotency` its answers at its hourly deletion, with `KeyValueStore.keys` under a prefix; `keys` scans the whole backing store, `SELECT id FROM` the table on SQL and a directory read on the file store, whose `keys` lists `.DS_Store` and subdirectories but fails on a file name that is not percent-encoding, such as `100%.txt`.
   - `effect/crypto`'s `Mac` and `Digest` are services no runtime bundle provides, so webhook signing and `contract/digest.ts` call WebCrypto, which adds no requirement to any surface; `Mac.timingSafeEqual` is a pure function, which `webhook/signing.ts` compares signatures with.
   - A `Clock` keeps its methods on a class or in a closure, so a spread drops them.
   - The CLI's `withSubcommands` replaces earlier subcommands, and a schema's description is read from its last check.
@@ -149,6 +152,7 @@ Recheck these on an upgrade of the dependency named.
   - The runtime retries a failed alarm 2 seconds later, doubling, six times, then drops it, and gives up on a handler that crashes, so `alarm.ts` retries each owner itself and an instance's build sets the alarm again.
   - workerd refuses a second `close()` of a closing socket and a frame sent to one, so `frames.ts` ignores both.
   - Close codes 4000 to 4999 are private use (RFC 6455 §7.4.2 reserves 1000 to 3999), so a refusal closes with one.
+  - Durable Object SQLite binds at most 100 parameters to a query, so `event-tables.ts` deletes a log's entries 90 at a time, and `tests/contract/sql-store.test.ts` fails a statement binding more.
 - Vitest and `@cloudflare/vitest-plugin`:
   - With `fsModuleCache` on, Vitest 5 answers a fresh worker's first module fetch with every module of its file's import graph already on disk (`fetchWarmModules`), and the plugin (1.6.1) inlines all their code, Effect's source maps included, into one message on the runner's socket; workerd closes a socket at a message over 32 MiB with 1009, and Vitest reports the file as "Worker exited unexpectedly". The package's durable tests' graphs came within 0.3 MiB of that with effect 4.1.3 and crossed it on CI's longer checkout path, so both workerd projects, the package and chat-rooms, set `fsModuleCache: false` until [cloudflare/workers-sdk#16349](https://github.com/cloudflare/workers-sdk/issues/16349) is fixed (still present in the plugin's 1.8.0).
 - Web platform:
