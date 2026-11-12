@@ -78,6 +78,45 @@ const pushRefused = Predicate.compose(
     reason.value === "push"
 );
 
+const reconnecting = <E, R>(
+  transient: ((error: E) => boolean) | undefined,
+  open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
+  cursor: string | null,
+  polled?: (cursor: string | null) => Stream.Stream<Fed, E, R>
+): Stream.Stream<Fed, E, R> => {
+  let at = cursor;
+
+  const once = Stream.suspend(() => open(at)).pipe(
+    Stream.tap((fed) =>
+      Effect.sync(() => {
+        at = fed.cursor ?? at;
+      })
+    )
+  );
+
+  const reopened =
+    transient === undefined
+      ? once
+      : once.pipe(
+          Stream.repeat(Schedule.spaced(reconnectDelay)),
+          Stream.retry(afterFailures(transient))
+        );
+
+  return polled === undefined
+    ? reopened
+    : reopened.pipe(
+        Stream.catchIf(pushRefused, () => Stream.suspend(() => polled(at)))
+      );
+};
+
+export const polling =
+  <E, R>(
+    poll: (cursor: string | null) => Effect.Effect<Page, E, R>,
+    transient: ((error: E) => boolean) | undefined
+  ) =>
+  (cursor: string | null): Stream.Stream<Fed, E, R> =>
+    reconnecting(transient, (at) => paged(poll, at), cursor);
+
 const capacity = 16;
 
 const unsubscribeTimeout = Duration.seconds(5);
@@ -155,39 +194,8 @@ export const watching = <E, R, SE = never>(
   E | SE | Event.SubscriptionError | Schema.SchemaError,
   R
 > => {
-  const reconnecting = (
-    open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
-    cursor: string | null,
-    polled?: (cursor: string | null) => Stream.Stream<Fed, E, R>
-  ): Stream.Stream<Fed, E, R> => {
-    const { transient } = transport;
-    let at = cursor;
-
-    const once = Stream.suspend(() => open(at)).pipe(
-      Stream.tap((fed) =>
-        Effect.sync(() => {
-          at = fed.cursor ?? at;
-        })
-      )
-    );
-
-    const reopened =
-      transient === undefined
-        ? once
-        : once.pipe(
-            Stream.repeat(Schedule.spaced(reconnectDelay)),
-            Stream.retry(afterFailures(transient))
-          );
-
-    return polled === undefined
-      ? reopened
-      : reopened.pipe(
-          Stream.catchIf(pushRefused, () => Stream.suspend(() => polled(at)))
-        );
-  };
-
-  const polled = (cursor: string | null) =>
-    reconnecting((at) => paged(transport.poll, at), cursor);
+  const { transient } = transport;
+  const polled = polling(transport.poll, transient);
 
   const webhooked = (
     { baseUrl, ttl }: Event.WebhookDelivery,
@@ -235,6 +243,7 @@ export const watching = <E, R, SE = never>(
         );
 
         return reconnecting(
+          transient,
           (at) => delivered(webhook, request, received, at),
           cursor
         );
@@ -297,6 +306,7 @@ export const watching = <E, R, SE = never>(
         }
 
         return reconnecting(
+          transient,
           transport.stream,
           cursor,
           mode === "stream" ? undefined : polled

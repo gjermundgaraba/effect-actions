@@ -1,6 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Schedule, Schema, Stream } from "effect";
-import { TestRunner } from "effect/cluster";
+import {
+  ClusterError,
+  MessageStorage,
+  RunnerHealth,
+  Runners,
+  RunnerStorage,
+  Sharding,
+  ShardingConfig,
+  Snowflake,
+} from "effect/cluster";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { Dns } from "effect/net";
 
@@ -37,17 +46,64 @@ const Ticker = ActionEntity.make(
 
 const TickerHttp = ActionHttp.make([Ticked], { authentication: Principal });
 
-const makeTicker = () => {
+const failingPolls = (fails: (call: number) => boolean) => {
+  let calls = 0;
+
+  const runners = Layer.effect(
+    Runners.Runners,
+    Effect.map(Runners.makeNoop, (noop) =>
+      Runners.Runners.of({
+        ...noop,
+        sendLocal: (options) => {
+          const { message } = options;
+
+          if (
+            message._tag === "OutgoingRequest" &&
+            message.envelope.tag === "ticked"
+          ) {
+            calls += 1;
+
+            if (fails(calls)) {
+              return Effect.fail(
+                new ClusterError.PersistenceError({
+                  cause: new Error("storage down"),
+                })
+              );
+            }
+          }
+
+          return noop.sendLocal(options);
+        },
+      })
+    )
+  ).pipe(Layer.provide(Snowflake.layerGenerator));
+
+  return Sharding.layer.pipe(
+    Layer.provideMerge(runners),
+    Layer.provideMerge(MessageStorage.layerMemory),
+    Layer.provide([RunnerStorage.layerMemory, RunnerHealth.layerNoop]),
+    Layer.provide(ShardingConfig.layer())
+  );
+};
+
+const makeTicker = (fails: (call: number) => boolean = () => false) => {
   const counted = { checks: 0, callbacks: 0, hooked: 0, unhooked: 0 };
+  const ticks: number[] = [];
 
   const ticking = Event.implement(
     Ticked,
     {
-      check: () =>
+      check: (_input, cursor) =>
         Effect.sync(() => {
           counted.checks += 1;
 
-          return { cursor: "0", events: [], nextPoll: "1 second" };
+          return {
+            cursor: String(ticks.length),
+            events: ticks
+              .slice(cursor === null ? ticks.length : Number(cursor))
+              .map((at) => ({ data: { at } })),
+            nextPoll: "1 second",
+          };
         }),
       subscription: () =>
         Effect.acquireRelease(
@@ -97,12 +153,13 @@ const makeTicker = () => {
   );
 
   const entities = ActionEntity.layer(Ticker, ticking).pipe(
-    Layer.provideMerge(TestRunner.layer),
+    Layer.provideMerge(failingPolls(fails)),
     Layer.provide([signIn, Event.layerMemory])
   );
 
   return {
     counted,
+    ticks,
     server: Testing.layer(edge).pipe(Layer.provideMerge(entities)),
   };
 };
@@ -174,6 +231,46 @@ const until = (done: () => boolean) =>
   );
 
 describe("ActionEntity.reaching's event streams", () => {
+  it.live(
+    "ask the entity again after a transient cluster failure, from where the stream reached, in the same stream",
+    () => {
+      const { counted, ticks, server } = makeTicker((call) => call === 2);
+
+      return Effect.gen(function* () {
+        const http = yield* ActionHttp.client(TickerHttp, {
+          transformClient: HttpClient.mapRequest(
+            HttpClientRequest.bearerToken("alice")
+          ),
+        });
+
+        const received: number[] = [];
+
+        ticks.push(1);
+
+        const watched = yield* Effect.forkScoped(
+          http.watch(Ticked, { room: "a" }, { cursor: "0" }).pipe(
+            Stream.take(2),
+            Stream.runForEach((item) =>
+              Effect.sync(() => {
+                received.push(item._tag === "Occurrence" ? item.data.at : -1);
+              })
+            )
+          )
+        );
+
+        yield* until(() => received.length === 1);
+
+        ticks.push(2);
+
+        yield* Fiber.join(watched);
+
+        expect(received).toStrictEqual([1, 2]);
+        expect(counted.hooked).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 30_000 }
+  );
+
   it.live(
     "release the subscription hook their polls hold in the entity as each closes, leaving another stream's of the same input held",
     () => {
