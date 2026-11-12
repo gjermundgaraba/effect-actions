@@ -242,13 +242,13 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
       contract: Action.Any | Event.Any,
       input: Action.Any["input"]["Type"]
     ) => {
-      const named = key[contract.name]?.(input);
+      const named: unknown = key[contract.name]?.(input);
 
-      return named === undefined || named === address.entityId
+      return named === address.entityId
         ? Effect.void
         : Effect.fail(
             new Action.Forbidden({
-              message: `This entity is ${address.entityType}/${address.entityId}, and the input of ${contract.name} names ${named}`,
+              message: `This entity is ${address.entityType}/${address.entityId}, and the input of ${contract.name} names ${Predicate.isString(named) ? named : "none"}`,
             })
           );
     };

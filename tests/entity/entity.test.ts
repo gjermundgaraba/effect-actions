@@ -130,6 +130,69 @@ describe("ActionEntity on Entity.makeTestClient", () => {
   );
 });
 
+const Probe = Action.make("probe", {
+  description: "Answer the entity it reached.",
+  input: {},
+  success: Schema.String,
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+interface Owner {
+  id: string | undefined;
+}
+
+describe("ActionEntity's key", () => {
+  it.effect(
+    "refuses with Forbidden a key that answers no string, its handler never running",
+    () => {
+      let ran = 0;
+      const owner = { id: "lobby" };
+      const unset: Owner = owner;
+
+      const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
+        key: { probe: () => owner.id },
+      });
+
+      const probing = Action.implement(Probe, () =>
+        Effect.sync(() => {
+          ran += 1;
+
+          return "reached";
+        })
+      );
+
+      return Effect.gen(function* () {
+        const clientFor = yield* Entity.makeTestClient(
+          Prober,
+          ActionEntity.layer(Prober, probing)
+        );
+
+        const { probe } = yield* clientFor("lobby");
+
+        if (probe === undefined) {
+          return yield* Effect.die(new Error("no probe rpc"));
+        }
+
+        const keyed = probe({});
+
+        if (!Effect.isEffect(keyed)) {
+          return yield* Effect.die(new Error("a streamed probe"));
+        }
+
+        expect(yield* keyed).toBe("reached");
+
+        unset.id = undefined;
+
+        const refused = yield* Effect.flip(keyed);
+
+        expect(refused).toMatchObject({ json: { _tag: "Forbidden" } });
+        expect(ran).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(ShardingConfig.layer()));
+    }
+  );
+});
+
 describe("ActionEntity on a TestRunner", () => {
   it.live.prop(
     "answers any input as ActionRpc.layer answers it, the payload as JSON carries it",
