@@ -407,6 +407,58 @@ describe("Stored.layerEvents on a database file", () => {
       })
   );
 
+  it.live(
+    "publishes in a handler's transaction while a watcher reads the log, the watcher receiving what the transaction committed",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const events = yield* Event.Events;
+        const client = yield* Action.client(logged);
+
+        const watching = yield* client
+          .watch(Posted, {})
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+
+        yield* Effect.sleep("20 millis");
+
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TABLE notes (text TEXT)`;
+              yield* sql`INSERT INTO notes (text) VALUES ('one')`;
+              yield* events.publish(Posted, {
+                data: { id: "m1", channel: "general", text: "one" },
+              });
+              yield* Effect.sleep("20 millis");
+              yield* events.publish(Posted, {
+                data: { id: "m2", channel: "general", text: "two" },
+              });
+            })
+          )
+          .pipe(
+            Effect.timeoutOrElse({
+              duration: "2 seconds",
+              orElse: () =>
+                Effect.die(
+                  new Error(
+                    "A publish in a transaction waited 2 seconds on a watcher's read"
+                  )
+                ),
+            })
+          );
+
+        expect(texts(yield* Fiber.join(watching))).toStrictEqual([
+          "one",
+          "two",
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.provideMerge(Stored.layerEvents, sqliteAt(":memory:"))
+        )
+      )
+  );
+
   it.effect(
     "materializes every source kind for a reader of the database alone: a log's entries, and a revision for each check and current source notified",
     () =>
