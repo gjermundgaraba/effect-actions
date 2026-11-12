@@ -17,7 +17,7 @@ import type { SocketServer } from "effect/socket";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import type { ErasedCall } from "../../src/rpc/erased.js";
+import { methodsOf } from "../../src/rpc/erased.js";
 
 class Actor extends Context.Service<Actor, string>()("rpc-types/Actor") {}
 
@@ -167,27 +167,8 @@ export const clientTypes = Effect.gen(function* () {
   expectTypeOf(client).toEqualTypeOf<ActionRpc.Client<typeof Rpc>>();
 });
 
-class Unreachable extends Schema.TaggedError<
-  Unreachable,
-  { readonly brand: unique symbol }
->()("Unreachable", {}) {}
-
-declare const through: ErasedCall<Unreachable>;
-
-const given = ActionRpc.client(Rpc, through);
-
-expectTypeOf(given).toEqualTypeOf<ActionRpc.Client<typeof Rpc, Unreachable>>();
-
-expectTypeOf<Effect.Error<ReturnType<typeof given.get>>>().toEqualTypeOf<
-  | Missing
-  | Action.InvalidInput
-  | Action.Unauthenticated
-  | Action.Forbidden
-  | Unreachable
->();
-
 // @ts-expect-error -- A client function answers through the binding's group, not any function.
-ActionRpc.client(Rpc, (tag: string) => tag);
+methodsOf(Rpc, (tag: string) => tag, false);
 
 type OwedPerRequest<L extends Layer.Any> = HttpRouter.Request.Only<
   "Requires",

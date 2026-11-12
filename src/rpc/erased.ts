@@ -21,7 +21,14 @@ import type { RpcMiddleware, RpcMessage } from "effect/rpc";
 import { providerOf } from "../authentication/provider.js";
 import type { Any as Authentication } from "../authentication/provider.js";
 import type * as Action from "../contract/Action.js";
-import { decodeInput } from "../contract/call.js";
+import {
+  checked,
+  checkedStream,
+  decodeInput,
+  sendingJson,
+  watchInput,
+} from "../contract/call.js";
+import type { CheckedMethod } from "../contract/call.js";
 import { Anyone } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
 import { bindingErrors, eventErrors } from "../contract/declared.js";
@@ -35,10 +42,14 @@ import type {
   ErasedHandler,
   ErasedValue,
 } from "../contract/implementation.js";
+import { answerFrom, elementsFrom } from "../contract/progress.js";
 import type { Reporting, Progressed } from "../contract/progress.js";
 import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import { concealed } from "../contract/reported.js";
-import { answeringOf, Answering } from "../contract/stream.js";
+import { answeringOf, Answering, elementOf } from "../contract/stream.js";
+import { watching } from "../contract/watch.js";
+import { transportOf } from "./watch.js";
+import type { StreamMethod } from "./watch.js";
 
 export const streams = (action: Action.Any) =>
   !Answering.$is("Value")(answeringOf(action));
@@ -156,8 +167,8 @@ export const erasedOf = (
 
 /**
  * A client function speaking the group `ActionRpc.layer` serves: one rpc of JSON per action and
- * event type, its declared failure carried as JSON, beside the binding's native rpcs. It is what
- * `ActionRpc.client` calls through when given one, failing with `T` beside the declared failures.
+ * event type, its declared failure carried as JSON, beside the binding's native rpcs. `methodsOf`
+ * builds a binding's client methods over one, failing with `T` beside the declared failures.
  */
 export type ErasedCall<T = unknown> = (
   tag: string,
@@ -169,6 +180,198 @@ export type ErasedCall<T = unknown> = (
 ) =>
   | Effect.Effect<Schema.Json, DeclaredFailure | T>
   | Stream.Stream<Schema.Json, DeclaredFailure | T>;
+
+export const ProgressedOf = <P extends Codec, S extends Codec>(
+  progress: P,
+  success: S
+) =>
+  Schema.Union([
+    Schema.TaggedStruct("Progress", { value: progress }),
+    Schema.TaggedStruct("Final", { value: success }),
+  ]);
+
+const elementedOf = (element: Codec, progress: Codec | undefined) =>
+  Schema.Union([
+    Schema.TaggedStruct("Element", { value: element }),
+    ...(progress === undefined
+      ? []
+      : [Schema.TaggedStruct("Progress", { value: progress })]),
+  ]);
+
+export const streamedOf = (
+  action: Action.Any
+): Schema.Codec<Progressed> | undefined =>
+  Answering.$match(answeringOf(action), {
+    Value: () => undefined,
+    Progressed: ({ success, progress }) => ProgressedOf(progress, success),
+    Elements: ({ element, progress }) => elementedOf(element, progress),
+  });
+
+export const nativeOf = (group: RpcGroup.Any) =>
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  group as RpcGroup.RpcGroup<Rpc.AnyWithProps>;
+
+type JsonMethod = (payload: Schema.Json) => Effect.Effect<Schema.Json, unknown>;
+
+type JsonStreamMethod = (
+  payload: Schema.Json
+) => Stream.Stream<Schema.Json, unknown>;
+
+type ErasedMethod = (payload: Schema.Json) => ReturnType<ErasedCall>;
+
+const isDeclared = (failure: unknown): failure is DeclaredFailure =>
+  failure instanceof DeclaredFailure;
+
+const failedOf = (error: Schema.Union<Action.Errors>) => {
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(error));
+
+  return (failure: DeclaredFailure) =>
+    Effect.flatMap(Effect.orDie(decode(failure.json)), Effect.fail);
+};
+
+const actionMethodOf = (
+  action: Action.Any,
+  binding: Declaring,
+  method: ErasedMethod
+): CheckedMethod => {
+  const failed = failedOf(Schema.Union(bindingErrors(action, binding)));
+  const streamed = streamedOf(action);
+
+  if (streamed === undefined) {
+    const decode = Schema.decodeUnknownEffect(
+      Schema.toCodecJson(action.success)
+    );
+
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const call = method as JsonMethod;
+
+    return checked(action, sendingJson, (json) =>
+      call(json).pipe(
+        Effect.catchIf(isDeclared, failed),
+        Effect.flatMap((sent) => Effect.orDie(decode(sent)))
+      )
+    );
+  }
+
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(streamed));
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const call = method as JsonStreamMethod;
+
+  const progressed = (json: Schema.Json) =>
+    call(json).pipe(
+      Stream.catchIf(isDeclared, (failure) =>
+        Stream.fromEffect(failed(failure))
+      ),
+      Stream.mapEffect((sent) => Effect.orDie(decode(sent)))
+    );
+
+  return elementOf(action.success) === undefined
+    ? checked(action, sendingJson, (json, onProgress) =>
+        answerFrom(progressed(json), onProgress)
+      )
+    : checkedStream(action, sendingJson, (json, onProgress) =>
+        elementsFrom(progressed(json), onProgress)
+      );
+};
+
+type EventMethod = (input: Schema.Json) => StreamMethod;
+
+const eventMethodOf = (
+  event: Event.Any,
+  binding: Declaring,
+  method: ErasedMethod
+): EventMethod => {
+  const decode = Schema.decodeUnknownEffect(
+    Schema.toCodecJson(PushedOf(event))
+  );
+
+  const failed = failedOf(Schema.Union(eventErrors(event, binding)));
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const call = method as JsonStreamMethod;
+
+  return (input) => (cursor) =>
+    call({ input, cursor }).pipe(
+      Stream.catchIf(isDeclared, (failure) =>
+        Stream.fromEffect(failed(failure))
+      ),
+      Stream.mapEffect((json) => Effect.orDie(decode(json)))
+    );
+};
+
+interface ClientBinding extends Declaring {
+  readonly actions: readonly Action.Any[];
+  readonly events: readonly Event.Any[];
+  readonly rpcs: RpcGroup.Any;
+}
+
+export const methodsOf = (
+  binding: ClientBinding,
+  call: ErasedCall,
+  silenceEnds: boolean
+) => {
+  const calling =
+    (tag: string): ErasedMethod =>
+    (payload) =>
+      call(tag, payload);
+
+  const methods = Object.fromEntries<unknown>([
+    ...binding.actions.map(
+      (action) =>
+        [
+          action.name,
+          actionMethodOf(action, binding, calling(action.name)),
+        ] as const
+    ),
+    ...[...nativeOf(binding.rpcs).requests.keys()].map(
+      (tag) =>
+        [
+          tag,
+          (payload: Schema.Json, options?: Parameters<ErasedCall>[2]) =>
+            call(tag, payload, options),
+        ] as const
+    ),
+  ]);
+
+  if (binding.events.length === 0) {
+    return methods;
+  }
+
+  const feeds = new Map(
+    binding.events.map(
+      (event) =>
+        [
+          event.name,
+          eventMethodOf(event, binding, calling(event.name)),
+        ] as const
+    )
+  );
+
+  const watch = (
+    event: Event.Any,
+    input?: ErasedValue,
+    watchOptions?: Event.WatchOptions<unknown>
+  ): Stream.Stream<Event.Received<Event.Any>, unknown> => {
+    const feed = feeds.get(event.name);
+
+    if (feed === undefined) {
+      return Stream.die(
+        new Error(
+          `ActionRpc.client: the binding holds no event type ${event.name} (watch one the binding ActionRpc.make returned lists)`
+        )
+      );
+    }
+
+    return Stream.unwrap(
+      Effect.map(watchInput(event, input), ({ json }) =>
+        watching(transportOf(event, feed(json), silenceEnds), watchOptions)
+      )
+    );
+  };
+
+  return { ...methods, watch };
+};
 
 const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
   const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(error));

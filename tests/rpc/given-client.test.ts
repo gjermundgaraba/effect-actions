@@ -4,7 +4,7 @@ import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 
 import * as Action from "../../src/contract/Action.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import { erasedOf } from "../../src/rpc/erased.js";
+import { erasedOf, methodsOf } from "../../src/rpc/erased.js";
 import type { ErasedCall } from "../../src/rpc/erased.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { authenticate } from "../support/app/authentication.js";
@@ -39,12 +39,20 @@ const served = Layer.provideMerge(
 const signedInAs = (token: string) =>
   RpcClient.withHeaders({ authorization: `Bearer ${token}` });
 
+function clientThrough<const B extends ActionRpc.Any>(
+  binding: B,
+  call: ErasedCall
+): ActionRpc.Client<B>;
+function clientThrough(binding: ActionRpc.Any, call: ErasedCall): object {
+  return methodsOf(binding, call, false);
+}
+
 class Unreachable extends Schema.TaggedError<
   Unreachable,
   { readonly brand: unique symbol }
 >()("Unreachable", {}) {}
 
-describe("ActionRpc.client over a given client function", () => {
+describe("methodsOf over a given client function", () => {
   it.effect(
     "answers through the function, with each call's headers and declared errors",
     () =>
@@ -53,7 +61,7 @@ describe("ActionRpc.client over a given client function", () => {
           flatten: true,
         });
 
-        const client = ActionRpc.client(Rpc, call);
+        const client = clientThrough(Rpc, call);
 
         const answer = yield* client.status();
 
@@ -78,7 +86,7 @@ describe("ActionRpc.client over a given client function", () => {
         Effect.fail(new Unreachable());
 
       const error = yield* Effect.flip(
-        ActionRpc.client(Rpc, unreachable).status()
+        clientThrough(Rpc, unreachable).status()
       );
 
       expect(error).toStrictEqual(new Unreachable());

@@ -1,5 +1,5 @@
-import { Effect, Layer, Predicate, Schedule, Schema, Stream } from "effect";
-import type { Context, Scope, Types } from "effect";
+import { Effect, Layer, Predicate, Schedule, Schema } from "effect";
+import type { Context, Scope, Stream, Types } from "effect";
 import type { HttpRouter, HttpServerRequest } from "effect/http";
 import {
   Rpc,
@@ -27,13 +27,7 @@ import type {
   VerifierError,
 } from "../authentication/provider.js";
 import type * as Action from "../contract/Action.js";
-import {
-  checked,
-  checkedStream,
-  sendingJson,
-  watchInput,
-} from "../contract/call.js";
-import type { Call, CheckedMethod } from "../contract/call.js";
+import type { Call } from "../contract/call.js";
 import type { Anyone } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
 import { bindingErrors, bindingOf, eventErrors } from "../contract/declared.js";
@@ -50,7 +44,6 @@ import type {
 } from "../contract/feed.js";
 import type {
   BuildError,
-  ErasedValue,
   Holding,
   Known,
   Member,
@@ -62,24 +55,20 @@ import type {
 import { listed } from "../contract/listed.js";
 import type { Only } from "../contract/listed.js";
 import { reservedList, reservedNames } from "../contract/names.js";
-import { answerFrom, elementsFrom } from "../contract/progress.js";
-import type { Progressed } from "../contract/progress.js";
 import { PushedOf, SubscriptionOf } from "../contract/push.js";
 import { provideServed, servingOf } from "../contract/serving.js";
-import { Answering, answeringOf, elementOf } from "../contract/stream.js";
 import type { Answer, StreamOf } from "../contract/stream.js";
-import { watching } from "../contract/watch.js";
 import type { WatchArgs } from "../contract/watch.js";
 import {
-  DeclaredFailure,
   erasedOf,
   handlersOf,
+  methodsOf,
+  nativeOf,
+  streamedOf,
   streams,
   verifyingNative,
 } from "./erased.js";
-import type { ErasedCall, SubscriptionKeeper } from "./erased.js";
-import { transportOf } from "./watch.js";
-import type { StreamMethod } from "./watch.js";
+import type { ProgressedOf, SubscriptionKeeper } from "./erased.js";
 
 export type { KeptSubscription, SubscriptionKeeper } from "./erased.js";
 
@@ -89,15 +78,6 @@ type ErrorOf<A extends Action.Any, E extends Action.Errors, D> = Schema.Union<
   ReadonlyArray<A["error"][number] | E[number] | VerifierError<A, D> | BuiltIns>
 >;
 
-const ProgressedOf = <P extends Codec, S extends Codec>(
-  progress: P,
-  success: S
-) =>
-  Schema.Union([
-    Schema.TaggedStruct("Progress", { value: progress }),
-    Schema.TaggedStruct("Final", { value: success }),
-  ]);
-
 type ElementedOf<Element extends Schema.Constraint, P> = Schema.Union<
   readonly [
     Schema.TaggedStruct<"Element", { readonly value: Element }>,
@@ -106,21 +86,6 @@ type ElementedOf<Element extends Schema.Constraint, P> = Schema.Union<
       : []),
   ]
 >;
-
-const elementedOf = (element: Codec, progress: Codec | undefined) =>
-  Schema.Union([
-    Schema.TaggedStruct("Element", { value: element }),
-    ...(progress === undefined
-      ? []
-      : [Schema.TaggedStruct("Progress", { value: progress })]),
-  ]);
-
-const streamedOf = (action: Action.Any): Schema.Codec<Progressed> | undefined =>
-  Answering.$match(answeringOf(action), {
-    Value: () => undefined,
-    Progressed: ({ success, progress }) => ProgressedOf(progress, success),
-    Elements: ({ element, progress }) => elementedOf(element, progress),
-  });
 
 type RpcOf<
   A extends Action.Any,
@@ -280,10 +245,6 @@ export interface Options<E extends Action.Errors = Action.Errors> {
    */
   readonly rpcs?: RpcGroup.Any;
 }
-
-const nativeOf = (group: RpcGroup.Any) =>
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  group as RpcGroup.RpcGroup<Rpc.AnyWithProps>;
 
 type RpcsOf<O> = O extends { readonly rpcs: infer G }
   ? RpcGroup.Rpcs<G>
@@ -694,62 +655,54 @@ export function layer(
 
 /**
  * What one call of an action `A` fails with, beside the binding's errors `E`: its declared and
- * built-in errors, and `T`, what the client it calls through fails with, by default Effect's own
- * `RpcClientError` when the server could not be reached. An answer that does not decode is a
- * defect, as the native client makes it.
+ * built-in errors, and Effect's own `RpcClientError` when the server could not be reached. An
+ * answer that does not decode is a defect, as the native client makes it.
  */
-export type MethodError<
-  A extends Action.Any,
-  E extends BindingError = never,
-  T = RpcClientError.RpcClientError,
-> = A["error"][number]["Type"] | E["Type"] | BuiltIns["Type"] | T;
+export type MethodError<A extends Action.Any, E extends BindingError = never> =
+  | A["error"][number]["Type"]
+  | E["Type"]
+  | BuiltIns["Type"]
+  | RpcClientError.RpcClientError;
 
-type Method<A extends Action.Any, E extends BindingError, T> = Call<
+type Method<A extends Action.Any, E extends BindingError> = Call<
   A,
-  Answer<A["success"], MethodError<A, E, T>, never>
+  Answer<A["success"], MethodError<A, E>, never>
 >;
 
 /**
  * What a watch of `W` over the binding `B` may fail with: a refusal, when it starts or later,
  * `InvalidInput`, the binding's errors, an `Event.SubscriptionError` (`Unsupported` for
  * `mode: "poll"`, which rpcs do not serve, `NotServed` for an event the server does not serve), or
- * `T`, what its client fails with that no reconnect outlasts, Effect's own `RpcClientError` by
- * default. An element that does not decode is a defect, as for a call.
+ * Effect's own `RpcClientError` that no reconnect outlasts. An element that does not decode is a defect, as for a call.
  */
-export type WatchError<
-  W extends Event.Any,
-  B extends Any,
-  T = RpcClientError.RpcClientError,
-> =
+export type WatchError<W extends Event.Any, B extends Any> =
   | Event.SubscriptionError
   | BuiltIns["Type"]
   | B["error"][number]["Type"]
   | VerifierError<W, B["authentication"]>["Type"]
-  | T;
+  | RpcClientError.RpcClientError;
 
-type Watching<B extends Any, T> = [B["events"][number]] extends [never]
+type Watching<B extends Any> = [B["events"][number]] extends [never]
   ? unknown
   : {
       readonly watch: <W extends B["events"][number], SE = never>(
         event: W,
         ...args: WatchArgs<W, SE>
-      ) => Stream.Stream<Event.Received<W>, WatchError<W, B, T> | SE>;
+      ) => Stream.Stream<Event.Received<W>, WatchError<W, B> | SE>;
     };
 
 /**
  * Every action of the binding `B`, as `client.<action>(input)`: a protected one may also fail
- * with what its descriptor's verifier declares, and every call with `T`, what the client it calls
- * through fails with. Where `B` lists event types, `watch(event, input, options)` streams one;
- * each native rpc of its `rpcs` is the native client's method.
+ * with what its descriptor's verifier declares. Where `B` lists event types, `watch(event, input,
+ * options)` streams one; each native rpc of its `rpcs` is the native client's method.
  */
-export type Client<B extends Any, T = RpcClientError.RpcClientError> = {
+export type Client<B extends Any> = {
   readonly [A in B["actions"][number] as A["name"]]: Method<
     A,
-    B["error"][number] | VerifierError<A, B["authentication"]>,
-    T
+    B["error"][number] | VerifierError<A, B["authentication"]>
   >;
-} & Watching<B, T> &
-  RpcClient.RpcClient<RpcGroup.Rpcs<B["rpcs"]>, T>;
+} & Watching<B> &
+  RpcClient.RpcClient<RpcGroup.Rpcs<B["rpcs"]>, RpcClientError.RpcClientError>;
 
 /**
  * The native `RpcClient.make` options `client` takes: `spanPrefix`, `spanAttributes`,
@@ -761,158 +714,6 @@ export type ClientOptions = Omit<
   "flatten"
 >;
 
-type JsonMethod = (payload: Schema.Json) => Effect.Effect<Schema.Json, unknown>;
-
-type JsonStreamMethod = (
-  payload: Schema.Json
-) => Stream.Stream<Schema.Json, unknown>;
-
-type ErasedMethod = (payload: Schema.Json) => ReturnType<ErasedCall>;
-
-const isDeclared = (failure: unknown): failure is DeclaredFailure =>
-  failure instanceof DeclaredFailure;
-
-const failedOf = (error: Schema.Union<Action.Errors>) => {
-  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(error));
-
-  return (failure: DeclaredFailure) =>
-    Effect.flatMap(Effect.orDie(decode(failure.json)), Effect.fail);
-};
-
-const actionMethodOf = (
-  action: Action.Any,
-  binding: Any,
-  method: ErasedMethod
-): CheckedMethod => {
-  const failed = failedOf(Schema.Union(bindingErrors(action, binding)));
-  const streamed = streamedOf(action);
-
-  if (streamed === undefined) {
-    const decode = Schema.decodeUnknownEffect(
-      Schema.toCodecJson(action.success)
-    );
-
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const call = method as JsonMethod;
-
-    return checked(action, sendingJson, (json) =>
-      call(json).pipe(
-        Effect.catchIf(isDeclared, failed),
-        Effect.flatMap((sent) => Effect.orDie(decode(sent)))
-      )
-    );
-  }
-
-  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(streamed));
-
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const call = method as JsonStreamMethod;
-
-  const progressed = (json: Schema.Json) =>
-    call(json).pipe(
-      Stream.catchIf(isDeclared, (failure) =>
-        Stream.fromEffect(failed(failure))
-      ),
-      Stream.mapEffect((sent) => Effect.orDie(decode(sent)))
-    );
-
-  return elementOf(action.success) === undefined
-    ? checked(action, sendingJson, (json, onProgress) =>
-        answerFrom(progressed(json), onProgress)
-      )
-    : checkedStream(action, sendingJson, (json, onProgress) =>
-        elementsFrom(progressed(json), onProgress)
-      );
-};
-
-type EventMethod = (input: Schema.Json) => StreamMethod;
-
-const eventMethodOf = (
-  event: Event.Any,
-  binding: Any,
-  method: ErasedMethod
-): EventMethod => {
-  const decode = Schema.decodeUnknownEffect(
-    Schema.toCodecJson(PushedOf(event))
-  );
-
-  const failed = failedOf(Schema.Union(eventErrors(event, binding)));
-
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const call = method as JsonStreamMethod;
-
-  return (input) => (cursor) =>
-    call({ input, cursor }).pipe(
-      Stream.catchIf(isDeclared, (failure) =>
-        Stream.fromEffect(failed(failure))
-      ),
-      Stream.mapEffect((json) => Effect.orDie(decode(json)))
-    );
-};
-
-const methodsOf = (binding: Any, call: ErasedCall, silenceEnds: boolean) => {
-  const calling =
-    (tag: string): ErasedMethod =>
-    (payload) =>
-      call(tag, payload);
-
-  const methods = Object.fromEntries<unknown>([
-    ...binding.actions.map(
-      (action) =>
-        [
-          action.name,
-          actionMethodOf(action, binding, calling(action.name)),
-        ] as const
-    ),
-    ...[...nativeOf(binding.rpcs).requests.keys()].map(
-      (tag) =>
-        [
-          tag,
-          (payload: Schema.Json, options?: Parameters<ErasedCall>[2]) =>
-            call(tag, payload, options),
-        ] as const
-    ),
-  ]);
-
-  if (binding.events.length === 0) {
-    return methods;
-  }
-
-  const feeds = new Map(
-    binding.events.map(
-      (event) =>
-        [
-          event.name,
-          eventMethodOf(event, binding, calling(event.name)),
-        ] as const
-    )
-  );
-
-  const watch = (
-    event: Event.Any,
-    input?: ErasedValue,
-    watchOptions?: Event.WatchOptions<unknown>
-  ): Stream.Stream<Event.Received<Event.Any>, unknown> => {
-    const feed = feeds.get(event.name);
-
-    if (feed === undefined) {
-      return Stream.die(
-        new Error(
-          `ActionRpc.client: the binding holds no event type ${event.name} (watch one the binding ActionRpc.make returned lists)`
-        )
-      );
-    }
-
-    return Stream.unwrap(
-      Effect.map(watchInput(event, input), ({ json }) =>
-        watching(transportOf(event, feed(json), silenceEnds), watchOptions)
-      )
-    );
-  };
-
-  return { ...methods, watch };
-};
-
 /**
  * Effect's native `RpcClient` for a binding, one method per action taking the action's input
  * directly: `client.greet({ name })`, as `ActionHttp.client`'s, the argument omitted when `{}`
@@ -920,8 +721,6 @@ const methodsOf = (binding: Any, call: ErasedCall, silenceEnds: boolean) => {
  * `Protocol` and a `Scope`, as `RpcClient.make` does; headers set with `RpcClient.withHeaders`
  * around a call go with its message, and the binding's native `rpcs` are its methods too. The
  * native client stays available under a JSON serialization: `RpcClient.make(Rpc.group)`.
- * Given a client function in place of options, one speaking the group `layer` serves, it returns
- * the client at once, calling through that function and failing with its errors.
  *
  * **Gotchas**
  *
@@ -930,7 +729,6 @@ const methodsOf = (binding: Any, call: ErasedCall, silenceEnds: boolean) => {
  * - The socket belongs to the Layer providing the protocol, not to the `Scope` around the client: provided around one call, it opens a socket for that call alone.
  * - `watch(event, input, options)` holds the event's stream rpc open, as `Action.client`'s does; `mode: "poll"` fails with `Event.SubscriptionError`, reason `Unsupported`, since rpcs serve no poll, and a watch of an event the server does not serve fails with it, reason `NotServed`, as over HTTP.
  * - A watch reconnects after the protocol's socket or HTTP transport fails, a response ends before its stream does, as a server's restart ends it, a status a server sends while it recovers, or, over Effect's HTTP protocol, 60 seconds without an element, a socket's own pings telling a dead one, a second later and doubling to 30 seconds, each reconnect logged as a warning; a declared error, a refusal included, or a socket's close with an application's code, 4000 to 4999, ends it.
- * - A watch through a given client function never ends for silence, and reconnects after the failures the protocol's client reconnects after: any other failure of that function ends it.
  * - A native rpc of the binding's `rpcs` is the native client's method: a stream rpc's is a `Stream`, its headers given as its options' `headers`, since `RpcClient.withHeaders` wraps an Effect.
  */
 export function client<const B extends Any>(
@@ -943,23 +741,15 @@ export function client<const B extends Any>(
   | Scope.Scope
   | Rpc.MiddlewareClient<RpcGroup.Rpcs<B["rpcs"]>>
 >;
-export function client<const B extends Any, T>(
-  binding: B,
-  call: ErasedCall<T>
-): Client<B, T>;
 export function client(
   binding: Any,
-  given?: ClientOptions | ErasedCall
-): object {
-  if (Predicate.isFunction(given)) {
-    return methodsOf(binding, given, false);
-  }
-
+  options?: ClientOptions
+): Effect.Effect<object, never, RpcClient.Protocol | Scope.Scope> {
   return Effect.map(
     Effect.all([
       RpcClient.make(
         erasedOf(binding.actions, binding.events).merge(nativeOf(binding.rpcs)),
-        { ...given, flatten: true }
+        { ...options, flatten: true }
       ),
       Effect.map(
         Effect.service(RpcClient.Protocol),
