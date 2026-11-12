@@ -407,7 +407,7 @@ interface Owner {
 
 describe("ActionEntity.reaching's key", () => {
   it.live(
-    "refuses with Forbidden an input whose key answers no string, reaching no entity",
+    "refuses with Forbidden a call and a poll whose input's key answers no string, reaching no entity",
     () => {
       const counted = { builds: 0, ran: 0 };
       const owner = { id: "lobby" };
@@ -421,8 +421,20 @@ describe("ActionEntity.reaching's key", () => {
         caller: Action.Anyone,
       });
 
-      const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
-        key: { probe: () => owner.id },
+      const Probed = Event.make("probed", {
+        description: "The entity was probed.",
+        payload: {},
+        caller: Action.Anyone,
+      });
+
+      const Prober = ActionEntity.make(
+        "Prober",
+        ActionRpc.make([Probe, Probed]),
+        { key: { probe: () => owner.id, probed: () => owner.id } }
+      );
+
+      const sourced = Event.implement(Probed, {
+        check: () => Effect.succeed({ cursor: "0", events: [] }),
       });
 
       const probing = Action.implement(
@@ -448,14 +460,88 @@ describe("ActionEntity.reaching's key", () => {
 
         const refused = yield* Effect.flip(client.probe());
 
+        const unpolled = yield* Effect.flip(
+          Stream.runDrain(client.watch(Probed, {}, { mode: "poll" }))
+        );
+
         expect(answered).toBe("lobby");
         expect(refused).toBeInstanceOf(Action.Forbidden);
+        expect(unpolled).toBeInstanceOf(Action.Forbidden);
         expect(counted).toStrictEqual({ builds: 1, ran: 1 });
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          ActionEntity.layer(Prober, probing).pipe(
-            Layer.provideMerge(TestRunner.layer)
+          ActionEntity.layer(Prober, [probing, sourced]).pipe(
+            Layer.provideMerge(TestRunner.layer),
+            Layer.provide(Event.layerMemory)
+          )
+        )
+      );
+    }
+  );
+});
+
+const Lines = Action.make("lines", {
+  description: "Stream numbered lines from the room's entity.",
+  input: { room: Schema.String, upTo: Schema.Int },
+  success: Action.Stream({ n: Schema.Int, entity: Schema.String }),
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
+  key: { lines: ({ room }) => room },
+});
+
+describe("ActionEntity.reaching's stream answer", () => {
+  it.live(
+    "streams each element of an Action.Stream answer from the entity its key names, through HTTP and in process",
+    () => {
+      const lining = Action.implement(
+        Lines,
+        Effect.map(
+          Entity.CurrentAddress,
+          ({ entityId }) =>
+            ({ upTo }) =>
+              Stream.range(1, upTo).pipe(
+                Stream.map((n) => ({ n, entity: entityId }))
+              )
+        )
+      );
+
+      const reachedLiner = ActionEntity.reaching(Liner);
+      const LinerHttp = ActionHttp.make([Lines]);
+
+      return Effect.gen(function* () {
+        const http = yield* ActionHttp.client(LinerHttp);
+        const inProcess = yield* Action.client(reachedLiner);
+
+        const overHttp = yield* Stream.runCollect(
+          http.lines({ room: "lobby", upTo: 3 })
+        );
+
+        const direct = yield* Stream.runCollect(
+          inProcess.lines({ room: "kitchen", upTo: 2 })
+        );
+
+        expect(overHttp).toStrictEqual([
+          { n: 1, entity: "lobby" },
+          { n: 2, entity: "lobby" },
+          { n: 3, entity: "lobby" },
+        ]);
+        expect(direct).toStrictEqual([
+          { n: 1, entity: "kitchen" },
+          { n: 2, entity: "kitchen" },
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Testing.layer(ActionHttp.layer(LinerHttp, reachedLiner)).pipe(
+            Layer.provideMerge(
+              ActionEntity.layer(Liner, lining).pipe(
+                Layer.provideMerge(TestRunner.layer)
+              )
+            )
           )
         )
       );
