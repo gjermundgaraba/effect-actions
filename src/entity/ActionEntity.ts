@@ -353,6 +353,15 @@ const isTransient = Schema.is(
   ])
 );
 
+const isClusterFailure = Schema.is(
+  Schema.Union([
+    ClusterError.MailboxFull,
+    ClusterError.AlreadyProcessingMessage,
+    ClusterError.PersistenceError,
+    ClusterError.EntityNotAssignedToRunner,
+  ])
+);
+
 /**
  * What one call of an action `A` fails with, beside the binding's errors `E`: its declared and
  * built-in errors, and what Effect's entity client fails with when the entity could not be
@@ -494,7 +503,7 @@ const reachedCall = (
  * - A stream asks the entity again after `MailboxFull`, `PersistenceError` or `EntityNotAssignedToRunner`, from where it reached, a second later and doubling to 30 seconds, as `client`'s watch does; another failure ends it.
  * - A stream's polls hold a subscription hook of their own in the entity, which its end releases; a poll, MCP's `events/poll` included, holds the subscriber's until its source's `lease` lapses, as on any surface.
  * - An event served through these is offered no webhook delivery, whose deliveries run outside any request, with no headers to send on: `events/list` names no `webhook`, and a webhook subscription fails with `Event.SubscriptionError`, reason `Unsupported`, a 409 over HTTP, before any callback is sent.
- * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's failure, which no action declares: a surface answers it as any undeclared failure, a 500 over HTTP and a defect through `Action.client`, never as a typed error.
+ * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's defect, carrying that error alone, since no action declares it: a 500 over HTTP and a defect through `Action.client`, never a typed error.
  * - An error the entity declares beyond the action's own and the built-in ones, its binding's `error` or its verifier's, is undeclared where the serving surface's binding does not declare it too.
  */
 export const reaching = <
@@ -557,10 +566,10 @@ export const reaching = <
             Effect.map(to(action, input), (entityId) =>
               Stream.provideService(answer, Reached, entityId)
             )
-          )
+          ).pipe(Stream.catchIf(isClusterFailure, Stream.die))
         : Effect.flatMap(to(action, input), (entityId) =>
             Effect.provideService(answer, Reached, entityId)
-          );
+          ).pipe(Effect.catchIf(isClusterFailure, Effect.die));
     };
   };
 
@@ -591,7 +600,7 @@ export const reaching = <
             cursor,
             ...(maxEvents === undefined ? {} : { maxEvents }),
           })
-        ),
+        ).pipe(Effect.catchIf(isClusterFailure, Effect.die)),
       stream: (input, cursor) =>
         Stream.unwrap(
           Effect.sync(() => {
@@ -602,6 +611,7 @@ export const reaching = <
                 sent(input, (json) => poll({ input: json, cursor: at, watch })),
               isTransient
             )(cursor).pipe(
+              Stream.catchIf(isClusterFailure, Stream.die),
               Stream.ensuring(
                 sent(input, (json) => release({ input: json, watch })).pipe(
                   Effect.timeout(releaseTimeout),

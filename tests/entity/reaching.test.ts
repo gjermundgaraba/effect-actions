@@ -549,15 +549,16 @@ describe("ActionEntity.reaching's cluster failures", () => {
         const failed = yield* Effect.exit(inProcess.read({ room: "a" }));
         const answered = yield* Effect.exit(http.read({ room: "a" }));
 
-        const died =
-          Exit.isFailure(failed) &&
-          failed.cause.reasons.some(
+        const reasons = Exit.isFailure(failed) ? failed.cause.reasons : [];
+
+        expect(reasons).toHaveLength(1);
+        expect(
+          reasons.every(
             (reason) =>
               Cause.isDieReason(reason) &&
               reason.defect instanceof ClusterError.PersistenceError
-          );
-
-        expect(died).toBe(true);
+          )
+        ).toBe(true);
         expect(Exit.isFailure(answered) && String(answered.cause)).toContain(
           "undeclared status code (500"
         );
