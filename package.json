@@ -37,6 +37,7 @@
   "exports": {
     "./Action": "./src/contract/Action.ts",
     "./ActionCli": "./src/cli/ActionCli.ts",
+    "./ActionEntity": "./src/entity/ActionEntity.ts",
     "./ActionHttp": "./src/http/ActionHttp.ts",
     "./ActionMcp": "./src/mcp/ActionMcp.ts",
     "./ActionRpc": "./src/rpc/ActionRpc.ts",
@@ -53,6 +54,7 @@
     "exports": {
       "./Action": "./dist/Action.mjs",
       "./ActionCli": "./dist/ActionCli.mjs",
+      "./ActionEntity": "./dist/ActionEntity.mjs",
       "./ActionHttp": "./dist/ActionHttp.mjs",
       "./ActionMcp": "./dist/ActionMcp.mjs",
       "./ActionRpc": "./dist/ActionRpc.mjs",

@@ -1,0 +1,373 @@
+import { describe, expect, it } from "@effect/vitest";
+import { Arbitrary, Cause, Effect, Exit, Layer, Schema, Stream } from "effect";
+import {
+  Entity,
+  MessageStorage,
+  ShardingConfig,
+  TestRunner,
+} from "effect/cluster";
+import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
+
+import * as Action from "../../src/contract/Action.js";
+import * as Event from "../../src/contract/Event.js";
+import * as ActionEntity from "../../src/entity/ActionEntity.js";
+import * as ActionRpc from "../../src/rpc/ActionRpc.js";
+import { methodsOf, polledTransport } from "../../src/rpc/erased.js";
+import type { ErasedCall } from "../../src/rpc/erased.js";
+import * as Testing from "../../src/testing/Testing.js";
+import {
+  makeRooms,
+  Payload,
+  Posted,
+  Room,
+  RoomClosed,
+  RoomRpc,
+  signIn,
+} from "../support/rooms.js";
+
+type Rooms = ReturnType<typeof makeRooms>;
+
+const signedInAs = (token: string) =>
+  RpcClient.withHeaders({ authorization: `Bearer ${token}` });
+
+const onTestRunner = (rooms: Rooms) =>
+  ActionEntity.layer(Room, rooms.implementations).pipe(
+    Layer.provideMerge(TestRunner.layer),
+    Layer.provide([signIn, Event.layerMemory])
+  );
+
+const roomClient = ActionEntity.client(Room);
+
+const overRpc = (rooms: Rooms) =>
+  RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+    Layer.provide(RpcSerialization.layerNdjson),
+    Layer.provide(
+      Testing.layer(
+        ActionRpc.layer(RoomRpc, rooms.echoing).pipe(
+          Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
+          Layer.provide(RpcSerialization.layerNdjson)
+        )
+      )
+    )
+  );
+
+const jsonTextOf = Schema.encodeSync(
+  Schema.fromJsonString(Schema.toCodecJson(Payload))
+);
+
+const Page = Schema.Struct({
+  events: Schema.Array(
+    Schema.Struct({ data: Schema.Struct({ text: Schema.String }) })
+  ),
+  cursor: Schema.NullOr(Schema.String),
+});
+
+const pageOf = Schema.decodeUnknownEffect(Page);
+
+const poll = (entityId: string, cursor: string | null) =>
+  Effect.gen(function* () {
+    const rpcs = yield* Room.client;
+    const sent = rpcs(entityId)["room.posted"];
+
+    if (sent === undefined) {
+      return yield* Effect.die(new Error("no poll rpc"));
+    }
+
+    const answer = sent({ input: { room: entityId }, cursor });
+
+    if (!Effect.isEffect(answer)) {
+      return yield* Effect.die(new Error("a streamed poll"));
+    }
+
+    const page = yield* pageOf(yield* answer);
+
+    return {
+      texts: page.events.map(({ data }) => data.text),
+      cursor: page.cursor,
+    };
+  });
+
+function typedOver<const Type extends string, const B extends ActionRpc.Any>(
+  entity: ActionEntity.Entity<Type, B>,
+  rpcs: Readonly<Record<string, (payload: unknown) => unknown>>
+): ActionEntity.Client<B>;
+function typedOver<Type extends string, B extends ActionRpc.Any>(
+  entity: ActionEntity.Entity<Type, B>,
+  rpcs: Readonly<Record<string, (payload: unknown) => unknown>>
+): object {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const call = ((tag: string, payload: unknown) =>
+    rpcs[tag]?.(payload)) as ErasedCall;
+
+  return methodsOf(
+    entity.binding,
+    call,
+    polledTransport(() => false)
+  );
+}
+
+const otherThanLobby = Arbitrary.schema(Schema.String).pipe(
+  Arbitrary.filter((named) => named !== "lobby")
+);
+
+describe("ActionEntity on Entity.makeTestClient", () => {
+  it.effect(
+    "answers an action, and refuses an input naming another entity with Forbidden",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const clientFor = yield* Entity.makeTestClient(
+          Room,
+          ActionEntity.layer(Room, rooms.implementations)
+        );
+
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+        const lobby = typedOver(Room, (yield* clientFor("lobby")) as never);
+
+        const read = yield* lobby.read({ room: "lobby" });
+        const refused = yield* Effect.flip(lobby.read({ room: "kitchen" }));
+
+        expect(read).toStrictEqual({ entity: "lobby", texts: [] });
+        expect(refused).toBeInstanceOf(Action.Forbidden);
+        expect(rooms.ran.read).toBe(1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide([ShardingConfig.layer(), signIn, Event.layerMemory])
+      );
+    }
+  );
+});
+
+describe("ActionEntity on a TestRunner", () => {
+  it.live.prop(
+    "answers any input as ActionRpc.layer answers it, the payload as JSON carries it",
+    [Arbitrary.schema(Payload)],
+    ([payload]) => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const lobby = (yield* roomClient)("lobby");
+        const rpc = yield* ActionRpc.client(RoomRpc);
+
+        const input = { room: "lobby", payload };
+
+        const fromEntity = yield* lobby.echo(input);
+        const fromRpc = yield* rpc.echo(input);
+
+        expect(jsonTextOf(fromEntity)).toBe(jsonTextOf(fromRpc));
+        expect(jsonTextOf(fromEntity)).toBe(jsonTextOf(payload));
+      }).pipe(
+        Effect.scoped,
+        Effect.provide([onTestRunner(rooms), overRpc(rooms)])
+      );
+    },
+    { timeout: 30_000, arbitrary: { runs: 100 } }
+  );
+
+  it.live.prop(
+    "refuses any key other than the entity's with Forbidden, its handler never running",
+    [otherThanLobby],
+    ([other]) => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const lobby = (yield* roomClient)("lobby");
+        const named = { room: other };
+
+        const refusals = [
+          yield* Effect.flip(lobby.read(named)),
+          yield* Effect.flip(lobby.shut(named)),
+          yield* Effect.flip(lobby.boom(named)),
+          yield* Effect.flip(
+            lobby.echo({
+              ...named,
+              payload: {
+                text: "",
+                amount: 0,
+                count: 0,
+                level: "low",
+                tags: [],
+              },
+            })
+          ),
+          yield* Effect.flip(
+            lobby.post({ ...named, text: "hi" }).pipe(signedInAs("alice"))
+          ),
+          yield* Effect.flip(
+            Stream.runHead(lobby.watch(Posted, named, { mode: "poll" }))
+          ),
+        ];
+
+        for (const refused of refusals) {
+          expect(refused).toBeInstanceOf(Action.Forbidden);
+        }
+
+        expect(rooms.ran).toStrictEqual({
+          echo: 0,
+          post: 0,
+          read: 0,
+          builds: 1,
+        });
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+    },
+    { timeout: 30_000, arbitrary: { runs: 50 } }
+  );
+
+  it.live("authenticates each call from the headers its client sends", () => {
+    const rooms = makeRooms();
+
+    return Effect.gen(function* () {
+      const lobby = (yield* roomClient)("lobby");
+      const post = { room: "lobby", text: "hi" };
+
+      const answered = yield* lobby.post(post).pipe(signedInAs("alice"));
+      const anonymous = yield* Effect.flip(lobby.post(post));
+
+      const unknown = yield* Effect.flip(
+        lobby.post(post).pipe(signedInAs("mallory"))
+      );
+
+      const elsewhere = yield* Effect.flip(
+        lobby.post({ room: "kitchen", text: "hi" })
+      );
+
+      expect(answered).toStrictEqual({ count: 1, by: "alice" });
+      expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
+      expect(unknown).toBeInstanceOf(Action.Unauthenticated);
+      expect(elsewhere).toBeInstanceOf(Action.Unauthenticated);
+      expect(rooms.ran.post).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+  });
+
+  it.live("fails with a declared error and its fields", () =>
+    Effect.gen(function* () {
+      const lobby = (yield* roomClient)("lobby");
+
+      const closed = yield* Effect.flip(lobby.shut({ room: "lobby" }));
+
+      expect(closed).toStrictEqual(
+        new RoomClosed({ room: "lobby", reason: "shut" })
+      );
+    }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
+  );
+
+  it.live(
+    "answers a defect with Internal server error, and its next call on the same handlers",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const lobby = (yield* roomClient)("lobby");
+
+        const died = yield* Effect.exit(lobby.boom({ room: "lobby" }));
+        const read = yield* lobby.read({ room: "lobby" });
+
+        expect(Exit.isFailure(died) && Cause.hasDies(died.cause)).toBe(true);
+        expect(
+          String(Exit.isFailure(died) && Cause.squash(died.cause))
+        ).toContain("Internal server error");
+        expect(read).toStrictEqual({ entity: "lobby", texts: [] });
+        expect(rooms.ran.builds).toBe(1);
+      }).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.scoped,
+        Effect.provide(onTestRunner(rooms))
+      );
+    }
+  );
+
+  it.live(
+    "keeps each entity's state its own, each building its handlers",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const clientOf = yield* roomClient;
+
+        yield* Effect.forEach(
+          ["a", "b", "a"],
+          (room, at) =>
+            clientOf(room)
+              .post({ room, text: `${room}${at}` })
+              .pipe(signedInAs("alice")),
+          { concurrency: "unbounded" }
+        );
+
+        const a = yield* clientOf("a").read({ room: "a" });
+        const b = yield* clientOf("b").read({ room: "b" });
+
+        expect({ ...a, texts: a.texts.toSorted() }).toStrictEqual({
+          entity: "a",
+          texts: ["a0", "a2"],
+        });
+        expect(b).toStrictEqual({ entity: "b", texts: ["b1"] });
+        expect(rooms.ran.builds).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+    }
+  );
+
+  it.live(
+    "answers an event's poll rpc past a cursor, and a watch follows it",
+    () =>
+      Effect.gen(function* () {
+        const a = (yield* roomClient)("a");
+
+        const start = yield* poll("a", null);
+
+        for (const text of ["one", "two", "three"]) {
+          yield* a.post({ room: "a", text }).pipe(signedInAs("alice"));
+        }
+
+        const first = yield* poll("a", start.cursor);
+        const second = yield* poll("a", first.cursor);
+
+        const watched = yield* a
+          .watch(Posted, { room: "a" }, { cursor: start.cursor })
+          .pipe(Stream.take(3), Stream.runCollect);
+
+        expect(start.texts).toStrictEqual([]);
+        expect(first.texts).toStrictEqual(["one", "two", "three"]);
+        expect(second.texts).toStrictEqual([]);
+        expect(
+          watched.map((received) =>
+            received._tag === "Occurrence" ? received.data.text : "gap"
+          )
+        ).toStrictEqual(["one", "two", "three"]);
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
+  );
+
+  it.live(
+    "refuses to watch an event as a stream, since an entity serves polls",
+    () =>
+      Effect.gen(function* () {
+        const a = (yield* roomClient)("a");
+
+        const refused = yield* Effect.flip(
+          Stream.runHead(a.watch(Posted, { room: "a" }, { mode: "stream" }))
+        );
+
+        expect(refused).toBeInstanceOf(Event.SubscriptionError);
+        expect(
+          refused instanceof Event.SubscriptionError && refused.reason._tag
+        ).toBe("Unsupported");
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
+  );
+
+  it.live("stores no message of its calls", () =>
+    Effect.gen(function* () {
+      const lobby = (yield* roomClient)("lobby");
+
+      for (let at = 0; at < 10; at += 1) {
+        yield* lobby
+          .post({ room: "lobby", text: `${at}` })
+          .pipe(signedInAs("alice"));
+      }
+
+      const driver = yield* MessageStorage.MemoryDriver;
+
+      expect(driver.journal).toStrictEqual([]);
+      expect(driver.requests.size).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
+  );
+});

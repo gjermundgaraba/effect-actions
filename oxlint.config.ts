@@ -15,6 +15,7 @@ const anyRelativeImport = ["./**", "../**"];
 const sharedPrivateFiles = [
   "authentication/provider.js",
   "authentication/refusal.js",
+  "rpc/erased.js",
   "stdio/console.js",
 ];
 
@@ -22,7 +23,13 @@ const lintingProbes = process.env["LINT_PROBE"] !== undefined;
 
 const lint: ReturnType<typeof config> = config({
   env: { browser: false },
-  testBlocks: ["it.effect", "it.effect.prop", "it.live", "it.prop"],
+  testBlocks: [
+    "it.effect",
+    "it.effect.prop",
+    "it.live",
+    "it.live.prop",
+    "it.prop",
+  ],
   expectBlocks: ["it.effect.each"],
   assertFunctions: [
     "runScenario",
@@ -109,6 +116,7 @@ const lint: ReturnType<typeof config> = config({
         "src/authentication/Authentication.ts",
         "src/cli/{ActionCli,commands}.ts",
         "src/contract/{Action,authorizer,call,caller,feed,idempotency,implementation,lease,push,serving,webhooks}.ts",
+        "src/entity/ActionEntity.ts",
         "src/http/{ActionHttp,client,events,placed,streamed,watch}.ts",
         "src/mcp/{ActionMcp,bridge,client,reply,watch}.ts",
         "src/rpc/{ActionRpc,erased,watch}.ts",
