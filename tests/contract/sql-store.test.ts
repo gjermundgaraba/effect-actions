@@ -449,10 +449,19 @@ describe("Stored.layerEvents on a database file", () => {
             })
           );
 
-        expect(texts(yield* Fiber.join(watching))).toStrictEqual([
-          "one",
-          "two",
-        ]);
+        const received = yield* Fiber.join(watching).pipe(
+          Effect.timeoutOrElse({
+            duration: "2 seconds",
+            orElse: () =>
+              Effect.die(
+                new Error(
+                  "The watcher received no 2 occurrences in 2 seconds after the transaction committed"
+                )
+              ),
+          })
+        );
+
+        expect(texts(received)).toStrictEqual(["one", "two"]);
       }).pipe(
         Effect.scoped,
         Effect.provide(

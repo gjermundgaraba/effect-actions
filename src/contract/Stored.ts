@@ -18,12 +18,12 @@ import { Idempotency, Kept, keptFor } from "./idempotency.js";
  *
  * **Gotchas**
  *
- * - Written for SQLite, such as Cloudflare's `DurableObjectSqlClient`, and tested on `@effect/sql-sqlite-node`'s: another dialect is unsupported.
+ * - Written for SQLite, such as a Durable Object's through `@effect/sql-sqlite-do`'s `SqliteClient`, and tested on `@effect/sql-sqlite-node`'s: another dialect is unsupported.
  * - Build it once per database, as `Event.layerMemory` is built once per process: two builds over one database each wake only their own subscribers, and their appends to one log collide, dying on the table's key.
  * - Logs are kept by their event's name: two event types of one name attached to one build die, naming it.
  * - A `key` holding a lone surrogate, not well-formed UTF-16, is kept with U+FFFD in its place: its occurrences no longer reach that key's subscribers.
  * - A query that fails dies: the database is the host's own, and nothing else can answer for it.
- * - Each append and read of a log is a transaction, joining the caller's: on a Durable Object, build `DurableObjectSqlClient` with `storage`, not `db` alone, or every one dies; an occurrence published in a transaction that rolls back is not kept, though its subscribers are woken to read nothing.
+ * - Each append and read of a log is a transaction, joining the caller's: on a Durable Object, build `@effect/sql-sqlite-do`'s `SqliteClient` with `storage`, not `db` alone, or every one dies; an occurrence published in a transaction that rolls back is not kept, though its subscribers are woken to read nothing.
  */
 export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
   Layer.effect(Events)(
@@ -81,7 +81,7 @@ const isLive = (kept: Kept, now: number) => kept.at + keptFor > now;
  * - An answer kept 24 hours ago or more is not read back, and a repeat runs the call again; expired answers are deleted as an answer is kept, at the first after each build and then at most once an hour, by listing every key of the store and reading each under the prefix: on a host that builds per wake, every wake that keeps an answer pays that scan.
  * - A store failing to read or keep an answer dies: the call fails, its answer not kept.
  * - A store failing to delete an expired answer dies after the answer was kept: the call fails, and its repeat is answered with the kept answer, its handler not run again.
- * - An answer kept under a key whose expired answer the deletion is removing, its key sent again 24 hours on, can be deleted with it, and a repeat then runs the call again: no lock spans the deletion's read and remove, since one held across the store's I/O would deadlock with a caller holding its SQL connection.
+ * - An answer kept under a key whose expired answer the deletion is removing, its key sent again 24 hours on, can be deleted with it: a repeat then runs the call again.
  */
 export const layerIdempotency: Layer.Layer<
   Idempotency,
