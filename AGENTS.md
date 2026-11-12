@@ -138,7 +138,6 @@ Recheck these on an upgrade of the dependency named.
   - `Entity.client`'s client is a Proxy keyed by tag, and `RpcGroup.Rpcs` drops string tags from its type, so `ActionEntity.client` calls it by tag through the erased call.
   - An rpc is volatile unless annotated `ClusterSchema.Persisted`, and an entity's concurrency defaults to 1, so a stream rpc holds its one slot until it ends.
   - `Entity.makeTestClient` joins `RpcClient.makeNoSerialization` to `RpcServer.makeNoSerialization`, with no runner, mailbox or encoding.
-  - `@effect/platform-cloudflare` 4.1.4's entity transport `JSON.stringify`s an envelope (`internal/entityWire.ts` `encodeRequest`), and `Headers.toJSON` redacts `Headers.CurrentRedactedNames`, so `ActionEntity.reaching` empties them around its client call alone; remove that when the transport encodes headers as `Schema.Headers` does.
 - Effect, elsewhere:
   - `Layer.build` forks the memo map around its caller, so `implementation.ts` builds into the map itself.
   - `Stream.retry` restarts its schedule at the first element after a failure.

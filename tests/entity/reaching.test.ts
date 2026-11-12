@@ -258,6 +258,8 @@ const seeing = [
             const request = yield* HttpServerRequest.HttpServerRequest;
             const by = request.headers["authorization"] ?? "none";
 
+            yield* Effect.log("entity", request.headers);
+
             yield* events.publish(Seen, { data: { by } }, { key: room });
 
             return by;
@@ -463,7 +465,7 @@ describe("ActionEntity.reaching's key", () => {
 
 describe("ActionEntity.reaching's headers", () => {
   it.live(
-    "sends the caller's authorization exactly, while the caller's own logs, during and after the call, redact it",
+    "sends the caller's authorization exactly, while the entity's logs and the caller's, during and after the call, redact it",
     () => {
       const logged: string[] = [];
 
@@ -486,7 +488,10 @@ describe("ActionEntity.reaching's headers", () => {
         yield* logHeaders;
 
         expect(seen).toBe("Bearer alice");
-        expect(logged).toHaveLength(2);
+        expect(
+          logged.filter((line) => line.startsWith('["entity"'))
+        ).toHaveLength(1);
+        expect(logged).toHaveLength(3);
 
         for (const line of logged) {
           expect(line).toContain('"authorization":"<redacted>"');

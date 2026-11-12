@@ -2,7 +2,6 @@ import { Context, Effect, Layer, Predicate, Schema, Stream } from "effect";
 import type { Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
-import { Headers } from "effect/http";
 import type { HttpServerRequest } from "effect/http";
 import type { RpcGroup } from "effect/rpc";
 
@@ -438,9 +437,6 @@ const Reached = Context.Reference<string | undefined>(
   { defaultValue: () => undefined }
 );
 
-const unredacted = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  Effect.provideService(effect, Headers.CurrentRedactedNames, []);
-
 const reachedCall = (
   clientFor: Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>,
   streaming: ReadonlySet<string>
@@ -459,15 +455,13 @@ const reachedCall = (
     streaming.has(tag)
       ? Stream.unwrap(
           Effect.map(send(tag, payload), (answer) =>
-            Stream.isStream(answer)
-              ? Stream.provideService(answer, Headers.CurrentRedactedNames, [])
-              : Stream.fromEffect(unredacted(answer))
+            Stream.isStream(answer) ? answer : Stream.fromEffect(answer)
           )
         )
       : Effect.flatMap(send(tag, payload), (answer) =>
           Stream.isStream(answer)
             ? Effect.die(new Error(`ActionEntity.reaching: ${tag} streams`))
-            : unredacted(answer)
+            : answer
         );
 };
 
@@ -482,7 +476,6 @@ const reachedCall = (
  *
  * - The caller's credential is verified twice, by the surface serving these and by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity, and a credential expiring between the two is refused by the entity.
  * - Every header of the caller's request is sent on but its connection's, its body's, what it accepts and an MCP request's routing headers (`mcp-*`); a call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends none, so the entity refuses a protected one with `Unauthenticated`.
- * - The entity receives `authorization`, `cookie`, `set-cookie` and `x-api-key` as sent, whatever the transport; the caller's own logs still redact them.
  * - A stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface, at once while a page has more and otherwise at its `nextPollMs`, a second at least: it holds the caller's request open but no entity, and an occurrence arrives up to that interval late.
  * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's failure, which no action declares: a surface answers it as any undeclared failure, a 500 over HTTP and a defect through `Action.client`, never as a typed error.
  * - An error the entity declares beyond the action's own and the built-in ones, its binding's `error` or its verifier's, is undeclared where the serving surface's binding does not declare it too.
