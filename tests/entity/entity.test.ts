@@ -59,11 +59,14 @@ const Page = Schema.Struct({
     Schema.Struct({ data: Schema.Struct({ text: Schema.String }) })
   ),
   cursor: Schema.NullOr(Schema.String),
+  truncated: Schema.Boolean,
+  hasMore: Schema.Boolean,
+  nextPollMs: Schema.Finite,
 });
 
 const pageOf = Schema.decodeUnknownEffect(Page);
 
-const poll = (entityId: string, cursor: string | null) =>
+const poll = (entityId: string, cursor: string | null, maxEvents?: number) =>
   Effect.gen(function* () {
     const rpcs = yield* Room.client;
     const sent = rpcs(entityId)["room.posted"];
@@ -72,18 +75,19 @@ const poll = (entityId: string, cursor: string | null) =>
       return yield* Effect.die(new Error("no poll rpc"));
     }
 
-    const answer = sent({ input: { room: entityId }, cursor });
+    const answer = sent({
+      input: { room: entityId },
+      cursor,
+      ...(maxEvents === undefined ? {} : { maxEvents }),
+    });
 
     if (!Effect.isEffect(answer)) {
       return yield* Effect.die(new Error("a streamed poll"));
     }
 
-    const page = yield* pageOf(yield* answer);
+    const { events, ...page } = yield* pageOf(yield* answer);
 
-    return {
-      texts: page.events.map(({ data }) => data.text),
-      cursor: page.cursor,
-    };
+    return { ...page, texts: events.map(({ data }) => data.text) };
   });
 
 const otherThanLobby = Arbitrary.schema(Schema.String).pipe(
@@ -136,6 +140,43 @@ const Probe = Action.make("probe", {
   success: Schema.String,
   readOnly: true,
   caller: Action.Anyone,
+});
+
+describe("ActionEntity's streaming action on Entity.makeTestClient", () => {
+  it.effect(
+    "streams each progress as a Progress before the answer as its Final",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const clientFor = yield* Entity.makeTestClient(
+          Room,
+          ActionEntity.layer(Room, rooms.implementations)
+        );
+
+        const { tally } = yield* clientFor("lobby");
+
+        if (tally === undefined) {
+          return yield* Effect.die(new Error("no tally rpc"));
+        }
+
+        const sent = tally({ room: "lobby", upTo: 2 });
+
+        if (Effect.isEffect(sent)) {
+          return yield* Effect.die(new Error("a unary tally"));
+        }
+
+        expect(yield* Stream.runCollect(sent)).toStrictEqual([
+          { _tag: "Progress", value: { at: 1 } },
+          { _tag: "Progress", value: { at: 2 } },
+          { _tag: "Final", value: { counted: 2 } },
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide([ShardingConfig.layer(), signIn, Event.layerMemory])
+      );
+    }
+  );
 });
 
 interface Owner {
@@ -248,6 +289,7 @@ describe("ActionEntity on a TestRunner", () => {
           yield* Effect.flip(
             lobby.post({ ...named, text: "hi" }).pipe(signedInAs("alice"))
           ),
+          yield* Effect.flip(lobby.tally({ ...named, upTo: 2 })),
           yield* Effect.flip(
             Stream.runHead(lobby.watch(Posted, named, { mode: "poll" }))
           ),
@@ -261,6 +303,7 @@ describe("ActionEntity on a TestRunner", () => {
           echo: 0,
           post: 0,
           read: 0,
+          tally: 0,
           builds: 1,
         });
       }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
@@ -388,6 +431,74 @@ describe("ActionEntity on a TestRunner", () => {
             received._tag === "Occurrence" ? received.data.text : "gap"
           )
         ).toStrictEqual(["one", "two", "three"]);
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
+  );
+
+  it.live(
+    "hands a streaming action's progress on before its answer, and refuses another entity's key with Forbidden",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const lobby = (yield* roomClient)("lobby");
+        const seen: string[] = [];
+
+        const answer = yield* lobby.tally(
+          { room: "lobby", upTo: 3 },
+          { onProgress: ({ at }) => Effect.sync(() => seen.push(`at ${at}`)) }
+        );
+
+        seen.push(`counted ${answer.counted}`);
+
+        const refused = yield* Effect.flip(
+          lobby.tally(
+            { room: "kitchen", upTo: 3 },
+            { onProgress: () => Effect.sync(() => seen.push("refused")) }
+          )
+        );
+
+        expect(seen).toStrictEqual(["at 1", "at 2", "at 3", "counted 3"]);
+        expect(refused).toBeInstanceOf(Action.Forbidden);
+        expect(rooms.ran.tally).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+    }
+  );
+
+  it.live(
+    "answers a poll page with hasMore past maxEvents, truncated for a cursor its log never minted, and a 5-second nextPollMs",
+    () =>
+      Effect.gen(function* () {
+        const a = (yield* roomClient)("a");
+
+        const start = yield* poll("a", null);
+
+        for (const text of ["one", "two", "three"]) {
+          yield* a.post({ room: "a", text }).pipe(signedInAs("alice"));
+        }
+
+        const first = yield* poll("a", start.cursor, 2);
+        const rest = yield* poll("a", first.cursor, 2);
+        const foreign = yield* poll("a", "minted-elsewhere");
+
+        expect(start).toMatchObject({
+          texts: [],
+          truncated: false,
+          hasMore: false,
+          nextPollMs: 5000,
+        });
+        expect(first).toMatchObject({
+          texts: ["one", "two"],
+          truncated: false,
+          hasMore: true,
+          nextPollMs: 5000,
+        });
+        expect(rest).toMatchObject({
+          texts: ["three"],
+          truncated: false,
+          hasMore: false,
+        });
+        expect(foreign).toMatchObject({ truncated: true, hasMore: false });
+        expect(foreign.cursor).toBe(rest.cursor);
       }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
   );
 

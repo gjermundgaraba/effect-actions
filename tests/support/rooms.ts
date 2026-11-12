@@ -67,6 +67,15 @@ export const Boom = Action.make("boom", {
   caller: Action.Anyone,
 });
 
+export const Tally = Action.make("tally", {
+  description: "Count to a number, reporting each step.",
+  input: { ...room, upTo: Schema.Int },
+  success: { counted: Schema.Int },
+  progress: { at: Schema.Int },
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
 export const Posted = Event.make("room.posted", {
   description: "A message was posted to a room.",
   input: room,
@@ -74,9 +83,12 @@ export const Posted = Event.make("room.posted", {
   caller: Action.Anyone,
 });
 
-export const RoomRpc = ActionRpc.make([Echo, Post, Read, Shut, Boom, Posted], {
-  authentication: Login,
-});
+export const RoomRpc = ActionRpc.make(
+  [Echo, Post, Read, Shut, Boom, Tally, Posted],
+  {
+    authentication: Login,
+  }
+);
 
 export const signIn = Authentication.layer(Login, verify);
 
@@ -89,12 +101,13 @@ export const Room = ActionEntity.make("Room", RoomRpc, {
     read: byRoom,
     shut: byRoom,
     boom: byRoom,
+    tally: byRoom,
     "room.posted": byRoom,
   },
 });
 
 export const makeRooms = () => {
-  const ran = { echo: 0, post: 0, read: 0, builds: 0 };
+  const ran = { echo: 0, post: 0, read: 0, tally: 0, builds: 0 };
 
   const echoing = Action.implement(Echo, ({ payload }) =>
     Effect.sync(() => {
@@ -139,10 +152,26 @@ export const makeRooms = () => {
     { authorize }
   );
 
+  const tallying = Action.implement(Tally, ({ upTo }, { progress }) =>
+    Effect.gen(function* () {
+      ran.tally += 1;
+
+      for (let at = 1; at <= upTo; at += 1) {
+        yield* progress({ at });
+      }
+
+      return { counted: upTo };
+    })
+  );
+
   const posted = Event.implement(Posted, {
     log: {},
     key: ({ room: named }) => named,
   });
 
-  return { ran, echoing, implementations: [echoing, actions, posted] as const };
+  return {
+    ran,
+    echoing,
+    implementations: [echoing, actions, tallying, posted] as const,
+  };
 };
