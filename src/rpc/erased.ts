@@ -11,6 +11,7 @@ import {
   SchemaTransformation,
   Stream,
 } from "effect";
+import type { Context } from "effect";
 import { HttpClientRequest, HttpServerRequest } from "effect/http";
 import type { Headers } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
@@ -152,6 +153,22 @@ export const erasedOf = (
     ),
     ...events.map((event) => streamOf(event.name))
   );
+
+/**
+ * A client function speaking the group `ActionRpc.layer` serves: one rpc of JSON per action and
+ * event type, its declared failure carried as JSON, beside the binding's native rpcs. It is what
+ * `ActionRpc.client` calls through when given one, failing with `T` beside the declared failures.
+ */
+export type ErasedCall<T = unknown> = (
+  tag: string,
+  payload: Schema.Json,
+  options?: {
+    readonly headers?: Headers.Input | undefined;
+    readonly context?: Context.Context<never> | undefined;
+  }
+) =>
+  | Effect.Effect<Schema.Json, DeclaredFailure | T>
+  | Stream.Stream<Schema.Json, DeclaredFailure | T>;
 
 const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {
   const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(error));
