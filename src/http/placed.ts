@@ -1,15 +1,11 @@
-import { Context, Effect, Option, Predicate, Schema, Stream } from "effect";
-import {
-  Headers,
-  HttpClient,
-  HttpClientRequest,
-  HttpServerRequest,
-} from "effect/http";
+import { Context, Effect, Predicate, Schema, Stream } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import * as Action from "../contract/Action.js";
 import * as Event from "../contract/Event.js";
 import { EventImplementation } from "../contract/feed.js";
 import type { Run } from "../contract/feed.js";
+import { forwarded } from "../contract/forwarded.js";
 import { Implementation, memoized } from "../contract/implementation.js";
 import type {
   ErasedAuthorize,
@@ -45,31 +41,6 @@ export type Placed<H extends AnyHttp> = ReadonlyArray<
       never
     >
 >;
-
-const ownedByTheRequest = (name: string) =>
-  [
-    "host",
-    "connection",
-    "keep-alive",
-    "te",
-    "trailer",
-    "transfer-encoding",
-    "upgrade",
-  ].includes(name) ||
-  ["content-", "accept", "proxy-", "sec-websocket-", "mcp-"].some((family) =>
-    name.startsWith(family)
-  );
-
-const forwarded = Effect.map(
-  Effect.serviceOption(HttpServerRequest.HttpServerRequest),
-  Option.match({
-    onNone: () => Headers.empty,
-    onSome: ({ headers }) =>
-      Headers.fromInput(
-        Object.entries(headers).filter(([name]) => !ownedByTheRequest(name))
-      ),
-  })
-);
 
 class Sending extends Context.Service<Sending, HttpClient.HttpClient>()(
   "effect-actions/ActionHttp/placed/Sending"
