@@ -403,9 +403,9 @@ const runOf = (
     let run: Run;
 
     if (isCheck(source)) {
-      run = checkRun(event, source, yield* attach.check(event, false));
+      run = checkRun(event, source, yield* attach.check(event));
     } else if (isCurrent(source)) {
-      run = currentRun(event, source, yield* attach.check(event, true));
+      run = currentRun(event, source, yield* attach.check(event));
     } else {
       run = logRun(
         event,

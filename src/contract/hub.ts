@@ -29,7 +29,7 @@ export interface Checking {
 }
 
 /**
- * Where an `Events` keeps its current sources' revisions: counters by name, which only count up,
+ * Where an `Events` keeps its check and current sources' revisions: counters by name, which only count up,
  * in an `epoch` telling them from counters that started again.
  */
 export interface RevisionStorage {
@@ -44,7 +44,7 @@ export interface RevisionStorage {
   readonly bump: (names: readonly string[]) => Effect.Effect<void>;
 }
 
-const memoryRevisions = (): RevisionStorage => {
+export const memoryRevisions = (): RevisionStorage => {
   const counts = new Map<string, number>();
 
   return {
@@ -69,7 +69,8 @@ const ofKey = (event: Event.Any, key: string) => `${event.name}\u0000=${key}`;
  * Where an event's occurrences are announced as they happen: `notify` wakes the subscribers of a
  * check source to read now, and `publish` appends an occurrence to a log source, both reaching
  * the subscribers of one `key` or every one. Domain code yields it as it yields a store, and an
- * entrypoint provides one implementation: `Event.layerMemory`, kept in a process's memory.
+ * entrypoint provides one implementation: `Event.layerMemory`, kept in a process's memory, or
+ * `Persisted.layerEvents`, kept in a database.
  * Every surface serving events and `Action.client` watching them need it.
  *
  * **Gotchas**
@@ -77,7 +78,7 @@ const ofKey = (event: Event.Any, key: string) => `${event.name}\u0000=${key}`;
  * - The handlers announcing and the surfaces serving must share one, as they share a store: built separately, as a test building its handlers under a `provide` of their own does, each has its own, and an announcement reaches no subscriber of the other.
  * - An event no implementation attached here has no subscribers here: `publish` does nothing for it, and `notify` only moves its revision, so a current source attached later answers the change.
  * - `notify` of a log source and `publish` to a check source die naming the other: a check source reads your store, so write there and notify; a log source keeps what you publish.
- * - Implementations attach only to one `layerMemory` or `makeEvents` made: built over another, such as `Events.of` in a test, they die, naming both.
+ * - Implementations attach only to one `layerMemory`, `Persisted.layerEvents` or `makeEvents` made: built over another, such as `Events.of` in a test, they die, naming all three.
  */
 export class Events extends Context.Service<
   Events,
@@ -98,8 +99,7 @@ export class Events extends Context.Service<
 
 interface Attachments {
   readonly check: (
-    event: Event.Any,
-    current: boolean
+    event: Event.Any
   ) => Effect.Effect<Checking, never, Scope.Scope>;
   readonly log: (
     event: Event.Any,
@@ -119,7 +119,7 @@ export const attachmentsOf = (
     return attachments === undefined
       ? Effect.die(
           new Error(
-            "This Event.Events serves no event implementation: provide Event.layerMemory, or one Event.makeEvents builds"
+            "This Event.Events serves no event implementation: provide Event.layerMemory or Persisted.layerEvents, or one Event.makeEvents builds"
           )
         )
       : Effect.succeed(attachments);
@@ -179,7 +179,7 @@ export interface MakeEventsOptions {
    */
   readonly emits?: boolean | undefined;
   /**
-   * Where current sources' revisions are kept; defaults to memory, a new epoch with each
+   * Where check and current sources' revisions are kept; defaults to memory, a new epoch with each
    * `makeEvents`. A host keeping its logs in storage keeps them there too, so a subscriber's
    * cursor outlives the host.
    */
@@ -207,7 +207,7 @@ export const makeEvents = (
 
     const checks = new Map<
       Event.Any,
-      { attached: Set<object>; waiters: Set<Waiter>; current?: boolean }
+      { attached: Set<object>; waiters: Set<Waiter> }
     >();
 
     const logs = new Map<Event.Any, Kept>();
@@ -268,12 +268,10 @@ export const makeEvents = (
           const key = notifyOptions?.key;
 
           return Effect.andThen(
-            checks.get(event)?.current === false
-              ? Effect.void
-              : revisions.bump([
-                  everyKey(event),
-                  key === undefined ? noKey(event) : ofKey(event, key),
-                ]),
+            revisions.bump([
+              everyKey(event),
+              key === undefined ? noKey(event) : ofKey(event, key),
+            ]),
             Effect.sync(() => {
               for (const waiter of checkOf(event).waiters) {
                 if (reaches(key, waiter.key)) {
@@ -302,38 +300,32 @@ export const makeEvents = (
     });
 
     attached.set(events, {
-      check: (event, current) =>
-        Effect.map(
-          holding(Object.assign(checkOf(event), { current }).attached, {}),
-          (): Checking => ({
-            polls,
-            wakes: (key) =>
-              Effect.flatMap(Queue.sliding<undefined>(1), (woken) =>
-                Effect.as(
-                  holding(checkOf(event).waiters, { key, woken }),
-                  Queue.take(woken)
+      check: (event) =>
+        Effect.map(holding(checkOf(event).attached, {}), (): Checking => ({
+          polls,
+          wakes: (key) =>
+            Effect.flatMap(Queue.sliding<undefined>(1), (woken) =>
+              Effect.as(
+                holding(checkOf(event).waiters, { key, woken }),
+                Queue.take(woken)
+              )
+            ),
+          revision: (key) =>
+            key === undefined
+              ? Effect.map(
+                  Effect.all([revisions.epoch, revisions.get(everyKey(event))]),
+                  ([epoch, count]) => `${epoch}:${count}`
                 )
-              ),
-            revision: (key) =>
-              key === undefined
-                ? Effect.map(
-                    Effect.all([
-                      revisions.epoch,
-                      revisions.get(everyKey(event)),
-                    ]),
-                    ([epoch, count]) => `${epoch}:${count}`
-                  )
-                : Effect.map(
-                    Effect.all([
-                      revisions.epoch,
-                      revisions.get(noKey(event)),
-                      revisions.get(ofKey(event, key)),
-                    ]),
-                    ([epoch, unkeyed, keyed]) =>
-                      `${epoch}:${unkeyed + keyed}:${key}`
-                  ),
-          })
-        ),
+              : Effect.map(
+                  Effect.all([
+                    revisions.epoch,
+                    revisions.get(noKey(event)),
+                    revisions.get(ofKey(event, key)),
+                  ]),
+                  ([epoch, unkeyed, keyed]) =>
+                    `${epoch}:${unkeyed + keyed}:${key}`
+                ),
+        })),
       log: (event, bounds, emit) =>
         Effect.suspend(() => {
           if (emit !== undefined && !emits) {

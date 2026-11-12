@@ -21,23 +21,24 @@ import { answered } from "./implementation.js";
 import type { ErasedValue, WrittenHandler } from "./implementation.js";
 import { declaredStatus, isTransientStatus } from "./status.js";
 
-const Kept = Schema.Struct({
+export const Kept = Schema.Struct({
   input: Schema.String,
   outcome: Schema.String,
   at: Schema.Finite,
 });
 
-type Kept = typeof Kept.Type;
+export type Kept = typeof Kept.Type;
 
-const keptFor = 24 * 60 * 60 * 1000;
+export const keptFor = 24 * 60 * 60 * 1000;
 
 /**
  * Where the answers of calls given an idempotency key are kept, by the action's name and a
  * SHA-256 digest in hex of the key and its caller's principal, `<action>/<digest>`, for 24 hours
  * at least: what an implementation of an action naming `idempotencyKey` requires at startup.
- * `layerIdempotency` keeps them in memory; a Durable Object's `make` and `handlers` provide one
- * over its storage; another store, shared by several servers, implements `get` and `set`, keeping
- * `Idempotency.Kept` at least `Idempotency.keptFor` milliseconds.
+ * `layerIdempotency` keeps them in memory, and `Persisted.layerIdempotency` in a
+ * `KeyValueStore`; a Durable Object's `make` and `handlers` provide one over its storage; another
+ * store, shared by several servers, implements `get` and `set`, keeping `Idempotency.Kept` at
+ * least `Idempotency.keptFor` milliseconds.
  *
  * **Gotchas**
  *

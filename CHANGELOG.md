@@ -12,6 +12,9 @@ The `effect` peer is now `~4.1.4`.
 
 ### Other changes
 
+- `Persisted.layerEvents`, in the new `Persisted` module, which no browser-safe module imports, keeps an `Event.Events`' logs, their cursors and its check and current sources' revisions in tables through the `SqlClient` it is built with, such as a cluster entity's own SQLite: a watch resumed from a cursor after a restart on the same database receives every occurrence past it. A reader of the database alone can tell what changed: a log source's occurrences are rows of `effect_actions_event_log`, and each `notify` moves a counter in `effect_actions_event_revision`.
+- `Persisted.layerIdempotency` keeps `Action.Idempotency`'s answers in a `KeyValueStore`, such as `KeyValueStore.layerSql`, so a repeat after a restart is answered as the first call was; an answer 24 hours old or more is not read back.
+- `Event.Events.notify` moves the revision of a check source too, where it moved only a current source's, so a reader of the revisions alone sees every source kind change. A `RevisionStorage` given to `Event.makeEvents` in `revisions`, such as the Cloudflare package's in a Durable Object's storage, now takes a write at each notify of a check source.
 - An `ActionHttp` binding whose `Authentication` takes an API key in the query, such as `HttpApiSecurity.apiKey({ in: "query", key: "api_key" })`, records it as `REDACTED` in the URL of its endpoints' server spans, public ones and a layer serving only those included, and of `ActionHttp.client`'s request spans, where the key was recorded as sent; a key in a header is redacted the same way where the host records request headers with `HttpMiddleware.TracerHeaderFilter`. Any other route, `ActionMcp` and `Authentication.protect`ed routes included, still records such a key as sent, as `Authentication.Options.security` says.
 
 ## 0.31.0

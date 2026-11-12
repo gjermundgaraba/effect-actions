@@ -300,7 +300,7 @@ describe("Event.Events", () => {
         const built = yield* Effect.exit(Effect.scoped(Action.client(logged)));
 
         expect(String(Exit.isFailure(built) ? built.cause : "")).toContain(
-          "This Event.Events serves no event implementation: provide Event.layerMemory, or one Event.makeEvents builds"
+          "This Event.Events serves no event implementation: provide Event.layerMemory or Persisted.layerEvents, or one Event.makeEvents builds"
         );
       }).pipe(
         Effect.provide(
@@ -526,10 +526,10 @@ const recordingStorage = () => {
 
 describe("Event.makeEvents", () => {
   it.effect(
-    "moves the revision at a notify of a current source, and none of a check source",
+    "moves the revision at a notify of a check source as of a current one, so a reader of the revisions alone sees both change",
     () =>
       Effect.gen(function* () {
-        let bumps = 0;
+        const bumped: string[][] = [];
 
         const Status = Event.make("status.changed", {
           description: "A status changed.",
@@ -543,9 +543,9 @@ describe("Event.makeEvents", () => {
             revisions: {
               epoch: Effect.succeed("epoch"),
               get: () => Effect.succeed(0),
-              bump: () =>
+              bump: (names) =>
                 Effect.sync(() => {
-                  bumps += 1;
+                  bumped.push([...names]);
                 }),
             },
           })
@@ -560,10 +560,12 @@ describe("Event.makeEvents", () => {
               current: () => Effect.succeed({ value: 0 }),
             })
           );
-          yield* events.notify(Posted);
-          expect(bumps).toBe(0);
+          yield* events.notify(Posted, { key: "general" });
           yield* events.notify(Status);
-          expect(bumps).toBe(1);
+          expect(bumped.map(([every]) => every)).toStrictEqual([
+            Posted.name,
+            Status.name,
+          ]);
         }).pipe(Effect.provide(layer));
       })
   );

@@ -43,6 +43,7 @@
     "./ActionToolkit": "./src/toolkit/ActionToolkit.ts",
     "./Authentication": "./src/authentication/Authentication.ts",
     "./Event": "./src/contract/Event.ts",
+    "./Persisted": "./src/contract/Persisted.ts",
     "./RequestPolicy": "./src/http/RequestPolicy.ts",
     "./Testing": "./src/testing/Testing.ts",
     "./Webhook": "./src/webhook/Webhook.ts",
@@ -58,6 +59,7 @@
       "./ActionToolkit": "./dist/ActionToolkit.mjs",
       "./Authentication": "./dist/Authentication.mjs",
       "./Event": "./dist/Event.mjs",
+      "./Persisted": "./dist/Persisted.mjs",
       "./RequestPolicy": "./dist/RequestPolicy.mjs",
       "./Testing": "./dist/Testing.mjs",
       "./Webhook": "./dist/Webhook.mjs",
@@ -80,6 +82,7 @@
   "devDependencies": {
     "@clanker-stuff/oxlint-config": "catalog:",
     "@effect/platform-node": "catalog:",
+    "@effect/sql-sqlite-node": "catalog:",
     "@effect/tsgo": "catalog:",
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/client": "2.4.0",

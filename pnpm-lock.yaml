@@ -176,6 +176,9 @@ catalogs:
     '@effect/platform-node':
       specifier: 4.1.4
       version: 4.1.4
+    '@effect/sql-sqlite-node':
+      specifier: 4.1.4
+      version: 4.1.4
     '@effect/tsgo':
       specifier: 0.67.7
       version: 0.67.7
@@ -212,6 +215,9 @@ importers:
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 4.1.4(effect@4.1.4)(redis@6.2.1)
+      '@effect/sql-sqlite-node':
+        specifier: 'catalog:'
+        version: 4.1.4(effect@4.1.4)
       '@effect/tsgo':
         specifier: 'catalog:'
         version: 0.67.7
@@ -380,6 +386,11 @@ packages:
     peerDependencies:
       effect: ^4.1.4
       redis: '>=5.1.0 <7.0.0'
+
+  '@effect/sql-sqlite-node@4.1.4':
+    resolution: {integrity: sha512-vEB3Xv7TftvZscuyee8doM1rXr0Dle5jxpuvjaEBlZkGAsUt0YvGudnOfEvUHMicE8wEuDQfpjWXM1q9HjNKUA==}
+    peerDependencies:
+      effect: ^4.1.4
 
   '@effect/tsgo-darwin-arm64@0.67.7':
     resolution: {integrity: sha512-5aqxhjyGPZvWxfWbxtS+F8YD3/edRcdAwVeksuZ56dWOIp3gnIMooTs2qr+aMbemvxpv6Da75yNTcyXXmbGcoA==}
@@ -2390,6 +2401,10 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@effect/sql-sqlite-node@4.1.4(effect@4.1.4)':
+    dependencies:
+      effect: 4.1.4
 
   '@effect/tsgo-darwin-arm64@0.67.7':
     optional: true
