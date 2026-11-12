@@ -10,6 +10,8 @@ import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
+import * as ActionHttp from "../../src/http/ActionHttp.js";
+import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 
 class Actor extends Context.Service<Actor, string>()("entity-types/Actor") {}
@@ -209,3 +211,37 @@ expectTypeOf(room.watch(Changed, { room: "a" })).toEqualTypeOf<
     Event.SubscriptionError | Action.BuiltIn | Reached
   >
 >();
+
+const Http = ActionHttp.make([Get, Open, Changed], {
+  authentication: SignedIn,
+});
+
+const reached = ActionEntity.reaching(Room);
+
+const overHttp = ActionHttp.layer(Http, reached);
+
+const overRpc = ActionRpc.layer(Rpc, reached);
+
+const overMcp = ActionMcp.layerHttp(reached, {
+  name: "rooms",
+  version: "0.0.0",
+  authentication: SignedIn,
+});
+
+type ReachedOverHttp = Layer.Services<typeof overHttp>;
+
+type ReachedOverRpc = Layer.Services<typeof overRpc>;
+
+type ReachedOverMcp = Layer.Services<typeof overMcp>;
+
+expectTypeOf<Sharding.Sharding>().toExtend<ReachedOverHttp>();
+
+expectTypeOf<Sharding.Sharding>().toExtend<ReachedOverRpc>();
+
+expectTypeOf<Sharding.Sharding>().toExtend<ReachedOverMcp>();
+
+expectTypeOf<Actor>().not.toExtend<ReachedOverHttp>();
+
+expectTypeOf<Actor>().not.toExtend<ReachedOverRpc>();
+
+expectTypeOf<Actor>().not.toExtend<ReachedOverMcp>();

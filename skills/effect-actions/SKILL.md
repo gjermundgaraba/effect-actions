@@ -39,7 +39,7 @@ Where things are, in a project that installs the package: these pages in `node_m
 | [ActionMcp.md](ActionMcp.md) | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, serve events, allow browser clients, add prompts and resources, send notifications |
 | [ActionRpc.md](ActionRpc.md) | bind actions to Effect rpcs, serve them on a protocol, call them, add native rpcs, send request context with a call |
 | [ActionRpc-events.md](ActionRpc-events.md) | serve and watch events over rpcs, follow what a request names, such as a room |
-| [ActionEntity.md](ActionEntity.md) | serve an RPC binding as an Effect Cluster entity, each call in the entity its input names; call it, watch its events by polling, test it on a `TestRunner` |
+| [ActionEntity.md](ActionEntity.md) | serve an RPC binding as an Effect Cluster entity, each call in the entity its input names; call it, serve it from any surface by key, watch its events by polling, test it on a `TestRunner` |
 | [ActionToolkit.md](ActionToolkit.md) | give a model actions as a native Effect AI `Toolkit`, show it images, name the caller, ask for approval |
 | [ActionCli.md](ActionCli.md) | run actions as local commands, or call a server from commands; watch events; shape flags, input and output; name the caller; add a command of your own |
 | [Webhook.md](Webhook.md) | deliver events to a subscriber's callback by webhook, signed, and watch by webhook |
@@ -68,7 +68,7 @@ The index in [kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples
 | --- | --- |
 | Speak JSON over HTTP | `ActionHttp`; clients use `ActionHttp.client`, or `ActionHttp.fetchClient` outside an Effect |
 | Are Effect programs, such as a page over one WebSocket | `ActionRpc`; clients use `ActionRpc.client` |
-| Reach a stateful object, such as a room, that an Effect Cluster places | `ActionEntity`; clients use `ActionEntity.client` |
+| Reach a stateful object, such as a room, that an Effect Cluster places | `ActionEntity`; clients use `ActionEntity.client`, and any surface serves it with `ActionEntity.reaching` |
 | Are MCP clients | `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.runStdio` for a subprocess, which runs the handlers itself |
 | Are a model in the same process | `ActionToolkit` |
 | Are people or scripts in a terminal | `ActionCli`: `make` runs handlers locally, `remote` calls a server through its HTTP binding |

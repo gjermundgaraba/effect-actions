@@ -1,7 +1,8 @@
-import { Context, Effect, Layer, Predicate, Schema } from "effect";
-import type { Scope, Stream } from "effect";
+import { Context, Effect, Layer, Predicate, Schema, Stream } from "effect";
+import type { Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
+import { Headers } from "effect/http";
 import type { HttpServerRequest } from "effect/http";
 import type { RpcGroup } from "effect/rpc";
 
@@ -14,25 +15,41 @@ import type {
 import * as Action from "../contract/Action.js";
 import type { Call } from "../contract/call.js";
 import type { BuiltIns } from "../contract/errors.js";
-import type * as Event from "../contract/Event.js";
+import * as Event from "../contract/Event.js";
+import { EventImplementation } from "../contract/feed.js";
 import type {
   EventBuildServices,
   EventServedRequest,
   HoldingEvents,
+  Run,
   ServingEvents,
 } from "../contract/feed.js";
-import type { Holding, Member, Served } from "../contract/implementation.js";
+import { forwarded } from "../contract/forwarded.js";
+import { Implementation, memoized } from "../contract/implementation.js";
+import type {
+  ErasedAuthorize,
+  ErasedValue,
+  Holding,
+  Member,
+  Served,
+  Written,
+  WrittenHandler,
+} from "../contract/implementation.js";
 import { InputCheck } from "../contract/input-check.js";
+import { paged } from "../contract/pages.js";
 import { buildersOf, servingOf } from "../contract/serving.js";
 import type { Answer } from "../contract/stream.js";
 import type { WatchArgs } from "../contract/watch.js";
 import type * as ActionRpc from "../rpc/ActionRpc.js";
 import {
+  actionMethodOf,
   erasedOf,
   handlersOf,
   methodsOf,
   nativeOf,
   polledTransport,
+  pollOf,
+  streams,
 } from "../rpc/erased.js";
 import type { ErasedCall } from "../rpc/erased.js";
 
@@ -400,3 +417,205 @@ export const client = <
       polledTransport(isTransient)
     ) as Client<B>;
   });
+
+type Nothing<C extends Action.Any | Event.Any> = {
+  readonly [K in C["name"]]: never;
+};
+
+const Reached = Context.Reference<string | undefined>(
+  "effect-actions/ActionEntity/Reached",
+  { defaultValue: () => undefined }
+);
+
+const unredacted = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.provideService(effect, Headers.CurrentRedactedNames, []);
+
+const reachedCall = (
+  clientFor: Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>,
+  streaming: ReadonlySet<string>
+): ErasedCall => {
+  const send = (tag: string, payload: Schema.Json) =>
+    Effect.flatMap(Effect.all([Reached, forwarded]), ([entityId, headers]) => {
+      const method =
+        entityId === undefined ? undefined : clientFor(entityId)[tag];
+
+      return method === undefined
+        ? Effect.die(new Error(`ActionEntity.reaching: no entity for ${tag}`))
+        : Effect.succeed(method(payload, { headers }));
+    });
+
+  return (tag, payload) =>
+    streaming.has(tag)
+      ? Stream.unwrap(
+          Effect.map(send(tag, payload), (answer) =>
+            Stream.isStream(answer)
+              ? Stream.provideService(answer, Headers.CurrentRedactedNames, [])
+              : Stream.fromEffect(unredacted(answer))
+          )
+        )
+      : Effect.flatMap(send(tag, payload), (answer) =>
+          Stream.isStream(answer)
+            ? Effect.die(new Error(`ActionEntity.reaching: ${tag} streams`))
+            : unredacted(answer)
+        );
+};
+
+/**
+ * The implementations of `entity`'s actions and event types that any surface serves beside its
+ * own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`: each call sent through
+ * `Entity.client` to the entity its contract's key names for its input, with the caller's
+ * headers, and its answer, declared errors and progress passed back; each event followed through
+ * the entity's poll rpc. The surface authenticates a protected one as its own and authorizes every
+ * caller; the entity reached authenticates and authorizes again. Building them requires
+ * `Sharding`.
+ *
+ * **Gotchas**
+ *
+ * - The caller's credential is verified twice, by the surface serving these and by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity, and a credential expiring between the two is refused by the entity.
+ * - Every header of the caller's request is sent on but its connection's, its body's, what it accepts and an MCP request's routing headers (`mcp-*`); a call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends none, so the entity refuses a protected one with `Unauthenticated`.
+ * - The headers are sent with `Headers.CurrentRedactedNames` empty around the entity's client call alone, since a transport that `JSON.stringify`s them, as `@effect/platform-cloudflare`'s does, would send `authorization`, `cookie`, `set-cookie` and `x-api-key` as `<redacted>`; the caller's own logs still redact them.
+ * - An input whose key answers no string is refused with `Forbidden` before any entity is reached.
+ * - A poll, over HTTP or MCP's `events/poll`, is one call of the event's poll rpc; a stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface at each page's `nextPollMs`, a second apart at least, holding the caller's request open but no entity, so an occurrence arrives up to that interval late.
+ * - What `Entity.client` fails with, `MailboxFull`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's failure, which no action declares: a surface answers it as any undeclared failure.
+ * - An error the entity declares beyond the action's own and the built-in ones, its binding's `error` or its verifier's, is undeclared where the serving surface's binding does not declare it too.
+ */
+export const reaching = <
+  const Type extends string,
+  const B extends ActionRpc.Any,
+>(
+  entity: Entity<Type, B>
+): ReadonlyArray<
+  | Implementation<
+      B["actions"][number],
+      Nothing<B["actions"][number]>,
+      never,
+      Sharding.Sharding
+    >
+  | EventImplementation<
+      B["events"][number],
+      Nothing<B["events"][number]>,
+      never,
+      Sharding.Sharding
+    >
+> => {
+  const { binding } = entity;
+  const key: ErasedKeys = entity.key;
+
+  const calls = Effect.map(entity.client, (clientFor) =>
+    reachedCall(
+      clientFor,
+      new Set(binding.actions.filter(streams).map(({ name }) => name))
+    )
+  );
+
+  const to = (contract: Action.Any | Event.Any, input: ErasedValue) => {
+    const named: unknown = key[contract.name]?.(input);
+
+    return Predicate.isString(named)
+      ? Effect.succeed(named)
+      : Effect.fail(
+          new Action.Forbidden({
+            message: `The input of ${contract.name} names no entity of ${entity.type}`,
+          })
+        );
+  };
+
+  const handlerOf = (
+    action: Action.Any,
+    call: ErasedCall
+  ): WrittenHandler<unknown> => {
+    const method = actionMethodOf(action, binding, (payload) =>
+      call(action.name, payload)
+    );
+
+    return (input, reporting) => {
+      const answer = method(
+        input,
+        ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }])
+      );
+
+      return Stream.isStream(answer)
+        ? Stream.unwrap(
+            Effect.map(to(action, input), (entityId) =>
+              Stream.provideService(answer, Reached, entityId)
+            )
+          )
+        : Effect.flatMap(to(action, input), (entityId) =>
+            Effect.provideService(answer, Reached, entityId)
+          );
+    };
+  };
+
+  const runOf = (event: Event.Any, call: ErasedCall): Run => {
+    const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(event.input));
+    const poll = pollOf(event, binding, (payload) => call(event.name, payload));
+
+    const pollFrom = (
+      input: ErasedValue,
+      cursor: string | null,
+      maxEvents?: number
+    ) =>
+      Effect.flatMap(to(event, input), (entityId) =>
+        Effect.orDie(encode(input)).pipe(
+          Effect.flatMap((json) =>
+            poll({
+              input: json,
+              cursor,
+              ...(maxEvents === undefined ? {} : { maxEvents }),
+            })
+          ),
+          Effect.provideService(Reached, entityId)
+        )
+      );
+
+    return {
+      poll: (input, cursor, { maxEvents }) =>
+        pollFrom(input, cursor, maxEvents),
+      stream: (input, cursor) => paged((at) => pollFrom(input, at), cursor),
+    };
+  };
+
+  return [
+    ...(binding.actions.length === 0
+      ? []
+      : [
+          new Implementation<
+            B["actions"][number],
+            Nothing<B["actions"][number]>,
+            never,
+            Sharding.Sharding
+          >(
+            binding.actions,
+            memoized(
+              Effect.map(calls, (call): Written =>
+                binding.actions.map((action) => [
+                  action,
+                  handlerOf(action, call),
+                ])
+              )
+            ),
+            memoized(Effect.succeed<ErasedAuthorize>(Action.allowAll))
+          ),
+        ]),
+    ...(binding.events.length === 0
+      ? []
+      : [
+          new EventImplementation<
+            B["events"][number],
+            Nothing<B["events"][number]>,
+            never,
+            Sharding.Sharding
+          >(
+            binding.events,
+            binding.events.map(
+              (event) =>
+                [
+                  event,
+                  memoized(Effect.map(calls, (call) => runOf(event, call))),
+                ] as const
+            ),
+            memoized(Effect.succeed<ErasedAuthorize<Event.Any>>(Event.allowAll))
+          ),
+        ]),
+  ];
+};

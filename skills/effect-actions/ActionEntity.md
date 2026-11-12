@@ -24,6 +24,14 @@ A protected action authenticates each call from the headers its envelope carries
 
 `ActionEntity.client(entity)` is Effect's `Entity.client` with one typed method per action: `(yield* ActionEntity.client(Room))("lobby").postMessage(input)`. Send credentials by setting headers with `RpcClient.withHeaders` around a call. The id must be the one the input's key names. What a call fails with is `ActionEntity.MethodError`, and the transport rules are on `ActionEntity.client`.
 
+## Reach it from any surface
+
+`ActionEntity.reaching(entity)` returns implementations of the entity's actions and event types that any surface serves beside its own: `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, such as one HTTP endpoint in front of every room. Give the surface a binding of the same contracts. Each call goes through `Entity.client` to the entity its input's key names, with the caller's headers, so one HTTP or MCP endpoint serves every room. Building them requires `Sharding`, as the client does.
+
+The surface authenticates a protected call with its own binding's descriptor, so a caller without a credential is refused before any entity is reached, and the entity authenticates the same headers again: provide the authentication provider to both. A call with no HTTP request behind it, such as one through `Action.client` in process, sends no headers on.
+
+An event is followed through the entity's poll rpc, so no watcher holds an entity open. A poll, over HTTP or MCP's `events/poll`, is one call of that rpc. A stream, an HTTP `text/event-stream` watch or an RPC subscription, polls the entity from the surface at each page's `nextPollMs`, a second apart at least: it holds the caller's request open, but no entity, and an occurrence arrives up to that interval late. An MCP endpoint served `requestScoped`, as on a serverless host, answers `events/poll` alone. What else crosses the two hops, a cluster failure and an error only the entity declares among them, is on `ActionEntity.reaching`.
+
 ## Watch an event
 
 The client's `watch(event, input, options)` follows an event by polling its rpc, from a cursor or from now, as `Action.client`'s does. An entity holds no stream open for a watcher, so a runtime that puts an idle entity to sleep can still do so. A watch asking for `mode: "stream"` fails with `Event.SubscriptionError`. What else ends a watch is on `ActionEntity.WatchError`.
