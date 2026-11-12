@@ -234,8 +234,6 @@ type JsonStreamMethod = (
   payload: Schema.Json
 ) => Stream.Stream<Schema.Json, unknown>;
 
-type ErasedMethod = (payload: Schema.Json) => ReturnType<ErasedCall>;
-
 const isDeclared = (failure: unknown): failure is DeclaredFailure =>
   failure instanceof DeclaredFailure;
 
@@ -246,7 +244,9 @@ const failedOf = (error: Schema.Union<Action.Errors>) => {
     Effect.flatMap(Effect.orDie(decode(failure.json)), Effect.fail);
 };
 
-const actionMethodOf = (
+type ErasedMethod = (payload: Schema.Json) => ReturnType<ErasedCall>;
+
+export const actionMethodOf = (
   action: Action.Any,
   binding: Declaring,
   method: ErasedMethod
@@ -324,28 +324,36 @@ export const streamedTransport =
       );
   };
 
+export const pollOf = (
+  event: Event.Any,
+  binding: Declaring,
+  method: ErasedMethod
+) => {
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(PageOf(event)));
+
+  const failed = failedOf(Schema.Union(eventErrors(event, binding)));
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const call = method as JsonMethod;
+
+  return (payload: {
+    readonly input: Schema.Json;
+    readonly cursor: string | null;
+    readonly maxEvents?: number;
+  }) =>
+    call(payload).pipe(
+      Effect.catchIf(isDeclared, failed),
+      Effect.flatMap((json) => Effect.orDie(decode(json)))
+    );
+};
+
 export const polledTransport =
   (transient: (error: unknown) => boolean): EventTransport =>
   (event, binding, method) => {
-    const decode = Schema.decodeUnknownEffect(
-      Schema.toCodecJson(PageOf(event))
-    );
-
-    const failed = failedOf(Schema.Union(eventErrors(event, binding)));
-
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const call = method as JsonMethod;
+    const poll = pollOf(event, binding, method);
 
     return (input) =>
-      polledTransportOf(
-        event,
-        (cursor) =>
-          call({ input, cursor }).pipe(
-            Effect.catchIf(isDeclared, failed),
-            Effect.flatMap((json) => Effect.orDie(decode(json)))
-          ),
-        transient
-      );
+      polledTransportOf(event, (cursor) => poll({ input, cursor }), transient);
   };
 
 interface ClientBinding extends Declaring {
