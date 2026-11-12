@@ -8,6 +8,7 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import {
+  Cause,
   Context,
   DateTime,
   Deferred,
@@ -677,6 +678,60 @@ const Post = Action.make("post", {
 });
 
 describe("Stored.layerIdempotency", () => {
+  const refusingRemoves = Layer.effect(KeyValueStore.KeyValueStore)(
+    Effect.map(KeyValueStore.KeyValueStore, (store) =>
+      KeyValueStore.make({
+        ...store,
+        remove: (key) =>
+          Effect.fail(
+            new KeyValueStore.KeyValueStoreError({
+              message: "refused",
+              method: "remove",
+              key,
+            })
+          ),
+      })
+    )
+  ).pipe(Layer.provide(KeyValueStore.layerMemory));
+
+  it.effect(
+    "fails a call whose answer it kept when deleting an expired answer fails, and answers the call's repeat with that answer",
+    () =>
+      Effect.gen(function* () {
+        let posted = 0;
+
+        const client = yield* Action.client(
+          Action.implement(Post, () =>
+            Effect.sync(() => {
+              posted += 1;
+
+              return { id: posted };
+            })
+          )
+        );
+
+        yield* client.post({ text: "hi", request: "r0" });
+        yield* TestClock.adjust("24 hours");
+
+        const failed = yield* Effect.exit(
+          client.post({ text: "hi", request: "r1" })
+        );
+
+        const repeated = yield* client.post({ text: "hi", request: "r1" });
+
+        expect([
+          Exit.isFailure(failed) && Cause.hasDies(failed.cause),
+          repeated,
+          posted,
+        ]).toStrictEqual([true, { id: 2 }, 2]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Stored.layerIdempotency.pipe(Layer.provide(refusingRemoves))
+        )
+      )
+  );
+
   it.effect(
     "answers a repeat after a restart on the same database as the first call was, and runs it again once 24 hours have passed",
     () =>

@@ -80,6 +80,8 @@ const isLive = (kept: Kept, now: number) => kept.at + keptFor > now;
  *
  * - An answer kept 24 hours ago or more is not read back, and a repeat runs the call again; expired answers are deleted as an answer is kept, at the first after each build and then at most once an hour, by listing every key of the store and reading each under the prefix: on a host that builds per wake, every wake that keeps an answer pays that scan.
  * - A store failing to read or keep an answer dies: the call fails, its answer not kept.
+ * - A store failing to delete an expired answer dies after the answer was kept: the call fails, and its repeat is answered with the kept answer, its handler not run again.
+ * - An answer kept under a key whose expired answer the deletion is removing, its key sent again 24 hours on, can be deleted with it, and a repeat then runs the call again: no lock spans the deletion's read and remove, since one held across the store's I/O would deadlock with a caller holding its SQL connection.
  */
 export const layerIdempotency: Layer.Layer<
   Idempotency,
