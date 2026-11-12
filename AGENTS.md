@@ -134,7 +134,7 @@ Recheck these on an upgrade of the dependency named.
 - Effect, Cluster (4.1.4):
   - An entity's handler defect restarts it and replays the message unless `toLayer` sets `disableFatalDefects`, so `ActionEntity.layer`, whose concealed defects would replay forever, always sets it.
   - `toLayer`'s build takes no typed error, and `defectRetryPolicy` retries a build that fails, so a builder's failure is a defect of the activation.
-  - A handler receives an `Entity.Request`, its headers those of the envelope, so `ActionEntity.layer` passes `request.payload` to the erased handler and authenticates from those headers.
+  - A handler receives an `Entity.Request` and, second, the rpc server's options, whose `headers` are the envelope's, so `ActionEntity.layer` passes `request.payload` and that second argument to the erased handler, which authenticates from its `headers`.
   - `Entity.client`'s client is a Proxy keyed by tag, and `RpcGroup.Rpcs` drops string tags from its type, so `ActionEntity.client` calls it by tag through the erased call.
   - An rpc is volatile unless annotated `ClusterSchema.Persisted`, and an entity's concurrency defaults to 1, so a stream rpc holds its one slot until it ends.
   - `Entity.makeTestClient` joins `RpcClient.makeNoSerialization` to `RpcServer.makeNoSerialization`, with no runner, mailbox or encoding.

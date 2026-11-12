@@ -74,7 +74,7 @@ The index in [kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples
 | Are people or scripts in a terminal | `ActionCli`: `make` runs handlers locally, `remote` calls a server through its HTTP binding |
 | Are your own code in the same process, such as a job or a test | `Action.client` |
 
-Surfaces combine: every one that runs handlers takes the same implementations, one or a list, and enforces each contract's `caller` and its implementation's `authorize` ([Action.md](Action.md#authorize-calls)). What a call answers on each surface, a success, bad input, a declared error, a refusal or a defect, is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `runStdio`, `ActionRpc.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client, and each built-in error: grep the symbol.
+Surfaces combine: every one that runs handlers takes the same implementations, one or a list, and enforces each contract's `caller` and its implementation's `authorize` ([Action.md](Action.md#authorize-calls)). What a call answers on each surface, a success, bad input, a declared error, a refusal or a defect, is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `runStdio`, `ActionRpc.layer`, `ActionEntity.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client, and each built-in error: grep the symbol.
 
 ## What the library leaves to you
 

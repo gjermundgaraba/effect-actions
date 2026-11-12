@@ -14,7 +14,9 @@ Each action is an rpc of the entity, named after it. Each event type is a unary 
 
 `ActionEntity.layer(entity, implementations)` registers the entity with `Sharding`. The implementations are those of the binding's actions and event types, one or a list, as on every surface ([Action.md](Action.md#implement-actions)), and they must cover the whole binding. Provide the layer with what the implementations read at startup, the authentication provider of the binding's descriptor ([Authentication.md](Authentication.md#verify-credentials)), `Event.Events` when the binding has event types, and the cluster's `Sharding`.
 
-Each entity id builds the implementations itself, when the cluster first sends it a message. State an implementation's builder holds belongs to that one entity, and a builder may read `Entity.CurrentAddress` for the id it serves. A service provided to the layer is built once per runner and shared by every entity id on it. The rules, and what a defect does, are on `ActionEntity.layer`.
+Each entity id builds the implementations itself, when the cluster first sends it a message, and shares no build with `Action.layer` provided above it. State an implementation's builder holds belongs to that one entity, and a builder may read `Entity.CurrentAddress` for the id it serves. A service provided to the layer is built once per runner and shared by every entity id on it.
+
+An entity provides nothing per call but the caller, so a handler or an authorizer reading any other service is a type error naming it: yield the service in the builder, where it is a startup service. The rules, and what a defect does, are on `ActionEntity.layer`.
 
 A protected action authenticates each call from the headers its envelope carries, as an RPC message does. Then the input decodes, and an input whose key names another entity is refused with `Forbidden` before the implementation's `authorize` runs.
 
