@@ -10,6 +10,7 @@ import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import {
   Context,
   DateTime,
+  Deferred,
   Effect,
   Exit,
   Fiber,
@@ -451,6 +452,64 @@ describe("Stored.layerEvents on a database file", () => {
           "one",
           "two",
         ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.provideMerge(Stored.layerEvents, sqliteAt(":memory:"))
+        )
+      )
+  );
+
+  it.live(
+    "publishes in a handler's transaction while another fiber publishes outside it, keeping both",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const events = yield* Event.Events;
+        const attachments = yield* attachmentsOf(events);
+        const log = yield* attachments.log(Posted, undefined, undefined);
+        const begun = yield* Deferred.make<undefined>();
+
+        const publishing = (id: string) =>
+          events.publish(Posted, {
+            data: { id, channel: "general", text: id },
+            eventId: id,
+          });
+
+        const transaction = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`SELECT 1`;
+              yield* Deferred.succeed(begun, undefined);
+              yield* Effect.sleep("20 millis");
+              yield* publishing("inside");
+            })
+          )
+          .pipe(Effect.forkChild);
+
+        yield* Deferred.await(begun);
+
+        yield* Effect.all([publishing("outside"), Fiber.join(transaction)], {
+          concurrency: "unbounded",
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: "2 seconds",
+            orElse: () =>
+              Effect.die(
+                new Error(
+                  "A publish in a transaction waited 2 seconds on a publish outside it"
+                )
+              ),
+          })
+        );
+
+        const { entries } = yield* log.read("elsewhere:0", 10);
+
+        expect(
+          entries
+            .map(({ value }) => value?.value.eventId ?? "")
+            .toSorted((left, right) => left.localeCompare(right))
+        ).toStrictEqual(["inside", "outside"]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
