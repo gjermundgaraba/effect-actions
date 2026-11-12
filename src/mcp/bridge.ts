@@ -29,7 +29,7 @@ import type { Pushed } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
 import { deliveryUnsupported } from "../contract/subscribe.js";
 import {
-  offersWebhook,
+  deliversByWebhook,
   Webhooks,
   webhookSubscriber,
 } from "../contract/webhooks.js";
@@ -340,20 +340,16 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
 
       const webhooks = Context.getOption(built, Webhooks);
 
-      const webhookOffered = (event: Event.Any) =>
-        Option.isSome(webhooks) && offersWebhook(event, authentication);
-
-      const deliveryOf = (event: Event.Any): EventDescriptor["delivery"] => [
+      const deliveryOf = (feed: Feed): EventDescriptor["delivery"] => [
         "poll",
         ...(send === undefined ? [] : ["push" as const]),
-        ...(webhookOffered(event) ? ["webhook" as const] : []),
+        ...(Option.isSome(webhooks) && deliversByWebhook(feed, authentication)
+          ? ["webhook" as const]
+          : []),
       ];
 
       const served = new Map(
-        feeds.map((feed) => [
-          feed.event.name,
-          servedOf(feed, deliveryOf(feed.event)),
-        ])
+        feeds.map((feed) => [feed.event.name, servedOf(feed, deliveryOf(feed))])
       );
 
       const servedNamed = (name: string) => {

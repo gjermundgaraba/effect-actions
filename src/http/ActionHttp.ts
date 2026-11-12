@@ -674,7 +674,7 @@ export function layer(
     Effect.gen(function* () {
       const bound = yield* acquire(apps, authentication);
 
-      const { feeds, webhooks, offered } = yield* servingFeeds(
+      const { feeds, webhooks } = yield* servingFeeds(
         "ActionHttp",
         events,
         authentication
@@ -701,13 +701,15 @@ export function layer(
           )
       );
 
-      const webhookAnswered = offered.map(
-        (feed) =>
-          [
-            feed.event.name,
-            webhookAnswers(feed, authentication, webhooks),
-          ] as const
-      );
+      const webhookAnswered = feeds
+        .filter(({ event }) => offersWebhook(event, authentication))
+        .map(
+          (feed) =>
+            [
+              feed.event.name,
+              webhookAnswers(feed, authentication, webhooks),
+            ] as const
+        );
 
       const byName = {
         ...Object.fromEntries(

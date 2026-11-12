@@ -53,6 +53,11 @@ export interface Feed {
     | ((input: ErasedValue, subscriber: string) => Effect.Effect<void>)
     | undefined;
   /**
+   * Present where reading needs the subscriber's request, as `ActionEntity.reaching` sends its
+   * headers on: no surface offers it by webhook, whose deliveries read outside any request.
+   */
+  readonly requestBound?: true | undefined;
+  /**
    * Authenticates the subscriber, checks `input` by `Action.InputCheck` and authorizes it, as
    * `poll` and `stream` do first.
    */
@@ -536,6 +541,7 @@ const guarded = (
   return {
     event,
     release: run.release,
+    requestBound: run.requestBound,
     admit,
     poll: (input, cursor, options) =>
       Effect.andThen(admit(input), () => run.poll(input, cursor, options)).pipe(

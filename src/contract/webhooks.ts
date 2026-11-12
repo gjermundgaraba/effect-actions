@@ -70,29 +70,31 @@ export const offersWebhook = (
   keyed: Keyed | undefined
 ): event is Protected => isProtected(event) && isNamed(keyed);
 
+export const deliversByWebhook = (
+  feed: Feed,
+  keyed: Keyed | undefined
+): feed is WebhookFeed =>
+  feed.requestBound !== true && offersWebhook(feed.event, keyed);
+
 export const servedWebhooks = (
   feeds: readonly Feed[],
   keyed: Keyed | undefined
 ): Effect.Effect<
-  {
-    readonly webhooks: Option.Option<Webhooks["Service"]>;
-    readonly offered: readonly WebhookFeed[];
-  },
+  { readonly webhooks: Option.Option<Webhooks["Service"]> },
   never,
   unknown
 > =>
   Effect.gen(function* () {
     const webhooks = yield* Effect.serviceOption(Webhooks);
 
-    const offered = feeds.filter((feed): feed is WebhookFeed =>
-      offersWebhook(feed.event, keyed)
-    );
-
     if (Option.isSome(webhooks) && isNamed(keyed)) {
-      yield* webhooks.value.serve(offered, keyed);
+      yield* webhooks.value.serve(
+        feeds.filter((feed) => deliversByWebhook(feed, keyed)),
+        keyed
+      );
     }
 
-    return { webhooks, offered };
+    return { webhooks };
   });
 
 export interface Subscriber extends Pick<
@@ -107,17 +109,19 @@ export const webhookSubscriber = (
   keyed: Keyed | undefined,
   webhooks: Option.Option<Webhooks["Service"]>
 ): Effect.Effect<Subscriber, Event.SubscriptionError, unknown> => {
-  const { event } = feed;
-
-  if (Option.isNone(webhooks) || !isNamed(keyed) || !isProtected(event)) {
-    return Effect.fail(deliveryUnsupported(event.name, "webhook"));
+  if (
+    Option.isNone(webhooks) ||
+    !isNamed(keyed) ||
+    !deliversByWebhook(feed, keyed)
+  ) {
+    return Effect.fail(deliveryUnsupported(feed.event.name, "webhook"));
   }
 
   const service = webhooks.value;
 
-  return Effect.map(Effect.service(event.caller), (identity) => ({
+  return Effect.map(Effect.service(feed.event.caller), (identity) => ({
     webhooks: service,
-    feed: { ...feed, event },
+    feed,
     keyed,
     principal: keyed.principal(identity),
   }));
