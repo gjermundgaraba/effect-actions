@@ -109,12 +109,12 @@ Recheck these on an upgrade of the dependency named.
   - `HttpApiSchema.StreamSse`'s `keepAlive`, since 4.1.3, writes `: keepalive` on a fixed tick from the response's start until the events end, not after a silence, so `http/streamed.ts` sets it on an action's streams, which start with their first event; an event's stream already sends a `Checked` every 30 seconds.
   - `HttpApiSchema` reads `httpApiStatus` from the checks, last to first and into groups, then the schema's annotations, then its key's, an explicit `undefined` clearing it; that reader is private, so `contract/status.ts` mirrors it.
 - Effect, RPC:
-  - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.1.3 `src/rpc/RpcClient.ts`, which Effect does not export.
+  - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.1.4 `src/rpc/RpcClient.ts`, which Effect does not export.
   - Only the HTTP protocol lacks chunk acknowledgement (`supportsAck: false`), so only it gets a watch's silence rule.
   - The HTTP protocol reads any status's body as frames, and the server answers an unserved tag with `Unknown request tag: <tag>`; `tests/rpc/rpc.test.ts` pins that message, `tests/rpc/events.test.ts` what the client does with both.
   - A protocol buffers a call's writes until a server runs, and `Protocol.make` calls its function as it makes the protocol (the Cloudflare stub and socket protocols rely on both).
   - The server reads a request's headers with `Headers.fromInput`, which since 4.1.3 joins a repeated name's values, and Effect's own HTTP and socket protocols put the upgrade's headers before each message's, so the Cloudflare socket protocol drops an upgrade header the message sends itself.
-- Effect, MCP (4.1.3):
+- Effect, MCP (4.1.4):
   - `registerToolkit` sends every success as `structuredContent` plus one JSON text block, with no option, so `ActionMcp` registers tools through `addTool`; since 4.1.3 a success without a value is sent with no content and no `structuredContent`, though it lists a `null` output schema, where `ActionMcp` sends `null`.
   - `addTool` reads the `McpServer.middleware` stacks, `visibility` included, from its `services`, and lays the rest under each request's context, less the request's own keys, so `ActionMcp` passes its build context there.
   - The registry is one layer per layer graph, so each endpoint is `Layer.fresh`.
