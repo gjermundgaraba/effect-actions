@@ -30,7 +30,7 @@ A protected action authenticates each call from the headers its envelope carries
 
 The surface authenticates a protected call with its own binding's descriptor and the entity authenticates it again, so provide the authentication provider to both.
 
-An event is followed through the entity's poll rpc, so no watcher holds an entity open; a stream polls it from the surface. An MCP endpoint served `requestScoped`, as on a serverless host, answers `events/poll` alone. What crosses the two hops, and what does not, is on `ActionEntity.reaching`.
+An event is followed through the entity's poll rpc, so no watcher holds an entity open; a stream polls it from the surface. What crosses the two hops, and what does not, is on `ActionEntity.reaching`.
 
 ## Watch an event
 

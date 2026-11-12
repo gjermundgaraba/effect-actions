@@ -135,6 +135,7 @@ export interface MakeOptions<B extends ActionRpc.Any> {
  *
  * - Every rpc is volatile, as `ClusterSchema.Persisted` defaults: annotating them persisted writes each envelope, its caller's headers and credential included, into `cluster_messages`, kept until a `MessageRetention` layer deletes it, and replays it with them.
  * - A binding with native rpcs throws: serve them from an `Entity` of their own.
+ * - A binding whose authentication reads an API key `in: "query"` throws: an entity authenticates from its envelope's headers alone.
  * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers, and returning a `Stream` of the elements of an `Action.Stream` answer; it holds the entity's one concurrency slot until its stream ends.
  * - `annotate` and its kin return a plain `Entity`, without `binding` and `key`, which `layer` and `client` do not take.
  */
@@ -148,6 +149,14 @@ export const make = <const Type extends string, const B extends ActionRpc.Any>(
   if (natives.length > 0) {
     throw new Error(
       `ActionEntity.make: the binding of ${type} holds native rpcs, ${natives.join(", ")} (serve them from an Entity of their own)`
+    );
+  }
+
+  const security = binding.authentication?.security;
+
+  if (Predicate.isTagged(security, "ApiKey") && security.in === "query") {
+    throw new Error(
+      `ActionEntity.make: the binding of ${type} reads its API key ${security.key} from the query, which no call of an entity carries (read it from a header: HttpApiSecurity.apiKey({ in: "header", key }))`
     );
   }
 
@@ -497,8 +506,11 @@ const reachedCall = (
  *
  * **Gotchas**
  *
- * - The caller's credential is verified twice, by the surface serving these and by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity, and a credential expiring between the two is refused by the entity.
- * - Every header of the caller's request is sent on but its connection's, its body's, what it accepts and an MCP request's routing headers (`mcp-*`); a call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends none, so the entity refuses a protected one with `Unauthenticated`.
+ * - The caller's credential is verified by the surface serving these and again by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity.
+ * - A refusal by the entity, a credential expired since the surface verified it included, ends a stream after it answered 200, where the surface's own refusal would have answered its 401 or 403.
+ * - Every header of the caller's request is sent on but its connection's, its body's, what it accepts and an MCP request's routing headers (`mcp-*`).
+ * - A call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends only the headers `RpcClient.withHeaders` sets around it: without them the entity refuses a protected one with `Unauthenticated`.
+ * - A call to an entity no runner is assigned waits without an answer, an HTTP request without a response, as Effect's entity client retries `EntityNotAssignedToRunner` every 100 milliseconds without limit: bound it with a timeout, such as the host's request timeout.
  * - A stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface, at once while a page has more and otherwise at its `nextPollMs`, a second at least: it holds the caller's request open but no entity, and an occurrence arrives up to that interval late.
  * - A stream asks the entity again after `MailboxFull`, `PersistenceError` or `EntityNotAssignedToRunner`, from where it reached, a second later and doubling to 30 seconds, as `client`'s watch does; another failure ends it.
  * - A stream's polls hold a subscription hook of their own in the entity, which its end releases; a poll, MCP's `events/poll` included, holds the subscriber's until its source's `lease` lapses, as on any surface.

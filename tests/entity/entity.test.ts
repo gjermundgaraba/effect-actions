@@ -6,17 +6,21 @@ import {
   ShardingConfig,
   TestRunner,
 } from "effect/cluster";
+import { HttpApiSecurity } from "effect/http-api";
 import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 
+import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { DeclaredFailure } from "../../src/rpc/erased.js";
 import * as Testing from "../../src/testing/Testing.js";
+import { CurrentActor } from "../support/app/authorization.js";
 import {
   makeRooms,
   Payload,
+  Post,
   Posted,
   Room,
   RoomClosed,
@@ -644,4 +648,26 @@ describe("ActionEntity on a TestRunner", () => {
       expect(driver.requests.size).toBe(0);
     }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
   );
+});
+
+describe("ActionEntity.make's authentication", () => {
+  it("refuses a binding reading its API key from the query, naming the key and the fix", () => {
+    const InQuery = Authentication.make("entity.InQuery", CurrentActor, {
+      security: HttpApiSecurity.apiKey({ in: "query", key: "api_key" }),
+    });
+
+    const InHeader = Authentication.make("entity.InHeader", CurrentActor, {
+      security: HttpApiSecurity.apiKey({ in: "header", key: "x-api-key" }),
+    });
+
+    const made = (authentication: typeof InQuery | typeof InHeader) => () =>
+      ActionEntity.make("Keyed", ActionRpc.make([Post], { authentication }), {
+        key: { post: ({ room }) => room },
+      });
+
+    expect(made(InQuery)).toThrow(
+      'reads its API key api_key from the query, which no call of an entity carries (read it from a header: HttpApiSecurity.apiKey({ in: "header", key }))'
+    );
+    expect(made(InHeader)).not.toThrow();
+  });
 });
