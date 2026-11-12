@@ -27,7 +27,7 @@ const Guarded = Action.make("guarded", {
 
 describe("the action span", () => {
   it("records a failed action span when the caller's identity is absent", async () => {
-    const { spans, tracer } = recordSpans();
+    const { named, tracer } = recordSpans();
 
     const call = Effect.gen(function* () {
       const client = yield* Action.client(
@@ -44,11 +44,11 @@ describe("the action span", () => {
 
     assert(Exit.isFailure(exit));
     expect(Cause.squash(exit.cause)).toBeInstanceOf(Action.Unauthenticated);
-    expect(spans.get("guarded")?.status).toMatchObject({ _tag: "Ended", exit });
+    expect(named("guarded")?.status).toMatchObject({ _tag: "Ended", exit });
   });
 
   it.effect("records an authorization refusal in the action span", () => {
-    const { spans, tracer } = recordSpans();
+    const { named, tracer } = recordSpans();
     const refusal = new Action.Forbidden();
 
     return Effect.gen(function* () {
@@ -62,7 +62,7 @@ describe("the action span", () => {
         client.guarded().pipe(Effect.provideService(CurrentActor, actors.alice))
       );
 
-      const status = spans.get("guarded")?.status;
+      const status = named("guarded")?.status;
       assert(status?._tag === "Ended");
       assert(Exit.isFailure(status.exit));
       assert(Cause.hasFails(status.exit.cause));
@@ -73,7 +73,7 @@ describe("the action span", () => {
   it.effect(
     "records a synchronous authorizer throw as a defect in the action span",
     () => {
-      const { spans, tracer } = recordSpans();
+      const { named, tracer } = recordSpans();
       const failure = new Error("authorize failed");
 
       return Effect.gen(function* () {
@@ -94,7 +94,7 @@ describe("the action span", () => {
         assert(Exit.isFailure(exit));
         assert(Cause.hasDies(exit.cause));
         expect(Cause.squash(exit.cause)).toBe(failure);
-        expect(spans.get("guarded")?.status).toMatchObject({
+        expect(named("guarded")?.status).toMatchObject({
           _tag: "Ended",
           exit,
         });
@@ -105,7 +105,7 @@ describe("the action span", () => {
   it.effect(
     "records a synchronous handler throw as a defect in the action span",
     () => {
-      const { spans, tracer } = recordSpans();
+      const { named, tracer } = recordSpans();
       const failure = new Error("handler failed");
 
       return Effect.gen(function* () {
@@ -120,7 +120,7 @@ describe("the action span", () => {
         assert(Exit.isFailure(exit));
         assert(Cause.hasDies(exit.cause));
         expect(Cause.squash(exit.cause)).toBe(failure);
-        expect(spans.get("public")?.status).toMatchObject({
+        expect(named("public")?.status).toMatchObject({
           _tag: "Ended",
           exit,
         });
@@ -131,7 +131,7 @@ describe("the action span", () => {
   it.effect(
     "records the dispatch exit after validating the declared error",
     () => {
-      const { spans, tracer } = recordSpans();
+      const { named, tracer } = recordSpans();
       const Limited = Schema.TaggedStruct("Limited", { value: Schema.Finite });
 
       const Refuse = Action.make("refuse", {
@@ -153,7 +153,7 @@ describe("the action span", () => {
         const exit = yield* Effect.exit(client.refuse());
 
         expect(Exit.hasDies(exit)).toBe(true);
-        const status = spans.get("refuse")?.status;
+        const status = named("refuse")?.status;
         assert(status?._tag === "Ended");
         expect(status.exit).toStrictEqual(exit);
       }).pipe(Effect.provideService(Tracer.Tracer, tracer));
@@ -163,7 +163,7 @@ describe("the action span", () => {
   it.effect(
     "keeps the action span open and its log annotations available during cleanup",
     () => {
-      const { spans, tracer } = recordSpans();
+      const { named, tracer } = recordSpans();
 
       const logs: Array<{
         message: unknown;
@@ -197,7 +197,7 @@ describe("the action span", () => {
           message: ["cleanup ran"],
           annotations: { "action.name": "public", "action.read_only": true },
         });
-        expect(spans.get("public")?.status).toMatchObject({
+        expect(named("public")?.status).toMatchObject({
           _tag: "Ended",
           exit: Exit.void,
         });
@@ -209,7 +209,7 @@ describe("the action span", () => {
   );
 
   it.effect("records a cleanup defect in the action span's exit", () => {
-    const { spans, tracer } = recordSpans();
+    const { named, tracer } = recordSpans();
     const failure = new Error("cleanup failed");
 
     return Effect.gen(function* () {
@@ -224,7 +224,7 @@ describe("the action span", () => {
       assert(Exit.isFailure(exit));
       assert(Cause.hasDies(exit.cause));
       expect(Cause.squash(exit.cause)).toBe(failure);
-      expect(spans.get("public")?.status).toMatchObject({
+      expect(named("public")?.status).toMatchObject({
         _tag: "Ended",
         exit,
       });

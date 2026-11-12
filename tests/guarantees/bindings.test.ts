@@ -726,18 +726,9 @@ describe("a builder beside HttpRouter.serve", () => {
 });
 
 const recorded = async <A>(call: (tracer: Tracer.Tracer) => Promise<A>) => {
-  const spans: Tracer.Span[] = [];
+  const { spans, tracer } = recordSpans();
 
-  await call(
-    Tracer.make({
-      span(options) {
-        const span = Tracer.nativeTracer.span(options);
-        spans.push(span);
-
-        return span;
-      },
-    })
-  );
+  await call(tracer);
 
   return spans.flatMap((span) => [...span.attributes.values()]);
 };
@@ -881,7 +872,7 @@ const callCount = async (
       ? post("/api/count", { value })
       : rawToolCall("count", { value });
 
-  const { spans, tracer } = recordSpans();
+  const { named, tracer } = recordSpans();
   const web = serveWithContext(routes.pipe(Layer.provide(authenticate)));
 
   const response = await web.handler(
@@ -889,7 +880,7 @@ const callCount = async (
     Context.make(Tracer.Tracer, tracer)
   );
 
-  return { response, spans };
+  return { response, named };
 };
 
 describe.each(["HTTP", "MCP"] as const)(
@@ -914,7 +905,7 @@ describe.each(["HTTP", "MCP"] as const)(
         annotations: ReadonlyMap<string, unknown>;
       }> = [];
 
-      const { spans, tracer } = recordSpans();
+      const { named, tracer } = recordSpans();
 
       const logger = Logger.make((options) => {
         logs.push({
@@ -962,19 +953,19 @@ describe.each(["HTTP", "MCP"] as const)(
             async (client) => await client.callTool({ name, arguments: {} })
           ));
 
-      return { logs, spans };
+      return { logs, named };
     };
 
     it("runs the handler in an action span under the request span", async () => {
-      const { logs, spans } = await run(() =>
+      const { logs, named } = await run(() =>
         Effect.log("handler ran").pipe(
           Effect.as("ok"),
           Effect.withSpan("action.identity")
         )
       );
 
-      const action = spans.get("identity");
-      const child = spans.get("action.identity");
+      const action = named("identity");
+      const child = named("action.identity");
       assert(action && child);
 
       expect(Option.getOrUndefined(child.parent)).toBe(action);
@@ -996,7 +987,7 @@ describe.each(["HTTP", "MCP"] as const)(
     });
 
     it("runs the authorizer in the action span with its log annotations", async () => {
-      const { logs, spans } = await run(
+      const { logs, named } = await run(
         () => Effect.succeed("ok"),
         "guarded",
         () => Effect.withSpan(Effect.log("authorizer ran"), "authorize")
@@ -1009,8 +1000,8 @@ describe.each(["HTTP", "MCP"] as const)(
           ["action.read_only", false],
         ]),
       });
-      const action = spans.get("guarded");
-      const child = spans.get("authorize");
+      const action = named("guarded");
+      const child = named("authorize");
       assert(action && child);
 
       expect(Option.getOrUndefined(child.parent)).toBe(action);
@@ -1021,10 +1012,10 @@ describe.each(["HTTP", "MCP"] as const)(
     });
 
     it("rejects invalid credentials before opening an action span", async () => {
-      const { response, spans } = await callCount(transport, 1, "unknown");
+      const { response, named } = await callCount(transport, 1, "unknown");
 
       expect(response.status).toBe(401);
-      expect(spans.has("count")).toBe(false);
+      expect(named("count")).toBeUndefined();
     });
   }
 );
@@ -1087,38 +1078,38 @@ describe("a call's spans", () => {
   });
 
   it("opens no action span for input that does not decode, which HTTP answers with a 400", async () => {
-    const { response, spans } = await callCount("HTTP", "invalid", "alice");
+    const { response, named } = await callCount("HTTP", "invalid", "alice");
 
     expect(response.status).toBe(400);
-    expect(spans.has("count")).toBe(false);
+    expect(named("count")).toBeUndefined();
   });
 
   it("opens no action span for input that does not decode, which MCP answers as a tool error naming the tool", async () => {
-    const { response, spans } = await callCount("MCP", "invalid", "alice");
+    const { response, named } = await callCount("MCP", "invalid", "alice");
     const reply = await Effect.runPromise(toolReplyOf(await response.text()));
 
     expect(reply.isError).toBe(true);
     expect(reply.text).toContain("Invalid parameters for tool 'count'");
-    expect(spans.has("count")).toBe(false);
+    expect(named("count")).toBeUndefined();
   });
 
   it("ends the action span with the handler's success before HTTP fails to encode it, with a 500", async () => {
-    const { response, spans } = await callCount("HTTP", 1, "alice");
+    const { response, named } = await callCount("HTTP", 1, "alice");
 
     expect(response.status).toBe(500);
-    expect(spans.get("count")?.status).toMatchObject({
+    expect(named("count")?.status).toMatchObject({
       _tag: "Ended",
       exit: Exit.succeed(Infinity),
     });
   });
 
   it("ends the action span with the handler's success before MCP fails to encode it, as a tool error", async () => {
-    const { response, spans } = await callCount("MCP", 1, "alice");
+    const { response, named } = await callCount("MCP", 1, "alice");
 
     await expect(response.json()).resolves.toMatchObject({
       result: { isError: true },
     });
-    expect(spans.get("count")?.status).toMatchObject({
+    expect(named("count")?.status).toMatchObject({
       _tag: "Ended",
       exit: Exit.succeed(Infinity),
     });

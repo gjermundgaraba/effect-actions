@@ -1,16 +1,19 @@
 import { Tracer } from "effect";
 
 export const recordSpans = () => {
-  const spans = new Map<string, Tracer.Span>();
+  const spans: Tracer.Span[] = [];
 
   const tracer = Tracer.make({
     span(options) {
       const span = Tracer.nativeTracer.span(options);
-      spans.set(options.name, span);
+      spans.push(span);
 
       return span;
     },
   });
 
-  return { spans, tracer };
+  const named = (name: string): Tracer.Span | undefined =>
+    spans.findLast((span) => span.name === name);
+
+  return { named, spans, tracer };
 };

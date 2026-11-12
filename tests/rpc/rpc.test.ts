@@ -48,6 +48,7 @@ import { double, status, userActions } from "../support/app/handlers.js";
 import { Users } from "../support/app/users.js";
 import { recorder } from "../support/reporter.js";
 import { sendRawNdjson, valueOrSquashedCause } from "../support/requests.js";
+import { recordSpans } from "../support/tracing.js";
 import { inMemoryValuesProtocolTo } from "../support/values.js";
 
 const Rpc = ActionRpc.make([Status, GetUser, RenameUser, Double, WhoAmI], {
@@ -574,17 +575,7 @@ it.effect(
     ];
 
     const reported: string[] = [];
-    const spans: Tracer.Span[] = [];
-
-    const tracer = Tracer.make({
-      span(options) {
-        const span = Tracer.nativeTracer.span(options);
-
-        spans.push(span);
-
-        return span;
-      },
-    });
+    const { spans, tracer } = recordSpans();
 
     const tracedFailures = () =>
       spans.flatMap(({ kind, status: spanStatus }) =>

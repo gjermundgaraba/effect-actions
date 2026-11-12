@@ -396,6 +396,7 @@ export interface Options<A = unknown> {
    * **Gotchas**
    *
    * - One scheme per descriptor, with no fallback: a host accepting two credentials for one identity declares two descriptors and serves them on two bindings or endpoints.
+   * - An API key in the query, or in a header the host's `HttpMiddleware.TracerHeaderFilter` records, is redacted from the spans of `ActionHttp` endpoints and `ActionHttp.client` calls alone: any other route, `ActionMcp` and `protect`ed routes included, records it as sent in its span's URL or headers.
    */
   readonly security?: Security;
   /**

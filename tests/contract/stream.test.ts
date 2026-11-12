@@ -264,7 +264,7 @@ describe("an action answering a stream, in process", () => {
   it.effect(
     "spans the stream's run and annotates the handler's logs with the action",
     () => {
-      const { spans, tracer } = recordSpans();
+      const { named, tracer } = recordSpans();
 
       const logs: Array<(typeof References.CurrentLogAnnotations)["Service"]> =
         [];
@@ -287,7 +287,7 @@ describe("an action answering a stream, in process", () => {
         );
 
         assert(Exit.isSuccess(exit));
-        expect(spans.get("tail")?.status).toMatchObject({ _tag: "Ended" });
+        expect(named("tail")?.status).toMatchObject({ _tag: "Ended" });
         expect(logs).toStrictEqual([
           { "action.name": "tail", "action.read_only": true },
         ]);

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+The `effect` peer is now `~4.1.4`.
+
+### Breaking changes
+
+**The `effect` peer requires Effect 4.1.4 or a later 4.1.x patch**: `ActionHttp` names an API key's query parameter or header in 4.1.4's `HttpApi.RedactedNames`, which 4.1.3 lacks.
+
+- Migrate: install `effect` and every `@effect/*` package at `~4.1.4`.
+
+### Other changes
+
+- An `ActionHttp` binding whose `Authentication` takes an API key in the query, such as `HttpApiSecurity.apiKey({ in: "query", key: "api_key" })`, records it as `REDACTED` in the URL of its endpoints' server spans, public ones and a layer serving only those included, and of `ActionHttp.client`'s request spans, where the key was recorded as sent; a key in a header is redacted the same way where the host records request headers with `HttpMiddleware.TracerHeaderFilter`. Any other route, `ActionMcp` and `Authentication.protect`ed routes included, still records such a key as sent, as `Authentication.Options.security` says.
+
 ## 0.31.0
 
 The `effect` peer is now `~4.1.3`.

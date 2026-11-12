@@ -85,6 +85,7 @@ import {
   webhookEndpointsOf,
 } from "./events.js";
 import type { pageOf, sentOf } from "./events.js";
+import { credentialNames } from "./redacted.js";
 import { SchemaErrors, schemaErrors } from "./schema-errors.js";
 import {
   answeredWithProgress,
@@ -509,7 +510,10 @@ export function make(
     }),
   ];
 
-  const api = apiOf(groupName(mount), endpoints);
+  const api = apiOf(groupName(mount), endpoints).annotate(
+    HttpApi.RedactedNames,
+    credentialNames(bound.authentication)
+  );
 
   return { actions, events, ...bound, prefix: absolutePath(mount), api };
 }
@@ -662,7 +666,9 @@ export function layer(
           : []),
       ].map((endpoint) => routed(endpoint, event));
     }),
-  ]).annotate(HttpApi.PayloadParseOptions, inputParseOptions);
+  ])
+    .annotate(HttpApi.RedactedNames, credentialNames(binding.authentication))
+    .annotate(HttpApi.PayloadParseOptions, inputParseOptions);
 
   const handlers = Layer.unwrap(
     Effect.gen(function* () {

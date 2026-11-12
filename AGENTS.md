@@ -107,6 +107,7 @@ Recheck these on an upgrade of the dependency named.
   - `HttpServerResponse.raw` takes its status from its options, not from the web `Response`.
   - `HttpApiSchema.StreamSse` encodes `data` through `Schema.toCodecJson` since 4.1.1, so `http/events.ts` passes the schema as is.
   - `HttpApiSchema.StreamSse`'s `keepAlive`, since 4.1.3, writes `: keepalive` on a fixed tick from the response's start until the events end, not after a silence, so `http/streamed.ts` sets it on an action's streams, which start with their first event; an event's stream already sends a `Checked` every 30 seconds.
+  - A server or client span records a request's query in `url.full` and `url.query`, and its headers only where `TracerHeaderFilter` admits them, redacting only `CurrentRedactedNames`; `HttpApi.RedactedNames` (4.1.4, unstable) adds names for an `HttpApi`'s endpoints alone, so `http/redacted.ts` names an API key's query parameter or header there, and `ActionMcp` and `protect`ed routes, not `HttpApi` endpoints, get no such names.
   - `HttpApiSchema` reads `httpApiStatus` from the checks, last to first and into groups, then the schema's annotations, then its key's, an explicit `undefined` clearing it; that reader is private, so `contract/status.ts` mirrors it.
 - Effect, RPC:
   - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.1.4 `src/rpc/RpcClient.ts`, which Effect does not export.
