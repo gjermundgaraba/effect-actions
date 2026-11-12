@@ -300,7 +300,7 @@ describe("Event.Events", () => {
         const built = yield* Effect.exit(Effect.scoped(Action.client(logged)));
 
         expect(String(Exit.isFailure(built) ? built.cause : "")).toContain(
-          "This Event.Events serves no event implementation: provide Event.layerMemory or Persisted.layerEvents, or one Event.makeEvents builds"
+          "This Event.Events serves no event implementation: provide Event.layerMemory or Stored.layerEvents, or one Event.makeEvents builds"
         );
       }).pipe(
         Effect.provide(

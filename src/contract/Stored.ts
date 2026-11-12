@@ -40,7 +40,7 @@ export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
 
           if (prior !== undefined && prior !== event) {
             throw new Error(
-              `Persisted.layerEvents keeps each log source's log by its event's name, and two event types are named "${event.name}" (give each event type a name of its own)`
+              `Stored.layerEvents keeps each log source's log by its event's name, and two event types are named "${event.name}" (give each event type a name of its own)`
             );
           }
 

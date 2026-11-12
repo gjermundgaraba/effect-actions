@@ -70,7 +70,7 @@ const ofKey = (event: Event.Any, key: string) => `${event.name}\u0000=${key}`;
  * check source to read now, and `publish` appends an occurrence to a log source, both reaching
  * the subscribers of one `key` or every one. Domain code yields it as it yields a store, and an
  * entrypoint provides one implementation: `Event.layerMemory`, kept in a process's memory, or
- * `Persisted.layerEvents`, kept in a database.
+ * `Stored.layerEvents`, kept in a database.
  * Every surface serving events and `Action.client` watching them need it.
  *
  * **Gotchas**
@@ -78,7 +78,7 @@ const ofKey = (event: Event.Any, key: string) => `${event.name}\u0000=${key}`;
  * - The handlers announcing and the surfaces serving must share one, as they share a store: built separately, as a test building its handlers under a `provide` of their own does, each has its own, and an announcement reaches no subscriber of the other.
  * - An event no implementation attached here has no subscribers here: `publish` does nothing for it, and `notify` only moves its revision, so a current source attached later answers the change.
  * - `notify` of a log source and `publish` to a check source die naming the other: a check source reads your store, so write there and notify; a log source keeps what you publish.
- * - Implementations attach only to one `layerMemory`, `Persisted.layerEvents` or `makeEvents` made: built over another, such as `Events.of` in a test, they die, naming all three.
+ * - Implementations attach only to one `layerMemory`, `Stored.layerEvents` or `makeEvents` made: built over another, such as `Events.of` in a test, they die, naming all three.
  */
 export class Events extends Context.Service<
   Events,
@@ -119,7 +119,7 @@ export const attachmentsOf = (
     return attachments === undefined
       ? Effect.die(
           new Error(
-            "This Event.Events serves no event implementation: provide Event.layerMemory or Persisted.layerEvents, or one Event.makeEvents builds"
+            "This Event.Events serves no event implementation: provide Event.layerMemory or Stored.layerEvents, or one Event.makeEvents builds"
           )
         )
       : Effect.succeed(attachments);

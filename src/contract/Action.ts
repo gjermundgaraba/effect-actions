@@ -219,7 +219,7 @@ export interface Options {
    * the key travels with the input. The caller makes the key at random for the call it means,
    * and sends it again on each retry; a call without it runs as any other. What is answered
    * again is kept by `Action.Idempotency`, which an implementation of the action requires at
-   * startup: provide `Action.layerIdempotency`, or `Persisted.layerIdempotency` over a
+   * startup: provide `Action.layerIdempotency`, or `Stored.layerIdempotency` over a
    * `KeyValueStore`; a Durable Object's `make` and `handlers` provide one over its storage.
    *
    * **Gotchas**

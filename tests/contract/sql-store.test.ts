@@ -6,7 +6,7 @@ import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
-import * as Persisted from "@gjermundgaraba/effect-actions/Persisted";
+import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import {
   Context,
   DateTime,
@@ -261,7 +261,7 @@ const sqlSystem = Effect.gen(function* () {
   return yield* restartable(
     Effect.flatMap(
       Layer.build(
-        Persisted.layerEvents.pipe(Layer.provide(Layer.succeedContext(client)))
+        Stored.layerEvents.pipe(Layer.provide(Layer.succeedContext(client)))
       ),
       (built) => opened(Context.get(built, Events))
     )
@@ -289,7 +289,7 @@ const everyStep: readonly Command[] = [
   { _tag: "Revision", key: "a" },
 ];
 
-describe("Persisted.layerEvents", () => {
+describe("Stored.layerEvents", () => {
   it.effect.prop(
     "answers every read and revision as a memory store kept across the same restarts does, each log holding what was published to it within its bounds",
     { steps: Steps },
@@ -355,14 +355,14 @@ describe("Persisted.layerEvents", () => {
   );
 });
 
-describe("Persisted.layerEvents on a database file", () => {
+describe("Stored.layerEvents on a database file", () => {
   const logged = Event.implement(Posted, { log: {} });
 
   it.effect(
     "resumes a watch from a cursor after a restart on the same file, receiving every occurrence past it",
     () =>
       Effect.gen(function* () {
-        const onFile = Persisted.layerEvents.pipe(
+        const onFile = Stored.layerEvents.pipe(
           Layer.provide(sqliteAt(yield* databaseFile))
         );
 
@@ -432,7 +432,7 @@ describe("Persisted.layerEvents on a database file", () => {
         }).pipe(
           Effect.scoped,
           Effect.provide(
-            Persisted.layerEvents.pipe(Layer.provide(sqliteAt(filename)))
+            Stored.layerEvents.pipe(Layer.provide(sqliteAt(filename)))
           )
         );
 
@@ -481,7 +481,7 @@ describe("the SQL log storage", () => {
         const sql = (yield* SqlClient.SqlClient).withoutTransforms();
 
         yield* Layer.build(
-          Persisted.layerEvents.pipe(
+          Stored.layerEvents.pipe(
             Layer.provide(Layer.succeed(SqlClient.SqlClient, sql))
           )
         );
@@ -530,7 +530,7 @@ const Post = Action.make("post", {
   idempotencyKey: "request",
 });
 
-describe("Persisted.layerIdempotency", () => {
+describe("Stored.layerIdempotency", () => {
   it.effect(
     "answers a repeat after a restart on the same database as the first call was, and runs it again once 24 hours have passed",
     () =>
@@ -546,7 +546,7 @@ describe("Persisted.layerIdempotency", () => {
         );
 
         const onFile = Layer.provideMerge(
-          Persisted.layerIdempotency,
+          Stored.layerIdempotency,
           Layer.provideMerge(
             KeyValueStore.layerSql(),
             sqliteAt(yield* databaseFile)
