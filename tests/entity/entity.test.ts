@@ -198,6 +198,58 @@ const Counter = ActionEntity.make("Counter", ActionRpc.make([Count]), {
   key: { count: ({ room }) => room },
 });
 
+const Lines = Action.make("lines", {
+  description: "Stream a room's numbered lines.",
+  input: { room: Schema.String, upTo: Schema.Int },
+  success: Action.Stream({ n: Schema.Int }),
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
+  key: { lines: ({ room }) => room },
+});
+
+describe("ActionEntity's stream answer", () => {
+  it.live(
+    "streams each element of an Action.Stream answer through the typed client, and refuses another entity's key with Forbidden",
+    () => {
+      let ran = 0;
+
+      const lining = Action.implement(Lines, ({ upTo }) =>
+        Stream.fromEffect(Effect.sync(() => (ran += 1))).pipe(
+          Stream.flatMap(() =>
+            Stream.range(1, upTo).pipe(Stream.map((n) => ({ n })))
+          )
+        )
+      );
+
+      return Effect.gen(function* () {
+        const lobby = (yield* ActionEntity.client(Liner))("lobby");
+
+        const elements = yield* Stream.runCollect(
+          lobby.lines({ room: "lobby", upTo: 3 })
+        );
+
+        const refused = yield* Effect.flip(
+          Stream.runCollect(lobby.lines({ room: "kitchen", upTo: 3 }))
+        );
+
+        expect(elements).toStrictEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+        expect(refused).toBeInstanceOf(Action.Forbidden);
+        expect(ran).toBe(1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ActionEntity.layer(Liner, lining).pipe(
+            Layer.provideMerge(TestRunner.layer)
+          )
+        )
+      );
+    }
+  );
+});
+
 describe("ActionEntity under Action.layer", () => {
   it.live(
     "builds each entity id's implementations itself, sharing no build with Action.layer above it",

@@ -96,7 +96,7 @@ export interface MakeOptions<B extends ActionRpc.Any> {
  *
  * - Every rpc is volatile, as `ClusterSchema.Persisted` defaults: annotating them persisted writes each envelope, its caller's headers and credential included, into `cluster_messages`, kept until a `MessageRetention` layer deletes it, and replays it with them.
  * - A binding with native rpcs throws: serve them from an `Entity` of their own.
- * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers; it holds the entity's one concurrency slot until its stream ends.
+ * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers, and returning a `Stream` of the elements of an `Action.Stream` answer; it holds the entity's one concurrency slot until its stream ends.
  * - `annotate` and its kin return a plain `Entity`, without `binding` and `key`, which `layer` and `client` do not take.
  */
 export const make = <const Type extends string, const B extends ActionRpc.Any>(
@@ -204,7 +204,7 @@ type EntityLayer<
  * **Gotchas**
  *
  * - What the application provides to this layer is shared by every entity of the runner; what an implementation builds, each entity id builds for itself: state held in a builder is that entity's alone.
- * - A handler or authorizer reading a service other than its caller is a type error naming that service: an entity provides nothing per call, so yield it in the builder, where it is a startup service, one value for every caller and entity id.
+ * - A handler, an authorizer or an event source reading per call a service other than its caller is a type error naming that service: an entity provides nothing per call, so yield it in the builder, where it is a startup service, one value for every caller and entity id.
  * - `Action.layer` above it shares no build with it: each entity id runs its implementations' builders again, beside the run `Action.layer` made for the other surfaces.
  * - A builder that fails or dies is a defect of the entity's activation, logged and retried by `defectRetryPolicy` while its calls wait: it never fails the layer.
  * - A handler's defect or undeclared failure ends that call with an `Error` whose message is `Internal server error`, as on `ActionRpc.layer`; the entity is neither restarted nor its call replayed, so its next call runs on the same handlers.

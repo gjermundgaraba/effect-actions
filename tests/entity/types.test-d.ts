@@ -3,7 +3,7 @@ import { Context, Effect, Redacted, Schema } from "effect";
 import type { Layer, Scope, Stream } from "effect";
 import { Entity } from "effect/cluster";
 import type { ClusterError, Sharding } from "effect/cluster";
-import type { HttpServerRequest } from "effect/http";
+import { HttpServerRequest } from "effect/http";
 import { Rpc as NativeRpc, RpcGroup } from "effect/rpc";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
@@ -149,6 +149,39 @@ const authorizingPerCall = Action.implement(
 
 // @ts-expect-error -- an entity provides no service per call, so an authorizer reads none.
 ActionEntity.layer(Room, [authorizingPerCall, changes]);
+
+const checkingPerCall = Event.implement(Changed, {
+  check: (_input, cursor) =>
+    Effect.map(Tenant, (tenant) => ({
+      cursor: cursor ?? "0",
+      events: [{ eventId: tenant, data: { id: tenant } }],
+    })),
+});
+
+// @ts-expect-error -- an entity provides no service per call, so an event source reads none per subscription.
+ActionEntity.layer(Room, [notes, checkingPerCall]);
+
+const readingTheRequest = Action.implement(
+  [Get, Open],
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+
+    return {
+      get: () => Effect.succeed(request.url),
+      open: () => Effect.succeed(request.url),
+    };
+  }),
+  { authorize: () => Effect.void }
+);
+
+const servedReadingTheRequest = ActionEntity.layer(Room, [
+  readingTheRequest,
+  changes,
+]);
+
+expectTypeOf<HttpServerRequest.HttpServerRequest>().toExtend<
+  Layer.Services<typeof servedReadingTheRequest>
+>();
 
 const clientOf = ActionEntity.client(Room);
 

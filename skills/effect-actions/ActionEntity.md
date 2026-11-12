@@ -16,7 +16,7 @@ Each action is an rpc of the entity, named after it. Each event type is a unary 
 
 Each entity id builds the implementations itself, when the cluster first sends it a message, and shares no build with `Action.layer` provided above it. State an implementation's builder holds belongs to that one entity, and a builder may read `Entity.CurrentAddress` for the id it serves. A service provided to the layer is built once per runner and shared by every entity id on it.
 
-An entity provides nothing per call but the caller, so a handler or an authorizer reading any other service is a type error naming it: yield the service in the builder, where it is a startup service. The rules, and what a defect does, are on `ActionEntity.layer`.
+An entity provides nothing per call but the caller, so a handler, an authorizer or an event source reading any other service per call is a type error naming it: yield the service in the builder, where it is a startup service. The rules, and what a defect does, are on `ActionEntity.layer`.
 
 A protected action authenticates each call from the headers its envelope carries, as an RPC message does. Then the input decodes, and an input whose key names another entity is refused with `Forbidden` before the implementation's `authorize` runs.
 
