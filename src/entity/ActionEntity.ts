@@ -94,7 +94,7 @@ export interface MakeOptions<B extends ActionRpc.Any> {
  *
  * **Gotchas**
  *
- * - Every rpc is volatile, as `ClusterSchema.Persisted` defaults: annotating them persisted writes each envelope, its caller's headers and credential included, into `cluster_messages` for good, and replays it with them.
+ * - Every rpc is volatile, as `ClusterSchema.Persisted` defaults: annotating them persisted writes each envelope, its caller's headers and credential included, into `cluster_messages`, kept until a `MessageRetention` layer deletes it, and replays it with them.
  * - A binding with native rpcs throws: serve them from an `Entity` of their own.
  * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc that holds the entity's one concurrency slot until its stream ends.
  * - `annotate` and its kin return a plain `Entity`, without `binding` and `key`, which `layer` and `client` do not take.

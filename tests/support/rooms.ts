@@ -78,7 +78,6 @@ export const RoomRpc = ActionRpc.make([Echo, Post, Read, Shut, Boom, Posted], {
   authentication: Login,
 });
 
-/** The room's provider: an entity has no route to publish a protected resource on. */
 export const signIn = Authentication.layer(Login, verify);
 
 const byRoom = ({ room: named }: { readonly room: string }) => named;

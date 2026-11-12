@@ -156,10 +156,6 @@ const unaryOf = (name: string) =>
     error: Declared,
   });
 
-/**
- * How an event type is served: `stream`, one stream rpc pushing what it reads, or `poll`, one
- * unary rpc answering a page past a cursor.
- */
 export type Delivery = "stream" | "poll";
 
 export const erasedOf = (
@@ -191,11 +187,6 @@ const PageOf = (event: Event.Any) =>
     nextPoll: Schema.DurationFromMillis,
   }).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
 
-/**
- * A client function speaking the group `ActionRpc.layer` serves: one rpc of JSON per action and
- * event type, its declared failure carried as JSON, beside the binding's native rpcs. `methodsOf`
- * builds a binding's client methods over one, failing with `T` beside the declared failures.
- */
 export type ErasedCall<T = unknown> = (
   tag: string,
   payload: Schema.Json,
@@ -301,10 +292,6 @@ const actionMethodOf = (
       );
 };
 
-/**
- * What a client watches an event type through, given the event's erased method: per input, the
- * transport its watch reads.
- */
 export type EventTransport = (
   event: Event.Any,
   binding: Declaring,
