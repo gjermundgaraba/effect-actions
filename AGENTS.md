@@ -131,6 +131,13 @@ Recheck these on an upgrade of the dependency named.
 - Effect, SQL:
   - A SQLite client shares one connection through a semaphore, which `withTransaction` holds until it ends and each statement outside one takes, so a log's `transaction` in `log.ts` takes the connection before the log's own lock: taken the other way, a publish in a handler's transaction deadlocks with a read or publish outside it.
   - `@effect/sql-sqlite-do` 4.1.4's client runs `withTransaction` through `storage.transaction()`, which closes the object's input gate, only when built with `storage`, and fails it when given `db` alone, so `Stored.layerEvents`, whose every log append and read is a transaction, needs `storage`.
+- Effect, Cluster (4.1.4):
+  - An entity's handler defect restarts it and replays the message unless `toLayer` sets `disableFatalDefects`, so `ActionEntity.layer`, whose concealed defects would replay forever, always sets it.
+  - `toLayer`'s build takes no typed error, and `defectRetryPolicy` retries a build that fails, so a builder's failure is a defect of the activation.
+  - A handler receives an `Entity.Request`, its headers those of the envelope, so `ActionEntity.layer` passes `request.payload` to the erased handler and authenticates from those headers.
+  - `Entity.client`'s client is a Proxy keyed by tag, and `RpcGroup.Rpcs` drops string tags from its type, so `ActionEntity.client` calls it by tag through the erased call.
+  - An rpc is volatile unless annotated `ClusterSchema.Persisted`, and an entity's concurrency defaults to 1, so a stream rpc holds its one slot until it ends.
+  - `Entity.makeTestClient` joins `RpcClient.makeNoSerialization` to `RpcServer.makeNoSerialization`, with no runner, mailbox or encoding.
 - Effect, elsewhere:
   - `Layer.build` forks the memo map around its caller, so `implementation.ts` builds into the map itself.
   - `Stream.retry` restarts its schedule at the first element after a failure.

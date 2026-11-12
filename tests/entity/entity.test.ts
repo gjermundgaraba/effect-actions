@@ -12,8 +12,7 @@ import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import { methodsOf, polledTransport } from "../../src/rpc/erased.js";
-import type { ErasedCall } from "../../src/rpc/erased.js";
+import { DeclaredFailure } from "../../src/rpc/erased.js";
 import * as Testing from "../../src/testing/Testing.js";
 import {
   makeRooms,
@@ -87,25 +86,6 @@ const poll = (entityId: string, cursor: string | null) =>
     };
   });
 
-function typedOver<const Type extends string, const B extends ActionRpc.Any>(
-  entity: ActionEntity.Entity<Type, B>,
-  rpcs: Readonly<Record<string, (payload: unknown) => unknown>>
-): ActionEntity.Client<B>;
-function typedOver<Type extends string, B extends ActionRpc.Any>(
-  entity: ActionEntity.Entity<Type, B>,
-  rpcs: Readonly<Record<string, (payload: unknown) => unknown>>
-): object {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const call = ((tag: string, payload: unknown) =>
-    rpcs[tag]?.(payload)) as ErasedCall;
-
-  return methodsOf(
-    entity.binding,
-    call,
-    polledTransport(() => false)
-  );
-}
-
 const otherThanLobby = Arbitrary.schema(Schema.String).pipe(
   Arbitrary.filter((named) => named !== "lobby")
 );
@@ -122,14 +102,25 @@ describe("ActionEntity on Entity.makeTestClient", () => {
           ActionEntity.layer(Room, rooms.implementations)
         );
 
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        const lobby = typedOver(Room, (yield* clientFor("lobby")) as never);
+        const { read } = yield* clientFor("lobby");
 
-        const read = yield* lobby.read({ room: "lobby" });
-        const refused = yield* Effect.flip(lobby.read({ room: "kitchen" }));
+        if (read === undefined) {
+          return yield* Effect.die(new Error("no read rpc"));
+        }
 
-        expect(read).toStrictEqual({ entity: "lobby", texts: [] });
-        expect(refused).toBeInstanceOf(Action.Forbidden);
+        const answered = read({ room: "lobby" });
+        const refusedCall = read({ room: "kitchen" });
+
+        if (!Effect.isEffect(answered) || !Effect.isEffect(refusedCall)) {
+          return yield* Effect.die(new Error("a streamed read"));
+        }
+
+        const answer = yield* answered;
+        const refused = yield* Effect.flip(refusedCall);
+
+        expect(answer).toStrictEqual({ entity: "lobby", texts: [] });
+        expect(refused).toBeInstanceOf(DeclaredFailure);
+        expect(refused).toMatchObject({ json: { _tag: "Forbidden" } });
         expect(rooms.ran.read).toBe(1);
       }).pipe(
         Effect.scoped,

@@ -186,7 +186,6 @@ type EntityLayer<
  * - What the application provides to this layer is shared by every entity of the runner; what an implementation builds, each entity id builds for itself: state held in a builder is that entity's alone.
  * - A builder that fails or dies is a defect of the entity's activation, logged and retried by `defectRetryPolicy` while its calls wait: it never fails the layer.
  * - A handler's defect or undeclared failure ends that call with an `Error` whose message is `Internal server error`, as on `ActionRpc.layer`; the entity is neither restarted nor its call replayed, so its next call runs on the same handlers.
- * - A call's headers are what its client sent: one through `Entity.client` sends those `RpcClient.withHeaders` sets around it, and none otherwise, so a protected call fails `Unauthenticated`.
  * - An implementation missing for one of the binding's actions or event types throws as the layer is made: an entity serves its whole binding.
  */
 export function layer<
@@ -351,7 +350,7 @@ export type Client<B extends ActionRpc.Any> = {
  * **Gotchas**
  *
  * - The id must be the one the input's key names: another fails the call with `Forbidden`, before the handler runs.
- * - Headers set with `RpcClient.withHeaders` around a call go with its envelope, which is how a protected call sends its credential.
+ * - Headers set with `RpcClient.withHeaders` around a call go with its envelope, which is how a protected call sends its credential; a call without them fails `Unauthenticated`.
  * - A watch polls, as `mode: "poll"` does over HTTP, at the page's `nextPollMs`; `mode: "stream"` fails with `Event.SubscriptionError`, reason `Unsupported`, and a webhook `mode` with it too.
  * - A watch retries after `MailboxFull`, `PersistenceError` and `EntityNotAssignedToRunner`, a second later and doubling to 30 seconds; a declared error, a refusal included, ends it.
  */
