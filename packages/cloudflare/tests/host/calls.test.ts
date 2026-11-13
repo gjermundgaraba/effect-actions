@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
+import { runInDurableObject } from "cloudflare:test";
 import { Effect, Schedule } from "effect";
 
 import {
   clientOver,
   evict,
   heldIn,
+  objectOf,
   opened,
   receivedTags,
 } from "../support/socket.js";
@@ -80,6 +82,45 @@ describe("ActionClusterEntity's calls", () => {
 
         yield* until(seen, "linger-started");
         socket.socket.close(1000);
+        yield* until(seen, "linger-interrupted");
+        yield* Effect.sleep("2 seconds");
+
+        expect(yield* lingered(seen)).toStrictEqual([
+          "linger-started",
+          "linger-interrupted",
+        ]);
+      }).pipe(Effect.scoped),
+    { timeout: 60_000 }
+  );
+
+  it.live(
+    "interrupts a forwarded call when its socket fails",
+    () =>
+      Effect.gen(function* () {
+        const room = "failing";
+        const seen: string[] = [];
+
+        const socket = yield* opened("Seer", room, {
+          authorization: "Bearer alice",
+        });
+
+        yield* (yield* clientOver(Seer.binding, socket))
+          .linger({ room })
+          .pipe(Effect.ignore, Effect.forkScoped);
+
+        yield* until(seen, "linger-started");
+
+        yield* Effect.promise(async () => {
+          await runInDurableObject(
+            objectOf("Seer", room),
+            async (instance, state) => {
+              for (const held of state.getWebSockets()) {
+                await instance.webSocketError?.(held, new Error("failed"));
+              }
+            }
+          );
+        });
+
         yield* until(seen, "linger-interrupted");
         yield* Effect.sleep("2 seconds");
 
