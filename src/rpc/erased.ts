@@ -48,7 +48,7 @@ import { concealed } from "../contract/reported.js";
 import { answeringOf, Answering, elementOf } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
 import type { Transport } from "../contract/watch.js";
-import { polledTransportOf, transportOf } from "./watch.js";
+import { isUnknownTag, polledTransportOf, transportOf } from "./watch.js";
 
 export const streams = (action: Action.Any) =>
   !Answering.$is("Value")(answeringOf(action));
@@ -372,12 +372,18 @@ export const watchedOf = (
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const release = calling(releaseTag(event.name)) as JsonMethod;
 
+  const releaseUnserved = isUnknownTag(releaseTag(event.name));
+
   return (
     input: Schema.Json
   ): Pick<Transport<unknown, never>, "poll" | "release"> => ({
     poll: (cursor, watch) =>
       poll({ input, cursor, ...(watch === undefined ? {} : { watch }) }),
-    release: (watch) => Effect.asVoid(release({ input, watch })),
+    release: (watch) =>
+      release({ input, watch }).pipe(
+        Effect.asVoid,
+        Effect.catchCauseIf(releaseUnserved, () => Effect.void)
+      ),
   });
 };
 

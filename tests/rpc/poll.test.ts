@@ -130,6 +130,37 @@ describe("ActionRpc.client with delivery poll", () => {
   );
 
   it.effect(
+    "fails a watch with InvalidInput against ActionRpc.layer, whose event rpc is a stream that refuses a poll's watch",
+    () =>
+      Effect.gen(function* () {
+        const log = makeMessages();
+
+        log.post("general", "before");
+
+        const failure = yield* Effect.gen(function* () {
+          const client = yield* ActionRpc.client(signedOut, {
+            delivery: "poll",
+          });
+
+          return yield* Effect.flip(
+            Stream.runDrain(client.watch(Posted, {}, { cursor: "0" }))
+          );
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            overHttp(
+              ActionRpc.layer(signedOut, [log.implementation]).pipe(
+                Layer.provide(Event.layerMemory)
+              )
+            )
+          )
+        );
+
+        expect(failure).toMatchObject({ _tag: "InvalidInput" });
+      })
+  );
+
+  it.effect(
     "sends a poll unanswered for 4 minutes again, from the same cursor and watch",
     () =>
       Effect.gen(function* () {

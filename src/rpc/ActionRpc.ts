@@ -659,8 +659,8 @@ export interface ClientOptions extends Omit<
    *
    * **Gotchas**
    *
-   * - Under `"poll"`, a poll unanswered for 4 minutes is sent again from the same cursor, the first interrupted: a server that holds a poll until something changes, as the Cloudflare package's socket host does, reads it again at least that often, which renews a subscription hook's default 5-minute `lease`.
-   * - Under `"poll"`, a server serving the binding through `ActionRpc.layer` serves no event's poll, so a watch fails with `Event.SubscriptionError`, reason `NotServed`.
+   * - Under `"poll"`, a poll unanswered for 4 minutes is sent again from the same cursor, the first interrupted, so a server that holds a poll until something changes, as the Cloudflare package's socket host does, reads it again at least that often.
+   * - Under `"poll"`, a server serving the binding through `ActionRpc.layer` answers a poll with the event's stream rpc, which refuses the poll's `watch` field, so a watch fails with `InvalidInput`, after any authentication: watch such a server with the default `delivery`.
    */
   readonly delivery?: "stream" | "poll" | undefined;
 }

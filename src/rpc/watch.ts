@@ -51,7 +51,7 @@ export const isRpcTransient = Predicate.or(
     )
 );
 
-const isUnknownTag = (tag: string) => {
+export const isUnknownTag = (tag: string) => {
   const message = `Unknown request tag: ${tag}`;
 
   return (cause: Cause.Cause<unknown>): boolean =>
