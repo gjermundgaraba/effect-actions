@@ -10,11 +10,14 @@ import {
   ShardingConfig,
   Snowflake,
 } from "effect/cluster";
+import { Sse } from "effect/encoding";
 import { Headers, HttpClient, HttpClientRequest } from "effect/http";
+import type { HttpClientResponse } from "effect/http";
 import { RpcClient } from "effect/rpc";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Event from "../../src/contract/Event.js";
+import { PushedOf } from "../../src/contract/push.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
@@ -33,8 +36,14 @@ const Ticked = Event.make("ticked", {
   caller: CurrentActor,
 });
 
+class Unavailable extends Schema.TaggedError<
+  Unavailable,
+  { readonly brand: unique symbol }
+>()("Unavailable", { issuer: Schema.String }, { httpApiStatus: 503 }) {}
+
 const Principal = Authentication.make("reaching.Principal", CurrentActor, {
   principal: (actor) => actor.id,
+  error: Unavailable,
 });
 
 const signIn = Authentication.layer(Principal, verify);
@@ -92,10 +101,20 @@ const failingPolls = (fails: (call: number) => boolean, lasting: boolean) => {
   );
 };
 
-const makeTicker = (
-  fails: (call: number) => boolean = () => false,
-  lasting = false
-) => {
+interface TickerOptions {
+  readonly fails?: (call: number) => boolean;
+  readonly lasting?: boolean;
+  readonly entityUnavailable?: (call: number) => boolean;
+  readonly requestScoped?: boolean;
+}
+
+const makeTicker = ({
+  fails = () => false,
+  lasting = false,
+  entityUnavailable = () => false,
+  requestScoped = true,
+}: TickerOptions = {}) => {
+  let verified = 0;
   const counted = { checks: 0, callbacks: 0, hooked: 0, unhooked: 0 };
   const ticks: number[] = [];
 
@@ -150,7 +169,7 @@ const makeTicker = (
       name: "worker",
       version: "0.0.0",
       authentication: Principal,
-      requestScoped: true,
+      requestScoped,
     })
   ).pipe(
     Layer.provide(signIn),
@@ -158,9 +177,17 @@ const makeTicker = (
     Layer.provide(Testing.layer(receiver))
   );
 
+  const entitySignIn = Authentication.layer(Principal, (token) => {
+    verified += 1;
+
+    return entityUnavailable(verified)
+      ? Effect.fail(new Unavailable({ issuer: "auth.example.com" }))
+      : verify(token);
+  });
+
   const entities = ActionEntity.layer(Ticker, ticking).pipe(
     Layer.provideMerge(failingPolls(fails, lasting)),
-    Layer.provide([signIn, Event.layerMemory])
+    Layer.provide([entitySignIn, Event.layerMemory])
   );
 
   return {
@@ -224,6 +251,17 @@ describe("ActionEntity.reaching's events by webhook", () => {
   );
 });
 
+const sentOf = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(PushedOf(Ticked)))
+);
+
+const framesOf = (response: HttpClientResponse.HttpClientResponse) =>
+  response.stream.pipe(
+    Stream.decodeText,
+    Stream.pipeThroughChannel(Sse.decode()),
+    Stream.mapEffect((frame) => sentOf(frame.data))
+  );
+
 const until = (done: () => boolean) =>
   Effect.sync(done).pipe(
     Effect.repeat({
@@ -240,7 +278,9 @@ describe("ActionEntity.reaching's event streams", () => {
   it.live(
     "ask the entity again after a transient cluster failure, from where the stream reached, in the same stream",
     () => {
-      const { counted, ticks, server } = makeTicker((call) => call === 2);
+      const { counted, ticks, server } = makeTicker({
+        fails: (call) => call === 2,
+      });
 
       return Effect.gen(function* () {
         const http = yield* ActionHttp.client(TickerHttp, {
@@ -280,7 +320,10 @@ describe("ActionEntity.reaching's event streams", () => {
   it.live(
     "end on a cluster failure no retry outlasts, which the HTTP stream reports as Failed and opens again under a hook of its own",
     () => {
-      const { counted, ticks, server } = makeTicker((call) => call === 2, true);
+      const { counted, ticks, server } = makeTicker({
+        fails: (call) => call === 2,
+        lasting: true,
+      });
 
       return Effect.gen(function* () {
         const http = yield* ActionHttp.client(TickerHttp, {
@@ -313,6 +356,89 @@ describe("ActionEntity.reaching's event streams", () => {
 
         expect(received).toStrictEqual([1, 2]);
         expect(counted).toMatchObject({ hooked: 2, unhooked: 2 });
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "end on an error the entity's verifier declares, which the HTTP stream sends as Failed and opens again under a hook of its own",
+    () => {
+      const { counted, ticks, server } = makeTicker({
+        entityUnavailable: (call) => call === 2,
+      });
+
+      return Effect.gen(function* () {
+        ticks.push(1);
+
+        const response = yield* HttpClient.execute(
+          HttpClientRequest.post("/api/events/ticked").pipe(
+            HttpClientRequest.setHeaders({
+              ...asAlice.headers,
+              accept: "text/event-stream",
+            }),
+            HttpClientRequest.bodyJsonUnsafe({
+              input: { room: "a" },
+              cursor: "0",
+            })
+          )
+        );
+
+        const frames = yield* framesOf(response).pipe(
+          Stream.tap((sent) =>
+            Effect.sync(() => {
+              if (sent._tag === "Failed") {
+                ticks.push(2);
+              }
+            })
+          ),
+          Stream.takeUntil(
+            (sent) => sent._tag === "Occurrence" && sent.data.at === 2
+          ),
+          Stream.runCollect
+        );
+
+        yield* until(() => counted.unhooked === 2);
+
+        expect(frames).toMatchObject([
+          { _tag: "Checked", cursor: "0" },
+          { _tag: "Occurrence", cursor: "1", data: { at: 1 } },
+          { _tag: "Failed" },
+          { _tag: "Occurrence", cursor: "2", data: { at: 2 } },
+        ]);
+        expect(JSON.stringify(frames)).not.toContain("auth.example.com");
+        expect(counted).toMatchObject({ hooked: 2, unhooked: 2 });
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "end on an error the entity's verifier declares before MCP's events/stream is active, which answers -32603 and opens it no more",
+    () => {
+      const { counted, server } = makeTicker({
+        entityUnavailable: (call) => call === 1,
+        requestScoped: false,
+      });
+
+      return Effect.gen(function* () {
+        const response = yield* HttpClient.execute(
+          ActionMcp.request(
+            "events/stream",
+            { name: "ticked", arguments: { room: "a" }, cursor: null },
+            asAlice
+          )
+        );
+
+        const answered = yield* response.text.pipe(
+          Effect.timeout("5 seconds"),
+          Effect.flatMap(Schema.decodeEffect(Json))
+        );
+
+        expect(answered).toMatchObject({
+          error: { code: -32_603, message: "Internal error" },
+        });
+        expect(counted).toMatchObject({ checks: 0, hooked: 0 });
       }).pipe(Effect.scoped, Effect.provide(server));
     },
     { timeout: 30_000 }
@@ -419,7 +545,9 @@ describe("ActionEntity.client's watches", () => {
   it.live(
     "ask the entity again after a transient cluster failure, from where the watch reached, under the hook it held",
     () => {
-      const { counted, ticks, server } = makeTicker((call) => call === 2);
+      const { counted, ticks, server } = makeTicker({
+        fails: (call) => call === 2,
+      });
 
       return Effect.gen(function* () {
         const a = (yield* ActionEntity.client(Ticker))("a");
