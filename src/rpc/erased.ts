@@ -54,7 +54,7 @@ import {
 } from "../contract/subscribe.js";
 import { watching } from "../contract/watch.js";
 import type { Transport } from "../contract/watch.js";
-import { servingFeeds, webhookAnswers } from "../contract/webhooks.js";
+import { servedWebhooks, webhookAnswers } from "../contract/webhooks.js";
 import type { WebhookHolder } from "../contract/webhooks.js";
 import { isUnknownTag, polledTransportOf, transportOf } from "./watch.js";
 
@@ -838,10 +838,12 @@ export const handlersOf = Effect.fnUntraced(function* (
 
   const bound = yield* acquire(apps, authentication);
 
-  const { feeds, webhooks } =
+  const feeds = yield* acquireFeeds(events);
+
+  const { webhooks } =
     holdsWebhooks === true
-      ? yield* servingFeeds("ActionEntity.layer", events, authentication)
-      : { feeds: yield* acquireFeeds(events), webhooks: Option.none() };
+      ? yield* servedWebhooks(feeds, authentication)
+      : { webhooks: Option.none() };
 
   const stepsOf = (caller: Action.Any["caller"]): readonly Step[] =>
     caller === Anyone || authenticating === undefined
