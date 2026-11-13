@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Schedule } from "effect";
 
 import { BoardRpc, Hooked, hooks, Leased, Pinned } from "../board.js";
 import {
@@ -52,6 +52,40 @@ describe("ActionClusterEntity's subscription hooks", () => {
         expect(yield* instancesOf(board)).toStrictEqual(before);
       }).pipe(Effect.scoped, Effect.provide(throughWorker)),
     { timeout: 60_000 }
+  );
+
+  it.live(
+    "lets the object of a page watching a hooked source hibernate once the hook's lease lapsed",
+    () =>
+      Effect.gen(function* () {
+        const board = "lapsed-idle";
+        const http = yield* boards;
+        const watching = yield* opened("Board", board);
+
+        const pins = yield* following(
+          (yield* clientOver(BoardRpc, watching)).watch(Leased, { board })
+        );
+
+        yield* watchingIn("Board", board, 1);
+
+        const before = yield* instancesOf(board);
+
+        yield* Effect.sync(() => hooksOf(board)).pipe(
+          Effect.repeat({
+            until: (seen) => seen.length > 1,
+            schedule: Schedule.spaced("100 millis"),
+          }),
+          Effect.timeout("40 seconds")
+        );
+        yield* Effect.sleep("25 seconds");
+        yield* http.pin({ board, n: 1 });
+
+        const pinned = yield* notes(pins, 1);
+
+        expect(pinned).toStrictEqual([{ n: 1 }]);
+        expect(yield* instancesOf(board)).not.toStrictEqual(before);
+      }).pipe(Effect.scoped, Effect.provide(throughWorker)),
+    { timeout: 90_000 }
   );
 
   it.live(
