@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { runInDurableObject } from "cloudflare:test";
-import { Effect, Schedule } from "effect";
+import { Cause, Effect, Exit, Fiber, Schedule } from "effect";
 
 import {
   clientOver,
@@ -128,6 +128,42 @@ describe("ActionClusterEntity's calls", () => {
           "linger-started",
           "linger-interrupted",
         ]);
+      }).pipe(Effect.scoped),
+    { timeout: 60_000 }
+  );
+
+  it.live(
+    "fails a page's call under way when its socket sends a frame the host cannot read, the call running in the entity to its end",
+    () =>
+      Effect.gen(function* () {
+        const room = "unreadable";
+        const seen: string[] = [];
+
+        const socket = yield* opened("Seer", room, {
+          authorization: "Bearer alice",
+        });
+
+        const call = yield* (yield* clientOver(Seer.binding, socket))
+          .linger({ room })
+          .pipe(Effect.exit, Effect.forkScoped);
+
+        yield* until(seen, "linger-started");
+        socket.socket.send("{");
+
+        const exit = yield* Fiber.join(call);
+        const whenFailed = [...(yield* lingered(seen))];
+
+        yield* lingered(seen).pipe(
+          Effect.repeat({
+            until: (tags) => tags.length > 1,
+            schedule: Schedule.spaced("50 millis"),
+          }),
+          Effect.timeout("10 seconds")
+        );
+
+        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
+        expect(whenFailed).toStrictEqual(["linger-started"]);
+        expect(seen).toStrictEqual(["linger-started", "linger-ended"]);
       }).pipe(Effect.scoped),
     { timeout: 60_000 }
   );
