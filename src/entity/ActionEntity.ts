@@ -3,7 +3,7 @@ import type { Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
 import type { HttpServerRequest } from "effect/http";
-import type { RpcGroup } from "effect/rpc";
+import { Rpc, RpcGroup, RpcMessage } from "effect/rpc";
 
 import type {
   RemoteRequest,
@@ -72,13 +72,15 @@ type ErasedRpc =
 
 /**
  * A cluster `Entity` serving an `ActionRpc` binding: one rpc of JSON per action, and per event
- * type one unary rpc answering a page past a cursor, plus the binding and the key of each of its
- * contracts. `layer` serves it, `client` calls it, and Effect's own `Entity` functions take it.
+ * type one unary rpc answering a page past a cursor, plus the entity's own native rpcs `N`, the
+ * binding and the key of each of its contracts. `layer` serves it, `client` calls its actions,
+ * and Effect's own `Entity` functions take it, `Entity.client` calling its native rpcs.
  */
 export interface Entity<
   Type extends string,
   B extends ActionRpc.Any,
-> extends Cluster.Entity<Type, ErasedRpc> {
+  N extends Rpc.Any = never,
+> extends Cluster.Entity<Type, ErasedRpc | N> {
   readonly binding: B;
   readonly key: Keys<B>;
 }
@@ -102,15 +104,28 @@ type WithoutNatives<B extends ActionRpc.Any> = [
   RpcGroup.Rpcs<B["rpcs"]>,
 ] extends [never]
   ? unknown
-  : { readonly "An entity serves no native rpcs": never };
+  : {
+      readonly "An entity's binding holds no native rpcs: give them to ActionEntity.make's rpcs": never;
+    };
 
 /** `make`'s options. */
-export interface MakeOptions<B extends ActionRpc.Any> {
+export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
   /**
    * By the name of each action and event type of the binding, the entity id its input names:
    * `{ PostMessage: ({ room }) => room }`. Every one needs a key.
    */
   readonly key: Keys<B>;
+  /**
+   * The entity's own native rpcs, beside its actions and event types, with their own schemas:
+   * `RpcGroup.make(Expire)`, such as a persisted tell the entity sends itself with `DeliverAt`.
+   * `layer` takes their handlers in its own `rpcs`.
+   *
+   * **Gotchas**
+   *
+   * - A native rpc authenticates nothing, whatever the binding's `authentication`: it is for tells the entity and other entities send with `Entity.client`, never for a surface's callers.
+   * - A native rpc named after an action, an event type or an event's `<event>/release` throws as the entity is made.
+   */
+  readonly rpcs?: RpcGroup.RpcGroup<N> | undefined;
 }
 
 /**
@@ -125,22 +140,27 @@ export interface MakeOptions<B extends ActionRpc.Any> {
  *
  * **Gotchas**
  *
- * - Every rpc is volatile, as `ClusterSchema.Persisted` defaults: annotating them persisted writes each envelope, its caller's headers and credential included, into `cluster_messages`, kept until a `MessageRetention` layer deletes it, and replays it with them.
- * - A binding with native rpcs throws: serve them from an `Entity` of their own.
+ * - The rpcs of its actions and event types are volatile, as `ClusterSchema.Persisted` defaults: annotated persisted, each envelope, its caller's headers and credential included, would be stored and replayed with them, on Effect's SQL runners until a `MessageRetention` layer deletes it, and on the Cloudflare runtime, which never prunes `cluster_messages`, for good, its credential headers redacted. `rpcs`' natives are persisted as their own annotations say.
+ * - A binding with native rpcs throws: give the entity's own rpcs to `make`'s `rpcs`.
  * - A binding whose authentication reads an API key `in: "query"` throws: an entity authenticates from its envelope's headers alone.
- * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers, and returning a `Stream` of the elements of an `Action.Stream` answer; it holds the entity's one concurrency slot until its stream ends.
+ * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers, and returning a `Stream` of the elements of an `Action.Stream` answer; it holds a slot of the entity's `concurrency`, by default its only one, until its stream ends, but on the Cloudflare runtime, which frees the slot while a frame waits for its client's acknowledgement.
  * - `annotate` and its kin return a plain `Entity`, without `binding` and `key`, which `layer` and `client` do not take.
  */
-export const make = <const Type extends string, const B extends ActionRpc.Any>(
+export const make = <
+  const Type extends string,
+  const B extends ActionRpc.Any,
+  N extends Rpc.Any = never,
+>(
   type: Type,
   binding: B & WithoutNatives<B>,
-  options: NoInfer<MakeOptions<B>>
-): Entity<Type, B> => {
+  options: NoInfer<Omit<MakeOptions<B, N>, "rpcs">> &
+    Pick<MakeOptions<B, N>, "rpcs">
+): Entity<Type, B, N> => {
   const natives = [...nativeOf(binding.rpcs).requests.keys()];
 
   if (natives.length > 0) {
     throw new Error(
-      `ActionEntity.make: the binding of ${type} holds native rpcs, ${natives.join(", ")} (serve them from an Entity of their own)`
+      `ActionEntity.make: the binding of ${type} holds native rpcs, ${natives.join(", ")} (give them to ActionEntity.make's rpcs, unauthenticated)`
     );
   }
 
@@ -164,23 +184,81 @@ export const make = <const Type extends string, const B extends ActionRpc.Any>(
     );
   }
 
-  return Object.assign(
-    Cluster.fromRpcGroup(
-      type,
-      erasedOf(binding.actions, binding.events, "poll")
-    ),
-    { binding, key: options.key }
+  const erased = erasedOf(binding.actions, binding.events, "poll");
+  const rpcs = options.rpcs ?? RpcGroup.make();
+
+  const taken = [...rpcs.requests.keys()].filter((tag) =>
+    erased.requests.has(tag)
   );
+
+  if (taken.length > 0) {
+    throw new Error(
+      `ActionEntity.make: the native rpcs of ${type}, ${taken.join(", ")}, are named after an action, an event type or an event's release (rename them)`
+    );
+  }
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const protocol = erased.merge(rpcs) as RpcGroup.RpcGroup<ErasedRpc | N>;
+
+  return Object.assign(Cluster.fromRpcGroup(type, protocol), {
+    binding,
+    key: options.key,
+  });
 };
 
 /**
  * `layer`'s options: `Entity.toLayer`'s, which the entity's registration takes, but
- * `disableFatalDefects`, which is always on.
+ * `disableFatalDefects`, which is always on, and `defectRetryPolicy`, which the Cloudflare
+ * runtime would follow to run a call that died again, and `services` and `rpcs`.
  */
-export type LayerOptions = Omit<
+export interface LayerOptions<
+  ROut = never,
+  RIn = never,
+  Handlers = never,
+  RX = never,
+> extends Omit<
   NonNullable<Parameters<Cluster.Any["toLayer"]>[1]>,
-  "disableFatalDefects"
->;
+  "disableFatalDefects" | "defectRetryPolicy"
+> {
+  /**
+   * What each entity id builds for itself as it activates, before its implementations'
+   * builders and its native rpcs' handlers, which read it: a store over the entity's own
+   * database, its `Event.Events`. It may read `Entity.CurrentAddress` and what the activation
+   * provides, such as a Durable Object's `DurableObjectSqlClient`.
+   *
+   * **Gotchas**
+   *
+   * - Each entity id builds it again at each activation: what it holds in memory is that activation's alone, as an implementation builder's is, where a service provided to `layer` is the runner's, shared by every entity id.
+   * - It fails or dies as a builder does: a defect of the activation, which the runtime handles as the builder's.
+   */
+  readonly services?: Layer.Layer<ROut, unknown, RIn> | undefined;
+  /**
+   * The handlers of `make`'s `rpcs`, as `Entity.toLayer` takes them: an `Entity.HandlersFrom` of
+   * those rpcs, or an Effect building one as each entity id activates, after `services`, whose
+   * output it and the handlers' answers read. Each handler receives Effect's own `Entity.Request`,
+   * its `payload`, `headers` and `requestId`, and may answer through `Rpc.fork` or
+   * `Rpc.uninterruptible`.
+   *
+   * **Gotchas**
+   *
+   * - Required exactly where `make` was given `rpcs`: left out there, or given for an entity without them, it is a type error.
+   */
+  readonly rpcs?:
+    | ([Handlers] extends [never]
+        ? never
+        : Handlers | Effect.Effect<Handlers, never, RX>)
+    | undefined;
+}
+
+type NativeLayerOptions<N extends Rpc.Any, ROut, RIn, Handlers, RX> = [
+  N,
+] extends [never]
+  ? [options?: LayerOptions<ROut, RIn>]
+  : [
+      options: LayerOptions<ROut, RIn, Handlers, RX> & {
+        readonly rpcs: Handlers | Effect.Effect<Handlers, never, RX>;
+      },
+    ];
 
 type Activation =
   | Cluster.CurrentAddress
@@ -213,6 +291,11 @@ type NoPerCall<B extends ActionRpc.Any, Apps extends Served> = [
 type EntityLayer<
   B extends ActionRpc.Any,
   Apps extends Served,
+  N extends Rpc.Any,
+  ROut,
+  RIn,
+  Handlers,
+  RX,
   A extends Action.Any = B["actions"][number],
   E extends Event.Any = B["events"][number],
 > = Layer.Layer<
@@ -220,16 +303,36 @@ type EntityLayer<
   never,
   | Exclude<
       | ServerBuildServices<Holding<Member<Apps>, A>, A>
-      | EventBuildServices<HoldingEvents<Member<Apps>, E>, E>,
-      Activation
+      | EventBuildServices<HoldingEvents<Member<Apps>, E>, E>
+      | ServedProvider<
+          Member<Apps>,
+          A,
+          B extends { readonly authentication: infer D } ? D : never,
+          ServingEvents<Member<Apps>, E>
+        >
+      | RX
+      | RpcGroup.HandlersServices<N, Handlers>,
+      Activation | ROut
     >
-  | ServedProvider<
-      Member<Apps>,
-      A,
-      B extends { readonly authentication: infer D } ? D : never,
-      ServingEvents<Member<Apps>, E>
-    >
+  | Exclude<RIn, Activation>
+  | Rpc.ServicesClient<N>
+  | Rpc.ServicesServer<N>
+  | Rpc.Middleware<N>
   | Sharding.Sharding
+>;
+
+const callOf = (request: Cluster.Request<Rpc.Any>, rpc: Rpc.AnyWithProps) => ({
+  client: new Rpc.ServerClient(0),
+  requestId: RpcMessage.RequestId(String(request.requestId)),
+  headers: request.headers,
+  rpc,
+});
+
+type NativeHandler = (
+  request: Cluster.Request<Rpc.Any>
+) => Rpc.WrapperOr<
+  | Effect.Effect<unknown, unknown, unknown>
+  | Stream.Stream<unknown, unknown, unknown>
 >;
 
 /**
@@ -246,23 +349,37 @@ type EntityLayer<
  * - What the application provides to this layer is shared by every entity of the runner; what an implementation builds, each entity id builds for itself: state held in a builder is that entity's alone.
  * - A handler, an authorizer or an event source reading per call a service other than its caller is a type error naming that service: an entity provides nothing per call, so yield it in the builder, where it is a startup service, one value for every caller and entity id.
  * - `Action.layer` above it shares no build with it: each entity id runs its implementations' builders again, beside the run `Action.layer` made for the other surfaces.
- * - A builder that fails or dies is a defect of the entity's activation, logged and retried by `defectRetryPolicy` while its calls wait: it never fails the layer.
- * - A handler's defect or undeclared failure ends that call with an `Error` whose message is `Internal server error`, as on `ActionRpc.layer`; the entity is neither restarted nor its call replayed, so its next call runs on the same handlers.
+ * - A builder that fails or dies is a defect of the entity's activation, never a failure of the layer: Effect's own runners log it and build again, 500 ms later and growing to 10 seconds apart, while its calls wait, and the Cloudflare runtime fails the calls waiting on that build, the next call building again.
+ * - A handler's defect or undeclared failure ends that call with an `Error` whose message is `Internal server error`, as on `ActionRpc.layer`, and the call is not run again; Effect's own runners keep the entity's handlers for its next call, and the Cloudflare runtime builds them again, so what its builders and `services` held in memory is gone.
  * - An implementation missing for one of the binding's actions or event types throws as the layer is made: an entity serves its whole binding.
  */
 export function layer<
   const Type extends string,
   const B extends ActionRpc.Any,
+  N extends Rpc.Any,
   const Apps extends Served,
+  ROut = never,
+  RIn = never,
+  Handlers extends Cluster.HandlersFrom<N> = never,
+  RX = never,
 >(
-  entity: Entity<Type, B>,
+  entity: Entity<Type, B, N>,
   implementations: Apps & NoPerCall<B, Apps>,
-  options?: LayerOptions
-): EntityLayer<B, Apps>;
+  ...options: NativeLayerOptions<N, ROut, RIn, Handlers, RX>
+): EntityLayer<B, Apps, N, ROut, RIn, Handlers, RX>;
 export function layer<Type extends string, B extends ActionRpc.Any>(
-  entity: Entity<Type, B>,
+  entity: Entity<Type, B, Rpc.Any>,
   served: Served,
-  options: LayerOptions = {}
+  {
+    services = Layer.empty,
+    rpcs = {},
+    ...options
+  }: LayerOptions<
+    never,
+    unknown,
+    Readonly<Record<string, NativeHandler>>,
+    unknown
+  > = {}
 ): Layer.Layer<never, never, unknown> {
   const { binding } = entity;
   const named = namedBy(entity.key);
@@ -279,14 +396,13 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
   const build = Effect.gen(function* () {
     const address = yield* Cluster.CurrentAddress;
 
-    const built =
+    const built = yield* Layer.buildWithMemoMap(
       first === undefined
-        ? Context.empty()
-        : yield* Layer.buildWithMemoMap(
-            Layer.mergeAll(first, ...rest),
-            Layer.makeMemoMapUnsafe(),
-            yield* Effect.scope
-          );
+        ? services
+        : Layer.provideMerge(Layer.mergeAll(first, ...rest), services),
+      Layer.makeMemoMapUnsafe(),
+      yield* Effect.scope
+    );
 
     const { handlers } = yield* Effect.provideContext(
       handlersOf(binding, {
@@ -294,8 +410,8 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
         events,
         authentication,
         middleware: [],
-        keeper: undefined,
         delivery: "poll",
+        keeper: undefined,
       }),
       built
     );
@@ -315,21 +431,48 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
           );
     };
 
-    return Object.fromEntries(
-      Object.entries(handlers).map(([tag, handler]) => [
-        tag,
-        (
-          request: Cluster.Request<ErasedRpc>,
-          call: Parameters<typeof handler>[1]
-        ) => {
-          const answer: Effect.Effect<unknown, unknown, unknown> = handler(
-            request.payload,
-            call
-          );
+    const natives = yield* Effect.provideContext(
+      Effect.isEffect(rpcs) ? rpcs : Effect.succeed(rpcs),
+      built
+    );
 
-          return Effect.provideService(answer, InputCheck, check);
-        },
-      ])
+    const answering =
+      (handler: NativeHandler): NativeHandler =>
+      (request) =>
+        Rpc.wrapMap(handler(request), (answer) =>
+          Effect.isEffect(answer)
+            ? Effect.provideContext(answer, built)
+            : Stream.provideContext(answer, built)
+        );
+
+    return Object.fromEntries(
+      [...nativeOf(entity.protocol).requests.values()].map((rpc) => {
+        const handler = handlers[rpc._tag];
+
+        if (handler !== undefined) {
+          return [
+            rpc._tag,
+            (request: Cluster.Request<ErasedRpc>) => {
+              const answer: Effect.Effect<unknown, unknown, unknown> = handler(
+                request.payload,
+                callOf(request, rpc)
+              );
+
+              return Effect.provideService(answer, InputCheck, check);
+            },
+          ] as const;
+        }
+
+        const native = natives[rpc._tag];
+
+        if (native === undefined) {
+          throw new Error(
+            `ActionEntity.layer: rpcs holds no handler for the native rpc ${rpc._tag} of ${entity.type} (give layer's rpcs a handler for each of make's rpcs)`
+          );
+        }
+
+        return [rpc._tag, answering(native)] as const;
+      })
     );
   }).pipe(Effect.orDie);
 
@@ -423,8 +566,9 @@ export type Client<B extends ActionRpc.Any> = {
 export const client = <
   const Type extends string,
   const B extends ActionRpc.Any,
+  N extends Rpc.Any = never,
 >(
-  entity: Entity<Type, B>
+  entity: Entity<Type, B, N>
 ): Effect.Effect<(entityId: string) => Client<B>, never, Sharding.Sharding> =>
   Effect.map(entity.client, (clientFor) => (entityId: string) => {
     const rpcs = clientFor(entityId);
@@ -508,8 +652,9 @@ const reachedCall = (
 export const reaching = <
   const Type extends string,
   const B extends ActionRpc.Any,
+  N extends Rpc.Any = never,
 >(
-  entity: Entity<Type, B>
+  entity: Entity<Type, B, N>
 ): ReadonlyArray<
   | Implementation<
       B["actions"][number],

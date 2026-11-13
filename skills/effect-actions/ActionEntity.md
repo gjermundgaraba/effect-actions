@@ -8,13 +8,17 @@ A message the library throws says its fix; for a compiler diagnostic or Effect's
 
 Bind the actions and event types with `ActionRpc.make`, as for any RPC server ([ActionRpc.md](ActionRpc.md#bind-actions-to-rpcs)), then give `ActionEntity.make` the entity type's name, the binding, and a `key` for each action and event type. A key reads the entity id from the input, such as `({ room }) => room`, so every contract of an entity names its entity in its input. A contract without a key is a type error.
 
-Each action is an rpc of the entity, named after it. Each event type is a unary rpc named after it, which answers the occurrences past a cursor, as an HTTP poll does. The entity is Effect's own `Entity`, so `Entity.makeTestClient` and the rest of Effect's cluster functions take it. What its rpcs send, and why none of them is persisted, is on `ActionEntity.make`.
+Each action is an rpc of the entity, named after it. Each event type is a unary rpc named after it, which answers the occurrences past a cursor, as an HTTP poll does. The entity is Effect's own `Entity`, so `Entity.makeTestClient` and the rest of Effect's cluster functions take it. What its rpcs send, and why none of its actions' and event types' rpcs is persisted, is on `ActionEntity.make`.
+
+An entity may also serve native rpcs of its own, given to `make` as `rpcs`: tells the entity or another entity sends through Effect's `Entity.client`, such as a persisted one annotated `ClusterSchema.Persisted` that the entity sends itself to run later, at the time its payload's `DeliverAt` names. They authenticate nothing, so no surface serves them.
 
 ## Serve it
 
 `ActionEntity.layer(entity, implementations)` registers the entity with `Sharding`. The implementations are those of the binding's actions and event types, one or a list, as on every surface ([Action.md](Action.md#implement-actions)), and they must cover the whole binding. Provide the layer with what the implementations read at startup, the authentication provider of the binding's descriptor ([Authentication.md](Authentication.md#verify-credentials)), `Event.Events` when the binding has event types, and the cluster's `Sharding`.
 
 Each entity id builds the implementations itself, when the cluster first sends it a message, and shares no build with `Action.layer` provided above it. State an implementation's builder holds belongs to that one entity, and a builder may read `Entity.CurrentAddress` for the id it serves. A service provided to the layer is built once per runner and shared by every entity id on it.
+
+What each entity id must build for itself, such as a store over its own database or `Event.Events` kept there by `Stored.layerEvents`, goes in the layer's `services` option: each entity id builds it as it activates, before its implementations' builders, which read it. The handlers of `make`'s native rpcs go in the layer's `rpcs` option, as Effect's `Entity.toLayer` takes them: each receives Effect's own `Entity.Request`, and an Effect building them runs after `services`, whose output it reads.
 
 An entity provides nothing per call but the caller, so a handler, an authorizer or an event source reading any other service per call is a type error naming it: yield the service in the builder, where it is a startup service. The rules, and what a defect does, are on `ActionEntity.layer`.
 
