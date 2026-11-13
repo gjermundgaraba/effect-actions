@@ -1,45 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
 import { runInDurableObject } from "cloudflare:test";
-import { Effect, Schedule } from "effect";
+import { Effect } from "effect";
 import { RpcMessage, RpcSerialization } from "effect/rpc";
 
 import * as ActionClusterEntity from "../../src/host/ActionClusterEntity.js";
-import { evict, objectOf, stubs, upgrade } from "../support/socket.js";
+import {
+  evict,
+  objectOf,
+  raw,
+  stubs,
+  until,
+  upgrade,
+} from "../support/socket.js";
 import { initialize } from "../worker.js";
 
 const parser = RpcSerialization.json.makeUnsafe();
-
-const raw = (type: string, id: string) =>
-  Effect.acquireRelease(
-    Effect.flatMap(upgrade(type, id), ({ status, webSocket }) => {
-      if (webSocket === null) {
-        return Effect.die(new Error(`No WebSocket: ${status}`));
-      }
-
-      const received: string[] = [];
-      const closed: number[] = [];
-
-      webSocket.addEventListener("message", ({ data }) => {
-        received.push(String(data));
-      });
-      webSocket.addEventListener("close", ({ code }) => {
-        closed.push(code);
-      });
-      webSocket.accept();
-
-      return Effect.succeed({ socket: webSocket, received, closed });
-    }),
-    ({ socket }) =>
-      Effect.sync(() => {
-        socket.close(1000);
-      })
-  );
-
-const until = <A>(read: () => A, done: (value: A) => boolean) =>
-  Effect.sync(read).pipe(
-    Effect.repeat({ until: done, schedule: Schedule.spaced("50 millis") }),
-    Effect.timeout("10 seconds")
-  );
 
 const instancesOf = (board: string) =>
   Effect.map(
@@ -218,6 +193,117 @@ describe("ActionClusterEntity's frames", () => {
         expect([refused.status, accepted.status]).toStrictEqual([431, 101]);
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
+  );
+
+  it.live(
+    "answers a frame it cannot read with a defect, and serves the socket after it",
+    () =>
+      Effect.gen(function* () {
+        const board = "unreadable-frames";
+        const { socket, received } = yield* raw("Board", board);
+
+        socket.send("{");
+        socket.send("null");
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 2
+        );
+
+        socket.send(
+          JSON.stringify({
+            _tag: "Request",
+            id: "1",
+            tag: "pin",
+            payload: { board, n: 1 },
+            headers: [],
+          })
+        );
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 3
+        );
+
+        expect(
+          received.map(
+            (message) => /"_tag":"(?<tag>\w+)"/u.exec(message)?.groups?.["tag"]
+          )
+        ).toStrictEqual(["Defect", "Defect", "Exit"]);
+        expect(received[2]).toContain('"_tag":"Success"');
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "leaves the runtime to answer a page's close with its own code and reason, and forgets the socket",
+    () =>
+      Effect.gen(function* () {
+        const board = "answers-close";
+        const { socket } = yield* raw("Board", board);
+
+        const closed = Effect.promise(async () => {
+          const { promise, resolve } = Promise.withResolvers<CloseEvent>();
+
+          socket.addEventListener("close", resolve, { once: true });
+
+          return await promise;
+        });
+
+        socket.close(4000, "page left");
+
+        const { code, reason, wasClean } = yield* closed.pipe(
+          Effect.timeout("5 seconds")
+        );
+
+        const left = yield* Effect.promise(
+          async () =>
+            await runInDurableObject(
+              objectOf("Board", board),
+              (_, state) => state.getWebSockets().length
+            )
+        );
+
+        expect({ code, reason, wasClean, left }).toStrictEqual({
+          code: 4000,
+          reason: "page left",
+          wasClean: true,
+          left: 0,
+        });
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live("ignores a second close event for a socket", () =>
+    Effect.gen(function* () {
+      const board = "closed-twice";
+
+      yield* raw("Board", board);
+
+      const outcomes = yield* Effect.promise(
+        async () =>
+          await runInDurableObject(
+            objectOf("Board", board),
+            async (instance, state) => {
+              const [socket] = state.getWebSockets();
+
+              if (socket === undefined) {
+                return ["no socket"];
+              }
+
+              return await Promise.all(
+                [1, 2].map(async () => {
+                  await instance.webSocketClose?.(socket, 1000, "", true);
+
+                  return "closed";
+                })
+              );
+            }
+          )
+      );
+
+      expect(outcomes).toStrictEqual(["closed", "closed"]);
+    }).pipe(Effect.scoped)
   );
 
   it.effect(

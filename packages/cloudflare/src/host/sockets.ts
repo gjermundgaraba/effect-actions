@@ -1,7 +1,7 @@
-import { Effect, Exit, Option, Predicate, Schema } from "effect";
-import { Rpc, RpcSchema, RpcSerialization } from "effect/rpc";
+import { Cause, Effect, Exit, Fiber, Option, Predicate, Schema } from "effect";
+import { Rpc, RpcMessage, RpcSchema, RpcSerialization } from "effect/rpc";
 
-import { closeQuietly, died, parser, send } from "./frames.js";
+import { closeQuietly, died, encodeDefect, parser, send } from "./frames.js";
 
 const Header = Schema.Tuple([Schema.String, Schema.String]);
 
@@ -10,6 +10,8 @@ const Headers = Schema.Array(Header);
 type Headers = typeof Headers.Type;
 
 const RequestId = Schema.Union([Schema.String, Schema.Finite]);
+
+type RequestId = typeof RequestId.Type;
 
 const Parked = Schema.Struct({
   id: RequestId,
@@ -25,6 +27,7 @@ const Answered = Schema.Struct({
   watch: Schema.String,
   cursor: Schema.String,
   gate: Schema.Finite,
+  at: Schema.Finite,
 });
 
 const Attachment = Schema.Struct({
@@ -94,7 +97,7 @@ const FromClient = Schema.Union([
   Schema.Struct({ _tag: Schema.Literals(["Ack", "Ping", "Eof"]) }),
 ]);
 
-const decodeFrames = Schema.decodeUnknownExit(Schema.Array(FromClient));
+const decodeFrames = Schema.decodeUnknownEffect(Schema.Array(FromClient));
 
 const Poll = Schema.Struct({
   cursor: Schema.NullOr(Schema.String),
@@ -190,6 +193,12 @@ const lostCalls =
 const lostSocket =
   "This server cannot read what it kept for this socket: connect again";
 
+const pollResentAfter = 240_000;
+
+const defaultLease = 300_000;
+
+const uncalledWithin = (defaultLease - pollResentAfter) / 2;
+
 /**
  * Answers sockets' frames from the entity each attachment names, parks the polls that find
  * nothing new, and answers them again once the gate moves.
@@ -197,15 +206,51 @@ const lostSocket =
 export const makeSockets = (options: {
   readonly servedBy: (name: string) => Served | undefined;
   readonly gate: () => number | undefined;
+  readonly now: () => number;
   readonly sockets: () => readonly WebSocket[];
   readonly waitUntil: (promise: Promise<unknown>) => void;
 }) => {
-  const { gate } = options;
+  const { gate, now } = options;
 
   let passing = false;
   let again = false;
 
-  const due = (now: number) =>
+  const running = new WeakMap<
+    WebSocket,
+    Map<RequestId, Fiber.Fiber<unknown>>
+  >();
+
+  const tracked = <A>(
+    socket: WebSocket,
+    id: RequestId,
+    call: Effect.Effect<A>
+  ) =>
+    Effect.gen(function* () {
+      const calls =
+        running.get(socket) ?? new Map<RequestId, Fiber.Fiber<unknown>>();
+
+      running.set(socket, calls);
+
+      const fiber = yield* Effect.forkChild(
+        Effect.onInterrupt(call, () =>
+          Effect.sync(() =>
+            updated(socket, (held) => ({
+              ...held,
+              calls: without(held.calls, (under) => under === id),
+            }))
+          )
+        )
+      );
+
+      calls.set(id, fiber);
+
+      return yield* Effect.ensuring(
+        Fiber.await(fiber),
+        Effect.sync(() => calls.delete(id))
+      );
+    });
+
+  const due = (current: number) =>
     options.sockets().flatMap((socket) => {
       const held = attachmentOf(socket);
 
@@ -216,13 +261,13 @@ export const makeSockets = (options: {
         return [];
       }
 
-      const moved = held.parked.filter((entry) => entry.gate !== now);
+      const moved = held.parked.filter((entry) => entry.gate !== current);
 
       if (
         moved.length === 0 ||
         !kept(socket, {
           ...held,
-          parked: without(held.parked, (entry) => entry.gate !== now),
+          parked: without(held.parked, (entry) => entry.gate !== current),
           calls: [...held.calls, ...moved.map(({ id }) => id)],
         })
       ) {
@@ -239,6 +284,7 @@ export const makeSockets = (options: {
   ): Effect.Effect<boolean> =>
     Effect.gen(function* () {
       const before = gate();
+      const at = now();
       const upgrade = attachmentOf(socket)?.headers ?? [];
 
       const exit = yield* served.call(
@@ -281,7 +327,7 @@ export const makeSockets = (options: {
           ...held,
           answered: [
             ...without(held.answered, (answer) => answer.watch === watch),
-            { watch, cursor, gate: before },
+            { watch, cursor, gate: before, at },
           ],
         }));
       }
@@ -290,18 +336,21 @@ export const makeSockets = (options: {
     });
 
   const pass: Effect.Effect<void> = Effect.suspend(() => {
-    const now = gate();
+    const current = gate();
 
-    return now === undefined
+    return current === undefined
       ? Effect.void
       : Effect.forEach(
-          due(now),
-          ({ socket, served, entry }) => polled(socket, served, entry),
+          due(current),
+          ({ socket, served, entry }) =>
+            tracked(socket, entry.id, polled(socket, served, entry)),
           { concurrency: "unbounded" }
         ).pipe(
-          Effect.tap((parked) =>
+          Effect.tap((exits) =>
             Effect.sync(() => {
-              again ||= parked.includes(true);
+              again ||= exits.some(
+                (exit) => Exit.isSuccess(exit) && exit.value
+              );
             })
           ),
           Effect.asVoid
@@ -309,10 +358,14 @@ export const makeSockets = (options: {
   });
 
   const passes = async () => {
-    do {
-      again = false;
-      await Effect.runPromise(pass);
-    } while (again);
+    try {
+      do {
+        again = false;
+        await Effect.runPromise(pass);
+      } while (again);
+    } finally {
+      passing = false;
+    }
   };
 
   const settled = () => {
@@ -323,12 +376,7 @@ export const makeSockets = (options: {
     }
 
     passing = true;
-
-    options.waitUntil(
-      passes().finally(() => {
-        passing = false;
-      })
-    );
+    options.waitUntil(passes());
   };
 
   const parkedAgain = (socket: WebSocket, request: Request) => {
@@ -348,6 +396,7 @@ export const makeSockets = (options: {
       answer !== undefined &&
       answer.cursor === poll.cursor &&
       answer.gate === gate() &&
+      now() - answer.at < uncalledWithin &&
       park(socket, {
         id: request.id,
         tag: request.tag,
@@ -387,12 +436,6 @@ export const makeSockets = (options: {
         return;
       }
 
-      if (served.polls.has(tag)) {
-        yield* polled(socket, served, { id, tag, payload, headers });
-
-        return;
-      }
-
       if (served.releases.has(tag)) {
         Option.map(decodeRelease(payload), ({ watch }) =>
           forget(socket, watch)
@@ -401,11 +444,15 @@ export const makeSockets = (options: {
 
       const upgrade = attachmentOf(socket)?.headers ?? [];
 
-      return yield* reply(
+      yield* tracked(
         socket,
-        served,
-        request,
-        yield* served.call(tag, payload, merged(upgrade, headers))
+        id,
+        served.polls.has(tag)
+          ? Effect.asVoid(polled(socket, served, { id, tag, payload, headers }))
+          : Effect.flatMap(
+              served.call(tag, payload, merged(upgrade, headers)),
+              (exit) => reply(socket, served, request, exit)
+            )
       );
     });
 
@@ -416,17 +463,31 @@ export const makeSockets = (options: {
       const served =
         held === undefined ? undefined : options.servedBy(held.name);
 
-      const frames = decodeFrames(
-        parser.decode(Predicate.isString(data) ? data : new Uint8Array(data))
-      );
-
       if (served === undefined) {
         closeQuietly(socket, 1012, lostSocket);
 
         return;
       }
 
+      const frames = yield* Effect.exit(
+        Effect.flatMap(
+          Effect.try(() =>
+            parser.decode(
+              Predicate.isString(data) ? data : new Uint8Array(data)
+            )
+          ),
+          (decoded) => decodeFrames(decoded)
+        )
+      );
+
       if (Exit.isFailure(frames)) {
+        send(
+          socket,
+          RpcMessage.ResponseDefectEncoded(
+            encodeDefect(Cause.squash(frames.cause))
+          )
+        );
+
         return;
       }
 
@@ -445,6 +506,10 @@ export const makeSockets = (options: {
                 ({ id }) => id === frame.requestId
               ),
             }));
+
+            const call = running.get(socket)?.get(frame.requestId);
+
+            return call === undefined ? Effect.void : Fiber.interrupt(call);
           }
 
           return Effect.void;
@@ -456,6 +521,15 @@ export const makeSockets = (options: {
   return {
     message,
     settled,
+    closed: (socket: WebSocket) =>
+      Effect.forEach(
+        [...(running.get(socket)?.values() ?? [])],
+        Fiber.interrupt,
+        {
+          concurrency: "unbounded",
+          discard: true,
+        }
+      ),
     accept: (socket: WebSocket, name: string, headers: Headers) =>
       kept(
         socket,

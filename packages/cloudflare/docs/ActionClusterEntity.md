@@ -124,7 +124,7 @@ export const followLobby = (baseUrl: string) =>
 
 ## What the socket holds
 
-The host keeps no state in memory between messages. Each socket's attachment, which the runtime keeps with the socket across hibernation, holds the upgrade's headers, the calls under way and the **parked** polls: a poll whose answer had nothing new is kept there instead of answered, and asked again once the object's events changed, read through `Stored.layerEvents`' change signal each time a call, the alarm, or a handler's work on the object settles. So an entity serving sockets keeps its events on `Stored.layerEvents`, as the example's room does in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts); one keeping them elsewhere has every poll answered at once, its pages polling at `nextPoll`.
+The host keeps no state in memory between messages but the calls it is forwarding, which a page's interrupt or the socket's close interrupts. Each socket's attachment, which the runtime keeps with the socket across hibernation, holds the upgrade's headers, the calls under way and the **parked** polls: a poll whose answer had nothing new is kept there instead of answered, and asked again once the object's events changed, read through `Stored.layerEvents`' change signal each time a handler on the object ends, whether a call, a tell or the alarm ran it. A change no handler writes, such as one a check source reads from an upstream, reaches a parked poll only when the page sends it again, 4 minutes after it sent it; `make`'s gotchas say which changes those are. So an entity serving sockets keeps its events on `Stored.layerEvents`, as the example's room does in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts); one keeping them elsewhere has every poll answered at once, its pages polling at `nextPoll`.
 
 ## What a post costs
 
@@ -134,7 +134,7 @@ Every call into an entity object, from the Worker, from another object or from t
 - **T**, the follow-up tells the post's handler sends: 2 for every post in the example, the room's persisted tell to itself, `tellLobby`, and the lobby's `roomChanged` that tell sends, plus 1 more, the room's `expire` tell to itself, for the first post of an hour's window;
 - **P**, the parked polls on that object, each asked again once, by the host, through the room's own `Entity.client`.
 
-No `hold` or `acknowledge` is called: a poll is unary. A page's next poll after an answer reaches the object as a socket message, not a stub call, and is parked at once when nothing changed since the answer. An application that sends no tells has T = 0; the lobby, watched over HTTP, adds no P.
+No `hold` or `acknowledge` is called: a poll is unary. A page's next poll after an answer reaches the object as a socket message, not a stub call, and is parked at once when nothing changed since the answer and the answer's call was under 30 seconds earlier; later it is sent to the entity, one stub call, which renews a subscription hook's lease. An application that sends no tells has T = 0; the lobby, watched over HTTP, adds no P. The example's test of these counts, "costs each post 1 + T + P stub calls", runs the Worker through [`chat-rooms/test/worker.ts`](../examples/chat-rooms/test/worker.ts), which exports a `ClusterEntity` counting each `invoke` by object and tag.
 
 ## Test on workerd
 

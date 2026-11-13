@@ -29,7 +29,13 @@ import { SqlClient } from "effect/sql";
 
 import * as ActionCluster from "../src/cluster/ActionCluster.js";
 import * as ActionClusterEntity from "../src/host/ActionClusterEntity.js";
-import { Board, BoardHttp, boardImplementations, boardTells } from "./board.js";
+import {
+  Board,
+  BoardHttp,
+  boardImplementations,
+  boardTells,
+  Tally,
+} from "./board.js";
 
 export {
   ClusterDurableQueue,
@@ -94,7 +100,17 @@ const Crash = Action.make("crash", {
   caller: Caller,
 });
 
+const Linger = Action.make("linger", {
+  description:
+    "Record its start, then its end 2 seconds later, or its interruption.",
+  input: { room: Schema.String },
+  success: Schema.Null,
+  readOnly: true,
+  caller: Caller,
+});
+
 const contracts = [
+  Linger,
   Whoami,
   Seen,
   ReadHeaders,
@@ -129,6 +145,7 @@ export const Seer = ActionEntity.make(
   ActionRpc.make(contracts, { authentication: Login }),
   {
     key: {
+      linger: byRoom,
       whoami: byRoom,
       seen: byRoom,
       readHeaders: byRoom,
@@ -159,6 +176,24 @@ const headersRead = Effect.gen(function* () {
 });
 
 const seeing = [
+  Action.implement(
+    Linger,
+    () =>
+      Effect.gen(function* () {
+        received.push({ tag: "linger-started", authorization: null });
+        yield* Effect.sleep("2 seconds");
+        received.push({ tag: "linger-ended", authorization: null });
+
+        return null;
+      }).pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() => {
+            received.push({ tag: "linger-interrupted", authorization: null });
+          })
+        )
+      ),
+    { authorize: Action.allowAll }
+  ),
   Action.implement(
     Whoami,
     Effect.map(
@@ -324,6 +359,9 @@ const application = (env: Cloudflare.Env) =>
       services: Stored.layerEvents.pipe(Layer.provideMerge(entitySql)),
       rpcs: boardTells,
     }),
+    ActionEntity.layer(Tally, boardImplementations, {
+      services: Layer.merge(Event.layerMemory, entitySql),
+    }),
     Layer.mergeAll(
       ActionHttp.layer(SeerHttp, ActionEntity.reaching(Seer)),
       ActionHttp.layer(BoardHttp, ActionEntity.reaching(Board))
@@ -335,7 +373,7 @@ const application = (env: Cloudflare.Env) =>
     Layer.provide(signIn),
     Layer.provideMerge(
       ActionCluster.layer({
-        entities: [Seer, Board],
+        entities: [Seer, Board, Tally],
         entityNamespace: env.CLUSTER_ENTITY,
         workflowNamespace: env.CLUSTER_WORKFLOW,
         queueNamespace: env.CLUSTER_QUEUE,
@@ -383,9 +421,14 @@ const counted = async <A>(
 
 const Host = ActionClusterEntity.make({
   initialize,
-  sockets: [Seer, Board],
+  sockets: [Seer, Board, Tally],
   protocol: { version: "1", code: 4000 },
 });
+
+export class OpenHost extends ActionClusterEntity.make({
+  initialize,
+  sockets: [Board],
+}) {}
 
 export class ClusterEntity extends Host {
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {

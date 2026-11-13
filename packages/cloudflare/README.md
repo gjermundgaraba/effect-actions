@@ -38,7 +38,7 @@ Layer.mergeAll(
 A page follows an entity's events over a WebSocket to the entity's own object, which the runtime keeps open while the object hibernates, through the class the Worker exports in place of Effect's `ClusterEntity`:
 
 ```ts
-export class ClusterEntity extends ActionClusterEntity.make({
+class ClusterEntity extends ActionClusterEntity.make({
   initialize,
   sockets: [Room],
   protocol: { version: "1", code: 4000 },

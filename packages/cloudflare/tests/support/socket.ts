@@ -10,6 +10,9 @@ import { Socket } from "effect/socket";
 export const objectOf = (type: string, id: string) =>
   env.CLUSTER_ENTITY.getByName(CloudflareCluster.encodeName(type, id));
 
+export const openHostOf = (type: string, id: string) =>
+  env.OPEN_HOST.getByName(CloudflareCluster.encodeName(type, id));
+
 export const upgrade = (
   type: string,
   id: string,
@@ -24,14 +27,8 @@ export const upgrade = (
       )
   );
 
-export const opened = (
-  type: string,
-  id: string,
-  headers: Record<string, string> = {},
-  version = "1"
-) =>
+export const connected = (response: Response) =>
   Effect.gen(function* () {
-    const response = yield* upgrade(type, id, headers, version);
     const socket = response.webSocket;
 
     if (socket === null) {
@@ -62,6 +59,47 @@ export const opened = (
 
     return { socket, protocol, closed };
   });
+
+export const opened = (
+  type: string,
+  id: string,
+  headers: Record<string, string> = {},
+  version = "1"
+) => Effect.flatMap(upgrade(type, id, headers, version), connected);
+
+export const raw = (type: string, id: string) =>
+  Effect.acquireRelease(
+    Effect.flatMap(upgrade(type, id), ({ status, webSocket }) => {
+      if (webSocket === null) {
+        return Effect.die(new Error(`No WebSocket: ${status}`));
+      }
+
+      const received: string[] = [];
+      const closed: number[] = [];
+
+      webSocket.addEventListener("message", ({ data }) => {
+        received.push(String(data));
+      });
+      webSocket.addEventListener("close", ({ code }) => {
+        closed.push(code);
+      });
+      webSocket.accept();
+
+      return Effect.succeed({ socket: webSocket, received, closed });
+    }),
+    ({ socket }) =>
+      Effect.sync(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.close(1000);
+        }
+      })
+  );
+
+export const until = <A>(read: () => A, done: (value: A) => boolean) =>
+  Effect.sync(read).pipe(
+    Effect.repeat({ until: done, schedule: Schedule.spaced("50 millis") }),
+    Effect.timeout("10 seconds")
+  );
 
 export const reconnecting = (type: string, id: string) =>
   Layer.build(
@@ -172,3 +210,31 @@ export const stubs = Effect.promise(
       .fetch("https://worker.example/stubs")
       .then(async (response) => await response.json())
 ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Stubs)), Effect.orDie);
+
+export const settledStubs = stubs.pipe(
+  Effect.repeat({
+    until: ({ started, finished }) =>
+      started.invoke === finished.invoke &&
+      started.hold === finished.hold &&
+      started.acknowledge === finished.acknowledge,
+    schedule: Schedule.spaced("100 millis"),
+  })
+);
+
+const Received = Schema.Array(
+  Schema.Struct({
+    tag: Schema.String,
+    authorization: Schema.NullOr(Schema.String),
+  })
+);
+
+export const receivedTags = Effect.promise(
+  async () =>
+    await exports.default
+      .fetch("https://worker.example/received")
+      .then(async (response) => await response.json())
+).pipe(
+  Effect.flatMap(Schema.decodeUnknownEffect(Received)),
+  Effect.map((received) => received.map(({ tag }) => tag)),
+  Effect.orDie
+);

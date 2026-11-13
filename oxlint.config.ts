@@ -145,10 +145,6 @@ const lint: ReturnType<typeof config> = config({
       rules: { "effecttsgo/any-unknown-in-error-context": "off" },
     },
     {
-      files: ["packages/cloudflare/src/host/ActionClusterEntity.ts"],
-      rules: { "typescript/method-signature-style": "off" },
-    },
-    {
       files: ["src/cli/commands.ts"],
       rules: { "promise/no-promise-in-callback": "off" },
     },

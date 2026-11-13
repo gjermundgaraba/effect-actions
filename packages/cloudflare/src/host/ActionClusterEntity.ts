@@ -16,16 +16,6 @@ import { pingPong, replyToClose } from "./frames.js";
 import { makeSockets } from "./sockets.js";
 import type { Served } from "./sockets.js";
 
-/** The refusal of an upgrade naming another version of the rpcs: `make`'s `protocol`. */
-export interface Protocol {
-  /** The version served, which a page names in its socket's URL as `?protocol=<version>`. */
-  readonly version: string;
-  /** The close code of a refusal, an integer from 4000 to 4999, which `ActionRpc.reconnectUntil(code)` stops at; another throws as the class is made. */
-  readonly code: number;
-  /** The close reason, at most 123 bytes UTF-8 encoded; by default `This server speaks protocol <version>: reload the page`. A longer one throws as the class is made. */
-  readonly reason?: string | undefined;
-}
-
 /** `make`'s options. */
 export interface Options<Env> {
   /**
@@ -37,22 +27,17 @@ export interface Options<Env> {
   ) => PromiseLike<Context.Context<Sharding.Sharding>>;
   /** The entities whose objects accept sockets: an upgrade to an object of another entity type is answered 404. */
   readonly sockets: readonly ActionEntity.Any[];
-  /** The version a page's upgrade names, refusing every other; without it, every upgrade is accepted. */
-  readonly protocol?: Protocol | undefined;
-}
-
-/** The methods of `make`'s class beside a Durable Object's own: the entity program's, as promises. */
-export interface Methods {
-  hold(): Promise<void>;
-  invoke(
-    envelopeText: string,
-    discard: boolean,
-    delivery?: EntityDeliveryOptions
-  ): Promise<EntityInvokeResult>;
-  acknowledge(requestId: string, replyId: string): Promise<readonly string[]>;
-  interrupt(storageRequestId: string, clientRequestId?: string): Promise<void>;
-  reset(requestId: string): Promise<void>;
-  deliverReply(requestId: string, reply: string): Promise<boolean>;
+  /** The version a page's upgrade names, every other refused with a close; without it, every upgrade is accepted. */
+  readonly protocol?:
+    | {
+        /** The version served, which a page names in its socket's URL as `?protocol=<version>`. */
+        readonly version: string;
+        /** The close code of a refusal, an integer from 4000 to 4999, which `ActionRpc.reconnectUntil(code)` stops at; another throws as the class is made. */
+        readonly code: number;
+        /** The close reason, at most 123 bytes UTF-8 encoded; by default `This server speaks protocol <version>: reload the page`. A longer one throws as the class is made. */
+        readonly reason?: string | undefined;
+      }
+    | undefined;
 }
 
 const gateQuery =
@@ -72,7 +57,7 @@ const closeReasonBytes = 123;
 
 const bytesOf = (text: string) => new TextEncoder().encode(text).byteLength;
 
-const refusalOf = (protocol: Protocol | undefined) => {
+const refusalOf = (protocol: Options<unknown>["protocol"]) => {
   if (protocol === undefined) {
     return undefined;
   }
@@ -98,7 +83,10 @@ const refusalOf = (protocol: Protocol | undefined) => {
   return { version, code, reason };
 };
 
-type Refusal = ReturnType<typeof refusalOf>;
+interface Bound {
+  readonly byType: ReadonlyMap<string, ActionEntity.Any>;
+  readonly refusal: ReturnType<typeof refusalOf>;
+}
 
 const isClusterFailure = Schema.is(
   Schema.Union([
@@ -118,30 +106,45 @@ type ClientFor = (
   entityId: string
 ) => Readonly<Record<string, Method | undefined>>;
 
-const servedOf = (
+const servingOf = (
   entity: ActionEntity.Any,
-  clientFor: ClientFor,
-  entityId: string
-): Served => ({
-  rpcs: ActionEntity.bindingRpcs(entity).requests,
-  polls: new Set(entity.binding.events.map(({ name }) => name)),
-  releases: new Set(entity.binding.events.map(({ name }) => `${name}/release`)),
-  call: (tag, payload, headers) =>
-    Effect.suspend(() => {
-      const answer = clientFor(entityId)[tag]?.(payload, { headers });
+  context: Context.Context<Sharding.Sharding>
+): ((entityId: string) => Served) => {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const clientFor = Effect.runSync(
+    Effect.provideContext(entity.client, context)
+  ) as ClientFor;
 
-      return Effect.isEffect(answer)
-        ? answer
-        : Effect.die(new Error(`ActionClusterEntity: ${tag} is no unary rpc`));
-    }).pipe(Effect.catchIf(isClusterFailure, Effect.die), Effect.exit),
-});
+  const rpcs = ActionEntity.bindingRpcs(entity).requests;
+  const polls = new Set(entity.binding.events.map(({ name }) => name));
+
+  const releases = new Set(
+    entity.binding.events.map(({ name }) => `${name}/release`)
+  );
+
+  return (entityId) => ({
+    rpcs,
+    polls,
+    releases,
+    call: (tag, payload, headers) =>
+      Effect.suspend(() => {
+        const answer = clientFor(entityId)[tag]?.(payload, { headers });
+
+        return Effect.isEffect(answer)
+          ? answer
+          : Effect.die(
+              new Error(`ActionClusterEntity: ${tag} is no unary rpc`)
+            );
+      }).pipe(Effect.catchIf(isClusterFailure, Effect.die), Effect.exit),
+  });
+};
 
 const hostOf = (
   ctx: DurableObjectState,
   context: Context.Context<Sharding.Sharding>,
-  byType: ReadonlyMap<string, ActionEntity.Any>
+  { byType, refusal }: Bound
 ) => {
-  const clients = new Map<string, ClientFor>();
+  const serving = new Map<string, (entityId: string) => Served>();
 
   const servedBy = (name: string): Served | undefined => {
     const address = CloudflareCluster.decodeName(name);
@@ -151,21 +154,17 @@ const hostOf = (
       return undefined;
     }
 
-    const clientFor =
-      clients.get(entity.type) ??
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      (Effect.runSync(
-        Effect.provideContext(entity.client, context)
-      ) as ClientFor);
+    const served = serving.get(entity.type) ?? servingOf(entity, context);
 
-    clients.set(entity.type, clientFor);
+    serving.set(entity.type, served);
 
-    return servedOf(entity, clientFor, address.id);
+    return served(address.id);
   };
 
   const sockets = makeSockets({
     servedBy,
     gate: gateOf(ctx.storage.sql),
+    now: Date.now,
     sockets: () => ctx.getWebSockets(),
     waitUntil: (promise) => {
       ctx.waitUntil(promise);
@@ -174,7 +173,7 @@ const hostOf = (
 
   return {
     ...sockets,
-    upgrade: (request: Request, refusal: Refusal): Response => {
+    upgrade: (request: Request): Response => {
       if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
         return new Response(
           "Expected a WebSocket upgrade: connect with a WebSocket client, or forward the page's own Request to the object",
@@ -217,6 +216,110 @@ const hostOf = (
   };
 };
 
+class Host<Env> extends DurableObject<Env> {
+  #program!: ClusterEntityProgram;
+  #host!: ReturnType<typeof hostOf>;
+
+  constructor(
+    ctx: DurableObjectState,
+    env: Env,
+    initialize: Options<Env>["initialize"],
+    bound: Bound
+  ) {
+    super(ctx, env);
+    ctx.setWebSocketAutoResponse(pingPong());
+
+    void ctx.blockConcurrencyWhile(async () => {
+      const host = hostOf(ctx, await initialize(env), bound);
+
+      this.#program = await Effect.runPromise(
+        makeClusterEntityProgram({
+          id: ctx.id,
+          storage: ctx.storage,
+          exports: ctx.exports,
+          waitUntil: (promise) => {
+            ctx.waitUntil(promise);
+            void promise.then(host.settled, host.settled);
+          },
+        })
+      );
+
+      this.#host = host;
+      host.started();
+    });
+  }
+
+  override async alarm(): Promise<void> {
+    await Effect.runPromise(this.#program.alarm());
+  }
+
+  async hold(): Promise<void> {
+    await Effect.runPromise(this.#program.hold());
+  }
+
+  async invoke(
+    envelopeText: string,
+    discard: boolean,
+    delivery?: EntityDeliveryOptions
+  ): Promise<EntityInvokeResult> {
+    return await Effect.runPromise(
+      this.#program.invoke(envelopeText, discard, delivery)
+    );
+  }
+
+  async acknowledge(
+    requestId: string,
+    replyId: string
+  ): Promise<readonly string[]> {
+    return await Effect.runPromise(
+      this.#program.acknowledge(requestId, replyId)
+    );
+  }
+
+  async interrupt(
+    storageRequestId: string,
+    clientRequestId = storageRequestId
+  ): Promise<void> {
+    await Effect.runPromise(
+      this.#program.interrupt(storageRequestId, clientRequestId)
+    );
+  }
+
+  async reset(requestId: string): Promise<void> {
+    await Effect.runPromise(this.#program.reset(requestId));
+  }
+
+  async deliverReply(requestId: string, reply: string): Promise<boolean> {
+    return await Effect.runPromise(
+      this.#program.deliverReply(requestId, reply)
+    );
+  }
+
+  override fetch(request: Request): Response {
+    return this.#host.upgrade(request);
+  }
+
+  override async webSocketMessage(
+    socket: WebSocket,
+    data: string | ArrayBuffer
+  ): Promise<void> {
+    await Effect.runPromise(this.#host.message(socket, data));
+  }
+
+  override async webSocketClose(
+    socket: WebSocket,
+    code: number,
+    reason: string
+  ): Promise<void> {
+    replyToClose(socket, code, reason);
+    await Effect.runPromise(this.#host.closed(socket));
+  }
+
+  override async webSocketError(socket: WebSocket): Promise<void> {
+    await Effect.runPromise(this.#host.closed(socket));
+  }
+}
+
 /**
  * A Durable Object class to export from the Worker as `ClusterEntity`, in place of Effect's own:
  * it runs `makeClusterEntityProgram` and forwards its seven methods, so every entity of the
@@ -230,126 +333,33 @@ const hostOf = (
  *
  * **Gotchas**
  *
- * - A watch's poll that finds nothing new is parked in the socket's attachment and answered once a change lands, read through `Stored.layerEvents`' change signal after each call, alarm and handler of the object settles: an entity whose events are not on `Stored.layerEvents` has its polls answered at once, its watches polling at `nextPoll`.
- * - A post a socket watches costs 1 + T + P stub calls, `invoke` each: the post, the T calls and tells its handler sends, each one, as a persisted tell to the entity itself is, and one for each of the P polls parked on that object, sent as it settles; the page's client polls again `nextPoll` later, and that poll is parked with no call when nothing changed meanwhile, so a change in that window reaches the page with that poll.
- * - A change written outside a handler, as an `emit` stream or a check source over an upstream, moves no settle: a parked poll answers it when the object next settles, or when its client sends it again, 4 minutes after it was sent, which wakes the object.
- * - A source's subscription hook is held by the entity's activation while its polls renew it, every 4 minutes at least: a hook whose `lease` is shorter lapses while a poll is parked, and one that holds a timer or a socket keeps the object awake.
+ * - A watch's poll that finds nothing new is parked in the socket's attachment and asked again once `Stored.layerEvents`' change signal moved, read as each handler the object runs ends, whether a call, a tell or an alarm ran it: an entity whose events are not on `Stored.layerEvents` has its polls answered at once, its watches polling at `nextPoll`.
+ * - A post a socket watches costs 1 + T + P stub calls, `invoke` each: the post, the T calls and tells its handler sends, each one, as a persisted tell to the entity itself is, and one for each of the P polls parked on that object, sent as it settles; the page's client polls again `nextPoll` later, and that poll is parked with no call when nothing changed meanwhile and the last poll's call was under 30 seconds earlier, so a source whose `nextPoll` is 30 seconds or more costs one call a page each `nextPoll`.
+ * - An `emit` stream's append, which no handler runs, moves the change signal but is read only when the object's next handler ends; a change a check source reads from an upstream moves no signal at all, so a parked poll answers it only when its client sends it again, 4 minutes after it was sent: `notify` the source from a handler to answer it at once.
+ * - A source's subscription hook is held by the entity's activation while a page's polls renew it: the host calls the entity with a page's poll at least every 4 minutes 30 seconds, or each `nextPoll` when that is longer, so a hook whose `lease` is shorter lapses while a poll is parked, and one that holds a timer or a socket keeps the object awake.
  * - Only the binding's actions and event types are forwarded: a native rpc, which authenticates nothing, and a streaming action, whose frames would hold the object awake, each fail the call with a defect naming it.
+ * - A call under way is interrupted, through Effect's own interrupt to the entity, when the page interrupts it, as `Effect.timeout` does, or its socket closes or fails; a frame the host cannot read is answered with Effect's `Defect`, which fails the page's calls under way on that socket.
  * - A call under way when the object is evicted, by a deploy, a crash or `evictDurableObject`, is lost: the next instance closes that socket with 1012, and the page's client connects again and polls from its cursor; a message on a socket whose attachment the object cannot read, as after a deploy changing it, closes it with 1012 the same way.
  * - The upgrade's headers, cookies included, are each call's credentials, and the host judges no `Origin`: refuse a page of another site, or keep cookies off the socket, in the Worker's `fetch`, before it hands the upgrade to the object.
  * - The upgrade's headers, the calls under way and the parked polls, each with the headers its message sent, share the runtime's 16 KiB attachment: an upgrade past it is answered 431, and a call past it fails with a defect naming it.
- * - The runtime answers the page's pings itself, so an open page does not wake the object; a request that is no upgrade is answered 426, an upgrade to an object of an entity type not in `sockets` 404.
+ * - The runtime answers the page's pings itself, so an open page does not wake the object, and the host answers a page's close with its code and reason; a request that is no upgrade is answered 426, an upgrade to an object of an entity type not in `sockets` 404.
  * - It waits on `initialize` alone, so a build pending past 15 seconds is taken over without Effect's own `ClusterEntity`'s bound, which keeps a replacement build inside the runtime's 30 seconds; Effect does not export that wait.
  */
 export const make = <Env>(
   options: Options<Env>
-): new (ctx: DurableObjectState, env: Env) => DurableObject<Env> & Methods => {
-  const refusal = refusalOf(options.protocol);
+): new (ctx: DurableObjectState, env: Env) => Host<Env> => {
+  const { initialize } = options;
 
-  const byType = new Map(
-    options.sockets.map((entity) => [entity.type, entity] as const)
-  );
+  const bound: Bound = {
+    refusal: refusalOf(options.protocol),
+    byType: new Map(
+      options.sockets.map((entity) => [entity.type, entity] as const)
+    ),
+  };
 
-  return class extends DurableObject<Env> implements Methods {
-    #program!: ClusterEntityProgram;
-    #host!: ReturnType<typeof hostOf>;
-
+  return class extends Host<Env> {
     constructor(ctx: DurableObjectState, env: Env) {
-      super(ctx, env);
-      ctx.setWebSocketAutoResponse(pingPong());
-
-      void ctx.blockConcurrencyWhile(async () => {
-        const host = hostOf(ctx, await options.initialize(env), byType);
-
-        this.#program = await Effect.runPromise(
-          makeClusterEntityProgram({
-            id: ctx.id,
-            storage: ctx.storage,
-            exports: ctx.exports,
-            waitUntil: (promise) => {
-              ctx.waitUntil(promise);
-              void promise.then(host.settled, host.settled);
-            },
-          })
-        );
-
-        this.#host = host;
-        host.started();
-      });
-    }
-
-    async #settling<A>(effect: Effect.Effect<A>): Promise<A> {
-      try {
-        return await Effect.runPromise(effect);
-      } finally {
-        this.#host.settled();
-      }
-    }
-
-    override async alarm(): Promise<void> {
-      await this.#settling(this.#program.alarm());
-    }
-
-    async hold(): Promise<void> {
-      await Effect.runPromise(this.#program.hold());
-    }
-
-    async invoke(
-      envelopeText: string,
-      discard: boolean,
-      delivery?: EntityDeliveryOptions
-    ): Promise<EntityInvokeResult> {
-      return await this.#settling(
-        this.#program.invoke(envelopeText, discard, delivery)
-      );
-    }
-
-    async acknowledge(
-      requestId: string,
-      replyId: string
-    ): Promise<readonly string[]> {
-      return await Effect.runPromise(
-        this.#program.acknowledge(requestId, replyId)
-      );
-    }
-
-    async interrupt(
-      storageRequestId: string,
-      clientRequestId = storageRequestId
-    ): Promise<void> {
-      await Effect.runPromise(
-        this.#program.interrupt(storageRequestId, clientRequestId)
-      );
-    }
-
-    async reset(requestId: string): Promise<void> {
-      await Effect.runPromise(this.#program.reset(requestId));
-    }
-
-    async deliverReply(requestId: string, reply: string): Promise<boolean> {
-      return await Effect.runPromise(
-        this.#program.deliverReply(requestId, reply)
-      );
-    }
-
-    override fetch(request: Request): Response {
-      return this.#host.upgrade(request, refusal);
-    }
-
-    override async webSocketMessage(
-      socket: WebSocket,
-      data: string | ArrayBuffer
-    ): Promise<void> {
-      await Effect.runPromise(this.#host.message(socket, data));
-    }
-
-    override webSocketClose(
-      socket: WebSocket,
-      code: number,
-      reason: string
-    ): void {
-      replyToClose(socket, code, reason);
-      this.#host.settled();
+      super(ctx, env, initialize, bound);
     }
   };
 };

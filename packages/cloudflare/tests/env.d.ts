@@ -7,6 +7,7 @@ declare global {
       readonly CLUSTER_WORKFLOW: DurableObjectNamespace;
       readonly CLUSTER_QUEUE: DurableObjectNamespace;
       readonly CLUSTER_SINGLETON: DurableObjectNamespace;
+      readonly OPEN_HOST: DurableObjectNamespace;
     }
 
     interface GlobalProps {

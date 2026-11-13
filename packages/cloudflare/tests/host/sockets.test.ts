@@ -1,72 +1,24 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { exports } from "cloudflare:workers";
-import { Effect, Layer, Predicate, Queue, Schedule, Stream } from "effect";
-import { FetchHttpClient } from "effect/http";
+import { Effect, Predicate, Queue, Schedule, Stream } from "effect";
 import { RpcClient } from "effect/rpc";
 
-import type { Note } from "../board.js";
-import { BoardHttp, BoardRpc, Logged, Pinned } from "../board.js";
+import { BoardRpc, Logged, Pinned } from "../board.js";
 import {
   clientOver,
   evict,
   objectOf,
   opened,
-  watchingIn,
+  settledStubs,
   stubs,
   upgrade,
+  watchingIn,
 } from "../support/socket.js";
+import { boards, following, notes, throughWorker } from "../support/watch.js";
 import { Seer } from "../worker.js";
 
-const throughWorker = FetchHttpClient.layer.pipe(
-  Layer.provide(
-    Layer.succeed(FetchHttpClient.Fetch)(
-      async (input, init) =>
-        await exports.default.fetch(new Request(input, init))
-    )
-  )
-);
-
-const boards = ActionHttp.client(BoardHttp, {
-  baseUrl: "https://worker.example",
-});
-
 const SeerRpc = Seer.binding;
-
-type Watched = Event.Received<typeof Pinned> | Event.Received<typeof Logged>;
-
-const following = (stream: Stream.Stream<Watched, unknown>) =>
-  Effect.gen(function* () {
-    const received = yield* Queue.unbounded<typeof Note.Type>();
-
-    yield* stream.pipe(
-      Stream.runForEach((item) =>
-        item._tag === "Occurrence"
-          ? Queue.offer(received, item.data)
-          : Effect.void
-      ),
-      Effect.forkScoped
-    );
-
-    return received;
-  });
-
-const notes = (received: Queue.Queue<typeof Note.Type>, count: number) =>
-  Effect.forEach(Array.from({ length: count }), () =>
-    Queue.take(received)
-  ).pipe(Effect.timeout("20 seconds"));
-
-const settledStubs = stubs.pipe(
-  Effect.repeat({
-    until: ({ started, finished }) =>
-      started.invoke === finished.invoke &&
-      started.hold === finished.hold &&
-      started.acknowledge === finished.acknowledge,
-    schedule: Schedule.spaced("100 millis"),
-  })
-);
 
 describe("ActionClusterEntity's sockets", () => {
   it.live(
