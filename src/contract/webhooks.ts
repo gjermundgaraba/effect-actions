@@ -40,7 +40,8 @@ export interface Subscribing extends AnyWebhookSubscription {
 
 /**
  * Where a surface's webhook subscriptions are held and delivered from: `Webhook.layer` provides
- * it, and a surface offers webhook delivery only where it is. A surface `serve`s the feeds it
+ * it, and a surface offers webhook delivery of its own events only where it is, and of an
+ * event `ActionEntity.reaching` serves where the entity holds one. A surface `serve`s the feeds it
  * offers by webhook as it builds, with its authentication, which restores their kept
  * subscriptions, and dies where they cannot be kept. `subscribe` runs as the subscriber, whose
  * context each delivery runs in; it fails as the feed's admission does, or with

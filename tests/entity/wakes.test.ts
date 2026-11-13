@@ -1,5 +1,6 @@
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
+import type { Duration } from "effect";
 import { Clock, Effect, Layer, Schedule, Schema } from "effect";
 import { SingleRunner } from "effect/cluster";
 import { Digest } from "effect/crypto";
@@ -37,7 +38,7 @@ const signIn = Authentication.layer(Login, verify);
 
 const Count = Schema.Array(Schema.Struct({ count: Schema.Int }));
 
-const makeWorld = () => {
+const makeWorld = (nextPoll: Duration.Input = "1 second") => {
   const ticks: number[] = [];
   const seen = { builds: 0, stops: 0, accepting: false };
   const delivered: string[] = [];
@@ -61,7 +62,7 @@ const makeWorld = () => {
             events: ticks
               .slice(cursor === null ? ticks.length : Number(cursor))
               .map((at) => ({ eventId: `tick-${at}`, data: { at } })),
-            nextPoll: "1 second",
+            nextPoll,
           }),
       }
     ),
@@ -129,6 +130,19 @@ const wakesBefore = (dueBefore: number, unprocessedOnly: boolean) =>
       Effect.map((rows) => rows[0]?.count ?? 0)
     )
   ).pipe(Effect.orDie);
+
+const Stored = Schema.Array(
+  Schema.Struct({
+    headers: Schema.NullOr(Schema.String),
+    payload: Schema.String,
+  })
+);
+
+const storedWakes = Effect.flatMap(SqlClient.SqlClient, (sql) =>
+  sql`SELECT headers, payload FROM cluster_messages WHERE tag = 'effect-actions/wake'`.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Stored))
+  )
+).pipe(Effect.orDie);
 
 const retryWakes = Effect.suspend(() => wakesBefore(Date.now() + 60_000, true));
 
@@ -199,6 +213,7 @@ describe("ActionEntity.layerClock on a SQL runner", () => {
         );
 
         const pendingAtStop = yield* retryWakes;
+        const wakesAtStop = yield* storedWakes;
 
         seen.accepting = true;
 
@@ -210,6 +225,12 @@ describe("ActionEntity.layerClock on a SQL runner", () => {
 
         expect(answered.status).toBe(200);
         expect(pendingAtStop).toBe(1);
+        expect(wakesAtStop).not.toStrictEqual([]);
+        expect(
+          wakesAtStop.filter(({ headers, payload }) =>
+            /authorization|alice/iu.test(`${headers ?? ""} ${payload}`)
+          )
+        ).toStrictEqual([]);
         expect(yield* wakesBefore(started + 60_000, false)).toBe(1);
         expect(seen.builds).toBe(2);
         expect(delivered.map((body) => bodyOf(body))).toMatchObject([
@@ -265,6 +286,62 @@ describe("ActionEntity.layerClock on a SQL runner", () => {
       );
     },
     { timeout: 90_000 }
+  );
+});
+
+describe("ActionEntity.layerClock's rows", () => {
+  it.live(
+    "writes a wake for a subscription's expiry at its grant and again at each refresh",
+    () => {
+      const { server } = makeWorld();
+
+      const expiryWakes = Effect.suspend(() =>
+        wakesBefore(Date.now() + 2 * 60 * 60 * 1000, false)
+      ).pipe(
+        Effect.zipWith(
+          Effect.suspend(() => wakesBefore(Date.now() + 60_000, false)),
+          (all, soon) => all - soon
+        )
+      );
+
+      return Effect.gen(function* () {
+        yield* subscribed;
+
+        const granted = yield* until(expiryWakes, (count) => count > 0, 5000);
+
+        yield* Effect.sleep("1100 millis");
+        yield* subscribed;
+
+        const refreshed = yield* until(
+          expiryWakes,
+          (count) => count > granted,
+          5000
+        );
+
+        expect([granted, refreshed]).toStrictEqual([1, 2]);
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "asks a check source whose nextPoll is 10 seconds or more again through a wake, one row each",
+    () => {
+      const { server } = makeWorld("10 seconds");
+
+      return Effect.gen(function* () {
+        yield* subscribed;
+
+        const polls = yield* until(
+          Effect.suspend(() => wakesBefore(Date.now() + 60_000, false)),
+          (count) => count > 1,
+          35_000
+        );
+
+        expect(polls).toBeGreaterThan(1);
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 60_000 }
   );
 });
 
