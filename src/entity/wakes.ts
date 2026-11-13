@@ -178,7 +178,7 @@ class DurableClock implements Clock.Clock {
  *
  * **Gotchas**
  *
- * - A long sleep's tell is due at a time sleeps ending near it share, before its end, and the sleep goes on from there: it never ends early, and an entity keeps at most 16 tells pending due within 16 seconds and 16 more for each doubling beyond, however many sleeps it starts.
+ * - A long sleep's tell is due at a time sleeps ending near it share, before its end, and the sleep goes on from there to its end, by a timer once under 10 seconds: an entity keeps at most 16 tells pending due within 16 seconds and 16 more for each doubling beyond, however many sleeps it starts.
  * - A tell delivered before its time, as a test moving its `deliver_at` delivers it, ends the sleeps it was sent for at once.
  */
 export const layerClock: Layer.Layer<never, never, Wakes> = Layer.effect(
