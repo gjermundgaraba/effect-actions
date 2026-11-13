@@ -216,6 +216,12 @@ const hostOf = (
   };
 };
 
+/**
+ * The Durable Object `make`'s class builds: the seven methods of Effect's own `ClusterEntity`,
+ * forwarded to `makeClusterEntityProgram`, and the WebSocket handlers serving `sockets`. Exported
+ * as a type alone, to name the class in a Worker's declarations; a subclass of `make`'s class
+ * overrides a method by calling `super`.
+ */
 class Host<Env> extends DurableObject<Env> {
   #program!: ClusterEntityProgram;
   #host!: ReturnType<typeof hostOf>;
@@ -363,3 +369,5 @@ export const make = <Env>(
     }
   };
 };
+
+export type { Host };
