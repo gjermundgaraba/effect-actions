@@ -27,6 +27,7 @@ import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
+import { framesOf } from "../support/sse.js";
 import { secretOf } from "../support/webhook.js";
 
 const Ticked = Event.make("ticked", {
@@ -255,7 +256,7 @@ const sentOf = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(PushedOf(Ticked)))
 );
 
-const framesOf = (response: HttpClientResponse.HttpClientResponse) =>
+const pushedFrames = (response: HttpClientResponse.HttpClientResponse) =>
   response.stream.pipe(
     Stream.decodeText,
     Stream.pipeThroughChannel(Sse.decode()),
@@ -384,7 +385,7 @@ describe("ActionEntity.reaching's event streams", () => {
           )
         );
 
-        const frames = yield* framesOf(response).pipe(
+        const frames = yield* pushedFrames(response).pipe(
           Stream.tap((sent) =>
             Effect.sync(() => {
               if (sent._tag === "Failed") {
@@ -414,7 +415,7 @@ describe("ActionEntity.reaching's event streams", () => {
   );
 
   it.live(
-    "end on an error the entity's verifier declares before MCP's events/stream is active, which answers -32603 and opens it no more",
+    "end on an error the entity's verifier declares before MCP's events/stream is active, which answers -32603 and opens it no more, where one admitted is active",
     () => {
       const { counted, server } = makeTicker({
         entityUnavailable: (call) => call === 1,
@@ -422,7 +423,7 @@ describe("ActionEntity.reaching's event streams", () => {
       });
 
       return Effect.gen(function* () {
-        const response = yield* HttpClient.execute(
+        const streamed = HttpClient.execute(
           ActionMcp.request(
             "events/stream",
             { name: "ticked", arguments: { room: "a" }, cursor: null },
@@ -430,15 +431,28 @@ describe("ActionEntity.reaching's event streams", () => {
           )
         );
 
-        const answered = yield* response.text.pipe(
-          Effect.timeout("5 seconds"),
-          Effect.flatMap(Schema.decodeEffect(Json))
+        const answered = yield* Effect.scoped(
+          Effect.flatMap(streamed, (response) =>
+            response.text.pipe(
+              Effect.timeout("5 seconds"),
+              Effect.flatMap(Schema.decodeEffect(Json))
+            )
+          )
+        );
+
+        const beforeAdmitted = { ...counted };
+
+        const [active] = yield* Effect.scoped(
+          Effect.flatMap(streamed, (response) => framesOf(response, 1))
         );
 
         expect(answered).toMatchObject({
           error: { code: -32_603, message: "Internal error" },
         });
-        expect(counted).toMatchObject({ checks: 0, hooked: 0 });
+        expect(beforeAdmitted).toMatchObject({ checks: 0, hooked: 0 });
+        expect(active?.data).toMatchObject({
+          method: "notifications/events/active",
+        });
       }).pipe(Effect.scoped, Effect.provide(server));
     },
     { timeout: 30_000 }
