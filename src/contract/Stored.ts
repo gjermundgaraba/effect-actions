@@ -15,6 +15,10 @@ import { Idempotency, Kept, keptFor } from "./idempotency.js";
  * every one. For a host whose subscribers outlive it, such as a cluster entity on its own
  * SQLite: a watch resumed from a cursor after a restart on the same database receives every
  * occurrence past it within the log's bounds, `maxAge` (10 minutes by default) and `maxEvents`.
+ * Its change signal is `(SELECT total(count) FROM effect_actions_event_revision) + (SELECT
+ * total(last) FROM effect_actions_event_position)`, which each `notify` and each append to a
+ * log, published or emitted, moves, and no read or restart does: a host reads it to learn
+ * whether a poll could answer anything new.
  *
  * **Gotchas**
  *

@@ -257,10 +257,8 @@ const memorySystem = () => {
   );
 };
 
-const sqlSystem = Effect.gen(function* () {
-  const client = yield* Layer.build(sqliteAt(":memory:"));
-
-  return yield* restartable(
+const sqlSystemOn = (client: Context.Context<SqlClient.SqlClient>) =>
+  restartable(
     Effect.flatMap(
       Layer.build(
         Stored.layerEvents.pipe(Layer.provide(Layer.succeedContext(client)))
@@ -268,7 +266,11 @@ const sqlSystem = Effect.gen(function* () {
       (built) => opened(Context.get(built, Events))
     )
   );
-});
+
+const sqlSystem = Effect.flatMap(
+  Layer.build(sqliteAt(":memory:")),
+  sqlSystemOn
+);
 
 interface Published {
   readonly seq: number;
@@ -354,6 +356,45 @@ describe("Stored.layerEvents", () => {
         }
       }),
     { arbitrary: { runs: 500 } }
+  );
+});
+
+const Gate = Schema.Array(Schema.Struct({ gate: Schema.Finite }));
+
+const gateOf = (sql: SqlClient.SqlClient) =>
+  sql`SELECT (SELECT total(count) FROM effect_actions_event_revision) + (SELECT total(last) FROM effect_actions_event_position) AS gate`.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Gate)),
+    Effect.map((rows) => rows[0]?.gate)
+  );
+
+describe("Stored.layerEvents' change signal", () => {
+  it.effect.prop(
+    "moves the sum of the revision counts and the log positions' last sequence numbers at each notify and publish, and at no read, revision or restart",
+    { steps: Steps },
+    ({ steps }) =>
+      Effect.gen(function* () {
+        const client = yield* Layer.build(sqliteAt(":memory:"));
+        const sql = Context.get(client, SqlClient.SqlClient);
+        const system = yield* sqlSystemOn(client);
+        let before = yield* gateOf(sql);
+
+        for (const [index, { command }] of steps.entries()) {
+          yield* system(command, index);
+
+          const after = yield* gateOf(sql);
+
+          expect({
+            command: command._tag,
+            moved: after !== before,
+          }).toStrictEqual({
+            command: command._tag,
+            moved: command._tag === "Publish" || command._tag === "Notify",
+          });
+
+          before = after;
+        }
+      }),
+    { arbitrary: { runs: 200 } }
   );
 });
 
