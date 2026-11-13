@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Predicate, Schema, Stream } from "effect";
+import { Effect, Layer, Predicate, Schema, Stream } from "effect";
 import type { Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
@@ -25,7 +25,12 @@ import type {
   Run,
   ServingEvents,
 } from "../contract/feed.js";
-import { Implementation, memoized } from "../contract/implementation.js";
+import {
+  answered,
+  elementsOf,
+  Implementation,
+  memoized,
+} from "../contract/implementation.js";
 import type {
   ErasedAuthorize,
   ErasedValue,
@@ -36,10 +41,13 @@ import type {
   WrittenHandler,
 } from "../contract/implementation.js";
 import { InputCheck } from "../contract/input-check.js";
+import type { Reporting } from "../contract/progress.js";
 import { buildersOf, servingOf } from "../contract/serving.js";
+import { elementOf } from "../contract/stream.js";
 import type { Answer } from "../contract/stream.js";
 import { polling } from "../contract/watch.js";
 import type { WatchArgs } from "../contract/watch.js";
+import type { WebhookHolder } from "../contract/webhooks.js";
 import type * as ActionRpc from "../rpc/ActionRpc.js";
 import {
   actionMethodOf,
@@ -49,7 +57,6 @@ import {
   nativeOf,
   polledTransport,
   pollOf,
-  streams,
   watchedOf,
   webhookCallsOf,
   webhookRpcsOf,
@@ -605,6 +612,20 @@ export type Client<B extends ActionRpc.Any> = {
   >;
 } & Watching<B>;
 
+const erasedCallOf =
+  (
+    rpcs: ReturnType<
+      Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>
+    >
+  ): ErasedCall =>
+  (tag, payload, options) => {
+    const method = rpcs[tag];
+
+    return method === undefined
+      ? Effect.die(new Error(`ActionEntity: no rpc ${tag}`))
+      : method(payload, options);
+  };
+
 /**
  * The client of `entity` over Effect's own `Entity.client`, as a function of an entity id: one
  * method per action taking its input, `rooms("lobby").postMessage({ room: "lobby", text })`, and
@@ -626,60 +647,19 @@ export const client = <
 >(
   entity: Entity<Type, B, N>
 ): Effect.Effect<(entityId: string) => Client<B>, never, Sharding.Sharding> =>
-  Effect.map(entity.client, (clientFor) => (entityId: string) => {
-    const rpcs = clientFor(entityId);
-
-    const call: ErasedCall = (tag, payload, options) => {
-      const method = rpcs[tag];
-
-      return method === undefined
-        ? Effect.die(new Error(`ActionEntity.client: no rpc ${tag}`))
-        : method(payload, options);
-    };
-
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    return methodsOf(
-      entity.binding,
-      call,
-      polledTransport(isTransient)
-    ) as Client<B>;
-  });
+  Effect.map(
+    entity.client,
+    (clientFor) => (entityId: string) =>
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      methodsOf(
+        entity.binding,
+        erasedCallOf(clientFor(entityId)),
+        polledTransport(isTransient)
+      ) as Client<B>
+  );
 
 type Nothing<C extends Action.Any | Event.Any> = {
   readonly [K in C["name"]]: never;
-};
-
-const Reached = Context.Reference<string | undefined>(
-  "effect-actions/ActionEntity/Reached",
-  { defaultValue: () => undefined }
-);
-
-const reachedCall = (
-  clientFor: Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>,
-  streaming: ReadonlySet<string>
-): ErasedCall => {
-  const send = (tag: string, payload: Schema.Json) =>
-    Effect.flatMap(Effect.all([Reached, forwarded]), ([entityId, headers]) => {
-      const method =
-        entityId === undefined ? undefined : clientFor(entityId)[tag];
-
-      return method === undefined
-        ? Effect.die(new Error(`ActionEntity.reaching: no entity for ${tag}`))
-        : Effect.succeed(method(payload, { headers }));
-    });
-
-  return (tag, payload) =>
-    streaming.has(tag)
-      ? Stream.unwrap(
-          Effect.map(send(tag, payload), (answer) =>
-            Stream.isStream(answer) ? answer : Stream.fromEffect(answer)
-          )
-        )
-      : Effect.flatMap(send(tag, payload), (answer) =>
-          Stream.isStream(answer)
-            ? Effect.die(new Error(`ActionEntity.reaching: ${tag} streams`))
-            : answer
-        );
 };
 
 /**
@@ -728,71 +708,75 @@ export const reaching = <
   const { binding } = entity;
   const named = namedBy(entity.key);
 
-  const calls = Effect.map(entity.client, (clientFor) =>
-    reachedCall(
-      clientFor,
-      new Set(binding.actions.filter(streams).map(({ name }) => name))
-    )
+  type Reach = (
+    contract: Action.Any | Event.Any,
+    input: ErasedValue
+  ) => Effect.Effect<
+    (tag: string) => (payload: Schema.Json) => ReturnType<ErasedCall>,
+    Action.Forbidden
+  >;
+
+  const reaches = Effect.map(
+    entity.client,
+    (clientFor): Reach =>
+      (contract, input) => {
+        const entityId = named(contract, input);
+
+        return entityId === undefined
+          ? Effect.fail(
+              new Action.Forbidden({
+                message: `The input of ${contract.name} names no entity of ${entity.type}`,
+              })
+            )
+          : Effect.map(forwarded, (headers) => {
+              const call = erasedCallOf(clientFor(entityId));
+
+              return (tag) => (payload) => call(tag, payload, { headers });
+            });
+      }
   );
-
-  const to = (contract: Action.Any | Event.Any, input: ErasedValue) => {
-    const entityId = named(contract, input);
-
-    return entityId === undefined
-      ? Effect.fail(
-          new Action.Forbidden({
-            message: `The input of ${contract.name} names no entity of ${entity.type}`,
-          })
-        )
-      : Effect.succeed(entityId);
-  };
 
   const handlerOf = (
     action: Action.Any,
-    call: ErasedCall
+    reach: Reach
   ): WrittenHandler<unknown> => {
-    const method = actionMethodOf(action, binding, (payload) =>
-      call(action.name, payload)
-    );
-
-    return (input, reporting) => {
-      const answer = method(
-        input,
-        ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }])
+    const answer = (input: ErasedValue, reporting: Reporting | undefined) =>
+      Effect.map(reach(action, input), (calling) =>
+        actionMethodOf(
+          action,
+          binding,
+          calling(action.name)
+        )(
+          input,
+          ...(reporting === undefined
+            ? []
+            : [{ onProgress: reporting.progress }])
+        )
       );
 
-      return Stream.isStream(answer)
-        ? Stream.unwrap(
-            Effect.map(to(action, input), (entityId) =>
-              Stream.provideService(answer, Reached, entityId)
-            )
-          ).pipe(Stream.catchIf(isClusterFailure, Stream.die))
-        : Effect.flatMap(to(action, input), (entityId) =>
-            Effect.provideService(answer, Reached, entityId)
-          ).pipe(Effect.catchIf(isClusterFailure, Effect.die));
-    };
+    return elementOf(action.success) === undefined
+      ? (input, reporting) =>
+          Effect.flatMap(answer(input, reporting), answered).pipe(
+            Effect.catchIf(isClusterFailure, Effect.die)
+          )
+      : (input, reporting) =>
+          elementsOf(answer(input, reporting)).pipe(
+            Stream.catchIf(isClusterFailure, Stream.die)
+          );
   };
 
-  const runOf = (event: Event.Any, call: ErasedCall): Run => {
+  const runOf = (event: Event.Any, reach: Reach): Run => {
     const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(event.input));
 
-    const calling = (tag: string) => (payload: Schema.Json) =>
-      call(tag, payload);
-
-    const poll = pollOf(event, binding, calling(event.name));
-    const watched = watchedOf(event, binding, calling);
-
     const reached = (input: ErasedValue) =>
-      Effect.all([to(event, input), Effect.orDie(encode(input))]);
-
-    const held = webhookCallsOf(event, binding, calling);
+      Effect.all([reach(event, input), Effect.orDie(encode(input))]);
 
     const inEntity = <A>(
       input: ErasedValue,
-      sent: Effect.Effect<A, unknown, unknown>
+      sent: (held: WebhookHolder) => Effect.Effect<A, unknown, unknown>
     ) =>
-      Effect.flatMap(to(event, input), (entityId) =>
-        Effect.provideService(sent, Reached, entityId)
+      Effect.flatMap(reach(event, input), (calling) =>
+        sent(webhookCallsOf(event, binding, calling))
       ).pipe(Effect.catchIf(isClusterFailure, Effect.die));
 
     return {
@@ -801,25 +785,33 @@ export const reaching = <
           ? undefined
           : {
               subscribe: (subscribing) =>
-                inEntity(subscribing.input, held.subscribe(subscribing)),
+                inEntity(subscribing.input, (held) =>
+                  held.subscribe(subscribing)
+                ),
               unsubscribe: (subscription) =>
-                inEntity(subscription.input, held.unsubscribe(subscription)),
+                inEntity(subscription.input, (held) =>
+                  held.unsubscribe(subscription)
+                ),
             },
       poll: (input, cursor, { maxEvents }) =>
-        Effect.flatMap(reached(input), ([entityId, json]) =>
-          poll({
+        Effect.flatMap(reached(input), ([calling, json]) =>
+          pollOf(
+            event,
+            binding,
+            calling(event.name)
+          )({
             input: json,
             cursor,
             ...(maxEvents === undefined ? {} : { maxEvents }),
-          }).pipe(Effect.provideService(Reached, entityId))
+          })
         ).pipe(Effect.catchIf(isClusterFailure, Effect.die)),
       stream: (input, cursor) =>
         Stream.unwrap(
-          Effect.map(reached(input), ([entityId, json]) =>
+          Effect.map(reached(input), ([calling, json]) =>
             polling(
-              watched(json),
+              watchedOf(event, binding, calling)(json),
               isTransient
-            )(cursor).pipe(Stream.provideService(Reached, entityId))
+            )(cursor)
           )
         ).pipe(Stream.catchIf(isClusterFailure, Stream.die)),
     };
@@ -837,10 +829,10 @@ export const reaching = <
           >(
             binding.actions,
             memoized(
-              Effect.map(calls, (call): Written =>
+              Effect.map(reaches, (reach): Written =>
                 binding.actions.map((action) => [
                   action,
-                  handlerOf(action, call),
+                  handlerOf(action, reach),
                 ])
               )
             ),
@@ -861,7 +853,7 @@ export const reaching = <
               (event) =>
                 [
                   event,
-                  memoized(Effect.map(calls, (call) => runOf(event, call))),
+                  memoized(Effect.map(reaches, (reach) => runOf(event, reach))),
                 ] as const
             ),
             memoized(Effect.succeed<ErasedAuthorize<Event.Any>>(Event.allowAll))
