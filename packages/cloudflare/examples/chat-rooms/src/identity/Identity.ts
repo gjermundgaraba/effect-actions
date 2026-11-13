@@ -12,4 +12,7 @@ export class CurrentMember extends Context.Service<CurrentMember, Member>()(
   "chat-rooms/CurrentMember"
 ) {}
 
-export const Login = Authentication.make("chat-rooms.Login", CurrentMember);
+export const Login = Authentication.make("chat-rooms.Login", CurrentMember, {
+  principal: (member) => member.id,
+  schema: Member,
+});

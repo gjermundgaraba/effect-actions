@@ -23,6 +23,7 @@ import {
 import { layerObjectSql } from "./platform/object-sql.js";
 import { layerSqlMessages } from "./platform/sql-messages.js";
 import { layerSqlPreviews } from "./platform/sql-previews.js";
+import { layerRoomWebhooks } from "./platform/webhook-delivery.js";
 
 const roomOfAddress = Layer.effect(CurrentRoom)(
   Effect.flatMap(Entity.CurrentAddress, ({ entityId }) =>
@@ -32,7 +33,8 @@ const roomOfAddress = Layer.effect(CurrentRoom)(
 
 const roomServices = Layer.mergeAll(
   Stored.layerEvents,
-  Stored.layerIdempotency.pipe(Layer.provide(KeyValueStore.layerSql()))
+  Stored.layerIdempotency.pipe(Layer.provide(KeyValueStore.layerSql())),
+  layerRoomWebhooks
 ).pipe(
   Layer.provideMerge(
     Layer.mergeAll(

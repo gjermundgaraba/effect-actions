@@ -1,6 +1,6 @@
 # chat-rooms
 
-Chat rooms on Cloudflare, on Effect Cluster: each room is one entity, `Room`, and so one Durable Object holding its messages in its own SQLite database. Members read, post and delete messages in the rooms they belong to over the Worker's JSON routes and MCP endpoint, which reach every room through `ActionEntity.reaching`. A page follows its room through an event, `MessagePosted`, over a WebSocket to the room's own object, which the runtime holds open while the room hibernates; an agent polls it over MCP. A message expires a day after it was posted: posting schedules a persisted tell to the room itself, delivered by `DeliverAt`. A lobby, one more entity, keeps when each room was last active: each room tells it its latest activity and the version of its messages, from a persisted tell the room sends itself, carrying no credential, and a page follows it, every preview whole at each change.
+Chat rooms on Cloudflare, on Effect Cluster: each room is one entity, `Room`, and so one Durable Object holding its messages in its own SQLite database. Members read, post and delete messages in the rooms they belong to over the Worker's JSON routes and MCP endpoint, which reach every room through `ActionEntity.reaching`. A page follows its room through an event, `MessagePosted`, over a WebSocket to the room's own object, which the runtime holds open while the room hibernates; an agent polls it over MCP, and a subscriber's callback receives it by webhook, delivered by the room across its eviction. A message expires a day after it was posted: posting schedules a persisted tell to the room itself, delivered by `DeliverAt`. A lobby, one more entity, keeps when each room was last active: each room tells it its latest activity and the version of its messages, from a persisted tell the room sends itself, carrying no credential, and a page follows it, every preview whole at each change.
 
 Start here to run actions on Cloudflare. The same chat on a long-lived server is live-rpc, in the core package's `examples/`.
 
@@ -34,6 +34,7 @@ Each trap below is shown in the code of the files it names.
 - **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
 - **A room's tells keep no credential**: `src/platform/cluster-clients.ts`, `test/worker.test.ts`.
 - **The lobby's event is a whole value**, followed with no read first: `src/lobby/events.ts`, `src/browser.ts`.
+- **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for a wait of 10 seconds or more, and a subscribed room stays awake while its subscription lives, as `MessagePosted` is a check source asked again every 2 seconds: `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
 
 ## Layout
 
@@ -63,6 +64,7 @@ src/
 │   ├── object-sql.ts    the entity's own SQLite database, as SqlClient
 │   ├── sql-messages.ts  MessageStore over the entity's SQLite database
 │   ├── sql-previews.ts  PreviewStore over the lobby's
+│   ├── webhook-delivery.ts  a room's webhook subscriptions, kept in its database, their long waits as wakes
 │   └── cluster-clients.ts  RoomMailbox and LobbyClient over the entities' clients
 ├── Api.ts             the JSON bindings: a room's and the lobby's
 ├── Rpc.ts             the entities' bindings, and the version a page's socket names
@@ -75,7 +77,11 @@ src/
 ├── browser.ts         client module: a page's room over JSON and its socket, and the lobby
 └── env.d.ts           the bindings' types, as `wrangler types` writes them
 test/
-└── worker.test.ts     through the Worker's fetch: JSON routes, a page's socket, MCP, the lobby, the expiry, the mailboxes
+├── worker.test.ts     through the Worker's fetch: JSON routes, a page's socket, MCP, the lobby, the expiry, the mailboxes
+├── webhooks.test.ts   a room's posts by webhook: an eviction, an unsubscribe, a 410, refused callbacks, order, expiry
+├── support.ts         the Worker's client and an object's tables, eviction and alarm
+├── receiver.ts        the webhook callbacks, answered in Node as Miniflare's outbound service
+└── worker.ts          the test Worker: the stub calls and instances each object counts
 ```
 
 - **An entity is built per wake.** The runtime evicts an idle object and builds the entity again for its next message, its `services` and builders included: anything in memory is gone, and `layerSqlMessages` creates its table if it is not there. The database and the mailbox stay.
@@ -98,4 +104,5 @@ test/
 | An event sent as a whole value, followed with no read first | `src/lobby/events.ts`, `src/browser.ts`, `test/worker.test.ts` |
 | A page's socket to its room, kept open while the room hibernates | `src/worker.ts`, `src/browser.ts`, `test/worker.test.ts` |
 | Another Worker reaching the entities through the booted runtime | `src/rooms-entrypoint.ts` |
+| A room's posts delivered by webhook, across its eviction | `src/platform/webhook-delivery.ts`, `src/routes.ts`, `test/webhooks.test.ts` |
 | Testing on the Workers runtime: an eviction, a scheduled tell, a planted failure, the mailboxes | `test/worker.test.ts` |

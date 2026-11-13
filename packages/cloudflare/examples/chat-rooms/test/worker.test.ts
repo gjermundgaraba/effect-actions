@@ -3,11 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import {
-  evictDurableObject,
-  runDurableObjectAlarm,
-  runInDurableObject,
-} from "cloudflare:test";
+import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import {
   Duration,
@@ -18,7 +14,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { Socket } from "effect/socket";
 
 import { LobbyHttp, RoomHttp } from "../src/Api.js";
@@ -37,17 +33,15 @@ import type { Task } from "../src/chat/Tells.js";
 import { Lobby, Room } from "../src/entities.js";
 import { Login } from "../src/identity/Identity.js";
 import { protocolVersion } from "../src/Rpc.js";
-
-const baseUrl = "https://chat.example";
-
-const worker = FetchHttpClient.layer.pipe(
-  Layer.provide(
-    Layer.succeed(FetchHttpClient.Fetch)(
-      async (input, init) =>
-        await exports.default.fetch(new Request(input, init))
-    )
-  )
-);
+import {
+  baseUrl,
+  deliverNow,
+  evict,
+  objectOf,
+  rowsIn,
+  sqlIn,
+  worker,
+} from "./support.js";
 
 const socketTo = (room: DemoRoomName) =>
   overSocket.pipe(
@@ -119,32 +113,6 @@ const arrivedIn = (received: readonly unknown[]) => (count: number) =>
     (length) => length >= count
   );
 
-const objectOf = (type: string, id: string) =>
-  env.CLUSTER_ENTITY.getByName(CloudflareCluster.encodeName(type, id));
-
-const rowsIn = (type: string, id: string, query: string) =>
-  Effect.promise(
-    async () =>
-      await runInDurableObject(objectOf(type, id), (_, state) =>
-        state.storage.sql
-          .exec(query)
-          .toArray()
-          .map((row) => JSON.stringify(row))
-      )
-  );
-
-const sqlIn = (
-  type: string,
-  id: string,
-  statement: string,
-  ...bindings: number[]
-) =>
-  Effect.promise(async () => {
-    await runInDurableObject(objectOf(type, id), (_, state) => {
-      state.storage.sql.exec(statement, ...bindings);
-    });
-  });
-
 const retryOf = (room: DemoRoomName, task: Task, after: number) =>
   eventually(
     rowsIn(
@@ -153,17 +121,6 @@ const retryOf = (room: DemoRoomName, task: Task, after: number) =>
       `SELECT deliver_at FROM cluster_messages WHERE processed = 0 AND json_extract(envelope, '$.tag') = 'retry' AND json_extract(envelope, '$.payload.task') = '${task}' AND deliver_at > ${after}`
     ),
     (rows) => rows.length > 0
-  );
-
-const deliverNow = (type: string, id: string, tag: string) =>
-  Effect.andThen(
-    sqlIn(
-      type,
-      id,
-      `UPDATE cluster_messages SET deliver_at = ? WHERE processed = 0 AND deliver_at IS NOT NULL AND json_extract(envelope, '$.tag') = '${tag}'`,
-      Date.now()
-    ),
-    Effect.promise(async () => await runDurableObjectAlarm(objectOf(type, id)))
   );
 
 const failing = (type: string, id: string, trigger: string) =>
@@ -193,11 +150,6 @@ const tellsOf = (type: string, id: string, tag: string) =>
           .toArray()
       )
   ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Tells)), Effect.orDie);
-
-const evict = (type: string, id: string) =>
-  Effect.promise(async () => {
-    await evictDurableObject(objectOf(type, id));
-  });
 
 const inApplication = <A, E>(effect: Effect.Effect<A, E, Application>) =>
   Effect.flatMap(

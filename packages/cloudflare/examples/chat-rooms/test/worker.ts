@@ -23,7 +23,14 @@ const invokes: Array<{
 
 const others = { hold: 0, acknowledge: 0 };
 
+const instances: string[] = [];
+
 export class ClusterEntity extends Counted {
+  constructor(...args: ConstructorParameters<typeof Counted>) {
+    super(...args);
+    instances.push(`${this.ctx.id.name ?? ""}#${crypto.randomUUID()}`);
+  }
+
   override async invoke(...args: Parameters<Counted["invoke"]>) {
     const counted = {
       object: this.ctx.id.name ?? "",
@@ -55,7 +62,7 @@ export class ClusterEntity extends Counted {
 export default {
   async fetch(request: Request, env: Cloudflare.Env) {
     if (new URL(request.url).pathname === "/stub-calls") {
-      return Response.json({ invokes, others });
+      return Response.json({ invokes, others, instances });
     }
 
     return await worker.fetch(request, env);

@@ -97,7 +97,7 @@ const lint: ReturnType<typeof config> = config({
     {
       files: [
         "packages/cloudflare/examples/chat-rooms/src/{application,platform/object-sql,worker}.ts",
-        "packages/cloudflare/examples/chat-rooms/test/worker.test.ts",
+        "packages/cloudflare/examples/chat-rooms/test/{support,worker.test}.ts",
         "packages/cloudflare/src/cluster/ActionCluster.ts",
         "packages/cloudflare/src/host/ActionClusterEntity.ts",
         "packages/cloudflare/tests/{worker,cluster/{eviction,redaction}.test,support/socket}.ts",
@@ -177,7 +177,7 @@ const lint: ReturnType<typeof config> = config({
     {
       files: [
         "examples/live-rpc/{src/browser,test/chat/chat.test,test/routes.test}.ts",
-        "packages/cloudflare/examples/chat-rooms/{src/browser,test/worker.test}.ts",
+        "packages/cloudflare/examples/chat-rooms/{src/browser,test/worker.test,test/webhooks.test}.ts",
       ],
       rules: { "unicorn/require-post-message-target-origin": "off" },
     },
