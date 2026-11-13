@@ -62,7 +62,9 @@ export const makeWakes = <E>(send: (wake: Wake) => Effect.Effect<unknown, E>) =>
     }>();
 
     const sleptUntil = (at: number) =>
-      clock.sleep(Duration.millis(at - clock.currentTimeMillisUnsafe()));
+      clock.sleep(
+        Duration.millis(Math.max(at - clock.currentTimeMillisUnsafe(), 0))
+      );
 
     const sentOrSlept = (due: number) =>
       send(new Wake({ at: due })).pipe(
@@ -91,21 +93,29 @@ export const makeWakes = <E>(send: (wake: Wake) => Effect.Effect<unknown, E>) =>
         );
       });
 
-    const until = (at: number): Effect.Effect<void> =>
+    const sleptOn = (
+      at: number,
+      durable: "already" | "if long"
+    ): Effect.Effect<void> =>
       Effect.suspend(() => {
         const now = clock.currentTimeMillisUnsafe();
 
-        if (at - now < Duration.toMillis(durableFrom)) {
+        if (
+          durable === "if long" &&
+          at - now < Duration.toMillis(durableFrom)
+        ) {
           return sleptUntil(at);
         }
 
         return Effect.flatMap(wokenBy(wakeTime(at, now)), (by) =>
-          clock.currentTimeMillisUnsafe() < by ? Effect.void : until(at)
+          clock.currentTimeMillisUnsafe() < by
+            ? Effect.void
+            : sleptOn(at, "if long")
         );
       });
 
     return {
-      wakes: Wakes.of({ until }),
+      wakes: Wakes.of({ until: (at) => sleptOn(at, "already") }),
       woke: ({ payload }: { readonly payload: Wake }) =>
         Rpc.fork(
           Effect.sync(() => {

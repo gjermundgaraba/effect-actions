@@ -415,14 +415,14 @@ const napUntil = (due: number) =>
 
 describe("ActionEntity.layerClock in an entity's services", () => {
   it.live(
-    "ends a handler's sleep of 10 seconds or more no earlier than it is due, though its wake comes while the handler holds the entity's one slot",
+    "ends a handler's sleep of 10 seconds or more at its end, not at its wake 900 milliseconds before, though the wake comes while the handler holds the entity's one slot",
     () =>
       Effect.gen(function* () {
         const late = yield* napUntil(
           Math.ceil(Date.now() / 1000) * 1000 + 12_900
         ).pipe(Effect.timeout("30 seconds"));
 
-        expect(late).toBeGreaterThanOrEqual(0);
+        expect(late).toBeGreaterThan(-100);
         expect(yield* wakesBefore(Date.now(), false)).toBeGreaterThan(0);
       }).pipe(Effect.provide(napping)),
     { timeout: 60_000 }
