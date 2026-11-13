@@ -127,7 +127,7 @@ export const initialize = CloudflareDurableObjects.setInitializer(
 
 ## Serve the entities from the Worker
 
-The Worker serves every entity's actions and events itself, `ActionHttp.layer(RoomHttp, ActionEntity.reaching(Room))`, each call sent to the object its input's key names, and one MCP endpoint for all of them, `requestScoped`, in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts). Each entity id builds its own stores as it activates, in `ActionEntity.layer`'s `services`: there, `CloudflareCluster.DurableObjectSqlClient` is the object's own database, which `Stored.layerEvents`, `Stored.layerIdempotency` over `KeyValueStore.layerSql` and the example's message store read; built outside an activation, it dies. A room reads its name from `Entity.CurrentAddress` the same way.
+The Worker serves every entity's actions and events itself, `ActionHttp.layer(RoomHttp, ActionEntity.reaching(Room))`, each call sent to the object its input's key names, and one MCP endpoint for all of them, `requestScoped`, in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts). Each entity id builds its own stores as it activates, in `ActionEntity.layer`'s `services`: there, `CloudflareCluster.DurableObjectSqlClient` is the object's own database, which `Stored.layerEvents`, `Stored.layerIdempotency` and the example's message store read; built outside an activation, it dies. A room reads its name from `Entity.CurrentAddress` the same way.
 
 Another Worker reaches the entities through a `WorkerEntrypoint` calling `ActionEntity.client` in the booted runtime: [`chat-rooms/src/rooms-entrypoint.ts`](../examples/chat-rooms/src/rooms-entrypoint.ts).
 

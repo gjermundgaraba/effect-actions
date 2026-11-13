@@ -35,8 +35,8 @@ export const keptFor = 24 * 60 * 60 * 1000;
  * Where the answers of calls given an idempotency key are kept, by the action's name and a
  * SHA-256 digest in hex of the key and its caller's principal, `<action>/<digest>`, for 24 hours
  * at least: what an implementation of an action naming `idempotencyKey` requires at startup.
- * `layerIdempotency` keeps them in memory, and `Stored.layerIdempotency` in a
- * `KeyValueStore`, such as `KeyValueStore.layerSql` over a cluster entity's own SQLite.
+ * `layerIdempotency` keeps them in memory, and `Stored.layerIdempotency` in a table of the
+ * `SqlClient` it is built with, such as a cluster entity's own SQLite.
  *
  * **Gotchas**
  *

@@ -8,10 +8,10 @@ import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import {
-  Cause,
   Context,
   DateTime,
   Deferred,
+  Duration,
   Effect,
   Exit,
   Fiber,
@@ -21,7 +21,6 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { KeyValueStore } from "effect/persistence";
 import { SqlClient, Statement } from "effect/sql";
 import { TestClock } from "effect/testing";
 
@@ -728,62 +727,8 @@ const Post = Action.make("post", {
 });
 
 describe("Stored.layerIdempotency", () => {
-  const refusingRemoves = Layer.effect(KeyValueStore.KeyValueStore)(
-    Effect.map(KeyValueStore.KeyValueStore, (store) =>
-      KeyValueStore.make({
-        ...store,
-        remove: (key) =>
-          Effect.fail(
-            new KeyValueStore.KeyValueStoreError({
-              message: "refused",
-              method: "remove",
-              key,
-            })
-          ),
-      })
-    )
-  ).pipe(Layer.provide(KeyValueStore.layerMemory));
-
   it.effect(
-    "fails a call whose answer it kept when deleting an expired answer fails, and answers the call's repeat with that answer",
-    () =>
-      Effect.gen(function* () {
-        let posted = 0;
-
-        const client = yield* Action.client(
-          Action.implement(Post, () =>
-            Effect.sync(() => {
-              posted += 1;
-
-              return { id: posted };
-            })
-          )
-        );
-
-        yield* client.post({ text: "hi", request: "r0" });
-        yield* TestClock.adjust("24 hours");
-
-        const failed = yield* Effect.exit(
-          client.post({ text: "hi", request: "r1" })
-        );
-
-        const repeated = yield* client.post({ text: "hi", request: "r1" });
-
-        expect([
-          Exit.isFailure(failed) && Cause.hasDies(failed.cause),
-          repeated,
-          posted,
-        ]).toStrictEqual([true, { id: 2 }, 2]);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Stored.layerIdempotency.pipe(Layer.provide(refusingRemoves))
-        )
-      )
-  );
-
-  it.effect(
-    "answers a repeat after a restart on the same database as the first call was, and runs it again once 24 hours have passed",
+    "answers a repeat after a restart on the same database as the first call was, runs it again once 24 hours have passed, and deletes the expired answers as it builds",
     () =>
       Effect.gen(function* () {
         let posted = 0;
@@ -798,10 +743,7 @@ describe("Stored.layerIdempotency", () => {
 
         const onFile = Layer.provideMerge(
           Stored.layerIdempotency,
-          Layer.provideMerge(
-            KeyValueStore.layerSql(),
-            sqliteAt(yield* databaseFile)
-          )
+          sqliteAt(yield* databaseFile)
         );
 
         const post = (request: string) =>
@@ -811,21 +753,29 @@ describe("Stored.layerIdempotency", () => {
             return yield* client.post({ text: "hi", request });
           }).pipe(Effect.scoped, Effect.provide(onFile));
 
+        const rows = Effect.flatMap(SqlClient.SqlClient, (sql) =>
+          Effect.orDie(
+            sql`SELECT count(*) AS count FROM effect_persistence_effect_actions_idempotency`
+          )
+        ).pipe(
+          Effect.map((counted) => counted[0]?.["count"]),
+          Effect.provide(onFile)
+        );
+
         const first = yield* post("r1");
 
         yield* post("r2");
+        yield* TestClock.adjust(
+          Duration.subtract(Duration.hours(24), Duration.millis(1))
+        );
 
         const repeated = yield* post("r1");
 
-        yield* TestClock.adjust("24 hours");
+        yield* TestClock.adjust("1 millis");
 
         const expired = yield* post("r1");
 
-        const kept = yield* Effect.orDie(
-          Effect.flatMap(KeyValueStore.KeyValueStore, (store) => store.keys)
-        ).pipe(Effect.provide(onFile));
-
-        expect([first, repeated, expired, posted, kept.length]).toStrictEqual([
+        expect([first, repeated, expired, posted, yield* rows]).toStrictEqual([
           { id: 1 },
           { id: 1 },
           { id: 3 },

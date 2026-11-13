@@ -1,5 +1,5 @@
-import { Clock, Effect, Layer, Option, Schema } from "effect";
-import { KeyValueStore } from "effect/persistence";
+import { Duration, Effect, Layer, Option, Schema } from "effect";
+import { Persistence } from "effect/persistence";
 import { SqlClient } from "effect/sql";
 
 import { createLogTables, sqlRevisions, sqlStorage } from "./event-tables.js";
@@ -70,72 +70,36 @@ export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
     }).pipe(Effect.orDie)
   );
 
-const hour = 60 * 60 * 1000;
-
-const isLive = (kept: Kept, now: number) => kept.at + keptFor > now;
+const decodeKept = Schema.decodeUnknownOption(Kept);
 
 /**
- * `Idempotency` in the `KeyValueStore` it is built with, under keys starting
- * `effect-actions/idempotency/`, each answer kept 24 hours after it was kept: over
- * `KeyValueStore.layerSql`, in a database that outlives the server, such as a cluster entity's
- * own SQLite.
+ * `Idempotency` in a table of the `SqlClient` it is built with, created as it builds,
+ * `effect_persistence_effect_actions_idempotency`, each answer kept 24 hours: in a database that
+ * outlives the server, such as a cluster entity's own SQLite.
  *
  * **Gotchas**
  *
- * - An answer kept 24 hours ago or more is not read back, and a repeat runs the call again; expired answers are deleted as an answer is kept, at the first after each build and then at most once an hour, by listing every key of the store and reading each under the prefix: on a host that builds per wake, every wake that keeps an answer pays that scan.
- * - A store failing to read or keep an answer dies: the call fails, its answer not kept.
- * - A store failing to delete an expired answer dies after the answer was kept: the call fails, and its repeat is answered with the kept answer, its handler not run again.
- * - An answer kept under a key whose expired answer the deletion is removing, its key sent again 24 hours on, can be deleted with it: a repeat then runs the call again.
+ * - An expired answer is never read back, and is deleted as the layer builds: a long-running server keeps the rows of expired answers until it builds again, as a cluster entity does each time it activates.
+ * - A database failing to read or keep an answer dies: the call fails, its answer not kept.
  */
 export const layerIdempotency: Layer.Layer<
   Idempotency,
   never,
-  KeyValueStore.KeyValueStore
+  SqlClient.SqlClient
 > = Layer.effect(Idempotency)(
   Effect.gen(function* () {
-    const store = KeyValueStore.toSchemaStore(
-      KeyValueStore.prefix(
-        yield* KeyValueStore.KeyValueStore,
-        "effect-actions/idempotency/"
-      ),
-      Kept
+    const store = yield* (yield* Persistence.BackingPersistence).make(
+      "effect_actions_idempotency"
     );
-
-    const read = (id: string) =>
-      store.get(id).pipe(
-        Effect.catchTag("SchemaError", () => Effect.succeedNone),
-        Effect.orDie
-      );
-
-    let prunedAt = -Infinity;
-
-    const pruneHourly = Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-
-      if (now - prunedAt < hour) {
-        return;
-      }
-
-      prunedAt = now;
-
-      for (const id of yield* Effect.orDie(store.keys)) {
-        if (!Option.exists(yield* read(id), (kept) => isLive(kept, now))) {
-          yield* Effect.orDie(store.remove(id));
-        }
-      }
-    });
 
     return Idempotency.of({
       get: (id) =>
-        Effect.gen(function* () {
-          const now = yield* Clock.currentTimeMillis;
-
-          return Option.getOrUndefined(
-            Option.filter(yield* read(id), (kept) => isLive(kept, now))
-          );
-        }),
+        store.get(id).pipe(
+          Effect.orDie,
+          Effect.map((value) => Option.getOrUndefined(decodeKept(value)))
+        ),
       set: (id, kept) =>
-        Effect.andThen(Effect.orDie(store.set(id, kept)), pruneHourly),
+        Effect.orDie(store.set(id, kept, Duration.millis(keptFor))),
     });
   })
-);
+).pipe(Layer.provide(Persistence.layerBackingSqlMultiTable));

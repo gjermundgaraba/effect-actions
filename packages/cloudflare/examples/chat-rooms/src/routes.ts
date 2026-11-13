@@ -5,7 +5,6 @@ import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import { Effect, Layer, Schema } from "effect";
 import { Entity } from "effect/cluster";
-import { KeyValueStore } from "effect/persistence";
 
 import { LobbyHttp, RoomHttp } from "./Api.js";
 import { DemoRoomName } from "./chat/Chat.js";
@@ -42,7 +41,7 @@ const roomWebhooks = Webhook.layer({
 
 const roomServices = Layer.mergeAll(
   Stored.layerEvents,
-  Stored.layerIdempotency.pipe(Layer.provide(KeyValueStore.layerSql())),
+  Stored.layerIdempotency,
   roomWebhooks
 ).pipe(
   Layer.provideMerge(
