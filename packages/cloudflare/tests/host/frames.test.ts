@@ -7,6 +7,7 @@ import * as ActionClusterEntity from "../../src/host/ActionClusterEntity.js";
 import {
   evict,
   objectOf,
+  openHostOf,
   raw,
   stubs,
   until,
@@ -321,6 +322,26 @@ describe("ActionClusterEntity's frames", () => {
 
         expect(outcomes).toStrictEqual(["closed", "closed"]);
       }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "fails an upgrade to an entity of sockets that ActionCluster.layer's entities lacks with CloudflareCluster's message",
+    () =>
+      Effect.gen(function* () {
+        const failure = yield* Effect.flip(
+          Effect.tryPromise(
+            async () =>
+              await openHostOf("Unbound", "stray").fetch("https://object/", {
+                headers: { upgrade: "websocket" },
+              })
+          )
+        );
+
+        expect(String(failure.cause)).toContain(
+          "is not part of the entities bound at Worker init"
+        );
+      }),
     { timeout: 30_000 }
   );
 

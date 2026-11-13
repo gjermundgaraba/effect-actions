@@ -35,6 +35,7 @@ import {
   boardImplementations,
   boardTells,
   Tally,
+  Unbound,
 } from "./board.js";
 
 export {
@@ -427,7 +428,7 @@ const Host = ActionClusterEntity.make({
 
 export class OpenHost extends ActionClusterEntity.make({
   initialize,
-  sockets: [Board],
+  sockets: [Board, Unbound],
 }) {}
 
 export class ClusterEntity extends Host {
