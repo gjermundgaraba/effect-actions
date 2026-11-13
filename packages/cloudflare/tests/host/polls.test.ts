@@ -41,7 +41,7 @@ const parkedIn = (board: string, count: number) =>
 
 describe("ActionClusterEntity's polls", () => {
   it.live(
-    "parks a page's next poll with no call within 30 seconds of its watch's last call, and calls the entity with it later, renewing a hook's lease",
+    "parks a page's next poll with no call within 30 seconds of its watch's last call, and forwards one sent later to the entity",
     () =>
       Effect.gen(function* () {
         const board = "lease";

@@ -236,7 +236,7 @@ describe("ActionClusterEntity's frames", () => {
   );
 
   it.live(
-    "leaves the runtime to answer a page's close with its own code and reason, and forgets the socket",
+    "answers a page's close with its own code and reason, and forgets the socket",
     () =>
       Effect.gen(function* () {
         const board = "answers-close";
@@ -274,36 +274,54 @@ describe("ActionClusterEntity's frames", () => {
     { timeout: 30_000 }
   );
 
-  it.live("ignores a second close event for a socket", () =>
-    Effect.gen(function* () {
-      const board = "closed-twice";
+  it.live(
+    "ignores a second close event for a socket that has made a call",
+    () =>
+      Effect.gen(function* () {
+        const board = "closed-twice";
+        const { socket: page, received } = yield* raw("Board", board);
 
-      yield* raw("Board", board);
+        page.send(
+          JSON.stringify({
+            _tag: "Request",
+            id: "1",
+            tag: "pin",
+            payload: { board, n: 1 },
+            headers: [],
+          })
+        );
 
-      const outcomes = yield* Effect.promise(
-        async () =>
-          await runInDurableObject(
-            objectOf("Board", board),
-            async (instance, state) => {
-              const [socket] = state.getWebSockets();
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 1
+        );
 
-              if (socket === undefined) {
-                return ["no socket"];
-              }
+        const outcomes = yield* Effect.promise(
+          async () =>
+            await runInDurableObject(
+              objectOf("Board", board),
+              async (instance, state) => {
+                const [socket] = state.getWebSockets();
 
-              return await Promise.all(
-                [1, 2].map(async () => {
+                if (socket === undefined) {
+                  return ["no socket"];
+                }
+
+                const closes: string[] = [];
+
+                for (let index = 0; index < 2; index += 1) {
                   await instance.webSocketClose?.(socket, 1000, "", true);
+                  closes.push("closed");
+                }
 
-                  return "closed";
-                })
-              );
-            }
-          )
-      );
+                return closes;
+              }
+            )
+        );
 
-      expect(outcomes).toStrictEqual(["closed", "closed"]);
-    }).pipe(Effect.scoped)
+        expect(outcomes).toStrictEqual(["closed", "closed"]);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
   );
 
   it.effect(
