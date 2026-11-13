@@ -10,8 +10,7 @@ import {
   Schema,
 } from "effect";
 import { ClusterSchema, DeliverAt } from "effect/cluster";
-import { Headers } from "effect/http";
-import { Rpc, RpcClient } from "effect/rpc";
+import { Rpc } from "effect/rpc";
 
 import { reported } from "../contract/reported.js";
 
@@ -52,7 +51,6 @@ export const makeWakes = <E>(send: (wake: Wake) => Effect.Effect<unknown, E>) =>
 
     const sentOrSlept = (at: number) =>
       send(new Wake({ at })).pipe(
-        Effect.provideService(RpcClient.CurrentHeaders, Headers.empty),
         Effect.matchCauseEffect({
           onSuccess: () => Effect.never,
           onFailure: (cause) =>
