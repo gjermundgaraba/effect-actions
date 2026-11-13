@@ -29,8 +29,8 @@ import type { Pushed } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
 import { deliveryUnsupported } from "../contract/subscribe.js";
 import {
+  subscriberOf,
   Webhooks,
-  webhookHolder,
   webhookSubscriber,
 } from "../contract/webhooks.js";
 import type { Subscriber } from "../contract/webhooks.js";
@@ -343,7 +343,7 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
       const deliveryOf = (feed: Feed): EventDescriptor["delivery"] => [
         "poll",
         ...(send === undefined ? [] : ["push" as const]),
-        ...(Option.isSome(webhookHolder(feed, authentication, webhooks))
+        ...(Option.isSome(webhookSubscriber(feed, authentication, webhooks))
           ? ["webhook" as const]
           : []),
       ];
@@ -374,10 +374,7 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
           asCaller(
             authentication,
             feed.event,
-            Effect.flatMap(
-              webhookSubscriber(feed, authentication, webhooks),
-              run
-            )
+            Effect.flatMap(subscriberOf(feed, authentication, webhooks), run)
           ),
           (cause) => Effect.flatMap(wireErrorOf(cause), Effect.fail)
         );

@@ -796,7 +796,6 @@ export const reaching = <
       ).pipe(Effect.catchIf(isClusterFailure, Effect.die));
 
     return {
-      requestBound: true,
       webhook:
         event.caller === Anyone
           ? undefined

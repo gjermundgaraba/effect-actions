@@ -83,27 +83,12 @@ const offeredByWebhook = (
   keyed: Keyed | undefined
 ): feed is WebhookFeed => offersWebhook(feed.event, keyed);
 
+/** Whether the surface's own `Webhooks` holds `feed`'s subscriptions: offered, held by no reached entity. */
 export const deliversByWebhook = (
   feed: Feed,
   keyed: Keyed | undefined
 ): feed is WebhookFeed =>
-  feed.requestBound !== true && offeredByWebhook(feed, keyed);
-
-/**
- * Where a surface sends `feed`'s webhook subscriptions: to the holder the feed names, a reached
- * entity, or else to the surface's own `Webhooks`; none where the event is not offered by webhook.
- */
-export const webhookHolder = (
-  feed: Feed,
-  keyed: Keyed | undefined,
-  webhooks: Option.Option<WebhookHolder>
-): Option.Option<WebhookHolder> => {
-  if (feed.webhook !== undefined && offersWebhook(feed.event, keyed)) {
-    return Option.some(feed.webhook);
-  }
-
-  return deliversByWebhook(feed, keyed) ? webhooks : Option.none();
-};
+  feed.webhook === undefined && offeredByWebhook(feed, keyed);
 
 export const servedWebhooks = (
   feeds: readonly Feed[],
@@ -133,28 +118,38 @@ export interface Subscriber extends Pick<
   readonly webhooks: WebhookHolder;
 }
 
+/**
+ * Who subscribes to `feed`'s webhooks, and where they are held: the holder the feed names, a
+ * reached entity, or else the surface's own `Webhooks`; none where the event is not offered by
+ * webhook. Its principal is read from the caller each time it runs.
+ */
 export const webhookSubscriber = (
   feed: Feed,
   keyed: Keyed | undefined,
   webhooks: Option.Option<WebhookHolder>
-): Effect.Effect<Subscriber, Event.SubscriptionError, unknown> => {
-  const holder = webhookHolder(feed, keyed, webhooks);
+): Option.Option<Effect.Effect<Subscriber, never, unknown>> =>
+  isNamed(keyed) && offeredByWebhook(feed, keyed)
+    ? Option.map(
+        feed.webhook === undefined ? webhooks : Option.some(feed.webhook),
+        (holder) =>
+          Effect.map(Effect.service(feed.event.caller), (identity) => ({
+            webhooks: holder,
+            feed,
+            keyed,
+            principal: keyed.principal(identity),
+          }))
+      )
+    : Option.none();
 
-  if (
-    Option.isNone(holder) ||
-    !isNamed(keyed) ||
-    !offeredByWebhook(feed, keyed)
-  ) {
-    return Effect.fail(deliveryUnsupported(feed.event.name, "webhook"));
-  }
-
-  return Effect.map(Effect.service(feed.event.caller), (identity) => ({
-    webhooks: holder.value,
-    feed,
-    keyed,
-    principal: keyed.principal(identity),
-  }));
-};
+/** As `webhookSubscriber`, failing as `Unsupported` where the event is not offered by webhook. */
+export const subscriberOf = (
+  feed: Feed,
+  keyed: Keyed | undefined,
+  webhooks: Option.Option<WebhookHolder>
+): Effect.Effect<Subscriber, Event.SubscriptionError, unknown> =>
+  Option.getOrElse(webhookSubscriber(feed, keyed, webhooks), () =>
+    Effect.fail(deliveryUnsupported(feed.event.name, "webhook"))
+  );
 
 /** A surface's answers to a webhook subscribe and unsubscribe of `feed`, run as its subscriber. */
 export const webhookAnswers = (
@@ -162,7 +157,7 @@ export const webhookAnswers = (
   keyed: Keyed | undefined,
   webhooks: Option.Option<WebhookHolder>
 ) => {
-  const served = webhookSubscriber(feed, keyed, webhooks);
+  const served = subscriberOf(feed, keyed, webhooks);
 
   return {
     subscribe: (payload: AnyWebhookSubscription) =>

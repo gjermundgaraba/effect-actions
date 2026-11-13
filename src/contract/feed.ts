@@ -54,12 +54,6 @@ export interface Feed {
     | ((input: ErasedValue, subscriber: string) => Effect.Effect<void>)
     | undefined;
   /**
-   * Present where reading needs the subscriber's request, as `ActionEntity.reaching` sends its
-   * headers on: a surface's own `Webhooks` never delivers it, whose deliveries read outside any
-   * request.
-   */
-  readonly requestBound?: true | undefined;
-  /**
    * Where its webhook subscriptions are held, in place of the surface's `Webhooks`: present where
    * `ActionEntity.reaching` reaches a protected event, whose entity holds them, so a subscribe
    * goes to that entity with the subscriber's request.
@@ -548,7 +542,6 @@ const guarded = (
   return {
     event,
     release: run.release,
-    requestBound: run.requestBound,
     webhook: run.webhook,
     admit,
     poll: (input, cursor, options) =>
