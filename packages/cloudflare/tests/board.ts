@@ -42,6 +42,14 @@ export const Heard = Event.make("board.heard", {
   caller: Action.Anyone,
 });
 
+export const Hooked = Event.make("board.hooked", {
+  description:
+    "A note pinned to the board, read from its table by a source holding a subscription hook.",
+  input: onBoard,
+  payload: Note,
+  caller: Action.Anyone,
+});
+
 export const Pin = Action.make("pin", {
   description:
     "Pin a note to the board: a row of its table and an entry of its log.",
@@ -60,7 +68,7 @@ export const Later = Action.make("later", {
   caller: Action.Anyone,
 });
 
-const contracts = [Pin, Later, Pinned, Logged, Heard] as const;
+const contracts = [Pin, Later, Pinned, Logged, Heard, Hooked] as const;
 
 export const BoardRpc = ActionRpc.make(contracts);
 
@@ -91,6 +99,7 @@ const key = {
   "board.pinned": byBoard,
   "board.logged": byBoard,
   "board.heard": byBoard,
+  "board.hooked": byBoard,
 };
 
 export const Board = ActionEntity.make("Board", BoardRpc, {
@@ -140,29 +149,42 @@ const pinning = Action.implement(
 
 const Count = Schema.Array(Schema.Struct({ count: Schema.Int }));
 
-const fromTable = Event.implement(
-  Pinned,
-  Effect.map(SqlClient.SqlClient, (sql) => ({
-    check: (_input, cursor) =>
-      Effect.gen(function* () {
-        const [{ count } = { count: 0 }] =
-          yield* sql`SELECT count(*) AS count FROM board_notes`.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Count))
-          );
+const fromTable = Effect.map(SqlClient.SqlClient, (sql) => ({
+  check: (_input: unknown, cursor: string | null) =>
+    Effect.gen(function* () {
+      const [{ count } = { count: 0 }] =
+        yield* sql`SELECT count(*) AS count FROM board_notes`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Count))
+        );
 
-        const after = cursor === null ? count : Math.min(Number(cursor), count);
+      const after = cursor === null ? count : Math.min(Number(cursor), count);
 
-        const rows =
-          yield* sql`SELECT n FROM board_notes ORDER BY rowid LIMIT -1 OFFSET ${after}`.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(Rows))
-          );
+      const rows =
+        yield* sql`SELECT n FROM board_notes ORDER BY rowid LIMIT -1 OFFSET ${after}`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Rows))
+        );
 
-        return {
-          cursor: String(count),
-          events: rows.map((data) => ({ data })),
-          nextPoll: Duration.seconds(1),
-        };
-      }).pipe(Effect.orDie),
+      return {
+        cursor: String(count),
+        events: rows.map((data) => ({ data })),
+        nextPoll: Duration.seconds(1),
+      };
+    }).pipe(Effect.orDie),
+}));
+
+const pinnedFromTable = Event.implement(Pinned, fromTable);
+
+export const hooks: string[] = [];
+
+const hookedFromTable = Event.implement(
+  Hooked,
+  Effect.map(fromTable, (source) => ({
+    ...source,
+    subscription: ({ board }: { readonly board: string }) =>
+      Effect.acquireRelease(
+        Effect.sync(() => hooks.push(`set up ${board}`)),
+        () => Effect.sync(() => hooks.push(`torn down ${board}`))
+      ),
   }))
 );
 
@@ -186,7 +208,13 @@ const fromWire = Event.implement(
   })
 );
 
-export const boardImplementations = [pinning, fromTable, fromLog, fromWire];
+export const boardImplementations = [
+  pinning,
+  pinnedFromTable,
+  hookedFromTable,
+  fromLog,
+  fromWire,
+];
 
 export const boardTells = Effect.map(
   pinned,

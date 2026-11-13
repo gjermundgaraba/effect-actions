@@ -4,7 +4,7 @@ import { exports } from "cloudflare:workers";
 import { Effect, Layer, Queue, Stream } from "effect";
 import { FetchHttpClient } from "effect/http";
 
-import type { Heard, Logged, Note, Pinned } from "../board.js";
+import type { Heard, Hooked, Logged, Note, Pinned } from "../board.js";
 import { BoardHttp } from "../board.js";
 
 export const throughWorker = FetchHttpClient.layer.pipe(
@@ -23,7 +23,8 @@ export const boards = ActionHttp.client(BoardHttp, {
 type Watched =
   | Event.Received<typeof Pinned>
   | Event.Received<typeof Logged>
-  | Event.Received<typeof Heard>;
+  | Event.Received<typeof Heard>
+  | Event.Received<typeof Hooked>;
 
 export const following = (stream: Stream.Stream<Watched, unknown>) =>
   Effect.gen(function* () {
