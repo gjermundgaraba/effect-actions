@@ -45,7 +45,7 @@ export interface Options {
    *
    * **Gotchas**
    *
-   * - Each subscriber's identity is kept by its authentication's `schema`, encoded at each grant: a surface offering a protected event by webhook refuses to start without it, or where two authentications with different schemas serve one event.
+   * - Each subscriber's identity is kept by its authentication's `schema`, encoded at each grant: a surface offering a protected event by webhook refuses to start without it, or where two authentications with different schemas serve one event; in an entity's `services` it is each activation that dies, as `ActionEntity.LayerOptions`' `services` says.
    * - A restored delivery runs in the layer's context and that identity alone, until the subscriber's next refresh: an authorizer or a source reading a service middleware or the surface's layer provides fails, each read reported and retried every 5 seconds.
    * - A subscriber refused as its subscription is restored is POSTed `terminated`; an authorizer or a source failing its first read with no refusal is retried, as later.
    * - A subscription suspended stays suspended when restored, until its subscriber's refresh delivers again.

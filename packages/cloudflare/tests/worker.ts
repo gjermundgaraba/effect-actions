@@ -7,6 +7,7 @@ import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
+import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import {
   Context,
   Effect,
@@ -19,11 +20,13 @@ import {
 import type { Scope } from "effect";
 import { ClusterSchema, Entity } from "effect/cluster";
 import {
+  FetchHttpClient,
   HttpEffect,
   HttpRouter,
   HttpServer,
   HttpServerRequest,
 } from "effect/http";
+import { KeyValueStore } from "effect/persistence";
 import { Rpc, RpcClient, RpcGroup } from "effect/rpc";
 import { SqlClient } from "effect/sql";
 
@@ -267,11 +270,43 @@ const seeing = [
   ),
 ];
 
-const signIn = Authentication.layer(Login, (token: Redacted.Redacted) =>
+const alice = (token: Redacted.Redacted) =>
   Redacted.value(token) === "alice"
     ? Effect.succeed("alice")
-    : Effect.fail(new Action.Unauthenticated({ message: "Unknown token." }))
+    : Effect.fail(new Action.Unauthenticated({ message: "Unknown token." }));
+
+const signIn = Authentication.layer(Login, alice);
+
+const Unkept = Authentication.make("tests.Unkept", Caller, {
+  principal: (caller) => caller,
+});
+
+export const Kept = Event.make("kept", {
+  description: "Nothing, under an authentication with no schema.",
+  input: { room: Schema.String },
+  payload: { by: Schema.String },
+  caller: Caller,
+});
+
+export const Keeper = ActionEntity.make(
+  "Keeper",
+  ActionRpc.make([Kept], { authentication: Unkept }),
+  { key: { kept: byRoom } }
 );
+
+const keeping = ActionEntity.layer(
+  Keeper,
+  Event.implement(
+    Kept,
+    { check: () => Effect.succeed({ cursor: "0", events: [] }) },
+    { authorize: Event.allowAll }
+  ),
+  {
+    services: Webhook.layer({ persist: true, resolveCallbacks: false }).pipe(
+      Layer.provide([KeyValueStore.layerMemory, FetchHttpClient.layer])
+    ),
+  }
+).pipe(Layer.provide([Authentication.layer(Unkept, alice), Event.layerMemory]));
 
 const entitySql = Layer.effect(SqlClient.SqlClient)(
   CloudflareCluster.DurableObjectSqlClient.orDie
@@ -363,6 +398,7 @@ const application = (env: Cloudflare.Env) =>
     ActionEntity.layer(Tally, boardImplementations, {
       services: Layer.merge(Event.layerMemory, entitySql),
     }),
+    keeping,
     Layer.mergeAll(
       ActionHttp.layer(SeerHttp, ActionEntity.reaching(Seer)),
       ActionHttp.layer(BoardHttp, ActionEntity.reaching(Board))
@@ -374,7 +410,7 @@ const application = (env: Cloudflare.Env) =>
     Layer.provide(signIn),
     Layer.provideMerge(
       ActionCluster.layer({
-        entities: [Seer, Board, Tally],
+        entities: [Seer, Board, Tally, Keeper],
         entityNamespace: env.CLUSTER_ENTITY,
         workflowNamespace: env.CLUSTER_WORKFLOW,
         queueNamespace: env.CLUSTER_QUEUE,

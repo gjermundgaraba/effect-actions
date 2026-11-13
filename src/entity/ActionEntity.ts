@@ -267,6 +267,7 @@ export interface LayerOptions<
    * - Each entity id builds it again at each activation: what it holds in memory is that activation's alone, as an implementation builder's is, where a service provided to `layer` is the runner's, shared by every entity id.
    * - It fails or dies as a builder does: a defect of the activation, which the runtime handles as the builder's.
    * - A `Webhook.layer` here holds the entity's webhook subscriptions and delivers them from its activation: give it `persist`, so a later activation restores them, and `layerClock`, so a wait of 10 seconds or more builds the entity again when it ends.
+   * - A `Webhook.layer` here with `persist` needs the binding's authentication to name a `schema` where it names a `principal`: without one each activation dies with the library's message naming `schema`, so on Effect's runners each call to the entity waits while the runner builds it again, and on the Cloudflare runtime each fails at once.
    */
   readonly services?: Layer.Layer<ROut, unknown, RIn> | undefined;
   /**

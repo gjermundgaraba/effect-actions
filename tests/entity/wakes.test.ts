@@ -6,6 +6,7 @@ import {
   Effect,
   Fiber,
   Layer,
+  Option,
   Schedule,
   Schema,
 } from "effect";
@@ -450,7 +451,75 @@ describe("ActionEntity.layerClock in an entity's services", () => {
   );
 });
 
+const Unkept = Authentication.make("wakes.Unkept", CurrentActor, {
+  principal: (actor) => actor.id,
+});
+
+const UnkeptTicker = ActionEntity.make(
+  "UnkeptTicker",
+  ActionRpc.make([Ticked], { authentication: Unkept }),
+  { key: { ticked: ({ room }) => room } }
+);
+
 describe("Webhook.layer with persist in an entity's services", () => {
+  it.live(
+    "dies at each activation where the authentication names a principal and no schema, so a call to the entity waits while Effect's runner builds it again",
+    () => {
+      const builds = { count: 0 };
+
+      const ticking = Event.implement(
+        Ticked,
+        Effect.as(
+          Effect.sync(() => {
+            builds.count += 1;
+          }),
+          {
+            check: () => Effect.succeed({ cursor: "0", events: [] }),
+          }
+        ),
+        { authorize: Event.allowAll }
+      );
+
+      const server = ActionEntity.layer(UnkeptTicker, ticking, {
+        services: Webhook.layer({
+          persist: true,
+          resolveCallbacks: false,
+        }).pipe(
+          Layer.provide(
+            Testing.layer(async () => await Promise.resolve(new Response(null)))
+          )
+        ),
+      }).pipe(
+        Layer.provideMerge(runner),
+        Layer.provide([
+          Authentication.layer(Unkept, verify),
+          Event.layerMemory,
+          KeyValueStore.layerSql(),
+        ]),
+        Layer.provideMerge(database)
+      );
+
+      return Effect.gen(function* () {
+        const tickers = yield* UnkeptTicker.client;
+
+        const answered = yield* Effect.suspend(() => {
+          const answer = tickers("a")["ticked"]?.(
+            { input: { room: "a" }, cursor: null },
+            { headers: { authorization: "Bearer alice" } }
+          );
+
+          return answer !== undefined && Effect.isEffect(answer)
+            ? answer
+            : Effect.die(new Error("no unary rpc ticked"));
+        }).pipe(Effect.timeoutOption("5 seconds"));
+
+        expect(Option.isNone(answered)).toBe(true);
+        expect(builds.count).toBeGreaterThan(1);
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 30_000 }
+  );
+
   it.live(
     "restores, as an entity id activates, only the subscriptions that entity id holds, though every entity shares one store and one id begins another's",
     () => {
