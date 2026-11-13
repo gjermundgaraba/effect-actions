@@ -28,10 +28,11 @@ import { Rpc, RpcClient, RpcGroup } from "effect/rpc";
 import { SqlClient } from "effect/sql";
 
 import * as ActionCluster from "../src/cluster/ActionCluster.js";
+import * as ActionClusterEntity from "../src/host/ActionClusterEntity.js";
+import { Board, BoardHttp, boardImplementations, boardTells } from "./board.js";
 
 export {
   ClusterDurableQueue,
-  ClusterEntity,
   ClusterSingleton,
   ClusterWorkflow,
 } from "@effect/platform-cloudflare/CloudflareDurableObjects";
@@ -319,7 +320,14 @@ const application = (env: Cloudflare.Env) =>
       ),
       rpcs: seerTasks,
     }),
-    ActionHttp.layer(SeerHttp, ActionEntity.reaching(Seer)).pipe(
+    ActionEntity.layer(Board, boardImplementations, {
+      services: Stored.layerEvents.pipe(Layer.provideMerge(entitySql)),
+      rpcs: boardTells,
+    }),
+    Layer.mergeAll(
+      ActionHttp.layer(SeerHttp, ActionEntity.reaching(Seer)),
+      ActionHttp.layer(BoardHttp, ActionEntity.reaching(Board))
+    ).pipe(
       Layer.provideMerge(HttpRouter.layer),
       Layer.provide(HttpServer.layerServices)
     )
@@ -327,7 +335,7 @@ const application = (env: Cloudflare.Env) =>
     Layer.provide(signIn),
     Layer.provideMerge(
       ActionCluster.layer({
-        entities: [Seer],
+        entities: [Seer, Board],
         entityNamespace: env.CLUSTER_ENTITY,
         workflowNamespace: env.CLUSTER_WORKFLOW,
         queueNamespace: env.CLUSTER_QUEUE,
@@ -356,9 +364,74 @@ export const initialize = CloudflareDurableObjects.setInitializer(
   }
 );
 
+const started = { invoke: 0, hold: 0, acknowledge: 0 };
+
+const finished = { invoke: 0, hold: 0, acknowledge: 0 };
+
+const instances: string[] = [];
+
+const counted = async <A>(
+  method: keyof typeof started,
+  call: () => Promise<A>
+): Promise<A> => {
+  started[method] += 1;
+
+  return await call().finally(() => {
+    finished[method] += 1;
+  });
+};
+
+const Host = ActionClusterEntity.make({
+  initialize,
+  sockets: [Seer, Board],
+  protocol: { version: "1", code: 4000 },
+});
+
+export class ClusterEntity extends Host {
+  constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
+    super(ctx, env);
+    instances.push(`${ctx.id.name ?? ""}#${crypto.randomUUID()}`);
+  }
+
+  override async invoke(
+    ...args: Parameters<InstanceType<typeof Host>["invoke"]>
+  ) {
+    return await counted("invoke", async () => await super.invoke(...args));
+  }
+
+  override async hold() {
+    await counted("hold", async () => {
+      await super.hold();
+    });
+  }
+
+  override async acknowledge(requestId: string, replyId: string) {
+    return await counted(
+      "acknowledge",
+      async () => await super.acknowledge(requestId, replyId)
+    );
+  }
+}
+
 export default {
   async fetch(request: Request, env: Cloudflare.Env) {
     const { pathname } = new URL(request.url);
+
+    if (pathname === "/stubs") {
+      return Response.json({ started, finished, instances });
+    }
+
+    const socketOf = /^\/sockets\/(?<type>[^/]+)\/(?<id>[^/]+)$/u.exec(
+      pathname
+    )?.groups;
+
+    const [type, id] = [socketOf?.["type"], socketOf?.["id"]];
+
+    if (type !== undefined && id !== undefined) {
+      return await env.CLUSTER_ENTITY.getByName(
+        CloudflareCluster.encodeName(type, id)
+      ).fetch(request);
+    }
 
     if (pathname === "/logged") {
       return Response.json(logged.splice(0));

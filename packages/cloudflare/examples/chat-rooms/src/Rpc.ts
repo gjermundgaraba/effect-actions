@@ -9,3 +9,7 @@ export const RoomRpc = ActionRpc.make([...Messages, MessagePosted], {
 });
 
 export const LobbyRpc = ActionRpc.make([Previews, PreviewsChanged]);
+
+export const protocolVersion = "1";
+
+export const unsupportedProtocol = 4000;

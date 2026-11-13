@@ -4,28 +4,50 @@ Import `@gjermundgaraba/effect-actions-cloudflare/ActionCluster`. An application
 
 ## Deploy the four classes
 
-The runtime's four Durable Object classes, `ClusterEntity`, `ClusterWorkflow`, `ClusterDurableQueue` and `ClusterSingleton`, are exported from the Worker's module, bound in `wrangler.jsonc` and created by a SQLite migration; `ActionCluster.layer` takes the four namespaces. The example's [`chat-rooms/wrangler.jsonc`](../examples/chat-rooms/wrangler.jsonc) is the whole configuration: its one migration, `cluster-v1`, creates the four, and a new application writes the same. One replacing classes of its own, as the earlier chat-rooms' `ChatRoom` and `ChatLobby`, keeps its deployed migrations and adds, before the one creating the four, a step deleting those classes, which deletes every object of theirs and its stored data.
+The runtime's four Durable Object classes, `ClusterEntity`, `ClusterWorkflow`, `ClusterDurableQueue` and `ClusterSingleton`, are exported from the Worker's module, bound in `wrangler.jsonc` and created by a SQLite migration; `ActionCluster.layer` takes the four namespaces. The example's `ClusterEntity` is `ActionClusterEntity.make`'s class, which runs the same entity program as Effect's and serves its rooms' sockets besides, in [ActionClusterEntity.md](ActionClusterEntity.md); an application serving no sockets re-exports Effect's own. The example's [`chat-rooms/wrangler.jsonc`](../examples/chat-rooms/wrangler.jsonc) is the whole configuration: its one migration, `cluster-v1`, creates the four, and a new application writes the same. One replacing classes of its own, as the earlier chat-rooms' `ChatRoom` and `ChatLobby`, keeps its deployed migrations and adds, before the one creating the four, a step deleting those classes, which deletes every object of theirs and its stored data.
 
 ```ts example=chat-rooms/src/worker.ts
-import { Context } from "effect";
+import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
+import * as ActionClusterEntity from "@gjermundgaraba/effect-actions-cloudflare/ActionClusterEntity";
+import { Context, Schema } from "effect";
 import type { Scope } from "effect";
 import { HttpEffect, HttpRouter } from "effect/http";
 import type { HttpServerRequest } from "effect/http";
 
 import { initialize } from "./application.js";
 import type { Application } from "./application.js";
+import { DemoRoomName } from "./chat/Chat.js";
+import { Room } from "./entities.js";
+import { protocolVersion, unsupportedProtocol } from "./Rpc.js";
 
 export {
   ClusterDurableQueue,
-  ClusterEntity,
   ClusterSingleton,
   ClusterWorkflow,
 } from "@effect/platform-cloudflare/CloudflareDurableObjects";
 
 export { RoomsEntrypoint } from "./rooms-entrypoint.js";
 
+export class ClusterEntity extends ActionClusterEntity.make({
+  initialize,
+  sockets: [Room],
+  protocol: { version: protocolVersion, code: unsupportedProtocol },
+}) {}
+
+const isRoom = Schema.is(DemoRoomName);
+
+const roomSocket = /^\/rooms\/(?<room>[^/]+)\/rpc$/u;
+
 export default {
   async fetch(request: Request, env: Cloudflare.Env) {
+    const room = roomSocket.exec(new URL(request.url).pathname)?.groups?.room;
+
+    if (room !== undefined && isRoom(room)) {
+      return await env.CLUSTER_ENTITY.getByName(
+        CloudflareCluster.encodeName(Room.type, room)
+      ).fetch(request);
+    }
+
     const context = await initialize(env);
 
     return await HttpEffect.toWebHandlerWith<

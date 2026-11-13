@@ -19,17 +19,24 @@ import {
   Stream,
 } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { Socket } from "effect/socket";
 
 import { LobbyHttp, RoomHttp } from "../src/Api.js";
 import { initialize } from "../src/application.js";
 import type { Application } from "../src/application.js";
-import { followLobby, openRoom } from "../src/browser.js";
+import {
+  followLobby,
+  followRoom,
+  openRoom,
+  overSocket,
+} from "../src/browser.js";
 import { MessagePosted, PostMessage } from "../src/chat/Chat.js";
 import type { DemoRoomName } from "../src/chat/Chat.js";
 import { day, Expire, windowOf } from "../src/chat/Tells.js";
 import type { Task } from "../src/chat/Tells.js";
 import { Lobby, Room } from "../src/entities.js";
 import { Login } from "../src/identity/Identity.js";
+import { protocolVersion } from "../src/Rpc.js";
 
 const baseUrl = "https://chat.example";
 
@@ -41,6 +48,40 @@ const worker = FetchHttpClient.layer.pipe(
     )
   )
 );
+
+const socketTo = (room: DemoRoomName) =>
+  overSocket.pipe(
+    Layer.provide(
+      Layer.effect(Socket.Socket)(
+        Socket.fromWebSocket(
+          Effect.acquireRelease(
+            Effect.flatMap(
+              Effect.promise(
+                async () =>
+                  await exports.default.fetch(
+                    `${baseUrl}/rooms/${room}/rpc?protocol=${protocolVersion}`,
+                    { headers: { upgrade: "websocket" } }
+                  )
+              ),
+              ({ status, webSocket }) => {
+                if (webSocket === null) {
+                  return Effect.die(new Error(`No WebSocket: ${status}`));
+                }
+
+                webSocket.accept();
+
+                return Effect.succeed(webSocket);
+              }
+            ),
+            (webSocket) =>
+              Effect.sync(() => {
+                webSocket.close(1000);
+              })
+          )
+        )
+      )
+    )
+  );
 
 const jsonAs = (token?: string) =>
   ActionHttp.client(RoomHttp, {
@@ -369,16 +410,17 @@ describe("the Worker and its rooms", () => {
   );
 
   it.live(
-    "follows a room through MessagePosted from the last id a page read, across the room's eviction",
+    "follows a room through MessagePosted over its socket, from the last id a page read, across the room's eviction",
     () =>
       Effect.gen(function* () {
         const page = yield* openRoom(baseUrl, "design", "ada");
+        const messages = yield* followRoom("design", "ada");
 
         const before = yield* page.post("Before the page watched.");
 
         const received: unknown[] = [];
 
-        yield* page.messages(before.id).pipe(
+        yield* messages(before.id).pipe(
           Stream.runForEach((item) => Effect.sync(() => received.push(item))),
           Effect.forkScoped
         );
@@ -399,7 +441,7 @@ describe("the Worker and its rooms", () => {
           { _tag: "Occurrence", data: first },
           { _tag: "Occurrence", data: second },
         ]);
-      }).pipe(Effect.scoped, Effect.provide(worker)),
+      }).pipe(Effect.scoped, Effect.provide([worker, socketTo("design")])),
     { timeout: 30_000 }
   );
 

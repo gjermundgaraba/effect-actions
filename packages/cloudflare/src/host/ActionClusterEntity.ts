@@ -1,0 +1,355 @@
+import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
+import { makeClusterEntityProgram } from "@effect/platform-cloudflare/CloudflareDurableObjectPrograms";
+import type {
+  ClusterEntityProgram,
+  EntityDeliveryOptions,
+  EntityInvokeResult,
+} from "@effect/platform-cloudflare/CloudflareDurableObjectPrograms";
+import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
+import { DurableObject } from "cloudflare:workers";
+import { Effect, Predicate, Schema } from "effect";
+import type { Context, Stream } from "effect";
+import { ClusterError } from "effect/cluster";
+import type { Sharding } from "effect/cluster";
+
+import { pingPong, replyToClose } from "./frames.js";
+import { makeSockets } from "./sockets.js";
+import type { Served } from "./sockets.js";
+
+/** The refusal of an upgrade naming another version of the rpcs: `make`'s `protocol`. */
+export interface Protocol {
+  /** The version served, which a page names in its socket's URL as `?protocol=<version>`. */
+  readonly version: string;
+  /** The close code of a refusal, an integer from 4000 to 4999, which `ActionRpc.reconnectUntil(code)` stops at; another throws as the class is made. */
+  readonly code: number;
+  /** The close reason, at most 123 bytes UTF-8 encoded; by default `This server speaks protocol <version>: reload the page`. A longer one throws as the class is made. */
+  readonly reason?: string | undefined;
+}
+
+/** `make`'s options. */
+export interface Options<Env> {
+  /**
+   * The function `CloudflareDurableObjects.setInitializer` returned, which the host waits on
+   * before it runs the entity program, as Effect's own `ClusterEntity` waits on the initializer.
+   */
+  readonly initialize: (
+    env: Env
+  ) => PromiseLike<Context.Context<Sharding.Sharding>>;
+  /** The entities whose objects accept sockets: an upgrade to an object of another entity type is answered 404. */
+  readonly sockets: readonly ActionEntity.Any[];
+  /** The version a page's upgrade names, refusing every other; without it, every upgrade is accepted. */
+  readonly protocol?: Protocol | undefined;
+}
+
+/** The methods of `make`'s class beside a Durable Object's own: the entity program's, as promises. */
+export interface Methods {
+  hold(): Promise<void>;
+  invoke(
+    envelopeText: string,
+    discard: boolean,
+    delivery?: EntityDeliveryOptions
+  ): Promise<EntityInvokeResult>;
+  acknowledge(requestId: string, replyId: string): Promise<readonly string[]>;
+  interrupt(storageRequestId: string, clientRequestId?: string): Promise<void>;
+  reset(requestId: string): Promise<void>;
+  deliverReply(requestId: string, reply: string): Promise<boolean>;
+}
+
+const gateQuery =
+  "SELECT (SELECT total(count) FROM effect_actions_event_revision) + (SELECT total(last) FROM effect_actions_event_position) AS gate";
+
+const gateOf = (sql: SqlStorage) => () => {
+  try {
+    const { gate } = sql.exec(gateQuery).one();
+
+    return Predicate.isNumber(gate) ? gate : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const closeReasonBytes = 123;
+
+const bytesOf = (text: string) => new TextEncoder().encode(text).byteLength;
+
+const refusalOf = (protocol: Protocol | undefined) => {
+  if (protocol === undefined) {
+    return undefined;
+  }
+
+  const {
+    version,
+    code,
+    reason = `This server speaks protocol ${version}: reload the page`,
+  } = protocol;
+
+  if (!Number.isInteger(code) || code < 4000 || code > 4999) {
+    throw new Error(
+      `ActionClusterEntity.make's protocol.code ${code} is not an integer from 4000 to 4999, the codes a watch ends at (give one of those)`
+    );
+  }
+
+  if (bytesOf(reason) > closeReasonBytes) {
+    throw new Error(
+      `ActionClusterEntity.make's protocol.reason, given or the default naming its version, is ${bytesOf(reason)} bytes, more than the ${closeReasonBytes} a close frame holds (give a reason of at most ${closeReasonBytes} bytes, UTF-8 encoded)`
+    );
+  }
+
+  return { version, code, reason };
+};
+
+type Refusal = ReturnType<typeof refusalOf>;
+
+const isClusterFailure = Schema.is(
+  Schema.Union([
+    ClusterError.MailboxFull,
+    ClusterError.PersistenceError,
+    ClusterError.AlreadyProcessingMessage,
+    ClusterError.EntityNotAssignedToRunner,
+  ])
+);
+
+type Method = (
+  payload: Schema.Json,
+  options: { readonly headers: ReadonlyArray<readonly [string, string]> }
+) => Effect.Effect<Schema.Json, unknown> | Stream.Stream<Schema.Json, unknown>;
+
+type ClientFor = (
+  entityId: string
+) => Readonly<Record<string, Method | undefined>>;
+
+const servedOf = (
+  entity: ActionEntity.Any,
+  clientFor: ClientFor,
+  entityId: string
+): Served => ({
+  rpcs: ActionEntity.bindingRpcs(entity).requests,
+  polls: new Set(entity.binding.events.map(({ name }) => name)),
+  releases: new Set(entity.binding.events.map(({ name }) => `${name}/release`)),
+  call: (tag, payload, headers) =>
+    Effect.suspend(() => {
+      const answer = clientFor(entityId)[tag]?.(payload, { headers });
+
+      return Effect.isEffect(answer)
+        ? answer
+        : Effect.die(new Error(`ActionClusterEntity: ${tag} is no unary rpc`));
+    }).pipe(Effect.catchIf(isClusterFailure, Effect.die), Effect.exit),
+});
+
+const hostOf = (
+  ctx: DurableObjectState,
+  context: Context.Context<Sharding.Sharding>,
+  byType: ReadonlyMap<string, ActionEntity.Any>
+) => {
+  const clients = new Map<string, ClientFor>();
+
+  const servedBy = (name: string): Served | undefined => {
+    const address = CloudflareCluster.decodeName(name);
+    const entity = address === undefined ? undefined : byType.get(address.type);
+
+    if (address === undefined || entity === undefined) {
+      return undefined;
+    }
+
+    const clientFor =
+      clients.get(entity.type) ??
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+      (Effect.runSync(
+        Effect.provideContext(entity.client, context)
+      ) as ClientFor);
+
+    clients.set(entity.type, clientFor);
+
+    return servedOf(entity, clientFor, address.id);
+  };
+
+  const sockets = makeSockets({
+    servedBy,
+    gate: gateOf(ctx.storage.sql),
+    sockets: () => ctx.getWebSockets(),
+    waitUntil: (promise) => {
+      ctx.waitUntil(promise);
+    },
+  });
+
+  return {
+    ...sockets,
+    upgrade: (request: Request, refusal: Refusal): Response => {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+        return new Response(
+          "Expected a WebSocket upgrade: connect with a WebSocket client, or forward the page's own Request to the object",
+          { status: 426 }
+        );
+      }
+
+      const { name } = ctx.id;
+
+      if (name === undefined || servedBy(name) === undefined) {
+        return new Response(
+          "This object serves no sockets: give its entity to ActionClusterEntity.make's sockets",
+          { status: 404 }
+        );
+      }
+
+      const { 0: client, 1: server } = new WebSocketPair();
+
+      if (
+        refusal !== undefined &&
+        new URL(request.url).searchParams.get("protocol") !== refusal.version
+      ) {
+        server.accept();
+        server.close(refusal.code, refusal.reason);
+
+        return new Response(null, { status: 101, webSocket: client });
+      }
+
+      if (!sockets.accept(server, name, [...request.headers])) {
+        return new Response(
+          "The headers a socket keeps exceed its attachment: send fewer or smaller cookies to this path, or the token on each message",
+          { status: 431 }
+        );
+      }
+
+      ctx.acceptWebSocket(server);
+
+      return new Response(null, { status: 101, webSocket: client });
+    },
+  };
+};
+
+/**
+ * A Durable Object class to export from the Worker as `ClusterEntity`, in place of Effect's own:
+ * it runs `makeClusterEntityProgram` and forwards its seven methods, so every entity of the
+ * cluster runs on it, and it serves Effect RPC over WebSockets, which the runtime holds while the
+ * object hibernates, for the entities of `sockets`. The Worker hands a page's upgrade to the
+ * entity's object, `getByName(CloudflareCluster.encodeName(type, id)).fetch(request)`; each call
+ * on the socket is forwarded into that entity through `Entity.client`, with the upgrade's
+ * headers under its own, its own winning, and answered as the entity answers it. A page calls
+ * with `ActionRpc.client(binding, { delivery: "poll" })`, over `RpcClient.layerProtocolSocket`
+ * and `RpcSerialization.layerJson`. Guide: `docs/ActionClusterEntity.md` in this package.
+ *
+ * **Gotchas**
+ *
+ * - A watch's poll that finds nothing new is parked in the socket's attachment and answered once a change lands, read through `Stored.layerEvents`' change signal after each call, alarm and handler of the object settles: an entity whose events are not on `Stored.layerEvents` has its polls answered at once, its watches polling at `nextPoll`.
+ * - A post a socket watches costs 1 + T + P stub calls, `invoke` each: the post, the T calls and tells its handler sends, each one, as a persisted tell to the entity itself is, and one for each of the P polls parked on that object, sent as it settles; the page's client polls again `nextPoll` later, and that poll is parked with no call when nothing changed meanwhile, so a change in that window reaches the page with that poll.
+ * - A change written outside a handler, as an `emit` stream or a check source over an upstream, moves no settle: a parked poll answers it when the object next settles, or when its client sends it again, 4 minutes after it was sent, which wakes the object.
+ * - A source's subscription hook is held by the entity's activation while its polls renew it, every 4 minutes at least: a hook whose `lease` is shorter lapses while a poll is parked, and one that holds a timer or a socket keeps the object awake.
+ * - Only the binding's actions and event types are forwarded: a native rpc, which authenticates nothing, and a streaming action, whose frames would hold the object awake, each fail the call with a defect naming it.
+ * - A call under way when the object is evicted, by a deploy, a crash or `evictDurableObject`, is lost: the next instance closes that socket with 1012, and the page's client connects again and polls from its cursor; a message on a socket whose attachment the object cannot read, as after a deploy changing it, closes it with 1012 the same way.
+ * - The upgrade's headers, cookies included, are each call's credentials, and the host judges no `Origin`: refuse a page of another site, or keep cookies off the socket, in the Worker's `fetch`, before it hands the upgrade to the object.
+ * - The upgrade's headers, the calls under way and the parked polls, each with the headers its message sent, share the runtime's 16 KiB attachment: an upgrade past it is answered 431, and a call past it fails with a defect naming it.
+ * - The runtime answers the page's pings itself, so an open page does not wake the object; a request that is no upgrade is answered 426, an upgrade to an object of an entity type not in `sockets` 404.
+ * - It waits on `initialize` alone, so a build pending past 15 seconds is taken over without Effect's own `ClusterEntity`'s bound, which keeps a replacement build inside the runtime's 30 seconds; Effect does not export that wait.
+ */
+export const make = <Env>(
+  options: Options<Env>
+): new (ctx: DurableObjectState, env: Env) => DurableObject<Env> & Methods => {
+  const refusal = refusalOf(options.protocol);
+
+  const byType = new Map(
+    options.sockets.map((entity) => [entity.type, entity] as const)
+  );
+
+  return class extends DurableObject<Env> implements Methods {
+    #program!: ClusterEntityProgram;
+    #host!: ReturnType<typeof hostOf>;
+
+    constructor(ctx: DurableObjectState, env: Env) {
+      super(ctx, env);
+      ctx.setWebSocketAutoResponse(pingPong());
+
+      void ctx.blockConcurrencyWhile(async () => {
+        const host = hostOf(ctx, await options.initialize(env), byType);
+
+        this.#program = await Effect.runPromise(
+          makeClusterEntityProgram({
+            id: ctx.id,
+            storage: ctx.storage,
+            exports: ctx.exports,
+            waitUntil: (promise) => {
+              ctx.waitUntil(promise);
+              void promise.then(host.settled, host.settled);
+            },
+          })
+        );
+
+        this.#host = host;
+        host.started();
+      });
+    }
+
+    async #settling<A>(effect: Effect.Effect<A>): Promise<A> {
+      try {
+        return await Effect.runPromise(effect);
+      } finally {
+        this.#host.settled();
+      }
+    }
+
+    override async alarm(): Promise<void> {
+      await this.#settling(this.#program.alarm());
+    }
+
+    async hold(): Promise<void> {
+      await Effect.runPromise(this.#program.hold());
+    }
+
+    async invoke(
+      envelopeText: string,
+      discard: boolean,
+      delivery?: EntityDeliveryOptions
+    ): Promise<EntityInvokeResult> {
+      return await this.#settling(
+        this.#program.invoke(envelopeText, discard, delivery)
+      );
+    }
+
+    async acknowledge(
+      requestId: string,
+      replyId: string
+    ): Promise<readonly string[]> {
+      return await Effect.runPromise(
+        this.#program.acknowledge(requestId, replyId)
+      );
+    }
+
+    async interrupt(
+      storageRequestId: string,
+      clientRequestId = storageRequestId
+    ): Promise<void> {
+      await Effect.runPromise(
+        this.#program.interrupt(storageRequestId, clientRequestId)
+      );
+    }
+
+    async reset(requestId: string): Promise<void> {
+      await Effect.runPromise(this.#program.reset(requestId));
+    }
+
+    async deliverReply(requestId: string, reply: string): Promise<boolean> {
+      return await Effect.runPromise(
+        this.#program.deliverReply(requestId, reply)
+      );
+    }
+
+    override fetch(request: Request): Response {
+      return this.#host.upgrade(request, refusal);
+    }
+
+    override async webSocketMessage(
+      socket: WebSocket,
+      data: string | ArrayBuffer
+    ): Promise<void> {
+      await Effect.runPromise(this.#host.message(socket, data));
+    }
+
+    override webSocketClose(
+      socket: WebSocket,
+      code: number,
+      reason: string
+    ): void {
+      replyToClose(socket, code, reason);
+      this.#host.settled();
+    }
+  };
+};

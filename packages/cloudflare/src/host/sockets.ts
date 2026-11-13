@@ -1,0 +1,480 @@
+import { Effect, Exit, Option, Predicate, Schema } from "effect";
+import { Rpc, RpcSchema, RpcSerialization } from "effect/rpc";
+
+import { closeQuietly, died, parser, send } from "./frames.js";
+
+const Header = Schema.Tuple([Schema.String, Schema.String]);
+
+const Headers = Schema.Array(Header);
+
+type Headers = typeof Headers.Type;
+
+const RequestId = Schema.Union([Schema.String, Schema.Finite]);
+
+const Parked = Schema.Struct({
+  id: RequestId,
+  tag: Schema.String,
+  payload: Schema.Json,
+  headers: Headers,
+  gate: Schema.Finite,
+});
+
+type Parked = typeof Parked.Type;
+
+const Answered = Schema.Struct({
+  watch: Schema.String,
+  cursor: Schema.String,
+  gate: Schema.Finite,
+});
+
+const Attachment = Schema.Struct({
+  name: Schema.String,
+  headers: Headers,
+  calls: Schema.Array(RequestId),
+  parked: Schema.Array(Parked),
+  answered: Schema.Array(Answered),
+});
+
+type Attachment = typeof Attachment.Type;
+
+const decodeAttachment = Schema.decodeUnknownOption(Attachment);
+
+const attachmentOf = (socket: WebSocket) =>
+  Option.getOrUndefined(decodeAttachment(socket.deserializeAttachment()));
+
+const kept = (socket: WebSocket, attachment: Attachment) => {
+  try {
+    socket.serializeAttachment(attachment);
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const updated = (
+  socket: WebSocket,
+  change: (held: Attachment) => Attachment
+) => {
+  const held = attachmentOf(socket);
+
+  return held !== undefined && kept(socket, change(held));
+};
+
+const without = <A>(
+  items: readonly A[],
+  drop: (item: A) => boolean
+): readonly A[] => items.filter((item) => !drop(item));
+
+const park = (socket: WebSocket, entry: Parked) =>
+  updated(socket, (held) => ({
+    ...held,
+    calls: without(held.calls, (call) => call === entry.id),
+    parked: [...held.parked, entry],
+  }));
+
+const forget = (socket: WebSocket, watch: string) =>
+  updated(socket, (held) => ({
+    ...held,
+    answered: without(held.answered, (answer) => answer.watch === watch),
+  }));
+
+const Request = Schema.TaggedStruct("Request", {
+  id: RequestId,
+  tag: Schema.String,
+  payload: Schema.Json,
+  headers: Headers,
+});
+
+type Request = typeof Request.Type;
+
+const FromClient = Schema.Union([
+  Request,
+  Schema.TaggedStruct("Interrupt", { requestId: RequestId }),
+  Schema.Struct({ _tag: Schema.Literals(["Ack", "Ping", "Eof"]) }),
+]);
+
+const decodeFrames = Schema.decodeUnknownExit(Schema.Array(FromClient));
+
+const Poll = Schema.Struct({
+  cursor: Schema.NullOr(Schema.String),
+  watch: Schema.optional(Schema.String),
+});
+
+const decodePoll = Schema.decodeUnknownOption(Poll);
+
+const Page = Schema.Struct({
+  events: Schema.Array(Schema.Unknown),
+  cursor: Schema.NullOr(Schema.String),
+  hasMore: Schema.Boolean,
+});
+
+const decodePage = Schema.decodeUnknownOption(Page);
+
+const decodeRelease = Schema.decodeUnknownOption(
+  Schema.Struct({ watch: Schema.String })
+);
+
+/** One entity's binding, as a socket reaches it: its rpcs by tag, its polls, and a call into it. */
+export interface Served {
+  readonly rpcs: ReadonlyMap<string, Rpc.AnyWithProps>;
+  readonly polls: ReadonlySet<string>;
+  readonly releases: ReadonlySet<string>;
+  readonly call: (
+    tag: string,
+    payload: Schema.Json,
+    headers: Headers
+  ) => Effect.Effect<Exit.Exit<Schema.Json, unknown>>;
+}
+
+const merged = (upgrade: Headers, own: Headers): Headers => {
+  const named = new Set(own.map(([name]) => name.toLowerCase()));
+
+  return [
+    ...upgrade.filter(([name]) => !named.has(name.toLowerCase())),
+    ...own,
+  ];
+};
+
+const encodeExit = (rpc: Rpc.AnyWithProps, exit: Exit.Exit<unknown, unknown>) =>
+  Schema.encodeUnknownEffect(
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    RpcSerialization.json.codecFor(Rpc.exitSchema(rpc)) as Schema.Codec<
+      Exit.Exit<unknown, unknown>,
+      unknown
+    >
+  )(exit);
+
+const reply = (
+  socket: WebSocket,
+  served: Served,
+  { id, tag }: Pick<Parked, "id" | "tag">,
+  exit: Exit.Exit<Schema.Json, unknown>
+) =>
+  Effect.gen(function* () {
+    updated(socket, (held) => ({
+      ...held,
+      calls: without(held.calls, (call) => call === id),
+    }));
+
+    const rpc = served.rpcs.get(tag);
+
+    if (rpc === undefined) {
+      return;
+    }
+
+    const encoded = yield* Effect.exit(encodeExit(rpc, exit));
+
+    send(
+      socket,
+      Exit.isSuccess(encoded)
+        ? {
+            _tag: "Exit",
+            requestId: id,
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+            exit: encoded.value as never,
+          }
+        : died(id, encoded.cause)
+    );
+  });
+
+const untracked =
+  "This socket's attachment, its upgrade's headers, its calls under way and its parked polls, would pass the runtime's 16 KiB: send fewer calls at once, or fewer or smaller headers";
+
+const streamed = (tag: string) =>
+  `${tag} is a streaming action, which a socket of ActionClusterEntity does not serve, since its frames would hold the object awake: call it over HTTP through ActionEntity.reaching`;
+
+const lostCalls =
+  "This server lost the calls it was answering on this socket: connect again";
+
+const lostSocket =
+  "This server cannot read what it kept for this socket: connect again";
+
+/**
+ * Answers sockets' frames from the entity each attachment names, parks the polls that find
+ * nothing new, and answers them again once the gate moves.
+ */
+export const makeSockets = (options: {
+  readonly servedBy: (name: string) => Served | undefined;
+  readonly gate: () => number | undefined;
+  readonly sockets: () => readonly WebSocket[];
+  readonly waitUntil: (promise: Promise<unknown>) => void;
+}) => {
+  const { gate } = options;
+
+  let passing = false;
+  let again = false;
+
+  const due = (now: number) =>
+    options.sockets().flatMap((socket) => {
+      const held = attachmentOf(socket);
+
+      const served =
+        held === undefined ? undefined : options.servedBy(held.name);
+
+      if (held === undefined || served === undefined) {
+        return [];
+      }
+
+      const moved = held.parked.filter((entry) => entry.gate !== now);
+
+      if (
+        moved.length === 0 ||
+        !kept(socket, {
+          ...held,
+          parked: without(held.parked, (entry) => entry.gate !== now),
+          calls: [...held.calls, ...moved.map(({ id }) => id)],
+        })
+      ) {
+        return [];
+      }
+
+      return moved.map((entry) => ({ socket, served, entry }));
+    });
+
+  const polled = (
+    socket: WebSocket,
+    served: Served,
+    entry: Omit<Parked, "gate">
+  ): Effect.Effect<boolean> =>
+    Effect.gen(function* () {
+      const before = gate();
+      const upgrade = attachmentOf(socket)?.headers ?? [];
+
+      const exit = yield* served.call(
+        entry.tag,
+        entry.payload,
+        merged(upgrade, entry.headers)
+      );
+
+      const poll = Option.getOrUndefined(decodePoll(entry.payload));
+
+      const page = Exit.isSuccess(exit)
+        ? Option.getOrUndefined(decodePage(exit.value))
+        : undefined;
+
+      const unchanged =
+        before !== undefined &&
+        poll !== undefined &&
+        page !== undefined &&
+        page.events.length === 0 &&
+        !page.hasMore &&
+        page.cursor === poll.cursor;
+
+      if (unchanged && park(socket, { ...entry, gate: before })) {
+        return true;
+      }
+
+      yield* reply(socket, served, entry, exit);
+
+      if (
+        before !== undefined &&
+        poll?.watch !== undefined &&
+        page !== undefined &&
+        page.cursor !== null &&
+        !page.hasMore
+      ) {
+        const { watch } = poll;
+        const { cursor } = page;
+
+        updated(socket, (held) => ({
+          ...held,
+          answered: [
+            ...without(held.answered, (answer) => answer.watch === watch),
+            { watch, cursor, gate: before },
+          ],
+        }));
+      }
+
+      return false;
+    });
+
+  const pass: Effect.Effect<void> = Effect.suspend(() => {
+    const now = gate();
+
+    return now === undefined
+      ? Effect.void
+      : Effect.forEach(
+          due(now),
+          ({ socket, served, entry }) => polled(socket, served, entry),
+          { concurrency: "unbounded" }
+        ).pipe(
+          Effect.tap((parked) =>
+            Effect.sync(() => {
+              again ||= parked.includes(true);
+            })
+          ),
+          Effect.asVoid
+        );
+  });
+
+  const passes = async () => {
+    do {
+      again = false;
+      await Effect.runPromise(pass);
+    } while (again);
+  };
+
+  const settled = () => {
+    if (passing) {
+      again = true;
+
+      return;
+    }
+
+    passing = true;
+
+    options.waitUntil(
+      passes().finally(() => {
+        passing = false;
+      })
+    );
+  };
+
+  const parkedAgain = (socket: WebSocket, request: Request) => {
+    const poll = Option.getOrUndefined(decodePoll(request.payload));
+
+    if (poll?.watch === undefined) {
+      return false;
+    }
+
+    const answer = attachmentOf(socket)?.answered.find(
+      ({ watch }) => watch === poll.watch
+    );
+
+    forget(socket, poll.watch);
+
+    return (
+      answer !== undefined &&
+      answer.cursor === poll.cursor &&
+      answer.gate === gate() &&
+      park(socket, {
+        id: request.id,
+        tag: request.tag,
+        payload: request.payload,
+        headers: request.headers,
+        gate: answer.gate,
+      })
+    );
+  };
+
+  const requested = (socket: WebSocket, served: Served, request: Request) =>
+    Effect.gen(function* () {
+      const { id, tag, payload, headers } = request;
+      const rpc = served.rpcs.get(tag);
+
+      if (rpc === undefined) {
+        send(socket, died(id, `Unknown request tag: ${tag}`));
+
+        return;
+      }
+
+      if (RpcSchema.isStreamSchema(rpc.successSchema)) {
+        send(socket, died(id, streamed(tag)));
+
+        return;
+      }
+
+      if (served.polls.has(tag) && parkedAgain(socket, request)) {
+        return;
+      }
+
+      if (
+        !updated(socket, (held) => ({ ...held, calls: [...held.calls, id] }))
+      ) {
+        send(socket, died(id, untracked));
+
+        return;
+      }
+
+      if (served.polls.has(tag)) {
+        yield* polled(socket, served, { id, tag, payload, headers });
+
+        return;
+      }
+
+      if (served.releases.has(tag)) {
+        Option.map(decodeRelease(payload), ({ watch }) =>
+          forget(socket, watch)
+        );
+      }
+
+      const upgrade = attachmentOf(socket)?.headers ?? [];
+
+      return yield* reply(
+        socket,
+        served,
+        request,
+        yield* served.call(tag, payload, merged(upgrade, headers))
+      );
+    });
+
+  const message = (socket: WebSocket, data: string | ArrayBuffer) =>
+    Effect.gen(function* () {
+      const held = attachmentOf(socket);
+
+      const served =
+        held === undefined ? undefined : options.servedBy(held.name);
+
+      const frames = decodeFrames(
+        parser.decode(Predicate.isString(data) ? data : new Uint8Array(data))
+      );
+
+      if (served === undefined) {
+        closeQuietly(socket, 1012, lostSocket);
+
+        return;
+      }
+
+      if (Exit.isFailure(frames)) {
+        return;
+      }
+
+      yield* Effect.forEach(
+        frames.value,
+        (frame) => {
+          if (frame._tag === "Request") {
+            return requested(socket, served, frame);
+          }
+
+          if (frame._tag === "Interrupt") {
+            updated(socket, (attached) => ({
+              ...attached,
+              parked: without(
+                attached.parked,
+                ({ id }) => id === frame.requestId
+              ),
+            }));
+          }
+
+          return Effect.void;
+        },
+        { concurrency: "unbounded", discard: true }
+      );
+    }).pipe(Effect.ensuring(Effect.sync(settled)));
+
+  return {
+    message,
+    settled,
+    accept: (socket: WebSocket, name: string, headers: Headers) =>
+      kept(
+        socket,
+        Attachment.make({
+          name,
+          headers,
+          calls: [],
+          parked: [],
+          answered: [],
+        })
+      ),
+    started: () => {
+      for (const socket of options.sockets()) {
+        if ((attachmentOf(socket)?.calls.length ?? 0) > 0) {
+          closeQuietly(socket, 1012, lostCalls);
+        }
+      }
+
+      settled();
+    },
+  };
+};

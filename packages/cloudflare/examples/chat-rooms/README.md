@@ -1,6 +1,6 @@
 # chat-rooms
 
-Chat rooms on Cloudflare, on Effect Cluster: each room is one entity, `Room`, and so one Durable Object holding its messages in its own SQLite database. Members read, post and delete messages in the rooms they belong to over the Worker's JSON routes and MCP endpoint, which reach every room through `ActionEntity.reaching`. A page follows its room through an event, `MessagePosted`, which the Worker polls from the room; an agent polls it over MCP. A message expires a day after it was posted: posting schedules a persisted tell to the room itself, delivered by `DeliverAt`. A lobby, one more entity, keeps when each room was last active: each room tells it its latest activity and the version of its messages, from a persisted tell the room sends itself, carrying no credential, and a page follows it, every preview whole at each change.
+Chat rooms on Cloudflare, on Effect Cluster: each room is one entity, `Room`, and so one Durable Object holding its messages in its own SQLite database. Members read, post and delete messages in the rooms they belong to over the Worker's JSON routes and MCP endpoint, which reach every room through `ActionEntity.reaching`. A page follows its room through an event, `MessagePosted`, over a WebSocket to the room's own object, which the runtime holds open while the room hibernates; an agent polls it over MCP. A message expires a day after it was posted: posting schedules a persisted tell to the room itself, delivered by `DeliverAt`. A lobby, one more entity, keeps when each room was last active: each room tells it its latest activity and the version of its messages, from a persisted tell the room sends itself, carrying no credential, and a page follows it, every preview whole at each change.
 
 Start here to run actions on Cloudflare. The same chat on a long-lived server is live-rpc, in the core package's `examples/`.
 
@@ -30,6 +30,7 @@ Each trap below is shown in the code of the files it names.
 - **Each change asks the lobby in the room's one slot, for 2 seconds at most**, then leaves the change to the next change or a retry, each reading the room's latest again, so while the lobby takes no call, or answers late, as an ask queued behind other rooms' in the lobby's one slot does, a call reaching the room behind n asks waits up to 2n seconds; the lobby finishes a call the room stopped waiting for, and records and announces a change in one transaction: `src/chat/handlers.ts`, `src/lobby/Changes.ts`, `src/platform/sql-previews.ts`.
 - **Changes may arrive in no set order, so the lobby keeps only a newer version**: `room_version` in `src/platform/sql-messages.ts`, `src/platform/sql-previews.ts`.
 - **Every processed tell keeps its row**, which the runtime never prunes: one expiry a room an hour, one retry a minute at most while a task fails, and one lobby tell for each post or delete, refused or failed ones included, and for each run of an expiry, its retries included: `src/chat/Tells.ts`, `src/retry.ts`.
+- **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; a page built against other rpcs is refused, and stops: `src/browser.ts`, `src/worker.ts`, `src/Rpc.ts`.
 - **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
 - **A room's tells keep no credential**: `src/platform/cluster-clients.ts`, `test/worker.test.ts`.
 - **The lobby's event is a whole value**, followed with no read first: `src/lobby/events.ts`, `src/browser.ts`.
@@ -64,17 +65,17 @@ src/
 │   ├── sql-previews.ts  PreviewStore over the lobby's
 │   └── cluster-clients.ts  RoomMailbox and LobbyClient over the entities' clients
 ├── Api.ts             the JSON bindings: a room's and the lobby's
-├── Rpc.ts             the entities' bindings
+├── Rpc.ts             the entities' bindings, and the version a page's socket names
 ├── entities.ts        Room and Lobby, the entities, each with its own rpcs
 ├── retry.ts           a failed task's later tries: logged, backed off to an hour
 ├── routes.ts          each entity's layer and services, and the Worker's routes
 ├── application.ts     the initializer: the whole application, once per isolate
-├── worker.ts          entrypoint: the four classes and the Worker's fetch
+├── worker.ts          entrypoint: the four classes, the room's sockets and the Worker's fetch
 ├── rooms-entrypoint.ts  the rooms' activity for another Worker
-├── browser.ts         client module: a page's room and the lobby, over JSON
+├── browser.ts         client module: a page's room over JSON and its socket, and the lobby
 └── env.d.ts           the bindings' types, as `wrangler types` writes them
 test/
-└── worker.test.ts     through the Worker's fetch: JSON routes, MCP, the lobby, the expiry, the mailboxes
+└── worker.test.ts     through the Worker's fetch: JSON routes, a page's socket, MCP, the lobby, the expiry, the mailboxes
 ```
 
 - **An entity is built per wake.** The runtime evicts an idle object and builds the entity again for its next message, its `services` and builders included: anything in memory is gone, and `layerSqlMessages` creates its table if it is not there. The database and the mailbox stay.
@@ -95,5 +96,6 @@ test/
 | A persisted tell scheduled by `DeliverAt`, one per `PrimaryKey`, handled per activation | `src/chat/Tells.ts`, `src/chat/handlers.ts`, `src/platform/cluster-clients.ts` |
 | An entity calling another with a change, which notifies its own event in the same transaction | `src/chat/handlers.ts`, `src/lobby/handlers.ts`, `src/platform/sql-previews.ts` |
 | An event sent as a whole value, followed with no read first | `src/lobby/events.ts`, `src/browser.ts`, `test/worker.test.ts` |
+| A page's socket to its room, kept open while the room hibernates | `src/worker.ts`, `src/browser.ts`, `test/worker.test.ts` |
 | Another Worker reaching the entities through the booted runtime | `src/rooms-entrypoint.ts` |
 | Testing on the Workers runtime: an eviction, a scheduled tell, a planted failure, the mailboxes | `test/worker.test.ts` |

@@ -29,11 +29,13 @@
   "sideEffects": false,
   "exports": {
     "./ActionCluster": "./src/cluster/ActionCluster.ts",
+    "./ActionClusterEntity": "./src/host/ActionClusterEntity.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "exports": {
       "./ActionCluster": "./dist/ActionCluster.mjs",
+      "./ActionClusterEntity": "./dist/ActionClusterEntity.mjs",
       "./package.json": "./package.json"
     },
     "access": "public"

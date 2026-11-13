@@ -35,6 +35,16 @@ Layer.mergeAll(
 );
 ```
 
-Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/): a room per entity, a lobby told of each room's activity, a day-old expiry scheduled with `DeliverAt`, and a Worker in front. In a project that installs it, both are in `node_modules/@gjermundgaraba/effect-actions-cloudflare/`.
+A page follows an entity's events over a WebSocket to the entity's own object, which the runtime keeps open while the object hibernates, through the class the Worker exports in place of Effect's `ClusterEntity`:
+
+```ts
+export class ClusterEntity extends ActionClusterEntity.make({
+  initialize,
+  sockets: [Room],
+  protocol: { version: "1", code: 4000 },
+}) {}
+```
+
+Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/): a room per entity, a lobby told of each room's activity, a day-old expiry scheduled with `DeliverAt`, a page's socket to its room, and a Worker in front. In a project that installs it, both are in `node_modules/@gjermundgaraba/effect-actions-cloudflare/`.
 
 MIT licensed.
