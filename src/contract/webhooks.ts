@@ -78,11 +78,16 @@ export const offersWebhook = (
   keyed: Keyed | undefined
 ): event is Protected => isProtected(event) && isNamed(keyed);
 
+const offeredByWebhook = (
+  feed: Feed,
+  keyed: Keyed | undefined
+): feed is WebhookFeed => offersWebhook(feed.event, keyed);
+
 export const deliversByWebhook = (
   feed: Feed,
   keyed: Keyed | undefined
 ): feed is WebhookFeed =>
-  feed.requestBound !== true && offersWebhook(feed.event, keyed);
+  feed.requestBound !== true && offeredByWebhook(feed, keyed);
 
 /**
  * Where a surface sends `feed`'s webhook subscriptions: to the holder the feed names, a reached
@@ -134,19 +139,18 @@ export const webhookSubscriber = (
   webhooks: Option.Option<WebhookHolder>
 ): Effect.Effect<Subscriber, Event.SubscriptionError, unknown> => {
   const holder = webhookHolder(feed, keyed, webhooks);
-  const { event } = feed;
 
   if (
     Option.isNone(holder) ||
     !isNamed(keyed) ||
-    !offersWebhook(event, keyed)
+    !offeredByWebhook(feed, keyed)
   ) {
-    return Effect.fail(deliveryUnsupported(event.name, "webhook"));
+    return Effect.fail(deliveryUnsupported(feed.event.name, "webhook"));
   }
 
-  return Effect.map(Effect.service(event.caller), (identity) => ({
+  return Effect.map(Effect.service(feed.event.caller), (identity) => ({
     webhooks: holder.value,
-    feed: { ...feed, event },
+    feed,
     keyed,
     principal: keyed.principal(identity),
   }));
