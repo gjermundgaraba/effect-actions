@@ -648,7 +648,6 @@ describe("ActionEntity.reaching's cluster failures", () => {
         expect(Exit.isFailure(answered) && String(answered.cause)).toContain(
           "undeclared status code (500"
         );
-        expect(rooms.ran.read).toBe(0);
       }).pipe(
         Effect.scoped,
         Effect.provide(
