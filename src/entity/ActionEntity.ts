@@ -85,6 +85,20 @@ export interface Entity<
   readonly key: Keys<B>;
 }
 
+/**
+ * Any entity `make` returns, as a function accepting every entity reads it: its type, its
+ * binding, and its `client`, Effect's `Entity.client`, whose client's methods are keyed by rpc tag.
+ */
+export interface Any {
+  readonly type: string;
+  readonly binding: ActionRpc.Any;
+  readonly client: Effect.Effect<
+    (entityId: string) => object,
+    never,
+    Sharding.Sharding
+  >;
+}
+
 interface ErasedKeys {
   readonly [name: string]: (input: Action.Any["input"]["Type"]) => string;
 }
@@ -205,6 +219,15 @@ export const make = <
     key: options.key,
   });
 };
+
+/**
+ * The rpcs of `entity`'s binding, as its `protocol` holds them without its native rpcs: one per
+ * action, and per event type its poll and its `<event>/release`. What a surface outside the
+ * cluster may forward to the entity, as the Cloudflare package's socket host does, and what
+ * `ActionRpc.client` with `delivery: "poll"` calls.
+ */
+export const bindingRpcs = (entity: Any): RpcGroup.RpcGroup<ErasedRpc> =>
+  erasedOf(entity.binding.actions, entity.binding.events, "poll");
 
 /**
  * `layer`'s options: `Entity.toLayer`'s, which the entity's registration takes, but

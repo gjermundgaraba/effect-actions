@@ -9,7 +9,7 @@ import {
   SchemaTransformation,
   Stream,
 } from "effect";
-import type { Context } from "effect";
+import type { Context, Duration } from "effect";
 import { HttpClientRequest, HttpServerRequest } from "effect/http";
 import type { Headers } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
@@ -381,12 +381,37 @@ export const watchedOf = (
   });
 };
 
+const resending =
+  (
+    poll: Transport<unknown, never>["poll"],
+    after: Duration.Input
+  ): Transport<unknown, never>["poll"] =>
+  (cursor, watch) =>
+    Effect.timeoutOrElse(poll(cursor, watch), {
+      duration: after,
+      orElse: () => resending(poll, after)(cursor, watch),
+    });
+
 export const polledTransport =
-  (transient: (error: unknown) => boolean): EventTransport =>
+  (
+    transient: (error: unknown) => boolean,
+    resendAfter?: Duration.Input
+  ): EventTransport =>
   (event, binding, calling) => {
     const watched = watchedOf(event, binding, calling);
 
-    return (input) => polledTransportOf(event, watched(input), transient);
+    return (input) => {
+      const { poll, release } = watched(input);
+
+      return polledTransportOf(
+        event,
+        {
+          poll: resendAfter === undefined ? poll : resending(poll, resendAfter),
+          release,
+        },
+        transient
+      );
+    };
   };
 
 interface ClientBinding extends Declaring {

@@ -41,6 +41,12 @@ const AuditedCounter = ActionEntity.make("AuditedCounter", binding, {
 
 const Plain = ActionEntity.make("Plain", binding, { key });
 
+expectTypeOf(Counter).toExtend<ActionEntity.Any>();
+
+expectTypeOf(AuditedCounter).toExtend<ActionEntity.Any>();
+
+expectTypeOf(Plain).toExtend<ActionEntity.Any>();
+
 const peek = Action.implement(
   Peek,
   Effect.map(Tally, (tally) => () => Effect.succeed(tally.count))
