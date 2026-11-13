@@ -42,6 +42,12 @@ A server outside the cluster that forwards a socket's calls into the entity, as 
 
 The client's `watch(event, input, options)` follows an event by polling its rpc, from a cursor or from now, as `Action.client`'s does. An entity holds no stream open for a watcher, so a runtime that puts an idle entity to sleep can still do so. A watch asking for `mode: "stream"` fails with `Event.SubscriptionError`. What else ends a watch is on `ActionEntity.WatchError`.
 
+## Deliver its events by webhook
+
+A protected event served through `ActionEntity.reaching` is offered webhook delivery ([Webhook.md](Webhook.md)), held by the entity its input's key names: the surface sends each subscribe and unsubscribe there with the caller's headers, and the entity delivers from the `Webhook.layer` in its layer's `services`. An entity without one refuses the subscribe as `Unsupported`.
+
+Give that layer `persist`, so a later activation of the entity restores its subscriptions, each entity id its own, and `ActionEntity.layerClock`, so a wait of 10 seconds or more is a persisted tell the entity sends itself and the runtime may stop the entity until it is due. What the rpcs carrying a subscription are, and why they are not persisted, is on `ActionEntity.make`; the rules for the layer are on `ActionEntity.LayerOptions`' `services`.
+
 ## Test it
 
 Provide the layer with `TestRunner.layer`, the in-memory cluster, and call it through `ActionEntity.client`. A `TestRunner` keeps real time, so run such a test with `it.live`, not `it.effect`. `Entity.makeTestClient` runs the entity with no runner, and its client speaks the rpcs' JSON rather than typed methods.
