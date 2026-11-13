@@ -1,11 +1,20 @@
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
-import type { Duration } from "effect";
-import { Clock, Effect, Layer, Schedule, Schema } from "effect";
+import {
+  Clock,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Schedule,
+  Schema,
+} from "effect";
 import { SingleRunner } from "effect/cluster";
+import type { Entity } from "effect/cluster";
 import { Digest } from "effect/crypto";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { KeyValueStore } from "effect/persistence";
+import { Rpc, RpcGroup } from "effect/rpc";
 import { SqlClient } from "effect/sql";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
@@ -38,7 +47,20 @@ const signIn = Authentication.layer(Login, verify);
 
 const Count = Schema.Array(Schema.Struct({ count: Schema.Int }));
 
-const makeWorld = (nextPoll: Duration.Input = "1 second") => {
+const database = Layer.orDie(SqliteClient.layer({ filename: ":memory:" }));
+
+const runner = SingleRunner.layer({
+  shardingConfig: { entityMessagePollInterval: "250 millis" },
+  runnerStorage: "memory",
+}).pipe(Layer.orDie, Layer.provide(Digest.layerWebCrypto));
+
+const makeWorld = ({
+  nextPoll = "1 second",
+  maxTtl,
+}: {
+  readonly nextPoll?: Duration.Input;
+  readonly maxTtl?: Duration.Input;
+} = {}) => {
   const ticks: number[] = [];
   const seen = { builds: 0, stops: 0, accepting: false };
   const delivered: string[] = [];
@@ -89,15 +111,12 @@ const makeWorld = (nextPoll: Duration.Input = "1 second") => {
     return new Response(null, { status: 200 });
   };
 
-  const sql = Layer.orDie(SqliteClient.layer({ filename: ":memory:" }));
-
-  const runner = SingleRunner.layer({
-    shardingConfig: { entityMessagePollInterval: "250 millis" },
-    runnerStorage: "memory",
-  }).pipe(Layer.orDie, Layer.provide(Digest.layerWebCrypto));
-
   const entities = ActionEntity.layer(Ticker, ticking, {
-    services: Webhook.layer({ persist: true, resolveCallbacks: false }).pipe(
+    services: Webhook.layer({
+      persist: true,
+      resolveCallbacks: false,
+      maxTtl,
+    }).pipe(
       Layer.provide(ActionEntity.layerClock),
       Layer.provide(Testing.layer(receiver))
     ),
@@ -117,7 +136,10 @@ const makeWorld = (nextPoll: Duration.Input = "1 second") => {
     ticks,
     seen,
     delivered,
-    server: edge.pipe(Layer.provideMerge(entities), Layer.provideMerge(sql)),
+    server: edge.pipe(
+      Layer.provideMerge(entities),
+      Layer.provideMerge(database)
+    ),
   };
 };
 
@@ -144,6 +166,13 @@ const storedWakes = Effect.flatMap(SqlClient.SqlClient, (sql) =>
   )
 ).pipe(Effect.orDie);
 
+const pendingWakes = Effect.flatMap(SqlClient.SqlClient, (sql) =>
+  sql`SELECT count(*) AS count FROM cluster_messages WHERE tag = 'effect-actions/wake' AND processed = 0`.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Count)),
+    Effect.map((rows) => rows[0]?.count ?? 0)
+  )
+).pipe(Effect.orDie);
+
 const retryWakes = Effect.suspend(() => wakesBefore(Date.now() + 60_000, true));
 
 const until = <A, E, R>(
@@ -162,7 +191,7 @@ const until = <A, E, R>(
 
 const asAlice = HttpClientRequest.setHeaders({ authorization: "Bearer alice" });
 
-const subscribeTo = (room: string) =>
+const subscribeTo = (room: string, ttlMs?: number) =>
   HttpClient.execute(
     HttpClientRequest.post("/api/events/ticked/subscribe").pipe(
       asAlice,
@@ -172,6 +201,7 @@ const subscribeTo = (room: string) =>
           url: "https://hooks.example.com/alice",
           secret: secretOf(1),
         },
+        ttlMs,
       })
     )
   );
@@ -291,43 +321,41 @@ describe("ActionEntity.layerClock on a SQL runner", () => {
 
 describe("ActionEntity.layerClock's rows", () => {
   it.live(
-    "writes a wake for a subscription's expiry at its grant and again at each refresh",
+    "keeps at most 16 wakes pending due within 16 seconds and 16 more for each doubling beyond, however many times a subscription is refreshed to expire at another time",
     () => {
-      const { server } = makeWorld();
+      const longest = 30 * 24 * 60 * 60 * 1000;
+      const refreshes = 400;
+      const { server } = makeWorld({ maxTtl: longest });
 
-      const expiryWakes = Effect.suspend(() =>
-        wakesBefore(Date.now() + 2 * 60 * 60 * 1000, false)
-      ).pipe(
-        Effect.zipWith(
-          Effect.suspend(() => wakesBefore(Date.now() + 60_000, false)),
-          (all, soon) => all - soon
-        )
-      );
+      const bound = 16 * (Math.floor(Math.log2(longest / 16_000)) + 2);
 
       return Effect.gen(function* () {
         yield* subscribed;
 
-        const granted = yield* until(expiryWakes, (count) => count > 0, 5000);
+        const granted = yield* until(pendingWakes, (count) => count > 0, 5000);
 
-        yield* Effect.sleep("1100 millis");
-        yield* subscribed;
+        for (let refresh = 0; refresh < refreshes; refresh += 1) {
+          yield* subscribeTo(
+            "a",
+            longest - refresh * Math.floor((longest - 60_000) / refreshes)
+          );
+        }
 
-        const refreshed = yield* until(
-          expiryWakes,
-          (count) => count > granted,
-          5000
-        );
+        yield* Effect.sleep("2 seconds");
 
-        expect([granted, refreshed]).toStrictEqual([1, 2]);
+        expect(granted).toBe(1);
+        expect(refreshes).toBeGreaterThan(bound);
+        expect(yield* pendingWakes).toBeGreaterThan(0);
+        expect(yield* pendingWakes).toBeLessThanOrEqual(bound);
       }).pipe(Effect.scoped, Effect.provide(server));
     },
-    { timeout: 30_000 }
+    { timeout: 120_000 }
   );
 
   it.live(
     "asks a check source whose nextPoll is 10 seconds or more again through a wake, one row each",
     () => {
-      const { server } = makeWorld("10 seconds");
+      const { server } = makeWorld({ nextPoll: "10 seconds" });
 
       return Effect.gen(function* () {
         yield* subscribed;
@@ -341,6 +369,83 @@ describe("ActionEntity.layerClock's rows", () => {
         expect(polls).toBeGreaterThan(1);
       }).pipe(Effect.scoped, Effect.provide(server));
     },
+    { timeout: 60_000 }
+  );
+});
+
+const Naps = RpcGroup.make(
+  Rpc.make("nap", { payload: { until: Schema.Int }, success: Schema.Int })
+);
+
+const Napper = ActionEntity.make(
+  "Napper",
+  ActionRpc.make([Ticked], { authentication: Login }),
+  { key: { ticked: ({ room }) => room }, rpcs: Naps }
+);
+
+const napping = ActionEntity.layer(
+  Napper,
+  Event.implement(
+    Ticked,
+    { check: () => Effect.succeed({ cursor: "0", events: [] }) },
+    { authorize: Event.allowAll }
+  ),
+  {
+    services: ActionEntity.layerClock,
+    rpcs: {
+      nap: ({ payload: { until: due } }) =>
+        Effect.gen(function* () {
+          yield* Effect.sleep(
+            Duration.millis(due - (yield* Clock.currentTimeMillis))
+          );
+
+          return (yield* Clock.currentTimeMillis) - due;
+        }),
+    } satisfies Entity.HandlersFrom<RpcGroup.Rpcs<typeof Naps>>,
+  }
+).pipe(
+  Layer.provideMerge(runner),
+  Layer.provideMerge(database),
+  Layer.provide([signIn, Event.layerMemory])
+);
+
+const napUntil = (due: number) =>
+  Effect.flatMap(Napper.client, (nappers) => nappers("n").nap({ until: due }));
+
+describe("ActionEntity.layerClock in an entity's services", () => {
+  it.live(
+    "ends a handler's sleep of 10 seconds or more no earlier than it is due, though its wake comes while the handler holds the entity's one slot",
+    () =>
+      Effect.gen(function* () {
+        const late = yield* napUntil(
+          Math.ceil(Date.now() / 1000) * 1000 + 12_900
+        ).pipe(Effect.timeout("30 seconds"));
+
+        expect(late).toBeGreaterThanOrEqual(0);
+        expect(yield* wakesBefore(Date.now(), false)).toBeGreaterThan(0);
+      }).pipe(Effect.provide(napping)),
+    { timeout: 60_000 }
+  );
+
+  it.live(
+    "ends a sleep at once when its wake is delivered before its time, as a test moving its deliver_at does",
+    () =>
+      Effect.gen(function* () {
+        const napped = yield* Effect.forkScoped(napUntil(Date.now() + 60_000));
+
+        yield* until(pendingWakes, (pending) => pending > 0, 10_000);
+        yield* Effect.flatMap(
+          SqlClient.SqlClient,
+          (client) =>
+            client`UPDATE cluster_messages SET deliver_at = ${Date.now()} WHERE tag = 'effect-actions/wake' AND processed = 0`
+        ).pipe(Effect.orDie);
+
+        const late = yield* Fiber.join(napped).pipe(
+          Effect.timeout("20 seconds")
+        );
+
+        expect(late).toBeLessThan(-30_000);
+      }).pipe(Effect.scoped, Effect.provide(napping)),
     { timeout: 60_000 }
   );
 });

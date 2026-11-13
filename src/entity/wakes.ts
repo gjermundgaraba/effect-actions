@@ -2,9 +2,9 @@ import {
   Clock,
   Context,
   DateTime,
+  Deferred,
   Duration,
   Effect,
-  Latch,
   Layer,
   PrimaryKey,
   Schema,
@@ -42,56 +42,82 @@ export class Wakes extends Context.Service<
   { readonly until: (at: number) => Effect.Effect<void> }
 >()("effect-actions/ActionEntity/Wakes") {}
 
+const wakeTime = (at: number, now: number) => {
+  let step = 1000;
+
+  while (step * 32 <= at - now) {
+    step *= 2;
+  }
+
+  return Math.floor(at / step) * step;
+};
+
+const durableFrom = Duration.seconds(10);
+
 export const makeWakes = <E>(send: (wake: Wake) => Effect.Effect<unknown, E>) =>
   Effect.map(Clock.Clock, (clock) => {
     const waiting = new Set<{
-      readonly at: number;
-      readonly woken: Latch.Latch;
+      readonly due: number;
+      readonly woken: Deferred.Deferred<number>;
     }>();
 
-    const sentOrSlept = (at: number) =>
-      send(new Wake({ at })).pipe(
+    const sleptUntil = (at: number) =>
+      clock.sleep(Duration.millis(at - clock.currentTimeMillisUnsafe()));
+
+    const sentOrSlept = (due: number) =>
+      send(new Wake({ at: due })).pipe(
         Effect.matchCauseEffect({
           onSuccess: () => Effect.never,
           onFailure: (cause) =>
-            Effect.andThen(
-              reported(cause),
-              Effect.flatMap(clock.currentTimeMillis, (now) =>
-                clock.sleep(Duration.millis(at - now))
-              )
-            ),
+            Effect.andThen(reported(cause), Effect.as(sleptUntil(due), due)),
         })
       );
 
+    const wokenBy = (due: number) =>
+      Effect.suspend(() => {
+        const waiter = { due, woken: Deferred.makeUnsafe<number>() };
+
+        waiting.add(waiter);
+
+        return Effect.raceFirst(
+          Deferred.await(waiter.woken),
+          sentOrSlept(due)
+        ).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              waiting.delete(waiter);
+            })
+          )
+        );
+      });
+
+    const until = (at: number): Effect.Effect<void> =>
+      Effect.suspend(() => {
+        const now = clock.currentTimeMillisUnsafe();
+
+        if (at - now < Duration.toMillis(durableFrom)) {
+          return sleptUntil(at);
+        }
+
+        return Effect.flatMap(wokenBy(wakeTime(at, now)), (by) =>
+          clock.currentTimeMillisUnsafe() < by ? Effect.void : until(at)
+        );
+      });
+
     return {
-      wakes: Wakes.of({
-        until: (at) =>
-          Effect.suspend(() => {
-            const waiter = { at, woken: Latch.makeUnsafe(false) };
-
-            waiting.add(waiter);
-
-            return Effect.raceFirst(waiter.woken.await, sentOrSlept(at)).pipe(
-              Effect.ensuring(
-                Effect.sync(() => {
-                  waiting.delete(waiter);
-                })
-              )
-            );
-          }),
-      }),
+      wakes: Wakes.of({ until }),
       woke: ({ payload }: { readonly payload: Wake }) =>
-        Effect.sync(() => {
-          for (const waiter of waiting) {
-            if (waiter.at <= payload.at) {
-              waiter.woken.openUnsafe();
+        Rpc.fork(
+          Effect.sync(() => {
+            for (const waiter of waiting) {
+              if (waiter.due <= payload.at) {
+                Deferred.doneUnsafe(waiter.woken, Effect.succeed(payload.at));
+              }
             }
-          }
-        }),
+          })
+        ),
     };
   });
-
-const durableFrom = Duration.seconds(10);
 
 class DurableClock implements Clock.Clock {
   readonly currentTimeMillis: Effect.Effect<number>;
@@ -128,18 +154,22 @@ class DurableClock implements Clock.Clock {
       return this.#base.sleep(duration);
     }
 
-    const due =
-      this.#base.currentTimeMillisUnsafe() + Duration.toMillis(duration);
-
-    return this.#until(Math.ceil(due / 1000) * 1000);
+    return this.#until(
+      this.#base.currentTimeMillisUnsafe() + Duration.toMillis(duration)
+    );
   }
 }
 
 /**
- * A `Clock` for an entity's `services` whose sleeps of 10 seconds or more are a persisted tell the
- * entity sends itself, due when the sleep ends, so the entity may stop meanwhile and is built again
- * when it is due: give it to `Webhook.layer` with `persist`, whose retry waits then outlast the
- * activation. Requires `Wakes`, which `ActionEntity.layer` provides to its `services`.
+ * A `Clock` for an entity's `services` whose sleeps of 10 seconds or more are persisted tells the
+ * entity sends itself, so the entity may stop meanwhile and is built again when one is due: give
+ * it to `Webhook.layer` with `persist`, whose retry waits then outlast the activation. Requires
+ * `Wakes`, which `ActionEntity.layer` provides to its `services`.
+ *
+ * **Gotchas**
+ *
+ * - A long sleep's tell is due at a time sleeps ending near it share, before its end, and the sleep goes on from there: it never ends early, and an entity keeps at most 16 tells pending due within 16 seconds and 16 more for each doubling beyond, however many sleeps it starts.
+ * - A tell delivered before its time, as a test moving its `deliver_at` delivers it, ends the sleeps it was sent for at once.
  */
 export const layerClock: Layer.Layer<never, never, Wakes> = Layer.effect(
   Clock.Clock

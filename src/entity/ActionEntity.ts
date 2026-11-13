@@ -4,6 +4,7 @@ import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
 import type { HttpServerRequest } from "effect/http";
 import { Rpc, RpcGroup, RpcMessage } from "effect/rpc";
+import type { RpcClient } from "effect/rpc";
 
 import type {
   RemoteRequest,
@@ -433,25 +434,17 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
   const build = Effect.gen(function* () {
     const address = yield* Cluster.CurrentAddress;
 
-    const self = yield* Effect.cached(
-      Effect.provideContext(
-        Effect.map(entity.client, (clientFor) => clientFor(address.entityId)),
-        yield* Effect.context<Sharding.Sharding>()
-      )
-    );
+    const sharding = yield* Effect.context<Sharding.Sharding>();
 
     const { wakes, woke } = yield* makeWakes((wake) =>
-      Effect.flatMap(self, (client) => {
-        const sent = client[wakeTag]?.(
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-          wake as never,
-          { discard: true }
-        );
+      Effect.flatMap(entity.client, (clientFor) => {
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+        const self = clientFor(address.entityId) as RpcClient.RpcClient<
+          typeof WakeRpc
+        >;
 
-        return Effect.isEffect(sent)
-          ? sent
-          : Effect.die(new Error(`ActionEntity.layer: no rpc ${wakeTag}`));
-      })
+        return self[wakeTag](wake, { discard: true });
+      }).pipe(Effect.provideContext(sharding))
     );
 
     const built = yield* Layer.buildWithMemoMap(
