@@ -231,6 +231,95 @@ const generalIn = (
   previews: ReadonlyArray<{ room: string; latestAt: number | null }>
 ) => previews.find(({ room }) => room === "general")?.latestAt;
 
+const StubCalls = Schema.Struct({
+  invokes: Schema.Array(
+    Schema.Struct({
+      object: Schema.String,
+      tag: Schema.String,
+      settled: Schema.Boolean,
+    })
+  ),
+  others: Schema.Struct({ hold: Schema.Int, acknowledge: Schema.Int }),
+});
+
+const settledStubCalls = Effect.promise(
+  async () =>
+    await exports.default
+      .fetch(`${baseUrl}/stub-calls`)
+      .then(async (response) => await response.json())
+).pipe(
+  Effect.flatMap(Schema.decodeUnknownEffect(StubCalls)),
+  Effect.orDie,
+  Effect.repeat({
+    until: ({ invokes }) => invokes.every(({ settled }) => settled),
+    schedule: Schedule.spaced("100 millis"),
+  })
+);
+
+const Held = Schema.Array(
+  Schema.Struct({
+    calls: Schema.Array(Schema.Unknown),
+    parked: Schema.Array(Schema.Unknown),
+  })
+);
+
+const parkedIn = (room: DemoRoomName, sockets: number) =>
+  Effect.promise(
+    async () =>
+      await runInDurableObject(objectOf("Room", room), (_, state) =>
+        state
+          .getWebSockets()
+          .map((socket): unknown => socket.deserializeAttachment())
+      )
+  ).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Held)),
+    Effect.orDie,
+    Effect.repeat({
+      until: (held) =>
+        held.length === sockets &&
+        held.every(
+          ({ calls, parked }) => calls.length === 0 && parked.length === 1
+        ),
+      schedule: Schedule.spaced("100 millis"),
+    }),
+    Effect.timeout("20 seconds")
+  );
+
+const LastPosted = Schema.Array(Schema.Struct({ at: Schema.Int }));
+
+const lastPostedAt = (room: DemoRoomName) =>
+  Effect.promise(
+    async () =>
+      await runInDurableObject(objectOf("Room", room), (_, state) => {
+        try {
+          return state.storage.sql
+            .exec("SELECT at FROM messages ORDER BY id DESC LIMIT 1")
+            .toArray();
+        } catch {
+          return [];
+        }
+      })
+  ).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(LastPosted)),
+    Effect.map((rows) => rows[0]?.at ?? null),
+    Effect.orDie
+  );
+
+const counted = (
+  calls: ReadonlyArray<{ readonly object: string; readonly tag: string }>
+) => {
+  const counts: Record<string, number> = {};
+
+  for (const { object, tag } of calls) {
+    const address = CloudflareCluster.decodeName(object);
+    const call = `${address?.type ?? object}/${address?.id ?? ""} ${tag}`;
+
+    counts[call] = (counts[call] ?? 0) + 1;
+  }
+
+  return counts;
+};
+
 const timed = <A, E>(call: Effect.Effect<A, E>) =>
   Effect.map(Effect.timed(call), ([took, value]) => ({
     took: Duration.toMillis(took),
@@ -443,6 +532,129 @@ describe("the Worker and its rooms", () => {
         ]);
       }).pipe(Effect.scoped, Effect.provide([worker, socketTo("design")])),
     { timeout: 30_000 }
+  );
+
+  it.live(
+    "follows a room through MessagePosted over one JSON watch held open across the room's eviction",
+    () =>
+      Effect.gen(function* () {
+        const ada = yield* jsonAs("ada");
+
+        const before = yield* ada.postMessage({
+          room: "design",
+          text: "Before the JSON watch.",
+        });
+
+        const received: unknown[] = [];
+
+        yield* ada
+          .watch(
+            MessagePosted,
+            { room: "design" },
+            { cursor: String(before.id) }
+          )
+          .pipe(
+            Stream.filter((item) => item._tag === "Occurrence"),
+            Stream.runForEach((item) => Effect.sync(() => received.push(item))),
+            Effect.forkScoped
+          );
+
+        const first = yield* ada.postMessage({
+          room: "design",
+          text: "While the JSON watch runs.",
+        });
+
+        yield* arrivedIn(received)(1);
+        yield* evict("Room", "design");
+
+        const second = yield* ada.postMessage({
+          room: "design",
+          text: "After the room's eviction, on the same watch.",
+        });
+
+        yield* arrivedIn(received)(2);
+
+        expect(received).toMatchObject([{ data: first }, { data: second }]);
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 60_000 }
+  );
+
+  it.live(
+    "costs each post 1 + T + P stub calls with two pages watching: the post, its tellLobby and the lobby's roomChanged, its expire on an hour's first post, and one re-poll a page",
+    () =>
+      Effect.gen(function* () {
+        const page = yield* openRoom(baseUrl, "general", "ada");
+        const received: unknown[] = [];
+
+        const watching = (socket: ReturnType<typeof socketTo>) =>
+          Effect.flatMap(Layer.build(socket), (context) =>
+            followRoom("general", "ada").pipe(
+              Effect.flatMap((messages) =>
+                messages(0).pipe(
+                  Stream.runForEach((item) =>
+                    Effect.sync(() => received.push(item))
+                  ),
+                  Effect.forkScoped
+                )
+              ),
+              Effect.provideContext(context)
+            )
+          );
+
+        yield* watching(socketTo("general"));
+        yield* watching(socketTo("general"));
+        yield* parkedIn("general", 2);
+
+        const posts = [
+          { text: "Counted, the first.", evicted: false },
+          { text: "Counted, after an eviction.", evicted: true },
+          { text: "Counted, the third.", evicted: false },
+          { text: "Counted, after another eviction.", evicted: true },
+        ];
+
+        const outcomes = yield* Effect.forEach(posts, ({ text, evicted }) =>
+          Effect.gen(function* () {
+            if (evicted) {
+              yield* evict("Room", "general");
+            }
+
+            const latest = yield* lastPostedAt("general");
+            const before = yield* settledStubCalls;
+            const arrived = received.length;
+            const posted = yield* page.post(text);
+
+            yield* arrivedIn(received)(arrived + 2);
+            yield* parkedIn("general", 2);
+
+            const after = yield* settledStubCalls;
+
+            const expires =
+              latest === null || windowOf(latest) !== windowOf(posted.at);
+
+            return {
+              calls: counted(after.invokes.slice(before.invokes.length)),
+              others: {
+                hold: after.others.hold - before.others.hold,
+                acknowledge:
+                  after.others.acknowledge - before.others.acknowledge,
+              },
+              expected: {
+                "Room/general postMessage": 1,
+                "Room/general tellLobby": 1,
+                "Lobby/lobby roomChanged": 1,
+                "Room/general message.posted": 2,
+                ...(expires ? { "Room/general expire": 1 } : {}),
+              },
+            };
+          })
+        );
+
+        for (const { calls, others, expected } of outcomes) {
+          expect(calls).toStrictEqual(expected);
+          expect(others).toStrictEqual({ hold: 0, acknowledge: 0 });
+        }
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 120_000 }
   );
 
   it.live(
