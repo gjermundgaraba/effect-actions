@@ -604,6 +604,12 @@ describe("the Worker and its rooms", () => {
         yield* watching(socketTo("general"));
         yield* watching(socketTo("general"));
         yield* parkedIn("general", 2);
+        yield* sqlIn(
+          "Room",
+          "general",
+          "UPDATE messages SET at = at - ?",
+          day / 24
+        );
 
         const posts = [
           { text: "Counted, the first.", evicted: false },
@@ -648,6 +654,12 @@ describe("the Worker and its rooms", () => {
             };
           })
         );
+
+        const [first] = outcomes;
+
+        expect(
+          Object.values(first?.calls ?? {}).reduce((sum, n) => sum + n, 0)
+        ).toBe(6);
 
         for (const { calls, others, expected } of outcomes) {
           expect(calls).toStrictEqual(expected);
