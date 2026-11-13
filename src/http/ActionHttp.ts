@@ -74,14 +74,21 @@ import type { SubscriptionOf } from "../contract/push.js";
 import { provideServed, servingOf } from "../contract/serving.js";
 import { declared } from "../contract/status.js";
 import { Answering, answeringOf } from "../contract/stream.js";
-import { offersWebhook, servingFeeds } from "../contract/webhooks.js";
+import type {
+  AnyWebhookCancellation,
+  AnyWebhookSubscription,
+} from "../contract/subscribe.js";
+import {
+  offersWebhook,
+  servingFeeds,
+  webhookAnswers,
+} from "../contract/webhooks.js";
 import { methods } from "./client.js";
 import type { AnyHttp, Client, Options as ClientOptions } from "./client.js";
 import {
   answering,
   eventEndpointOf,
   servedSent,
-  webhookAnswers,
   webhookEndpointsOf,
 } from "./events.js";
 import type { pageOf, sentOf } from "./events.js";
@@ -727,13 +734,21 @@ export function layer(
         ...Object.fromEntries(
           webhookAnswered.map(
             ([eventName, { subscribe }]) =>
-              [`${eventName}/subscribe`, subscribe] as const
+              [
+                `${eventName}/subscribe`,
+                ({ payload }: { readonly payload: AnyWebhookSubscription }) =>
+                  subscribe(payload),
+              ] as const
           )
         ),
         ...Object.fromEntries(
           webhookAnswered.map(
             ([eventName, { unsubscribe }]) =>
-              [`${eventName}/unsubscribe`, unsubscribe] as const
+              [
+                `${eventName}/unsubscribe`,
+                ({ payload }: { readonly payload: AnyWebhookCancellation }) =>
+                  unsubscribe(payload),
+              ] as const
           )
         ),
       };

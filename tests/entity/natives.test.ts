@@ -1,9 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Exit, Fiber, Layer, Schema } from "effect";
-import { Entity, ShardingConfig, TestRunner } from "effect/cluster";
+import {
+  ClusterSchema,
+  Entity,
+  ShardingConfig,
+  TestRunner,
+} from "effect/cluster";
 import { Rpc, RpcClient, RpcGroup } from "effect/rpc";
 
 import * as Action from "../../src/contract/Action.js";
+import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { CurrentActor } from "../support/app/authorization.js";
@@ -40,6 +46,13 @@ const Peek = Action.make("peek", {
   input: { counter: Schema.String },
   success: { count: Schema.Int, by: Schema.String },
   readOnly: true,
+  caller: CurrentActor,
+});
+
+const Peeked = Event.make("peeked", {
+  description: "The counter was read.",
+  input: { counter: Schema.String },
+  payload: { by: Schema.String },
   caller: CurrentActor,
 });
 
@@ -220,17 +233,61 @@ describe("ActionEntity's native rpcs and services", () => {
       }).pipe(Effect.scoped, Effect.provide(counters))
   );
 
-  it("refuses a native rpc named after an action as the entity is made", () => {
-    expect(() =>
-      ActionEntity.make(
-        "Clash",
-        ActionRpc.make([Peek], { authentication: Login }),
-        {
-          key: { peek: ({ counter }) => counter },
-          rpcs: RpcGroup.make(Rpc.make("peek")),
-        }
-      )
-    ).toThrow("are named after an action, an event type or an event's release");
+  it.each([
+    "peek",
+    "peeked",
+    "peeked/release",
+    "peeked/subscribe",
+    "peeked/unsubscribe",
+    "effect-actions/wake",
+  ])(
+    "refuses a native rpc named %s, an rpc of the binding or the entity's wake, as the entity is made",
+    (tag) => {
+      expect(() =>
+        ActionEntity.make(
+          "Clash",
+          ActionRpc.make([Peek, Peeked], { authentication: Login }),
+          {
+            key: {
+              peek: ({ counter }) => counter,
+              peeked: ({ counter }) => counter,
+            },
+            rpcs: RpcGroup.make(Rpc.make(tag)),
+          }
+        )
+      ).toThrow(
+        `are named after an action, an event type, an event's release, subscribe or unsubscribe, or the entity's wake`
+      );
+    }
+  );
+
+  it("keeps its actions', event types' and webhook subscriptions' rpcs volatile and its wake persisted", () => {
+    const Peeking = ActionEntity.make(
+      "Peeking",
+      ActionRpc.make([Peek, Peeked], { authentication: Login }),
+      {
+        key: {
+          peek: ({ counter }) => counter,
+          peeked: ({ counter }) => counter,
+        },
+      }
+    );
+
+    const persisted = Object.fromEntries(
+      [...Peeking.protocol.requests].map(([tag, rpc]) => [
+        tag,
+        Context.get(rpc.annotations, ClusterSchema.Persisted),
+      ])
+    );
+
+    expect(persisted).toStrictEqual({
+      peek: false,
+      peeked: false,
+      "peeked/release": false,
+      "peeked/subscribe": false,
+      "peeked/unsubscribe": false,
+      "effect-actions/wake": true,
+    });
   });
 
   it.effect("serves its native rpcs to Entity.makeTestClient", () =>

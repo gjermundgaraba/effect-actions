@@ -29,8 +29,8 @@ import type { Pushed } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
 import { deliveryUnsupported } from "../contract/subscribe.js";
 import {
-  deliversByWebhook,
   Webhooks,
+  webhookHolder,
   webhookSubscriber,
 } from "../contract/webhooks.js";
 import type { Subscriber } from "../contract/webhooks.js";
@@ -343,7 +343,7 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
       const deliveryOf = (feed: Feed): EventDescriptor["delivery"] => [
         "poll",
         ...(send === undefined ? [] : ["push" as const]),
-        ...(Option.isSome(webhooks) && deliversByWebhook(feed, authentication)
+        ...(Option.isSome(webhookHolder(feed, authentication, webhooks))
           ? ["webhook" as const]
           : []),
       ];

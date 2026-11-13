@@ -116,6 +116,7 @@ const trusted = (url: URL, prefixes: readonly URL[]) =>
   );
 
 const snapshotOf = Context.omit(
+  Clock.Clock,
   Scope.Scope,
   HttpServerRequest.HttpServerRequest,
   HttpServerRequest.ParsedSearchParams,

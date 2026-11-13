@@ -2,6 +2,7 @@ import {
   Cause,
   Effect,
   ErrorReporter,
+  Option,
   Predicate,
   Queue,
   Result,
@@ -31,7 +32,7 @@ import { Anyone, principalOf } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
 import { bindingErrors, eventErrors } from "../contract/declared.js";
 import type { Declaring } from "../contract/declared.js";
-import type * as Event from "../contract/Event.js";
+import * as Event from "../contract/Event.js";
 import { acquireFeeds } from "../contract/feed.js";
 import type { AnyEventImplementation, Feed } from "../contract/feed.js";
 import { acquire, elementsOf } from "../contract/implementation.js";
@@ -46,8 +47,15 @@ import type { Reporting, Progressed } from "../contract/progress.js";
 import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import { concealed } from "../contract/reported.js";
 import { answeringOf, Answering, elementOf } from "../contract/stream.js";
+import {
+  Subscribed,
+  WebhookCancellationOf,
+  WebhookSubscriptionOf,
+} from "../contract/subscribe.js";
 import { watching } from "../contract/watch.js";
 import type { Transport } from "../contract/watch.js";
+import { servedWebhooks, webhookAnswers } from "../contract/webhooks.js";
+import type { WebhookHolder } from "../contract/webhooks.js";
 import { isUnknownTag, polledTransportOf, transportOf } from "./watch.js";
 
 export const streams = (action: Action.Any) =>
@@ -157,6 +165,25 @@ const unaryOf = (name: string) =>
 export type Delivery = "stream" | "poll";
 
 export const releaseTag = (name: string) => `${name}/release`;
+
+export const subscribeTag = (name: string) => `${name}/subscribe`;
+
+export const unsubscribeTag = (name: string) => `${name}/unsubscribe`;
+
+const heldByWebhook = (event: Event.Any) => event.caller !== Anyone;
+
+export const webhookRpcsOf = (events: readonly Event.Any[]) =>
+  RpcGroup.make(
+    ...events
+      .filter(heldByWebhook)
+      .flatMap((event) => [
+        unaryOf(subscribeTag(event.name)),
+        unaryOf(unsubscribeTag(event.name)),
+      ])
+  );
+
+const webhookErrors = (event: Event.Any, binding: Declaring) =>
+  Schema.Union([...eventErrors(event, binding), Event.SubscriptionError]);
 
 export const erasedOf = (
   actions: readonly Action.Any[],
@@ -385,6 +412,45 @@ export const watchedOf = (
         Effect.catchCauseIf(releaseUnserved, () => Effect.void)
       ),
   });
+};
+
+export const webhookCallsOf = (
+  event: Event.Any,
+  binding: Declaring,
+  calling: Calling
+): WebhookHolder => {
+  const failed = failedOf(webhookErrors(event, binding));
+
+  const encodeSubscription = Schema.encodeUnknownEffect(
+    Schema.toCodecJson(WebhookSubscriptionOf(event))
+  );
+
+  const encodeCancellation = Schema.encodeUnknownEffect(
+    Schema.toCodecJson(WebhookCancellationOf(event))
+  );
+
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(Subscribed));
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const subscribe = calling(subscribeTag(event.name)) as JsonMethod;
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const unsubscribe = calling(unsubscribeTag(event.name)) as JsonMethod;
+
+  return {
+    subscribe: ({ input, delivery, cursor, ttlMs }) =>
+      Effect.orDie(encodeSubscription({ input, delivery, cursor, ttlMs })).pipe(
+        Effect.flatMap(subscribe),
+        Effect.catchIf(isDeclared, failed),
+        Effect.flatMap((json) => Effect.orDie(decode(json)))
+      ),
+    unsubscribe: ({ input, delivery: { url } }) =>
+      Effect.orDie(encodeCancellation({ input, delivery: { url } })).pipe(
+        Effect.flatMap(unsubscribe),
+        Effect.catchIf(isDeclared, failed),
+        Effect.asVoid
+      ),
+  };
 };
 
 const resending =
@@ -696,6 +762,39 @@ const releaseHandlerOf = (
   );
 };
 
+const webhookHandlersOf = (
+  feed: Feed,
+  steps: readonly Step[],
+  error: Schema.Union<Action.Errors>,
+  answers: ReturnType<typeof webhookAnswers>
+) => {
+  const subscribing = decodeInput({ input: WebhookSubscriptionOf(feed.event) });
+  const cancelling = decodeInput({ input: WebhookCancellationOf(feed.event) });
+  const encode = Schema.encodeEffect(Schema.toCodecJson(Subscribed));
+  const boundary = callBoundaryOf(error);
+
+  return [
+    [
+      subscribeTag(feed.event.name),
+      servedCall(steps, boundary, (payload) =>
+        Effect.suspend(() => subscribing(payload)).pipe(
+          Effect.flatMap(answers.subscribe),
+          Effect.flatMap(encode)
+        )
+      ),
+    ],
+    [
+      unsubscribeTag(feed.event.name),
+      servedCall(steps, boundary, (payload) =>
+        Effect.suspend(() => cancelling(payload)).pipe(
+          Effect.flatMap(answers.unsubscribe),
+          Effect.as(null)
+        )
+      ),
+    ],
+  ] as const;
+};
+
 export const verifyingNative = (
   verify: Verification,
   { headers }: CallOptions
@@ -713,11 +812,19 @@ interface HandlersOptions {
   readonly authentication: Authentication | undefined;
   readonly middleware: readonly RpcMiddleware.AnyService[];
   readonly delivery: Delivery;
+  readonly holdsWebhooks?: true | undefined;
 }
 
 export const handlersOf = Effect.fnUntraced(function* (
   binding: Declaring,
-  { apps, events, authentication, middleware, delivery }: HandlersOptions
+  {
+    apps,
+    events,
+    authentication,
+    middleware,
+    delivery,
+    holdsWebhooks,
+  }: HandlersOptions
 ) {
   const listedMiddleware: readonly Step[] = yield* Effect.forEach(
     middleware,
@@ -731,6 +838,11 @@ export const handlersOf = Effect.fnUntraced(function* (
 
   const bound = yield* acquire(apps, authentication);
   const feeds = yield* acquireFeeds(events);
+
+  const { webhooks } =
+    holdsWebhooks === true
+      ? yield* servedWebhooks(feeds, authentication)
+      : { webhooks: Option.none() };
 
   const stepsOf = (caller: Action.Any["caller"]): readonly Step[] =>
     caller === Anyone || authenticating === undefined
@@ -803,6 +915,20 @@ export const handlersOf = Effect.fnUntraced(function* (
                 ),
               ] as const
           )
+    ),
+    ...Object.fromEntries(
+      holdsWebhooks === true
+        ? feeds
+            .filter(({ event }) => heldByWebhook(event))
+            .flatMap((feed) =>
+              webhookHandlersOf(
+                feed,
+                stepsOf(feed.event.caller),
+                webhookErrors(feed.event, binding),
+                webhookAnswers(feed, authentication, webhooks)
+              )
+            )
+        : []
     ),
   };
 

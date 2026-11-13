@@ -13,6 +13,7 @@ import type {
 } from "../authentication/provider.js";
 import * as Action from "../contract/Action.js";
 import type { Call } from "../contract/call.js";
+import { Anyone } from "../contract/caller.js";
 import type { BuiltIns } from "../contract/errors.js";
 import * as Event from "../contract/Event.js";
 import { EventImplementation } from "../contract/feed.js";
@@ -49,9 +50,14 @@ import {
   pollOf,
   streams,
   watchedOf,
+  webhookCallsOf,
+  webhookRpcsOf,
 } from "../rpc/erased.js";
 import type { ErasedCall } from "../rpc/erased.js";
 import { forwarded } from "./forwarded.js";
+import { makeWakes, wakeTag, WakeRpc, Wakes } from "./wakes.js";
+
+export { layerClock, Wakes } from "./wakes.js";
 
 type Contract<B extends ActionRpc.Any> =
   | B["actions"][number]
@@ -150,11 +156,14 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
  * `{ events, cursor, truncated, hasMore, nextPollMs }`, as an HTTP poll does, and one named
  * `<event>/release`, taking `{ input, watch }`: polls naming a `watch`, a UUID, hold a
  * subscription hook of their own, keyed by it and their caller's principal, which its release by
- * that principal frees. Guide: `docs/ActionEntity.md` in this package.
+ * that principal frees. A protected event type has two more, `<event>/subscribe` and
+ * `<event>/unsubscribe`, taking a webhook subscription and its cancellation, and the entity has
+ * its wake, `effect-actions/wake`, which `layerClock` sends. Guide: `docs/ActionEntity.md` in
+ * this package.
  *
  * **Gotchas**
  *
- * - The rpcs of its actions and event types are volatile, as `ClusterSchema.Persisted` defaults: annotated persisted, each envelope, its caller's headers and credential included, would be stored and replayed with them, on Effect's SQL runners until a `MessageRetention` layer deletes it, and on the Cloudflare runtime, which never prunes `cluster_messages`, for good, its credential headers redacted. `rpcs`' natives are persisted as their own annotations say.
+ * - The rpcs of its actions, event types and webhook subscriptions are volatile, as `ClusterSchema.Persisted` defaults, and its wake alone is persisted: annotated persisted, each envelope, its caller's headers and credential included, would be stored and replayed with them, on Effect's SQL runners until a `MessageRetention` layer deletes it, and on the Cloudflare runtime, which never prunes `cluster_messages`, for good, its credential headers redacted. `rpcs`' natives are persisted as their own annotations say.
  * - A binding with native rpcs throws: give the entity's own rpcs to `make`'s `rpcs`.
  * - A binding whose authentication reads an API key `in: "query"` throws: an entity authenticates from its envelope's headers alone.
  * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers, and returning a `Stream` of the elements of an `Action.Stream` answer; it holds a slot of the entity's `concurrency`, by default its only one, until its stream ends, but on the Cloudflare runtime, which frees the slot while a frame waits for its client's acknowledgement.
@@ -198,7 +207,10 @@ export const make = <
     );
   }
 
-  const erased = erasedOf(binding.actions, binding.events, "poll");
+  const erased = erasedOf(binding.actions, binding.events, "poll")
+    .merge(webhookRpcsOf(binding.events))
+    .add(WakeRpc);
+
   const rpcs = options.rpcs ?? RpcGroup.make();
 
   const taken = [...rpcs.requests.keys()].filter((tag) =>
@@ -207,7 +219,7 @@ export const make = <
 
   if (taken.length > 0) {
     throw new Error(
-      `ActionEntity.make: the native rpcs of ${type}, ${taken.join(", ")}, are named after an action, an event type or an event's release (rename them)`
+      `ActionEntity.make: the native rpcs of ${type}, ${taken.join(", ")}, are named after an action, an event type, an event's release, subscribe or unsubscribe, or the entity's wake, ${wakeTag} (rename them)`
     );
   }
 
@@ -253,6 +265,7 @@ export interface LayerOptions<
    *
    * - Each entity id builds it again at each activation: what it holds in memory is that activation's alone, as an implementation builder's is, where a service provided to `layer` is the runner's, shared by every entity id.
    * - It fails or dies as a builder does: a defect of the activation, which the runtime handles as the builder's.
+   * - A `Webhook.layer` here holds the entity's webhook subscriptions and delivers them from its activation: give it `persist`, so a later activation restores them, and `layerClock`, so a wait of 10 seconds or more builds the entity again when it ends.
    */
   readonly services?: Layer.Layer<ROut, unknown, RIn> | undefined;
   /**
@@ -286,7 +299,8 @@ type NativeLayerOptions<N extends Rpc.Any, ROut, RIn, Handlers, RX> = [
 type Activation =
   | Cluster.CurrentAddress
   | Cluster.CurrentRunnerAddress
-  | Scope.Scope;
+  | Scope.Scope
+  | Wakes;
 
 type PerCall<
   B extends ActionRpc.Any,
@@ -419,13 +433,34 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
   const build = Effect.gen(function* () {
     const address = yield* Cluster.CurrentAddress;
 
+    const self = yield* Effect.cached(
+      Effect.provideContext(
+        Effect.map(entity.client, (clientFor) => clientFor(address.entityId)),
+        yield* Effect.context<Sharding.Sharding>()
+      )
+    );
+
+    const { wakes, woke } = yield* makeWakes((wake) =>
+      Effect.flatMap(self, (client) => {
+        const sent = client[wakeTag]?.(
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+          wake as never,
+          { discard: true }
+        );
+
+        return Effect.isEffect(sent)
+          ? sent
+          : Effect.die(new Error(`ActionEntity.layer: no rpc ${wakeTag}`));
+      })
+    );
+
     const built = yield* Layer.buildWithMemoMap(
       first === undefined
         ? services
         : Layer.provideMerge(Layer.mergeAll(first, ...rest), services),
       Layer.makeMemoMapUnsafe(),
       yield* Effect.scope
-    );
+    ).pipe(Effect.provideService(Wakes, wakes));
 
     const { handlers } = yield* Effect.provideContext(
       handlersOf(binding, {
@@ -434,6 +469,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
         authentication,
         middleware: [],
         delivery: "poll",
+        holdsWebhooks: true,
       }),
       built
     );
@@ -469,6 +505,10 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
 
     return Object.fromEntries(
       [...nativeOf(entity.protocol).requests.values()].map((rpc) => {
+        if (rpc._tag === wakeTag) {
+          return [rpc._tag, woke] as const;
+        }
+
         const handler = handlers[rpc._tag];
 
         if (handler !== undefined) {
@@ -667,7 +707,7 @@ const reachedCall = (
  * - A stream asks the entity again after `MailboxFull` or `PersistenceError`, from where it reached, a second later and doubling to 30 seconds, as `client`'s watch does; any other failure, a declared error or a defect, ends its polling.
  * - HTTP's `text/event-stream` whose polling ended on a failure other than a refusal sends `Failed` and opens it again 5 seconds later, from where it reached; MCP's `events/stream` does what `ActionMcp.layerHttp` says of an upstream's failure, a `-32603` before `active`.
  * - A stream's polls hold a subscription hook of their own in the entity, which its end releases, as `client`'s watch does; a poll, MCP's `events/poll` included, holds the subscriber's until its source's `lease` lapses, as on any surface.
- * - An event served through these is offered no webhook delivery, whose deliveries run outside any request, with no headers to send on: `events/list` names no `webhook`, and a webhook subscription fails with `Event.SubscriptionError`, reason `Unsupported`, a 409 over HTTP, before any callback is sent.
+ * - A protected event's webhook subscription is held by the entity its input's key names, the subscribe and unsubscribe sent there with the caller's headers, and delivered by the `Webhook.layer` in that entity's `services`, never the serving surface's: an entity without one fails the subscribe with `Event.SubscriptionError`, reason `Unsupported`, a 409 over HTTP, before any callback is sent.
  * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's defect, carrying that error alone, since no action declares it: a 500 over HTTP and a defect through `Action.client`, never a typed error.
  * - An error the entity declares beyond the action's own and the built-in ones, its binding's `error` or its verifier's, is undeclared where the serving surface's binding does not declare it too.
  */
@@ -751,8 +791,27 @@ export const reaching = <
     const reached = (input: ErasedValue) =>
       Effect.all([to(event, input), Effect.orDie(encode(input))]);
 
+    const held = webhookCallsOf(event, binding, calling);
+
+    const inEntity = <A>(
+      input: ErasedValue,
+      sent: Effect.Effect<A, unknown, unknown>
+    ) =>
+      Effect.flatMap(to(event, input), (entityId) =>
+        Effect.provideService(sent, Reached, entityId)
+      ).pipe(Effect.catchIf(isClusterFailure, Effect.die));
+
     return {
       requestBound: true,
+      webhook:
+        event.caller === Anyone
+          ? undefined
+          : {
+              subscribe: (subscribing) =>
+                inEntity(subscribing.input, held.subscribe(subscribing)),
+              unsubscribe: (subscription) =>
+                inEntity(subscription.input, held.unsubscribe(subscription)),
+            },
       poll: (input, cursor, { maxEvents }) =>
         Effect.flatMap(reached(input), ([entityId, json]) =>
           poll({

@@ -35,6 +35,7 @@ import { AnyOccurrence, Gap } from "./occurrence.js";
 import { fedOf, pagedFrom } from "./pages.js";
 import type { Fed, Page } from "./pages.js";
 import { reported } from "./reported.js";
+import type { WebhookHolder } from "./webhooks.js";
 
 type ErasedOccurrence = Event.Occurrence<Event.Any>;
 
@@ -54,9 +55,16 @@ export interface Feed {
     | undefined;
   /**
    * Present where reading needs the subscriber's request, as `ActionEntity.reaching` sends its
-   * headers on: no surface offers it by webhook, whose deliveries read outside any request.
+   * headers on: a surface's own `Webhooks` never delivers it, whose deliveries read outside any
+   * request.
    */
   readonly requestBound?: true | undefined;
+  /**
+   * Where its webhook subscriptions are held, in place of the surface's `Webhooks`: present where
+   * `ActionEntity.reaching` reaches a protected event, whose entity holds them, so a subscribe
+   * goes to that entity with the subscriber's request.
+   */
+  readonly webhook?: WebhookHolder | undefined;
   /**
    * Authenticates the subscriber, checks `input` by `InputCheck` and authorizes it, as
    * `poll` and `stream` do first.
@@ -541,6 +549,7 @@ const guarded = (
     event,
     release: run.release,
     requestBound: run.requestBound,
+    webhook: run.webhook,
     admit,
     poll: (input, cursor, options) =>
       Effect.andThen(admit(input), () => run.poll(input, cursor, options)).pipe(

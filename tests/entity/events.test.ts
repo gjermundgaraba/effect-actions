@@ -107,17 +107,29 @@ interface TickerOptions {
   readonly lasting?: boolean;
   readonly entityUnavailable?: (call: number) => boolean;
   readonly requestScoped?: boolean;
+  readonly entityWebhooks?: boolean;
 }
+
+const challengeIn = (body: string) =>
+  /"challenge":"(?<challenge>[^"]+)"/u.exec(body)?.groups?.["challenge"];
 
 const makeTicker = ({
   fails = () => false,
   lasting = false,
   entityUnavailable = () => false,
   requestScoped = true,
+  entityWebhooks = false,
 }: TickerOptions = {}) => {
-  let verified = 0;
-  const counted = { checks: 0, callbacks: 0, hooked: 0, unhooked: 0 };
+  const counted = {
+    checks: 0,
+    callbacks: 0,
+    hooked: 0,
+    unhooked: 0,
+    verified: 0,
+  };
+
   const ticks: number[] = [];
+  const received: Array<{ readonly url: string; readonly body: string }> = [];
 
   const ticking = Event.implement(
     Ticked,
@@ -149,17 +161,28 @@ const makeTicker = ({
   );
 
   const receiver = async (request: Request) => {
-    const body = await request.text();
-
-    const challenge = /"challenge":"(?<challenge>[^"]+)"/u.exec(body)?.groups?.[
-      "challenge"
-    ];
+    const challenge = challengeIn(await request.text());
 
     counted.callbacks += 1;
 
     return challenge === undefined
       ? new Response(null, { status: 200 })
       : Response.json({ challenge });
+  };
+
+  const entityReceiver = async (request: Request) => {
+    const body = await request.text();
+    const challenge = challengeIn(body);
+
+    received.push({ url: request.url, body });
+
+    if (challenge === undefined) {
+      return new Response(null, { status: 200 });
+    }
+
+    return Response.json({
+      challenge: request.url.endsWith("/wrong") ? "wrong" : challenge,
+    });
   };
 
   const reached = ActionEntity.reaching(Ticker);
@@ -179,14 +202,20 @@ const makeTicker = ({
   );
 
   const entitySignIn = Authentication.layer(Principal, (token) => {
-    verified += 1;
+    counted.verified += 1;
 
-    return entityUnavailable(verified)
+    return entityUnavailable(counted.verified)
       ? Effect.fail(new Unavailable({ issuer: "auth.example.com" }))
       : verify(token);
   });
 
-  const entities = ActionEntity.layer(Ticker, ticking).pipe(
+  const entities = ActionEntity.layer(Ticker, ticking, {
+    services: entityWebhooks
+      ? Webhook.layer({ resolveCallbacks: false }).pipe(
+          Layer.provide(Testing.layer(entityReceiver))
+        )
+      : Layer.empty,
+  }).pipe(
     Layer.provideMerge(failingPolls(fails, lasting)),
     Layer.provide([entitySignIn, Event.layerMemory])
   );
@@ -194,6 +223,7 @@ const makeTicker = ({
   return {
     counted,
     ticks,
+    received,
     server: Testing.layer(edge).pipe(Layer.provideMerge(entities)),
   };
 };
@@ -213,9 +243,145 @@ const delivery = {
   secret: secretOf(1),
 };
 
+const until = (done: () => boolean) =>
+  Effect.sync(done).pipe(
+    Effect.repeat({
+      until: (held) => held,
+      schedule: Schedule.spaced("20 millis"),
+      times: 500,
+    }),
+    Effect.flatMap((held) =>
+      held ? Effect.void : Effect.die(new Error(`Never held: ${String(done)}`))
+    )
+  );
+
+const subscribeOverHttp = (
+  path: "subscribe" | "unsubscribe",
+  room: string,
+  url: string,
+  headers: Record<string, string> = asAlice.headers
+) =>
+  HttpClient.execute(
+    HttpClientRequest.post(`/api/events/ticked/${path}`).pipe(
+      HttpClientRequest.setHeaders(headers),
+      HttpClientRequest.bodyJsonUnsafe({
+        input: { room },
+        delivery:
+          path === "subscribe" ? { url, secret: delivery.secret } : { url },
+      })
+    )
+  );
+
+const occurrencesIn = (
+  received: ReadonlyArray<{ readonly url: string; readonly body: string }>,
+  url: string
+) =>
+  received.filter(
+    (each) => each.url === url && each.body.includes('"name":"ticked"')
+  );
+
 describe("ActionEntity.reaching's events by webhook", () => {
   it.live(
-    "offers no webhook delivery, and refuses a webhook subscription over MCP and HTTP before any callback or entity is reached",
+    "holds a subscription made over HTTP or MCP in the entity its input's key names, which delivers each occurrence and stops at the unsubscribe, the surface's own Webhook.layer holding none",
+    () => {
+      const { counted, ticks, received, server } = makeTicker({
+        entityWebhooks: true,
+      });
+
+      return Effect.gen(function* () {
+        const listed = yield* mcpSent("events/list", {});
+
+        const overHttp = yield* subscribeOverHttp(
+          "subscribe",
+          "a",
+          delivery.url
+        );
+
+        const overMcp = yield* mcpSent("events/subscribe", {
+          name: "ticked",
+          arguments: { room: "b" },
+          delivery: {
+            mode: "webhook",
+            url: "https://hooks.example.com/bob",
+            secret: delivery.secret,
+          },
+        });
+
+        ticks.push(1);
+
+        yield* until(
+          () =>
+            occurrencesIn(received, delivery.url).length === 1 &&
+            occurrencesIn(received, "https://hooks.example.com/bob").length ===
+              1
+        );
+
+        const unsubscribed = yield* subscribeOverHttp(
+          "unsubscribe",
+          "a",
+          delivery.url
+        );
+
+        ticks.push(2);
+
+        yield* until(
+          () =>
+            occurrencesIn(received, "https://hooks.example.com/bob").length ===
+            2
+        );
+
+        expect(listed).toMatchObject({
+          result: {
+            events: [{ name: "ticked", delivery: ["poll", "webhook"] }],
+          },
+        });
+        expect(overHttp.status).toBe(200);
+        expect(yield* overHttp.json).toMatchObject({ cursor: "0" });
+        expect(overMcp).toMatchObject({ result: { cursor: "0" } });
+        expect(unsubscribed.status).toBe(204);
+        expect(occurrencesIn(received, delivery.url)).toHaveLength(1);
+        expect(counted.callbacks).toBe(0);
+      }).pipe(Effect.scoped, Effect.provide(server));
+    }
+  );
+
+  it.live(
+    "answers the entity's own refusal of a callback, CallbackFailed over HTTP and MCP, its category passed back",
+    () => {
+      const { received, server } = makeTicker({ entityWebhooks: true });
+
+      return Effect.gen(function* () {
+        const overHttp = yield* subscribeOverHttp(
+          "subscribe",
+          "a",
+          "https://hooks.example.com/wrong"
+        );
+
+        const overMcp = yield* mcpSent("events/subscribe", {
+          name: "ticked",
+          arguments: { room: "a" },
+          delivery: {
+            mode: "webhook",
+            url: "https://hooks.example.com/wrong",
+            secret: delivery.secret,
+          },
+        });
+
+        expect(overHttp.status).toBe(409);
+        expect(yield* overHttp.json).toMatchObject({
+          _tag: "SubscriptionError",
+          reason: { _tag: "CallbackFailed", category: "challenge_failed" },
+        });
+        expect(overMcp).toMatchObject({
+          error: { data: { reason: "challenge_failed" } },
+        });
+        expect(received).toHaveLength(2);
+      }).pipe(Effect.scoped, Effect.provide(server));
+    }
+  );
+
+  it.live(
+    "offers webhook delivery for a reached protected event, and the entity holding no Webhook.layer refuses a subscription with Unsupported, a 409 over HTTP, before any callback is sent",
     () => {
       const { counted, server } = makeTicker();
 
@@ -228,15 +394,16 @@ describe("ActionEntity.reaching's events by webhook", () => {
           delivery: { mode: "webhook", ...delivery },
         });
 
-        const overHttp = yield* HttpClient.execute(
-          HttpClientRequest.post("/api/events/ticked/subscribe").pipe(
-            HttpClientRequest.setHeaders(asAlice.headers),
-            HttpClientRequest.bodyJsonUnsafe({ input: { room: "a" }, delivery })
-          )
+        const overHttp = yield* subscribeOverHttp(
+          "subscribe",
+          "a",
+          delivery.url
         );
 
         expect(listed).toMatchObject({
-          result: { events: [{ name: "ticked", delivery: ["poll"] }] },
+          result: {
+            events: [{ name: "ticked", delivery: ["poll", "webhook"] }],
+          },
         });
         expect(overMcp).toMatchObject({
           error: { data: { feature: "deliveryMode", value: "webhook" } },
@@ -247,6 +414,41 @@ describe("ActionEntity.reaching's events by webhook", () => {
           reason: { _tag: "Unsupported", value: "webhook" },
         });
         expect(counted).toMatchObject({ checks: 0, callbacks: 0, hooked: 0 });
+        expect(counted.verified).toBeGreaterThan(0);
+      }).pipe(Effect.scoped, Effect.provide(server));
+    }
+  );
+
+  it.live(
+    "refuses a webhook subscription without a credential at the surface, reaching no entity and sending no callback",
+    () => {
+      const { counted, received, server } = makeTicker({
+        entityWebhooks: true,
+      });
+
+      return Effect.gen(function* () {
+        const overHttp = yield* subscribeOverHttp(
+          "subscribe",
+          "a",
+          delivery.url,
+          {}
+        );
+
+        const overMcp = yield* Effect.map(
+          HttpClient.execute(
+            ActionMcp.request("events/subscribe", {
+              name: "ticked",
+              arguments: { room: "a" },
+              delivery: { mode: "webhook", ...delivery },
+            })
+          ),
+          (response) => response.status
+        );
+
+        expect(overHttp.status).toBe(401);
+        expect(overMcp).toBe(401);
+        expect(counted.verified).toBe(0);
+        expect(received).toHaveLength(0);
       }).pipe(Effect.scoped, Effect.provide(server));
     }
   );
@@ -261,18 +463,6 @@ const pushedFrames = (response: HttpClientResponse.HttpClientResponse) =>
     Stream.decodeText,
     Stream.pipeThroughChannel(Sse.decode()),
     Stream.mapEffect((frame) => sentOf(frame.data))
-  );
-
-const until = (done: () => boolean) =>
-  Effect.sync(done).pipe(
-    Effect.repeat({
-      until: (held) => held,
-      schedule: Schedule.spaced("20 millis"),
-      times: 500,
-    }),
-    Effect.flatMap((held) =>
-      held ? Effect.void : Effect.die(new Error(`Never held: ${String(done)}`))
-    )
   );
 
 describe("ActionEntity.reaching's event streams", () => {

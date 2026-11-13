@@ -62,6 +62,12 @@ export class Webhooks extends Context.Service<
   }
 >()("effect-actions/Webhooks") {}
 
+/** Subscribes and unsubscribes a feed's webhooks where they are held. */
+export type WebhookHolder = Pick<
+  Webhooks["Service"],
+  "subscribe" | "unsubscribe"
+>;
+
 const isProtected = (event: Event.Any): event is Protected =>
   event.caller !== Anyone;
 
@@ -75,6 +81,22 @@ export const deliversByWebhook = (
   keyed: Keyed | undefined
 ): feed is WebhookFeed =>
   feed.requestBound !== true && offersWebhook(feed.event, keyed);
+
+/**
+ * Where a surface sends `feed`'s webhook subscriptions: to the holder the feed names, a reached
+ * entity, or else to the surface's own `Webhooks`; none where the event is not offered by webhook.
+ */
+export const webhookHolder = (
+  feed: Feed,
+  keyed: Keyed | undefined,
+  webhooks: Option.Option<WebhookHolder>
+): Option.Option<WebhookHolder> => {
+  if (feed.webhook !== undefined && offersWebhook(feed.event, keyed)) {
+    return Option.some(feed.webhook);
+  }
+
+  return deliversByWebhook(feed, keyed) ? webhooks : Option.none();
+};
 
 export const servedWebhooks = (
   feeds: readonly Feed[],
@@ -101,30 +123,53 @@ export interface Subscriber extends Pick<
   Subscribing,
   "feed" | "keyed" | "principal"
 > {
-  readonly webhooks: Webhooks["Service"];
+  readonly webhooks: WebhookHolder;
 }
 
 export const webhookSubscriber = (
   feed: Feed,
   keyed: Keyed | undefined,
-  webhooks: Option.Option<Webhooks["Service"]>
+  webhooks: Option.Option<WebhookHolder>
 ): Effect.Effect<Subscriber, Event.SubscriptionError, unknown> => {
+  const holder = webhookHolder(feed, keyed, webhooks);
+  const { event } = feed;
+
   if (
-    Option.isNone(webhooks) ||
+    Option.isNone(holder) ||
     !isNamed(keyed) ||
-    !deliversByWebhook(feed, keyed)
+    !offersWebhook(event, keyed)
   ) {
-    return Effect.fail(deliveryUnsupported(feed.event.name, "webhook"));
+    return Effect.fail(deliveryUnsupported(event.name, "webhook"));
   }
 
-  const service = webhooks.value;
-
-  return Effect.map(Effect.service(feed.event.caller), (identity) => ({
-    webhooks: service,
-    feed,
+  return Effect.map(Effect.service(event.caller), (identity) => ({
+    webhooks: holder.value,
+    feed: { ...feed, event },
     keyed,
     principal: keyed.principal(identity),
   }));
+};
+
+/** A surface's answers to a webhook subscribe and unsubscribe of `feed`, run as its subscriber. */
+export const webhookAnswers = (
+  feed: Feed,
+  keyed: Keyed | undefined,
+  webhooks: Option.Option<WebhookHolder>
+) => {
+  const served = webhookSubscriber(feed, keyed, webhooks);
+
+  return {
+    subscribe: (payload: AnyWebhookSubscription) =>
+      Effect.flatMap(served, ({ webhooks: holder, ...subscriber }) =>
+        holder.subscribe({ ...payload, ...subscriber })
+      ),
+    unsubscribe: (payload: AnyWebhookCancellation) =>
+      Effect.flatMap(
+        served,
+        ({ webhooks: holder, feed: subscribed, principal }) =>
+          holder.unsubscribe({ ...payload, feed: subscribed, principal })
+      ),
+  };
 };
 
 /**

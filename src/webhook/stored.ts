@@ -38,7 +38,7 @@ export interface Storage {
   >;
 }
 
-const prefix = "effect-actions/webhook/";
+export const storePrefix = "effect-actions/webhook/";
 
 const flushTimeout = Duration.seconds(5);
 
@@ -58,7 +58,8 @@ class UnfinishedWrites extends Schema.TaggedError<
 }
 
 export const makeWriteBehindStorage = (
-  store: KeyValueStore.KeyValueStore
+  store: KeyValueStore.KeyValueStore,
+  prefix = storePrefix
 ): Effect.Effect<Storage, never, Scope.Scope> =>
   Effect.gen(function* () {
     const records = KeyValueStore.toSchemaStore(
