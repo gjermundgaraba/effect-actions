@@ -330,6 +330,20 @@ describe("ActionEntity.reaching's events by webhook", () => {
             2
         );
 
+        const unsubscribedOverMcp = yield* mcpSent("events/unsubscribe", {
+          name: "ticked",
+          arguments: { room: "b" },
+          delivery: { mode: "webhook", url: "https://hooks.example.com/bob" },
+        });
+
+        ticks.push(3);
+
+        yield* Effect.sleep("1 second");
+
+        expect(unsubscribedOverMcp).toMatchObject({ result: {} });
+        expect(
+          occurrencesIn(received, "https://hooks.example.com/bob")
+        ).toHaveLength(2);
         expect(listed).toMatchObject({
           result: {
             events: [{ name: "ticked", delivery: ["poll", "webhook"] }],
