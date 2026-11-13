@@ -50,6 +50,14 @@ export const Hooked = Event.make("board.hooked", {
   caller: Action.Anyone,
 });
 
+export const Leased = Event.make("board.leased", {
+  description:
+    "A note pinned to the board, read from its table by a source holding a subscription hook on a 10-second lease.",
+  input: onBoard,
+  payload: Note,
+  caller: Action.Anyone,
+});
+
 export const Pin = Action.make("pin", {
   description:
     "Pin a note to the board: a row of its table and an entry of its log.",
@@ -68,7 +76,7 @@ export const Later = Action.make("later", {
   caller: Action.Anyone,
 });
 
-const contracts = [Pin, Later, Pinned, Logged, Heard, Hooked] as const;
+const contracts = [Pin, Later, Pinned, Logged, Heard, Hooked, Leased] as const;
 
 export const BoardRpc = ActionRpc.make(contracts);
 
@@ -100,6 +108,7 @@ const key = {
   "board.logged": byBoard,
   "board.heard": byBoard,
   "board.hooked": byBoard,
+  "board.leased": byBoard,
 };
 
 export const Board = ActionEntity.make("Board", BoardRpc, {
@@ -178,8 +187,7 @@ const pinnedFromTable = Event.implement(Pinned, fromTable);
 
 export const hooks: string[] = [];
 
-const hookedFromTable = Event.implement(
-  Hooked,
+const hookedOn = (lease?: Duration.Input) =>
   Effect.map(fromTable, (source) => ({
     ...source,
     subscription: ({ board }: { readonly board: string }) =>
@@ -187,8 +195,12 @@ const hookedFromTable = Event.implement(
         Effect.sync(() => hooks.push(`set up ${board}`)),
         () => Effect.sync(() => hooks.push(`torn down ${board}`))
       ),
-  }))
-);
+    lease,
+  }));
+
+const hookedFromTable = Event.implement(Hooked, hookedOn());
+
+const leasedFromTable = Event.implement(Leased, hookedOn("10 seconds"));
 
 const fromLog = Event.implement(Logged, { log: {} });
 
@@ -214,6 +226,7 @@ export const boardImplementations = [
   pinning,
   pinnedFromTable,
   hookedFromTable,
+  leasedFromTable,
   fromLog,
   fromWire,
 ];

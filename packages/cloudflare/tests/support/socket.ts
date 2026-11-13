@@ -2,7 +2,7 @@ import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluste
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { Effect, Layer, Schedule, Schema } from "effect";
+import { Effect, Layer, Predicate, Schedule, Schema } from "effect";
 import type { Context } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
@@ -94,6 +94,50 @@ export const raw = (type: string, id: string) =>
         }
       })
   );
+
+export const pollOf =
+  (socket: WebSocket, tag: string, board: string) =>
+  (id: string, watch: string, cursor: string | null) => {
+    socket.send(
+      JSON.stringify({
+        _tag: "Request",
+        id,
+        tag,
+        payload: { input: { board }, cursor, watch },
+        headers: [],
+      })
+    );
+  };
+
+export const answeredEarlier = (
+  type: string,
+  id: string,
+  watch: string,
+  millis: number
+) =>
+  Effect.promise(async () => {
+    await runInDurableObject(objectOf(type, id), (_, state) => {
+      for (const held of state.getWebSockets()) {
+        const attachment: unknown = held.deserializeAttachment();
+
+        if (
+          Predicate.isObject(attachment) &&
+          Array.isArray(attachment["answered"])
+        ) {
+          held.serializeAttachment({
+            ...attachment,
+            answered: attachment["answered"].map((answer: unknown) =>
+              Predicate.isObject(answer) &&
+              answer["watch"] === watch &&
+              Predicate.isNumber(answer["at"])
+                ? { ...answer, at: answer["at"] - millis }
+                : answer
+            ),
+          });
+        }
+      }
+    });
+  });
 
 export const until = <A>(read: () => A, done: (value: A) => boolean) =>
   Effect.sync(read).pipe(

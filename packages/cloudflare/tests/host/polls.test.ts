@@ -4,27 +4,15 @@ import { Effect, Predicate, Schedule } from "effect";
 
 import { Pinned } from "../board.js";
 import {
+  answeredEarlier,
   heldIn,
   objectOf,
+  pollOf,
   raw,
   settledStubs,
   until,
 } from "../support/socket.js";
 import { boards, throughWorker } from "../support/watch.js";
-
-const pollOf =
-  (socket: WebSocket, board: string) =>
-  (id: string, watch: string, cursor: string | null) => {
-    socket.send(
-      JSON.stringify({
-        _tag: "Request",
-        id,
-        tag: Pinned.name,
-        payload: { input: { board }, cursor, watch },
-        headers: [],
-      })
-    );
-  };
 
 const parkedIn = (board: string, count: number) =>
   heldIn("Board", board).pipe(
@@ -60,7 +48,7 @@ describe("ActionClusterEntity's polls", () => {
       Effect.gen(function* () {
         const board = "lease";
         const { socket, received } = yield* raw("Board", board);
-        const poll = pollOf(socket, board);
+        const poll = pollOf(socket, Pinned.name, board);
         const fresh = crypto.randomUUID();
         const stale = crypto.randomUUID();
 
@@ -79,29 +67,7 @@ describe("ActionClusterEntity's polls", () => {
           (messages) => messages.length >= 3
         );
 
-        yield* Effect.promise(async () => {
-          await runInDurableObject(objectOf("Board", board), (_, state) => {
-            for (const held of state.getWebSockets()) {
-              const attachment: unknown = held.deserializeAttachment();
-
-              if (
-                Predicate.isObject(attachment) &&
-                Array.isArray(attachment["answered"])
-              ) {
-                held.serializeAttachment({
-                  ...attachment,
-                  answered: attachment["answered"].map((answer: unknown) =>
-                    Predicate.isObject(answer) &&
-                    answer["watch"] === stale &&
-                    Predicate.isNumber(answer["at"])
-                      ? { ...answer, at: answer["at"] - 30_000 }
-                      : answer
-                  ),
-                });
-              }
-            }
-          });
-        });
+        yield* answeredEarlier("Board", board, stale, 30_000);
 
         const before = yield* settledStubs;
 
@@ -125,7 +91,7 @@ describe("ActionClusterEntity's polls", () => {
         const board = "upstream";
         const http = yield* boards;
         const { socket, received } = yield* raw("Board", board);
-        const poll = pollOf(socket, board);
+        const poll = pollOf(socket, Pinned.name, board);
         const watch = crypto.randomUUID();
 
         poll("0", crypto.randomUUID(), null);
