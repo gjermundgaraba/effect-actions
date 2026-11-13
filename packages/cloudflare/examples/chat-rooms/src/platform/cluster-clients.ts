@@ -2,7 +2,7 @@ import { Effect, Layer } from "effect";
 import { Entity } from "effect/cluster";
 
 import { RoomMailbox } from "../chat/mailbox.js";
-import { Expire, Retry } from "../chat/Tells.js";
+import { Expire } from "../chat/Tells.js";
 import { Lobby, Room } from "../entities.js";
 import { LobbyClient } from "../lobby/client.js";
 
@@ -16,10 +16,6 @@ export const layerRoomMailbox = Layer.effect(RoomMailbox)(
       expire: (at) =>
         Effect.orDie(room.expire(new Expire({ at }), { discard: true })),
       tellLobby: Effect.orDie(room.tellLobby(undefined, { discard: true })),
-      retry: (task, at, attempt) =>
-        Effect.orDie(
-          room.retry(new Retry({ task, at, attempt }), { discard: true })
-        ),
     });
   })
 );

@@ -28,8 +28,7 @@ import {
 } from "../src/browser.js";
 import { MessagePosted, PostMessage } from "../src/chat/Chat.js";
 import type { DemoRoomName } from "../src/chat/Chat.js";
-import { day, Expire, windowOf } from "../src/chat/Tells.js";
-import type { Task } from "../src/chat/Tells.js";
+import { Expire } from "../src/chat/Tells.js";
 import { Lobby, Room } from "../src/entities.js";
 import { Login } from "../src/identity/Identity.js";
 import { protocolVersion } from "../src/Rpc.js";
@@ -113,15 +112,22 @@ const arrivedIn = (received: readonly unknown[]) => (count: number) =>
     (length) => length >= count
   );
 
-const retryOf = (room: DemoRoomName, task: Task, after: number) =>
-  eventually(
-    rowsIn(
-      "Room",
-      room,
-      `SELECT deliver_at FROM cluster_messages WHERE processed = 0 AND json_extract(envelope, '$.tag') = 'retry' AND json_extract(envelope, '$.payload.task') = '${task}' AND deliver_at > ${after}`
-    ),
-    (rows) => rows.length > 0
+const hour = 60 * 60 * 1000;
+
+const day = 24 * hour;
+
+const expiryOf = (postedAt: number) => {
+  const due = new Date(postedAt + day);
+
+  const itsHour = Date.UTC(
+    due.getUTCFullYear(),
+    due.getUTCMonth(),
+    due.getUTCDate(),
+    due.getUTCHours()
   );
+
+  return itsHour === due.getTime() ? itsHour : itsHour + hour;
+};
 
 const failing = (type: string, id: string, trigger: string) =>
   Effect.acquireRelease(sqlIn(type, id, trigger), () =>
@@ -132,9 +138,7 @@ const Tells = Schema.Array(
   Schema.Struct({
     deliver_at: Schema.NullOr(Schema.Int),
     processed: Schema.Int,
-    task: Schema.NullOr(Schema.String),
     at: Schema.NullOr(Schema.Int),
-    attempt: Schema.NullOr(Schema.Int),
   })
 );
 
@@ -144,7 +148,7 @@ const tellsOf = (type: string, id: string, tag: string) =>
       await runInDurableObject(objectOf(type, id), (_, state) =>
         state.storage.sql
           .exec(
-            "SELECT deliver_at, processed, json_extract(envelope, '$.payload.task') AS task, json_extract(envelope, '$.payload.at') AS at, json_extract(envelope, '$.payload.attempt') AS attempt FROM cluster_messages WHERE json_extract(envelope, '$.tag') = ?",
+            "SELECT deliver_at, processed, json_extract(envelope, '$.payload.at') AS at FROM cluster_messages WHERE json_extract(envelope, '$.tag') = ?",
             tag
           )
           .toArray()
@@ -157,11 +161,19 @@ const inApplication = <A, E>(effect: Effect.Effect<A, E, Application>) =>
     (context) => Effect.provideContext(effect, context)
   );
 
-const expireNow = (room: DemoRoomName) =>
+const expireNow = (room: DemoRoomName, at = Date.now()) =>
   inApplication(
     Effect.flatMap(Room.client, (rooms) =>
-      rooms(room).expire(new Expire({ at: Date.now() }), { discard: true })
+      rooms(room).expire(new Expire({ at }), { discard: true })
     )
+  );
+
+const toldTheLobby = (room: DemoRoomName) =>
+  eventually(
+    Effect.map(tellsOf("Room", room, "tellLobby"), (tells) =>
+      tells.filter(({ processed }) => processed === 0)
+    ),
+    (pending) => pending.length === 0
   );
 
 const Versions = Schema.Array(
@@ -587,7 +599,7 @@ describe("the Worker and its rooms", () => {
             const after = yield* settledStubCalls;
 
             const expires =
-              latest === null || windowOf(latest) !== windowOf(posted.at);
+              latest === null || expiryOf(latest) !== expiryOf(posted.at);
 
             return {
               calls: counted(after.invokes.slice(before.invokes.length)),
@@ -796,6 +808,50 @@ describe("the Worker and its rooms", () => {
   );
 
   it.live(
+    "keeps a message younger than a day when an expiry is delivered",
+    () =>
+      Effect.gen(function* () {
+        const json = yield* jsonAs("ada");
+
+        const [old, young] = yield* Effect.forEach(["Old.", "Young."], (text) =>
+          json.postMessage({ room: "design", text })
+        );
+
+        if (old === undefined || young === undefined) {
+          return yield* Effect.die(new Error("two posts expected"));
+        }
+
+        const minute = 60 * 1000;
+
+        yield* sqlIn(
+          "Room",
+          "design",
+          "UPDATE messages SET at = at - ? WHERE id = ?",
+          day,
+          old.id
+        );
+        yield* sqlIn(
+          "Room",
+          "design",
+          "UPDATE messages SET at = at - ? WHERE id = ?",
+          day - minute,
+          young.id
+        );
+        yield* expireNow("design");
+
+        const { messages } = yield* eventually(
+          json.readMessages({ room: "design", after: old.id - 1 }),
+          (read) => read.messages.length < 2
+        );
+
+        expect(messages).toStrictEqual([
+          { ...young, at: young.at - (day - minute) },
+        ]);
+      }).pipe(Effect.provide(worker)),
+    { timeout: 30_000 }
+  );
+
+  it.live(
     "answers another Worker's call of RoomsEntrypoint as the lobby keeps it, and refuses a room it does not list",
     () =>
       Effect.gen(function* () {
@@ -826,14 +882,14 @@ describe("the Worker and its rooms", () => {
   );
 
   it.live(
-    "tells itself to expire again a minute later when an expiry fails, and expires the day-old message then",
+    "gives up an expiry that keeps failing, its tell processed, and expires the day-old message at the next one",
     () =>
       Effect.gen(function* () {
         const json = yield* jsonAs("ada");
 
         const posted = yield* json.postMessage({
           room: "general",
-          text: "Expired on the second try.",
+          text: "Expired by the next expiry.",
         });
 
         yield* sqlIn(
@@ -850,19 +906,33 @@ describe("the Worker and its rooms", () => {
           "CREATE TRIGGER planted_failure BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'planted'); END"
         );
 
+        const lobbyTells = Effect.map(
+          tellsOf("Room", "general", "tellLobby"),
+          (tells) => tells.length
+        );
+
+        const toldBefore = yield* lobbyTells;
         const failedAt = Date.now();
 
-        yield* expireNow("general");
+        yield* expireNow("general", failedAt);
 
-        yield* retryOf("general", "expire", failedAt + 30_000);
+        yield* eventually(
+          Effect.map(tellsOf("Room", "general", "expire"), (tells) =>
+            tells.filter(
+              ({ at, processed }) => at === failedAt && processed === 1
+            )
+          ),
+          (processed) => processed.length > 0
+        );
 
+        expect((yield* lobbyTells) - toldBefore).toBe(3);
         expect(
           (yield* json.readMessages({ room: "general", after: posted.id - 1 }))
             .messages
         ).toStrictEqual([{ ...posted, at: posted.at - day }]);
 
         yield* sqlIn("Room", "general", "DROP TRIGGER planted_failure");
-        yield* deliverNow("Room", "general", "retry");
+        yield* expireNow("general");
 
         const { messages } = yield* eventually(
           json.readMessages({ room: "general", after: posted.id - 1 }),
@@ -875,7 +945,7 @@ describe("the Worker and its rooms", () => {
   );
 
   it.live(
-    "tells the lobby of a change after a failed ask at once, the failed ask's retry still pending",
+    "answers a post the lobby fails to record, and shows the room's latest at its next change",
     () =>
       Effect.gen(function* () {
         const json = yield* jsonAs("ada");
@@ -889,76 +959,29 @@ describe("the Worker and its rooms", () => {
           "CREATE TRIGGER planted_failure BEFORE INSERT ON previews BEGIN SELECT RAISE(ABORT, 'planted'); END"
         );
 
-        const failedAt = Date.now();
-
-        yield* json.postMessage({
+        const missed = yield* json.postMessage({
           room: "design",
           text: "Missed by the lobby.",
         });
 
-        yield* retryOf("design", "tellLobby", failedAt + 30_000);
-
-        yield* sqlIn("Lobby", "lobby", "DROP TRIGGER planted_failure");
-
-        const posted = yield* json.postMessage({
-          room: "design",
-          text: "Shown with no retry.",
-        });
-
-        yield* eventually(lobby.previews(), (answer) =>
-          answer.previews.some(
-            ({ room, latestAt }) => room === "design" && latestAt === posted.at
-          )
-        );
+        yield* toldTheLobby("design");
 
         expect(
-          (yield* tellsOf("Room", "design", "retry")).filter(
-            ({ processed, task, deliver_at }) =>
-              processed === 0 &&
-              task === "tellLobby" &&
-              (deliver_at ?? 0) > failedAt + 30_000
-          )
-        ).toHaveLength(1);
-      }).pipe(Effect.scoped, Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "answers a post the lobby fails to record, tells the lobby again a minute later, and shows the post then",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-        const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl });
-
-        yield* lobby.previews();
-
-        yield* failing(
-          "Lobby",
-          "lobby",
-          "CREATE TRIGGER planted_failure BEFORE INSERT ON previews BEGIN SELECT RAISE(ABORT, 'planted'); END"
-        );
-
-        const failedAt = Date.now();
-
-        const posted = yield* json.postMessage({
-          room: "design",
-          text: "Recorded on the second try.",
-        });
-
-        yield* retryOf("design", "tellLobby", failedAt + 30_000);
-
-        expect(
-          (yield* json.readMessages({ room: "design", after: posted.id - 1 }))
+          (yield* json.readMessages({ room: "design", after: missed.id - 1 }))
             .messages
-        ).toStrictEqual([posted]);
+        ).toStrictEqual([missed]);
         expect(
           (yield* lobby.previews()).previews.find(
             ({ room }) => room === "design"
           )?.latestAt
-        ).not.toBe(posted.at);
+        ).not.toBe(missed.at);
 
         yield* sqlIn("Lobby", "lobby", "DROP TRIGGER planted_failure");
-        yield* deliverNow("Room", "design", "retry");
+
+        const posted = yield* json.postMessage({
+          room: "design",
+          text: "Shown at the next change.",
+        });
 
         const { previews } = yield* eventually(lobby.previews(), (answer) =>
           answer.previews.some(
@@ -970,64 +993,6 @@ describe("the Worker and its rooms", () => {
           room: "design",
           latestAt: posted.at,
         });
-      }).pipe(Effect.scoped, Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-  it.live(
-    "keeps one pending retry a minute while the lobby fails, however many changes and activations of the room it misses",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-
-        yield* failing(
-          "Lobby",
-          "lobby",
-          "CREATE TRIGGER planted_failure BEFORE INSERT ON previews BEGIN SELECT RAISE(ABORT, 'planted'); END"
-        );
-
-        const failedAt = Date.now();
-
-        const posted = yield* Effect.forEach(
-          Array.from({ length: 4 }, (_, n) => n),
-          (n) =>
-            Effect.gen(function* () {
-              yield* evict("Room", "general");
-
-              const message = yield* json.postMessage({
-                room: "general",
-                text: `Missed ${n + 1}.`,
-              });
-
-              yield* Effect.sleep("1100 millis");
-
-              return message;
-            })
-        );
-
-        const last = posted.at(-1)?.at ?? failedAt;
-
-        expect(last - (posted[0]?.at ?? last)).toBeGreaterThan(3000);
-
-        yield* retryOf("general", "tellLobby", failedAt + 30_000);
-
-        yield* eventually(
-          Effect.map(tellsOf("Room", "general", "tellLobby"), (tells) =>
-            tells.filter(({ processed }) => processed === 0)
-          ),
-          (pending) => pending.length === 0
-        );
-
-        const retries = (yield* tellsOf("Room", "general", "retry")).filter(
-          ({ processed, task, deliver_at }) =>
-            processed === 0 &&
-            task === "tellLobby" &&
-            (deliver_at ?? 0) > failedAt
-        );
-
-        expect(retries.length).toBeGreaterThan(0);
-        expect(retries.length).toBeLessThanOrEqual(2);
-
-        yield* evict("Room", "general");
       }).pipe(Effect.scoped, Effect.provide(worker)),
     { timeout: 30_000 }
   );
@@ -1080,21 +1045,19 @@ describe("the Worker and its rooms", () => {
           json.postMessage({ room: "general", text: `In one window, ${n}.` })
         );
 
-        const windows = new Set(posted.map(({ at }) => windowOf(at)));
+        const scheduled = yield* tellsOf("Room", "general", "expire");
 
-        const scheduled = (yield* tellsOf("Room", "general", "expire")).filter(
-          ({ at }) => at !== null && windows.has(at)
-        );
-
-        expect(scheduled).toHaveLength(windows.size);
-
-        const later = 2 * 60 * 60 * 1000;
+        for (const { at } of posted) {
+          expect(
+            scheduled.filter((tell) => tell.at === expiryOf(at))
+          ).toHaveLength(1);
+        }
 
         yield* sqlIn(
           "Room",
           "general",
           "UPDATE messages SET at = at + ?",
-          later
+          2 * hour
         );
 
         const { messages } = yield* json.readMessages({
@@ -1102,103 +1065,64 @@ describe("the Worker and its rooms", () => {
           after: 0,
         });
 
-        const next = windowOf(Math.min(...messages.map(({ at }) => at)));
+        const oldest = Math.min(...messages.map(({ at }) => at));
 
         yield* expireNow("general");
 
         const nexts = yield* eventually(
           Effect.map(tellsOf("Room", "general", "expire"), (tells) =>
-            tells.filter(({ at }) => at === next)
+            tells.filter((tell) => tell.at === expiryOf(oldest))
           ),
           (found) => found.length > 0
         );
 
-        expect(nexts).toMatchObject([{ processed: 0, deliver_at: next }]);
+        expect(nexts).toMatchObject([
+          { processed: 0, deliver_at: expiryOf(oldest) },
+        ]);
       }).pipe(Effect.provide(worker)),
     { timeout: 30_000 }
   );
 
   it.live(
-    "retries a failing expiry, each wait twice the last up to an hour, and expires the day-old message once it succeeds",
+    "sends a page's post once when the room fails it, sending again only after a transport failure",
     () =>
       Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
+        const page = yield* openRoom(baseUrl, "general", "ada");
 
-        const kept = yield* json.postMessage({
-          room: "design",
-          text: "Expired once the store recovers.",
-        });
-
-        yield* sqlIn(
-          "Room",
-          "design",
-          "UPDATE messages SET at = at - ? WHERE id = ?",
-          day,
-          kept.id
-        );
+        yield* page.post("Before the room fails.");
 
         yield* failing(
           "Room",
-          "design",
-          "CREATE TRIGGER planted_failure BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'planted'); END"
+          "general",
+          "CREATE TRIGGER planted_failure BEFORE INSERT ON effect_actions_event_revision BEGIN SELECT RAISE(ABORT, 'planted'); END"
         );
 
-        const pendingExpiries = Effect.map(
-          tellsOf("Room", "design", "retry"),
-          (tells) =>
-            tells.filter(
-              ({ processed, task }) => processed === 0 && task === "expire"
-            )
-        );
+        const before = yield* settledStubCalls;
 
-        const minute = 60_000;
+        yield* Effect.flip(page.post("Failed by the room."));
 
-        const alignedToTheMinute = (at: number) =>
-          Math.ceil(at / minute) * minute;
-
-        for (const [attempt, wait] of [1, 2, 4, 8, 16, 32, 60].entries()) {
-          const deliveredAt = Date.now();
-
-          yield* attempt === 0
-            ? expireNow("design")
-            : deliverNow("Room", "design", "retry");
-
-          const [retry] = yield* eventually(
-            Effect.map(pendingExpiries, (pending) =>
-              pending.filter((tell) => tell.attempt === attempt + 1)
-            ),
-            (found) => found.length > 0
-          );
-
-          const foundAt = Date.now();
-
-          expect(retry?.deliver_at).toBeGreaterThanOrEqual(
-            alignedToTheMinute(deliveredAt + wait * minute)
-          );
-          expect(retry?.deliver_at).toBeLessThanOrEqual(
-            alignedToTheMinute(foundAt + wait * minute)
-          );
-        }
-
-        yield* sqlIn("Room", "design", "DROP TRIGGER planted_failure");
-        yield* deliverNow("Room", "design", "retry");
-
-        yield* eventually(pendingExpiries, (pending) => pending.length === 0);
+        const after = yield* settledStubCalls;
 
         expect(
-          (yield* json.readMessages({ room: "design", after: kept.id - 1 }))
-            .messages
-        ).toStrictEqual([]);
+          counted(after.invokes.slice(before.invokes.length))[
+            "Room/general postMessage"
+          ]
+        ).toBe(1);
       }).pipe(Effect.scoped, Effect.provide(worker)),
     { timeout: 30_000 }
   );
 
   it.live(
-    "expires a post and tells the lobby of it when the post fails after its write",
+    "posts a message once when its first try fails after the write and the page sends it again with its request",
     () =>
       Effect.gen(function* () {
         const json = yield* jsonAs("ada");
-        const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl });
+
+        const sent = {
+          room: "general",
+          text: "Failed after its write, then sent again.",
+          request: crypto.randomUUID(),
+        } as const;
 
         const last = yield* json.readMessages({ room: "general", after: 0 });
         const after = last.messages.at(-1)?.id ?? 0;
@@ -1209,38 +1133,24 @@ describe("the Worker and its rooms", () => {
           "CREATE TRIGGER planted_failure BEFORE INSERT ON effect_actions_event_revision BEGIN SELECT RAISE(ABORT, 'planted'); END"
         );
 
-        const failed = yield* Effect.flip(
-          json.postMessage({
-            room: "general",
-            text: "Written before the post failed.",
-          })
-        );
+        yield* Effect.flip(json.postMessage(sent));
 
-        expect(failed).toBeDefined();
+        yield* sqlIn("Room", "general", "DROP TRIGGER planted_failure");
 
-        const [written] = (yield* json.readMessages({ room: "general", after }))
-          .messages;
+        const posted = yield* json.postMessage(sent);
 
-        expect(written?.text).toBe("Written before the post failed.");
+        const { messages } = yield* json.readMessages({
+          room: "general",
+          after,
+        });
 
-        yield* eventually(lobby.previews(), (answer) =>
-          answer.previews.some(
-            ({ room, latestAt }) =>
-              room === "general" && latestAt === written?.at
-          )
-        );
-
-        expect(
-          (yield* tellsOf("Room", "general", "expire")).filter(
-            ({ at }) => written !== undefined && at === windowOf(written.at)
-          )
-        ).toHaveLength(1);
+        expect(messages).toStrictEqual([posted]);
       }).pipe(Effect.scoped, Effect.provide(worker)),
     { timeout: 30_000 }
   );
 
   it.live(
-    "sends a page following the lobby a change whose announcement failed once it is recorded again",
+    "sends a page following the lobby a room's next change after an announcement failed",
     () =>
       Effect.gen(function* () {
         const json = yield* jsonAs("grace");
@@ -1263,19 +1173,21 @@ describe("the Worker and its rooms", () => {
           "CREATE TRIGGER planted_failure BEFORE INSERT ON effect_actions_event_revision BEGIN SELECT RAISE(ABORT, 'planted'); END"
         );
 
-        const failedAt = Date.now();
+        const missed = yield* json.postMessage({
+          room: "general",
+          text: "Its announcement failed.",
+        });
+
+        yield* toldTheLobby("general");
+
+        expect(received.map(generalIn)).not.toContain(missed.at);
+
+        yield* sqlIn("Lobby", "lobby", "DROP TRIGGER planted_failure");
 
         const posted = yield* json.postMessage({
           room: "general",
-          text: "Announced on the second try.",
+          text: "Announced at the next change.",
         });
-
-        yield* retryOf("general", "tellLobby", failedAt + 30_000);
-
-        expect(received.map(generalIn)).not.toContain(posted.at);
-
-        yield* sqlIn("Lobby", "lobby", "DROP TRIGGER planted_failure");
-        yield* deliverNow("Room", "general", "retry");
 
         yield* eventually(
           Effect.sync(() => received.map(generalIn)),

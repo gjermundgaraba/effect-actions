@@ -137,7 +137,7 @@ A protected event the Worker serves through `ActionEntity.reaching` is delivered
 
 ## Schedule a tell
 
-An entity's own work, outside any caller's request, is a native rpc of its own: declared in `ActionEntity.make`'s `rpcs`, handled by `ActionEntity.layer`'s `rpcs`, an `Entity.HandlersFrom` built as the entity activates, in [`chat-rooms/src/chat/handlers.ts`](../examples/chat-rooms/src/chat/handlers.ts), and sent through `Entity.client`. One annotated `ClusterSchema.Persisted` and sent as a tell, `{ discard: true }`, is a row of the object's mailbox, run after the call sending it ends where that call holds the entity's one slot, `concurrency: 1`, the default, and no `Rpc.fork`, and run again after a crash; the Cloudflare runtime frees the slot too while a stream's frame waits for its client's acknowledgement. A payload naming `DeliverAt` is delivered at that time, by the object's alarm; a `PrimaryKey` makes every tell of one key one delivery for the object's life, a processed one included, so a room schedules one expiry an hour's window, and the retries due in one minute share one.
+An entity's own work, outside any caller's request, is a native rpc of its own: declared in `ActionEntity.make`'s `rpcs`, handled by `ActionEntity.layer`'s `rpcs`, an `Entity.HandlersFrom` built as the entity activates, in [`chat-rooms/src/chat/handlers.ts`](../examples/chat-rooms/src/chat/handlers.ts), and sent through `Entity.client`. One annotated `ClusterSchema.Persisted` and sent as a tell, `{ discard: true }`, is a row of the object's mailbox, run after the call sending it ends where that call holds the entity's one slot, `concurrency: 1`, the default, and no `Rpc.fork`, and run again after a crash; the Cloudflare runtime frees the slot too while a stream's frame waits for its client's acknowledgement. A payload naming `DeliverAt` is delivered at that time, by the object's alarm; a `PrimaryKey` makes every tell of one key one delivery for the object's life, a processed one included, so a room schedules one expiry an hour's window.
 
 ```ts example=chat-rooms/src/chat/Tells.ts
 import { DateTime, PrimaryKey, Schema } from "effect";
@@ -164,38 +164,20 @@ export class Expire extends Schema.Class<
   }
 }
 
-export const Task = Schema.Literals(["expire", "tellLobby"]);
-
-export type Task = typeof Task.Type;
-
-export class Retry extends Schema.Class<
-  Retry,
-  { readonly brand: unique symbol }
->("chat-rooms/Retry")({ task: Task, at: Schema.Int, attempt: Schema.Int }) {
-  [PrimaryKey.symbol]() {
-    return `${this.task}-${this.at}`;
-  }
-
-  [DeliverAt.symbol]() {
-    return DateTime.makeUnsafe(this.at);
-  }
-}
-
 export const RoomTells = RpcGroup.make(
   Rpc.make("expire", { payload: Expire }),
-  Rpc.make("tellLobby"),
-  Rpc.make("retry", { payload: Retry })
+  Rpc.make("tellLobby")
 ).annotateRpcs(ClusterSchema.Persisted, true);
 ```
 
-A volatile call's change, such as a post, sends its follow-ups as persisted tells before it writes: they run after its handler ends, as the room serves one call at a time (`concurrency: 1` in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts)) and no handler answers through `Rpc.fork`, so each reads what the change wrote; a crash after the write replays them, and a failure before it runs them on an unchanged room, which changes nothing. The room asks the lobby at each change by a volatile call, `roomChanged`, in its one slot, waiting a second for the answer and a second more at most for the lobby to take its interruption, so while the lobby takes no call, or answers late, as an ask queued behind other rooms' in the lobby's one slot does, a call reaching the room behind n asks waits up to 2n seconds; a lobby that fails or answers late is asked again by the next change or a later `retry`, each reading the room's latest again. `roomChanged` is annotated `ClusterSchema.Uninterruptible` for the server, so the lobby records a change the room stopped waiting for, and records it and notifies its followers in one transaction, so a retry never finds the change recorded and its notification lost.
+A volatile call's change, such as a post, sends its follow-ups as persisted tells before it writes: they run after its handler ends, as the room serves one call at a time (`concurrency: 1` in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts)) and no handler answers through `Rpc.fork`, so each reads what the change wrote; a crash after the write replays them, and a failure before it runs them on an unchanged room, which changes nothing. A post writes its message and notifies its followers in one transaction, in [`chat-rooms/src/platform/sql-messages.ts`](../examples/chat-rooms/src/platform/sql-messages.ts), so a post whose notification fails keeps no message, and the post sent again with its `request` is posted once. The room asks the lobby at each change by a volatile call, `roomChanged`, in its one slot, waiting a second for the answer and a second more at most for the lobby to take its interruption, so while the lobby takes no call, or answers late, as an ask queued behind other rooms' in the lobby's one slot does, a call reaching the room behind n asks waits up to 2n seconds; a lobby that fails or answers late is asked again by the next change, which reads the room's latest again. `roomChanged` is annotated `ClusterSchema.Uninterruptible` for the server, so the lobby records a change the room stopped waiting for, and records it and notifies its followers in one transaction, so a retry never finds the change recorded and its notification lost.
 
 ```ts example=chat-rooms/src/platform/cluster-clients.ts
 import { Effect, Layer } from "effect";
 import { Entity } from "effect/cluster";
 
 import { RoomMailbox } from "../chat/mailbox.js";
-import { Expire, Retry } from "../chat/Tells.js";
+import { Expire } from "../chat/Tells.js";
 import { Lobby, Room } from "../entities.js";
 import { LobbyClient } from "../lobby/client.js";
 
@@ -209,10 +191,6 @@ export const layerRoomMailbox = Layer.effect(RoomMailbox)(
       expire: (at) =>
         Effect.orDie(room.expire(new Expire({ at }), { discard: true })),
       tellLobby: Effect.orDie(room.tellLobby(undefined, { discard: true })),
-      retry: (task, at, attempt) =>
-        Effect.orDie(
-          room.retry(new Retry({ task, at, attempt }), { discard: true })
-        ),
     });
   })
 );
@@ -229,7 +207,7 @@ export const layerLobbyClient = Layer.effect(LobbyClient)(
 );
 ```
 
-A tell is processed once its handler ends, a failure included, and replayed only after the object crashed mid-run: a handler whose work fails logs the cause and sends itself a later `retry`, 1, 2 and 4 minutes later and so on, at most an hour apart, as [`chat-rooms/src/retry.ts`](../examples/chat-rooms/src/retry.ts) does. The retries stop short of success where scheduling one fails, such as on `MailboxFull`, which is logged, or where the entity cannot be built when one is delivered, which the runtime then marks processed without running it: a later change starts the task again, the next post of another hour's window its expiry and any change its tell to the lobby, so an idle room keeps a day-old message, or the lobby its old preview, until then. Delivery is at least once, in no set order: the room counts its changes in its own database, and the lobby keeps a preview only of a version above the one it holds, in [`chat-rooms/src/platform/sql-previews.ts`](../examples/chat-rooms/src/platform/sql-previews.ts). Every processed tell keeps its row in the object's `cluster_messages`, which the runtime never prunes: a room keeps one expiry row an hour, a failing task one retry row a minute at most, and one lobby tell row for each post or delete, refused or failed ones included, and for each run of an expiry, its retries included.
+A tell is processed once its handler ends, a failure included, and replayed only after the object crashed mid-run: a handler whose work fails tries it twice more, 100 and 200 milliseconds later, the lobby's ask within its second, then logs the cause and gives up, in [`chat-rooms/src/chat/handlers.ts`](../examples/chat-rooms/src/chat/handlers.ts); a tell delivered while the entity cannot be built is marked processed without running. Either way a later change starts the task again, the next post of another hour's window its expiry and any change its tell to the lobby, so an idle room keeps a day-old message, or the lobby its old preview, until then. Delivery is at least once, in no set order: the room counts its changes in its own database, and the lobby keeps a preview only of a version above the one it holds, in [`chat-rooms/src/platform/sql-previews.ts`](../examples/chat-rooms/src/platform/sql-previews.ts). Every processed tell keeps its row in the object's `cluster_messages`, which the runtime never prunes: a room keeps one expiry row an hour, and one lobby tell row for each post or delete, refused or failed ones included, and for each try of an expiry.
 
 ## Test on workerd
 

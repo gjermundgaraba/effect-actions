@@ -81,7 +81,9 @@ export const openRoom = (baseUrl: string, room: DemoRoomName, token: string) =>
           (request) =>
             client.postMessage({ room, text, request }).pipe(
               Effect.retry({
-                while: (error) => Predicate.isTagged(error, "HttpClientError"),
+                while: (error) =>
+                  Predicate.isTagged(error, "HttpClientError") &&
+                  error.reason._tag === "TransportError",
                 times: 2,
               })
             )

@@ -16,7 +16,8 @@ export class MessageStore extends Context.Service<
     readonly post: (
       author: string,
       text: string,
-      at: number
+      at: number,
+      announce: Effect.Effect<void>
     ) => Effect.Effect<Message>;
     readonly remove: (
       author: string,

@@ -9,6 +9,6 @@ Messages the package does not own: workerd's, the compiler's and Effect's, from 
 - `Future DeliverAt asks must define a PrimaryKey`: a scheduled call waited for its answer, its payload naming no `PrimaryKey`; send it as a tell, `{ discard: true }`, or give its payload a `PrimaryKey`.
 - `Stream asks with a future DeliverAt are not supported`: a stream rpc was sent a `DeliverAt` payload; schedule a unary tell instead.
 - `Cannot deduplicate an ask onto a tell with the same PrimaryKey`: an ask and a tell share a `PrimaryKey`; give each its own key, such as one naming the scheduled time.
-- `MailboxFull`: the object holds 4096 unprocessed requests and unacknowledged stream replies; a send through `Entity.client` fails with it, and a call through `ActionEntity.reaching` dies with it, so give the tells sent per window or per minute one `PrimaryKey`, as the example's expiry and retries do.
+- `MailboxFull`: the object holds 4096 unprocessed requests and unacknowledged stream replies; a send through `Entity.client` fails with it, and a call through `ActionEntity.reaching` dies with it, so give the tells sent per window one `PrimaryKey`, as the example's expiry does.
 - `Encoded entity message exceeds 2 MB`, the cause of a `PersistenceError`: one envelope, its payload and headers, encodes to over 2 MB; keep large values out of a call's input.
 - `Unknown entity RPC tag`: the object's entity serves no rpc of that tag, as when a deploy renamed an rpc while a persisted tell of the old name waited in `cluster_messages`; keep a scheduled rpc's tag across deploys.

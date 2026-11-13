@@ -26,10 +26,11 @@ Each trap below is shown in the code of the files it names.
 - **The Worker serves every room, each room answers**: `src/routes.ts`.
 - **A change sends its follow-ups before it writes**, its expiry and its tell to the lobby, so a crash after the write still runs them, and they read what it wrote only because they run after it, the room serving one call at a time and no handler answering through `Rpc.fork`: `followUpsRunAfterThisCall` in `src/chat/handlers.ts`, `concurrency: 1` in `src/routes.ts`.
 - **A post schedules its expiry once per hour's window**: `src/chat/Tells.ts`, `src/chat/handlers.ts`, `src/platform/cluster-clients.ts`.
-- **A failed task logs its cause and sends itself a retry later**, as Effect replays only a crash, until it succeeds, scheduling the retry fails or the room cannot be built when it is delivered, the last two leaving the task to a later change: `src/retry.ts`, `src/chat/handlers.ts`.
-- **Each change asks the lobby in the room's one slot, for 2 seconds at most**, then leaves the change to the next change or a retry, each reading the room's latest again, so while the lobby takes no call, or answers late, as an ask queued behind other rooms' in the lobby's one slot does, a call reaching the room behind n asks waits up to 2n seconds; the lobby finishes a call the room stopped waiting for, and records and announces a change in one transaction: `src/chat/handlers.ts`, `src/lobby/Changes.ts`, `src/platform/sql-previews.ts`.
+- **A post writes its message and wakes its followers in one transaction**, so a post whose notification fails keeps nothing, and a page sending it again with its `request` posts it once; the page sends it again only after a transport failure: `src/platform/sql-messages.ts`, `src/chat/handlers.ts`, `src/browser.ts`.
+- **A failed task is tried twice more within the call, then logged and left to a later change**, as Effect replays only a crash: `retried` in `src/chat/handlers.ts`.
+- **Each change asks the lobby in the room's one slot, for 2 seconds at most**, then leaves the change to the next change, which reads the room's latest again, so while the lobby takes no call, or answers late, as an ask queued behind other rooms' in the lobby's one slot does, a call reaching the room behind n asks waits up to 2n seconds; the lobby finishes a call the room stopped waiting for, and records and announces a change in one transaction: `src/chat/handlers.ts`, `src/lobby/Changes.ts`, `src/platform/sql-previews.ts`.
 - **Changes may arrive in no set order, so the lobby keeps only a newer version**: `room_version` in `src/platform/sql-messages.ts`, `src/platform/sql-previews.ts`.
-- **Every processed tell keeps its row**, which the runtime never prunes: one expiry a room an hour, one retry a minute at most while a task fails, and one lobby tell for each post or delete, refused or failed ones included, and for each run of an expiry, its retries included: `src/chat/Tells.ts`, `src/retry.ts`.
+- **Every processed tell keeps its row**, which the runtime never prunes: one expiry a room an hour, and one lobby tell for each post or delete, refused or failed ones included, and for each try of an expiry: `src/chat/Tells.ts`, `src/chat/handlers.ts`.
 - **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; a page built against other rpcs is refused, and stops: `src/browser.ts`, `src/worker.ts`, `src/Rpc.ts`.
 - **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
 - **A room's tells keep no credential**: `src/platform/cluster-clients.ts`, `test/worker.test.ts`.
@@ -42,7 +43,7 @@ Each trap below is shown in the code of the files it names.
 src/
 ├── chat/
 │   ├── Chat.ts        contract: the rooms, the message, its errors, the room's actions and event
-│   ├── Tells.ts       the room's own rpcs: its expiry, its tell to the lobby and their retry, and the expiry's window
+│   ├── Tells.ts       the room's own rpcs: its expiry and its tell to the lobby, and the expiry's window
 │   ├── room.ts        Room, the room an entity holds: read from its address
 │   ├── mailbox.ts     RoomMailbox, how a room tells itself
 │   ├── store.ts       MessageStore, the service the handlers call
@@ -69,7 +70,6 @@ src/
 ├── Api.ts             the JSON bindings: a room's and the lobby's
 ├── Rpc.ts             the entities' bindings, and the version a page's socket names
 ├── entities.ts        Room and Lobby, the entities, each with its own rpcs
-├── retry.ts           a failed task's later tries: logged, backed off to an hour
 ├── routes.ts          each entity's layer and services, and the Worker's routes
 ├── application.ts     the initializer: the whole application, once per isolate
 ├── worker.ts          entrypoint: the four classes, the room's sockets and the Worker's fetch

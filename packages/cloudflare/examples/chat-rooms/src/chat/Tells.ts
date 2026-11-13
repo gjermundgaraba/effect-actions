@@ -22,25 +22,7 @@ export class Expire extends Schema.Class<
   }
 }
 
-export const Task = Schema.Literals(["expire", "tellLobby"]);
-
-export type Task = typeof Task.Type;
-
-export class Retry extends Schema.Class<
-  Retry,
-  { readonly brand: unique symbol }
->("chat-rooms/Retry")({ task: Task, at: Schema.Int, attempt: Schema.Int }) {
-  [PrimaryKey.symbol]() {
-    return `${this.task}-${this.at}`;
-  }
-
-  [DeliverAt.symbol]() {
-    return DateTime.makeUnsafe(this.at);
-  }
-}
-
 export const RoomTells = RpcGroup.make(
   Rpc.make("expire", { payload: Expire }),
-  Rpc.make("tellLobby"),
-  Rpc.make("retry", { payload: Retry })
+  Rpc.make("tellLobby")
 ).annotateRpcs(ClusterSchema.Persisted, true);

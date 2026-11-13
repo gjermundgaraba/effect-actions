@@ -48,13 +48,14 @@ export const layerSqlMessages = Layer.effect(MessageStore)(
       ),
       read: (after) =>
         query(sql`SELECT * FROM messages WHERE id > ${after} ORDER BY id`),
-      post: (author, text, at) =>
+      post: (author, text, at, announce) =>
         Effect.gen(function* () {
           const [message] = yield* query(
             sql`INSERT INTO messages (author, text, at) VALUES (${author}, ${text}, ${at}) RETURNING *`
           );
 
           yield* changed;
+          yield* announce;
 
           return (
             message ?? (yield* Effect.die(new Error("no message inserted")))
