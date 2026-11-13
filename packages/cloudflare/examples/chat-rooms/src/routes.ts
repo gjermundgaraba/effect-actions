@@ -2,6 +2,7 @@ import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
+import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import { Effect, Layer, Schema } from "effect";
 import { Entity } from "effect/cluster";
 import { KeyValueStore } from "effect/persistence";
@@ -23,7 +24,7 @@ import {
 import { layerObjectSql } from "./platform/object-sql.js";
 import { layerSqlMessages } from "./platform/sql-messages.js";
 import { layerSqlPreviews } from "./platform/sql-previews.js";
-import { layerRoomWebhooks } from "./platform/webhook-delivery.js";
+import { layerWebhookDelivery } from "./platform/webhook-delivery.js";
 
 const roomOfAddress = Layer.effect(CurrentRoom)(
   Effect.flatMap(Entity.CurrentAddress, ({ entityId }) =>
@@ -31,10 +32,18 @@ const roomOfAddress = Layer.effect(CurrentRoom)(
   )
 );
 
+const roomWebhooks = Webhook.layer({
+  persist: true,
+  resolveCallbacks: false,
+}).pipe(
+  Layer.provide(ActionEntity.layerClock),
+  Layer.provide(layerWebhookDelivery)
+);
+
 const roomServices = Layer.mergeAll(
   Stored.layerEvents,
   Stored.layerIdempotency.pipe(Layer.provide(KeyValueStore.layerSql())),
-  layerRoomWebhooks
+  roomWebhooks
 ).pipe(
   Layer.provideMerge(
     Layer.mergeAll(

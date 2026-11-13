@@ -34,7 +34,7 @@ Each trap below is shown in the code of the files it names.
 - **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
 - **A room's tells keep no credential**: `src/platform/cluster-clients.ts`, `test/worker.test.ts`.
 - **The lobby's event is a whole value**, followed with no read first: `src/lobby/events.ts`, `src/browser.ts`.
-- **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for a wait of 10 seconds or more, and a subscribed room stays awake while its subscription lives, as `MessagePosted` is a check source asked again every 2 seconds: `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
+- **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for a wait of 10 seconds or more, and a subscribed room stays awake while its subscription lives, as `MessagePosted` is a check source asked again every 2 seconds: `roomWebhooks` in `src/routes.ts`, `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
 
 ## Layout
 
@@ -64,7 +64,7 @@ src/
 │   ├── object-sql.ts    the entity's own SQLite database, as SqlClient
 │   ├── sql-messages.ts  MessageStore over the entity's SQLite database
 │   ├── sql-previews.ts  PreviewStore over the lobby's
-│   ├── webhook-delivery.ts  a room's webhook subscriptions, kept in its database, their long waits as wakes
+│   ├── webhook-delivery.ts  the table a room keeps its webhook subscriptions in, and fetch's client for their POSTs
 │   └── cluster-clients.ts  RoomMailbox and LobbyClient over the entities' clients
 ├── Api.ts             the JSON bindings: a room's and the lobby's
 ├── Rpc.ts             the entities' bindings, and the version a page's socket names
@@ -104,5 +104,5 @@ test/
 | An event sent as a whole value, followed with no read first | `src/lobby/events.ts`, `src/browser.ts`, `test/worker.test.ts` |
 | A page's socket to its room, kept open while the room hibernates | `src/worker.ts`, `src/browser.ts`, `test/worker.test.ts` |
 | Another Worker reaching the entities through the booted runtime | `src/rooms-entrypoint.ts` |
-| A room's posts delivered by webhook, across its eviction | `src/platform/webhook-delivery.ts`, `src/routes.ts`, `test/webhooks.test.ts` |
+| A room's posts delivered by webhook, across its eviction | `src/routes.ts`, `src/platform/webhook-delivery.ts`, `test/webhooks.test.ts` |
 | Testing on the Workers runtime: an eviction, a scheduled tell, a planted failure, the mailboxes | `test/worker.test.ts` |
