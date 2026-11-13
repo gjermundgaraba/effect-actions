@@ -138,7 +138,7 @@ export const routes = Layer.mergeAll(mcp, api, rpc).pipe(
 
 Webhook delivery, `events/subscribe` and `events/unsubscribe`, is `Webhook.layer`'s ([Webhook.md](Webhook.md)), provided to the endpoint.
 
-- **Which deployment.** Push needs a server that outlives a request, so a `requestScoped` endpoint serves events by poll, and by webhook where `Webhook.layer` is provided. Sources, logs, `subscription` hooks' leases and webhook subscriptions are built once with the endpoint, either way. On a host with no lasting process, such as a serverless platform, serve check sources alone, without a `subscription` hook or `Webhook.layer`: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a gap, and its own leases and webhook subscriptions, lost as it ends.
+- **Which deployment.** Push needs a server that outlives a request, so a `requestScoped` endpoint serves events by poll, and by webhook where `Webhook.layer` is provided or an `ActionEntity.reaching` entity holds one ([ActionEntity.md](ActionEntity.md#deliver-its-events-by-webhook)). Sources, logs, `subscription` hooks' leases and webhook subscriptions are built once with the endpoint, either way. On a host with no lasting process, such as a serverless platform, serve check sources alone, without a `subscription` hook or `Webhook.layer`: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a gap, and its own leases and webhook subscriptions, lost as it ends.
 
 ## Allow browser clients
 
