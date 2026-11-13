@@ -29,7 +29,7 @@ The `effect` peer is now `~4.1.4`.
 
 **`Stored.layerIdempotency` keeps answers in a table of a `SqlClient`, through Effect's `Persistence.layerBackingSqlMultiTable`.** It now requires `SqlClient.SqlClient` in place of `KeyValueStore.KeyValueStore`, and keeps answers in `effect_persistence_effect_actions_idempotency`, each for 24 hours.
 
-- Migrate: provide `Stored.layerIdempotency` with the `SqlClient` it previously reached through `KeyValueStore.layerSql`, dropping that layer, as chat-rooms' `src/routes.ts` does. Answers kept under the old store's `effect-actions/idempotency/` keys are not read, so a call repeated after the upgrade runs again, and those rows stay in the `KeyValueStore` until deleted.
+- Migrate: provide `Stored.layerIdempotency` with the `SqlClient` it previously reached through `KeyValueStore.layerSql`, dropping that layer, as chat-rooms' `src/routes.ts` does. An application that gave it another `KeyValueStore`, such as a file store, gives it a `SqlClient`, such as `@effect/sql-sqlite-node`'s `SqliteClient.layer` on a file, or provides an `Action.Idempotency` of its own over that store. Answers kept under the old store's `effect-actions/idempotency/` keys are not read, so a call repeated after the upgrade runs again, and those rows stay in the `KeyValueStore` until deleted.
 - **Reversed: SQL pruned expired answers hourly.** `Stored.layerIdempotency` deleted expired answers at most once an hour, by listing every key of its store; it now deletes them once, as it builds, and never reads one back, so a long-running server keeps their rows until it builds again, where a cluster entity builds it each time it activates.
 
 ### Other changes
