@@ -39,6 +39,20 @@ const parkedIn = (board: string, count: number) =>
     Effect.timeout("20 seconds")
   );
 
+const parkedAs = (board: string, id: string) =>
+  heldIn("Board", board).pipe(
+    Effect.repeat({
+      until: (held) =>
+        held.some(({ parked }) =>
+          parked.some(
+            (entry) => Predicate.isObject(entry) && entry["id"] === id
+          )
+        ),
+      schedule: Schedule.spaced("100 millis"),
+    }),
+    Effect.timeout("20 seconds")
+  );
+
 describe("ActionClusterEntity's polls", () => {
   it.live(
     "parks a page's next poll with no call within 30 seconds of its watch's last call, and forwards one sent later to the entity",
@@ -105,7 +119,7 @@ describe("ActionClusterEntity's polls", () => {
   );
 
   it.live(
-    "answers a change a check source's upstream holds when the page sends its poll again, not when the object settles",
+    "answers a change a check source's upstream holds when the page sends its poll again, not when the object settles, and never the parked poll the page interrupted",
     () =>
       Effect.gen(function* () {
         const board = "upstream";
@@ -152,9 +166,27 @@ describe("ActionClusterEntity's polls", () => {
           (messages) => messages.length >= 3
         );
 
+        poll("4", watch, "1");
+        yield* parkedAs(board, "4");
+        yield* http.pin({ board, n: 9 });
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 4
+        );
+
+        yield* settledStubs;
+        yield* Effect.sleep("1 second");
+
+        expect(
+          received.filter((message) => message.includes('"requestId":"2"'))
+        ).toStrictEqual([]);
         expect(settled).toBe(2);
         expect(received[2]).toContain('"requestId":"3"');
         expect(received[2]).toContain('"data":{"n":8}');
+        expect(received[3]).toContain('"requestId":"4"');
+        expect(received[3]).toContain('"data":{"n":9}');
+        expect(received).toHaveLength(4);
       }).pipe(Effect.scoped, Effect.provide(throughWorker)),
     { timeout: 60_000 }
   );
