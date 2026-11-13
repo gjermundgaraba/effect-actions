@@ -1,31 +1,27 @@
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import { Effect } from "effect";
+import type { Entity } from "effect/cluster";
+import type { RpcGroup } from "effect/rpc";
 
-import { LobbyCalls } from "./Calls.js";
-import { LobbyHost } from "./host.js";
+import type { RoomChanges } from "./Changes.js";
 import { Previews, PreviewsChanged } from "./Lobby.js";
 import { PreviewStore } from "./store.js";
 
 export const lobby = Action.implement(
   Previews,
   Effect.map(
-    LobbyHost,
-    (host) => () => Effect.map(host.previews, (previews) => ({ previews }))
+    PreviewStore,
+    (store) => () => Effect.map(store.read, (previews) => ({ previews }))
   )
 );
 
-export const calls = LobbyCalls.toLayer(
-  Effect.gen(function* () {
-    const store = yield* PreviewStore;
-    const events = yield* Event.Events;
+export const roomChanges = Effect.gen(function* () {
+  const store = yield* PreviewStore;
+  const events = yield* Event.Events;
 
-    return LobbyCalls.of({
-      roomChanged: ({ room, latestAt }) =>
-        Effect.flatMap(store.record(room, latestAt), (changed) =>
-          changed ? events.notify(PreviewsChanged) : Effect.void
-        ),
-      previews: () => store.read,
-    });
-  })
-);
+  return {
+    roomChanged: ({ payload }) =>
+      store.record(payload, events.notify(PreviewsChanged)),
+  } satisfies Entity.HandlersFrom<RpcGroup.Rpcs<typeof RoomChanges>>;
+});

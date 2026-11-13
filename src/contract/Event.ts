@@ -16,11 +16,11 @@ import type { Gap, OccurrenceSchema } from "./occurrence.js";
 
 export type { EventImplementation as Implementation } from "./feed.js";
 
-export { Events, layerMemory, makeEvents } from "./hub.js";
+export { Events, layerMemory } from "./hub.js";
 
-export type { KeyOptions, MakeEventsOptions, RevisionStorage } from "./hub.js";
+export type { KeyOptions } from "./hub.js";
 
-export type { Listed, LogStorage } from "./log.js";
+export type { Listed } from "./log.js";
 
 export type { AnyEventImplementation as AnyImplementation } from "./feed.js";
 
@@ -234,7 +234,7 @@ export interface Current<E extends Any, R = never> extends Hooked<E, R> {
  *
  * **Gotchas**
  *
- * - A cursor is only good where the log that minted it lives, for as long as it keeps its occurrences: once they are dropped, or after a restart under `Event.layerMemory`, a subscriber resuming from it receives `truncated` and a fresh cursor; `Stored.layerEvents` and a Durable Object keep a log across a restart.
+ * - A cursor is only good where the log that minted it lives, for as long as it keeps its occurrences: once they are dropped, or after a restart under `Event.layerMemory`, a subscriber resuming from it receives `truncated` and a fresh cursor; `Stored.layerEvents` keeps a log across a restart on the same database.
  * - A subscriber reading slower than occurrences arrive falls behind the log like a resumed one: it receives `truncated`, never a backlog held for it alone.
  * - An `emit` stream is consumed from startup, in the server's scope, by one build at a time, until it ends, even past its build's release: a failure ends it and is reported, an end is logged, and the next held build's stream, if any, takes over; the log then holds what was published.
  */

@@ -46,7 +46,7 @@ Where things are, in a project that installs the package: these pages in `node_m
 | [Authentication.md](Authentication.md) | declare how callers sign in, verify credentials, publish OAuth discovery, step up for a scope |
 | [Authentication-advanced.md](Authentication-advanced.md) | use an API key or a cookie, read the request in a verifier, protect a route of your own, run a request policy before authentication |
 | [Testing.md](Testing.md) | test an implementation in process, and routes, tools and rpcs in memory, as a signed-in caller; test events and webhooks; assert on errors |
-| `@gjermundgaraba/effect-actions-cloudflare`'s `docs/README.md` | serve actions, events and Effect rpcs from Cloudflare Durable Objects: install that package; its pages and example are in its own `node_modules` folder |
+| `@gjermundgaraba/effect-actions-cloudflare`'s `docs/README.md` | run actions and events in Cloudflare Durable Objects as cluster entities, served by a Worker over JSON and MCP: install that package; its pages and example are in its own `node_modules` folder |
 
 ## Examples
 

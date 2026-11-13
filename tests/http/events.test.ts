@@ -16,7 +16,6 @@ import { TestClock } from "effect/testing";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
-import { memoryStorage } from "../../src/contract/log.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
@@ -171,16 +170,13 @@ describe("HTTP events", () => {
           })
         );
 
-        const refusingEmit = Layer.effect(Event.Events)(
-          Event.makeEvents({ log: () => memoryStorage(), emits: false })
-        );
-
         const answers = yield* Effect.forEach([0, 1], () =>
           Effect.flatMap(
             subscribe("counter.counted", { input: {}, cursor: null }),
             answerOf
           )
         ).pipe(
+          Effect.tap(settle),
           Effect.provide(
             Layer.provideMerge(
               Testing.layer(
@@ -188,7 +184,7 @@ describe("HTTP events", () => {
                   actions: [Counted],
                 })
               ),
-              refusingEmit
+              Event.layerMemory
             )
           )
         );

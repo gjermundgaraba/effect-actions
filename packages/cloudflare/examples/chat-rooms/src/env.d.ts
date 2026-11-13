@@ -1,10 +1,16 @@
-declare namespace Cloudflare {
-  interface Env {
-    readonly CHAT_ROOM: DurableObjectNamespace<import("./worker.js").ChatRoom>;
-    readonly CHAT_LOBBY: DurableObjectNamespace<import("./worker.js").ChatLobby>;
-  }
+import type * as Worker from "./worker.ts";
 
-  interface GlobalProps {
-    mainModule: typeof import("./worker.js");
+declare global {
+  namespace Cloudflare {
+    interface Env {
+      readonly CLUSTER_ENTITY: DurableObjectNamespace;
+      readonly CLUSTER_WORKFLOW: DurableObjectNamespace;
+      readonly CLUSTER_QUEUE: DurableObjectNamespace;
+      readonly CLUSTER_SINGLETON: DurableObjectNamespace;
+    }
+
+    interface GlobalProps {
+      mainModule: typeof Worker;
+    }
   }
 }

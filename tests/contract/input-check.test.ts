@@ -5,6 +5,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
+import { InputCheck } from "../../src/contract/input-check.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
 
@@ -35,7 +36,7 @@ const routes = ActionHttp.layer(Http, [
 ]).pipe(
   Layer.provide(Event.layerMemory),
   Layer.provide(
-    Layer.succeed(Action.InputCheck)((_contract, input) =>
+    Layer.succeed(InputCheck)((_contract, input) =>
       Schema.is(Schema.Struct({ shelf: Schema.Literal("mine") }))(input)
         ? Effect.void
         : Effect.fail(refused)
@@ -43,7 +44,7 @@ const routes = ActionHttp.layer(Http, [
   )
 );
 
-describe("Action.InputCheck", () => {
+describe("InputCheck", () => {
   it.effect(
     "refuses each call and subscription whose input it refuses, served or watched, and passes the rest",
     () =>
@@ -109,7 +110,7 @@ describe("Action.InputCheck", () => {
             )
           ),
           Layer.provide(
-            Layer.succeed(Action.InputCheck)(() =>
+            Layer.succeed(InputCheck)(() =>
               Effect.andThen(
                 Effect.sync(() => {
                   steps.push("checked");
@@ -192,7 +193,7 @@ describe("Action.InputCheck", () => {
       }).pipe(
         Effect.scoped,
         Effect.provide(Event.layerMemory),
-        Effect.provideService(Action.InputCheck, (contract) =>
+        Effect.provideService(InputCheck, (contract) =>
           Effect.andThen(
             Effect.sync(() => {
               checked.push(contract.name);
@@ -253,7 +254,7 @@ describe("Action.InputCheck", () => {
             )
           ),
           Layer.provide(
-            Layer.succeed(Action.InputCheck)(() =>
+            Layer.succeed(InputCheck)(() =>
               Effect.andThen(
                 Effect.sync(() => {
                   steps.push("checked");

@@ -2,8 +2,6 @@ import {
   Cause,
   Effect,
   ErrorReporter,
-  Match,
-  Option,
   Predicate,
   Queue,
   Result,
@@ -16,7 +14,7 @@ import { HttpClientRequest, HttpServerRequest } from "effect/http";
 import type { Headers } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
 import { Rpc, RpcGroup } from "effect/rpc";
-import type { RpcMiddleware, RpcMessage } from "effect/rpc";
+import type { RpcMiddleware } from "effect/rpc";
 
 import { providerOf } from "../authentication/provider.js";
 import type { Any as Authentication } from "../authentication/provider.js";
@@ -599,87 +597,23 @@ const sendingElements = (
     );
 };
 
-/**
- * One event subscription a `SubscriptionKeeper` keeps, as it arrived: the request a keeper writes
- * to the server again, once restarted, with the payload `resumeFrom` gave for the last value sent.
- */
-export interface KeptSubscription {
-  readonly clientId: number;
-  readonly requestId: string | number;
-  readonly tag: string;
-  /** The subscription's payload, an object of its `input` and the `cursor` it resumes from. */
-  readonly payload: Schema.Json;
-  /** The headers the request was authenticated with, which a resumed one is authenticated with again. */
-  readonly headers: ReadonlyArray<readonly [string, string]>;
-  /**
-   * The payload that resumes the subscription after `values`, a chunk sent for it, or
-   * `undefined` where they reach no position. It never throws, being called as the protocol
-   * sends: an input that does not encode fails its subscription as it is admitted instead.
-   */
-  readonly resumeFrom: (
-    values: RpcMessage.ResponseChunkEncoded["values"]
-  ) => Schema.Json | undefined;
-}
-
-/**
- * What a protocol keeping event subscriptions across restarts of its server offers under
- * `subscriptionKeeper`, as the Cloudflare package's `layerWebSocket` does: `layer` hands it each
- * subscription once admitted, and sends every position the subscription reaches, with no
- * 30-second heartbeat, whose timer would keep such a host awake.
- */
-export interface SubscriptionKeeper {
-  readonly keep: (subscription: KeptSubscription) => Effect.Effect<void>;
-}
-
 const subscriptionHandlerOf = (
   feed: Feed,
   steps: readonly Step[],
-  error: Schema.Union<Action.Errors>,
-  keeper: SubscriptionKeeper | undefined
+  error: Schema.Union<Action.Errors>
 ) => {
   const decode = decodeInput({ input: SubscriptionOf(feed.event) });
-  const encodeInput = Schema.encodeEffect(Schema.toCodecJson(feed.event.input));
-
-  const sent = Schema.toCodecJson(PushedOf(feed.event));
-  const encode = Schema.encodeEffect(sent);
-  const decodeSent = Schema.decodeUnknownOption(sent);
+  const encode = Schema.encodeEffect(Schema.toCodecJson(PushedOf(feed.event)));
   const boundary = callBoundaryOf(error);
 
-  return servedCall(steps, boundary, (payload, options) =>
+  return servedCall(steps, boundary, (payload) =>
     Effect.gen(function* () {
       const { input, cursor } = yield* decode(payload);
       const open = yield* feed.stream(input);
 
-      if (keeper !== undefined) {
-        const resumed = yield* Effect.orDie(encodeInput(input));
-
-        yield* keeper.keep({
-          clientId: options.client.id,
-          requestId: options.requestId,
-          tag: feed.event.name,
-          payload,
-          headers: Object.entries(options.headers),
-          resumeFrom: (values) => {
-            const reached = values
-              .flatMap((value) => Option.toArray(decodeSent(value)))
-              .map((pushed) =>
-                Match.value(pushed).pipe(
-                  Match.tag("Failed", () => null),
-                  Match.orElse((positioned) => positioned.cursor)
-                )
-              )
-              .findLast(Predicate.isNotNull);
-
-            return reached === undefined
-              ? undefined
-              : { input: resumed, cursor: reached };
-          },
-        });
-      }
-
       return yield* queuedPush(open, cursor, encode, {
         ending: boundary,
-        positions: keeper === undefined ? "heartbeat" : "watermark",
+        positions: "heartbeat",
       });
     })
   );
@@ -747,20 +681,12 @@ interface HandlersOptions {
   readonly events: readonly AnyEventImplementation[];
   readonly authentication: Authentication | undefined;
   readonly middleware: readonly RpcMiddleware.AnyService[];
-  readonly keeper: SubscriptionKeeper | undefined;
   readonly delivery: Delivery;
 }
 
 export const handlersOf = Effect.fnUntraced(function* (
   binding: Declaring,
-  {
-    apps,
-    events,
-    authentication,
-    middleware,
-    keeper,
-    delivery,
-  }: HandlersOptions
+  { apps, events, authentication, middleware, delivery }: HandlersOptions
 ) {
   const listedMiddleware: readonly Step[] = yield* Effect.forEach(
     middleware,
@@ -820,8 +746,7 @@ export const handlersOf = Effect.fnUntraced(function* (
               ? subscriptionHandlerOf(
                   feed,
                   stepsOf(feed.event.caller),
-                  Schema.Union(eventErrors(feed.event, binding)),
-                  keeper
+                  Schema.Union(eventErrors(feed.event, binding))
                 )
               : pollHandlerOf(
                   feed,

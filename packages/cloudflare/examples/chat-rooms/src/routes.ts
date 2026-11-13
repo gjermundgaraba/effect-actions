@@ -1,61 +1,74 @@
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { env } from "cloudflare:workers";
-import { Layer } from "effect";
-import { RpcServer } from "effect/rpc";
+import * as Stored from "@gjermundgaraba/effect-actions/Stored";
+import { Effect, Layer, Schema } from "effect";
+import { Entity } from "effect/cluster";
+import { KeyValueStore } from "effect/persistence";
 
 import { LobbyHttp, RoomHttp } from "./Api.js";
+import { DemoRoomName } from "./chat/Chat.js";
 import { messageEvents } from "./chat/events.js";
-import { messages } from "./chat/handlers.js";
+import { messages, roomTells } from "./chat/handlers.js";
+import { Room as CurrentRoom } from "./chat/room.js";
+import { Lobby, Room } from "./entities.js";
 import { Login } from "./identity/Identity.js";
 import { authenticate } from "./identity/verifier.js";
-import { LobbyCalls } from "./lobby/Calls.js";
 import { previewEvents } from "./lobby/events.js";
-import { calls as lobbyHandlers, lobby } from "./lobby/handlers.js";
+import { lobby, roomChanges } from "./lobby/handlers.js";
 import {
-  LobbyRpc,
-  protocolVersion,
-  RoomRpc,
-  unsupportedProtocol,
-} from "./Rpc.js";
+  layerLobbyClient,
+  layerRoomMailbox,
+} from "./platform/cluster-clients.js";
+import { layerObjectSql } from "./platform/object-sql.js";
+import { layerSqlMessages } from "./platform/sql-messages.js";
+import { layerSqlPreviews } from "./platform/sql-previews.js";
 
-const room = [messages, messageEvents];
-
-const byRoom = (input: { readonly room: string }) => input.room;
-
-export const rooms = ActionDurableObject.placed(RoomHttp, {
-  readMessages: byRoom,
-  postMessage: byRoom,
-  deleteMessage: byRoom,
-  "message.posted": byRoom,
-});
-
-const pageSocket = ActionDurableObject.layerWebSocket({
-  path: "/rpc",
-  protocol: { version: protocolVersion, code: unsupportedProtocol },
-});
-
-export const roomRoutes = Layer.mergeAll(
-  ActionRpc.layer(RoomRpc, room).pipe(Layer.provide(pageSocket)),
-  ActionHttp.layer(RoomHttp, room)
-).pipe(Layer.provide(authenticate));
-
-export const lobbyRoutes = ActionRpc.layer(LobbyRpc, [previewEvents]).pipe(
-  Layer.provide(pageSocket)
+const roomOfAddress = Layer.effect(CurrentRoom)(
+  Effect.flatMap(Entity.CurrentAddress, ({ entityId }) =>
+    Effect.orDie(Schema.decodeUnknownEffect(DemoRoomName)(entityId))
+  )
 );
 
-export const lobbyCalls = RpcServer.layer(LobbyCalls).pipe(
-  Layer.provide(lobbyHandlers)
+const roomServices = Layer.mergeAll(
+  Stored.layerEvents,
+  Stored.layerIdempotency.pipe(Layer.provide(KeyValueStore.layerSql()))
+).pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      layerSqlMessages,
+      roomOfAddress,
+      layerRoomMailbox,
+      layerLobbyClient
+    )
+  ),
+  Layer.provideMerge(layerObjectSql)
 );
 
-const inRooms = ActionDurableObject.reaching(rooms, () => env.CHAT_ROOM);
+const lobbyServices = Layer.mergeAll(Stored.layerEvents, layerSqlPreviews).pipe(
+  Layer.provideMerge(layerObjectSql)
+);
+
+export const entities = Layer.mergeAll(
+  ActionEntity.layer(Room, [messages, messageEvents], {
+    services: roomServices,
+    rpcs: roomTells,
+    concurrency: 1,
+  }).pipe(Layer.provide(authenticate)),
+  ActionEntity.layer(Lobby, [lobby, previewEvents], {
+    services: lobbyServices,
+    rpcs: roomChanges,
+  })
+);
+
+const inRooms = ActionEntity.reaching(Room);
+
+const inLobby = ActionEntity.reaching(Lobby);
 
 export const workerRoutes = Layer.mergeAll(
-  ActionHttp.layer(LobbyHttp, lobby),
   ActionHttp.layer(RoomHttp, inRooms),
-  ActionMcp.layerHttp([lobby, ...inRooms], {
+  ActionHttp.layer(LobbyHttp, inLobby),
+  ActionMcp.layerHttp([...inRooms, ...inLobby], {
     name: "chat-rooms",
     version: "1.0.0",
     authentication: Login,

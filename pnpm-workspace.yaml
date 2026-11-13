@@ -4,6 +4,7 @@ catalog:
   "@clanker-stuff/oxlint-config": 0.5.0
   "@cloudflare/vitest-plugin": 1.6.1
   "@cloudflare/workers-types": 5.20261110.1
+  "@effect/platform-cloudflare": 4.1.4
   "@effect/platform-node": 4.1.4
   "@effect/sql-sqlite-node": 4.1.4
   "@effect/tsgo": 0.67.7

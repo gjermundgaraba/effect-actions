@@ -13,6 +13,7 @@ import {
 import { TestClock } from "effect/testing";
 
 import * as Action from "../../src/contract/Action.js";
+import type { Kept } from "../../src/contract/idempotency.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
 
@@ -175,7 +176,7 @@ describe("an action's idempotencyKey", () => {
     () =>
       Effect.gen(function* () {
         const { posted, implementation } = posting();
-        const kept = new Map<string, typeof Action.Idempotency.Kept.Type>();
+        const kept = new Map<string, Kept>();
 
         const store = Layer.succeed(Action.Idempotency)(
           Action.Idempotency.of({

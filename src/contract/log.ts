@@ -66,7 +66,7 @@ export interface Listed<A> {
 }
 
 /**
- * Where a log keeps its position and its entries, by sequence number, as `Event.makeEvents` is
+ * Where a log keeps its position and its entries, by sequence number, as `makeEvents` is
  * given it: storage alone, the log's cursors, bounds, truncation and expiry being the core's.
  */
 export interface LogStorage<A> {

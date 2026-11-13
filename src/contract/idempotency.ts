@@ -36,9 +36,7 @@ export const keptFor = 24 * 60 * 60 * 1000;
  * SHA-256 digest in hex of the key and its caller's principal, `<action>/<digest>`, for 24 hours
  * at least: what an implementation of an action naming `idempotencyKey` requires at startup.
  * `layerIdempotency` keeps them in memory, and `Stored.layerIdempotency` in a
- * `KeyValueStore`; a Durable Object's `make` and `handlers` provide one over its storage; another
- * store, shared by several servers, implements `get` and `set`, keeping `Idempotency.Kept` at
- * least `Idempotency.keptFor` milliseconds.
+ * `KeyValueStore`, such as `KeyValueStore.layerSql` over a cluster entity's own SQLite.
  *
  * **Gotchas**
  *
@@ -53,16 +51,7 @@ export class Idempotency extends Context.Service<
     /** Keeps `kept` under `id`, replacing what was. */
     readonly set: (id: string, kept: Kept) => Effect.Effect<void>;
   }
->()("effect-actions/Action/Idempotency") {
-  /**
-   * What is kept of a call answered under its key: the digest of its input, its outcome as JSON,
-   * and when it was kept, in milliseconds since the epoch.
-   */
-  static readonly Kept = Kept;
-
-  /** How long, in milliseconds, a kept answer is kept at least: 24 hours. */
-  static readonly keptFor = keptFor;
-}
+>()("effect-actions/Action/Idempotency") {}
 
 /**
  * `Idempotency` in the server's memory, each answer kept 24 hours after it was kept: lost when

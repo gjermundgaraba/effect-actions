@@ -6,13 +6,8 @@ import type * as Event from "./Event.js";
 
 /**
  * A check every call and every subscription runs on its decoded input, on every surface, once the
- * surface has verified its caller and before its authorizer: what a host provides, as a Durable
- * Object refuses an input naming another object, to refuse an input it does not serve. Defaults
- * to none.
- *
- * **Gotchas**
- *
- * - Provide it to the layer graph the surfaces are built in, as `Layer.succeed(Action.InputCheck)(check)`: provided per request, it misses a socket's later calls.
+ * surface has verified its caller and before its authorizer: what `ActionEntity.layer` provides
+ * around each call, refusing an input whose key names another entity. Defaults to none.
  */
 export const InputCheck = Context.Reference<
   (

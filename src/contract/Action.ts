@@ -124,8 +124,6 @@ export {
 
 export { Image } from "./media.js";
 
-export { InputCheck } from "./input-check.js";
-
 export { Idempotency, layerIdempotency } from "./idempotency.js";
 
 /** What `make` needs to define an action. */
@@ -220,7 +218,7 @@ export interface Options {
    * and sends it again on each retry; a call without it runs as any other. What is answered
    * again is kept by `Action.Idempotency`, which an implementation of the action requires at
    * startup: provide `Action.layerIdempotency`, or `Stored.layerIdempotency` over a
-   * `KeyValueStore`; a Durable Object's `make` and `handlers` provide one over its storage.
+   * `KeyValueStore`, as a cluster entity does over its own database.
    *
    * **Gotchas**
    *

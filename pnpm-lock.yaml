@@ -173,6 +173,9 @@ catalogs:
     '@cloudflare/workers-types':
       specifier: 5.20261110.1
       version: 5.20261110.1
+    '@effect/platform-cloudflare':
+      specifier: 4.1.4
+      version: 4.1.4
     '@effect/platform-node':
       specifier: 4.1.4
       version: 4.1.4
@@ -260,6 +263,9 @@ importers:
       '@cloudflare/workers-types':
         specifier: 'catalog:'
         version: 5.20261110.1
+      '@effect/platform-cloudflare':
+        specifier: 'catalog:'
+        version: 4.1.4(effect@4.1.4)
       '@effect/vitest':
         specifier: 'catalog:'
         version: 4.1.4(effect@4.1.4)(vitest@5.1.0)
@@ -374,6 +380,15 @@ packages:
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
     engines: {node: '>=12'}
 
+  '@effect/platform-cloudflare@4.1.4':
+    resolution: {integrity: sha512-9XKvbJt8jwh2UsT/txzmbfFsW5aQ8AyA96dAbqLy2mTLKsVBIa0POlowpfkXLLOZkay0CDiWIRvIkU1YI/2JNA==}
+    peerDependencies:
+      '@alchemy.run/cloudflare': '>=2.0.0-beta.85 <3'
+      effect: ^4.1.4
+    peerDependenciesMeta:
+      '@alchemy.run/cloudflare':
+        optional: true
+
   '@effect/platform-node-shared@4.1.4':
     resolution: {integrity: sha512-DWdfphHGOFJNj/mYadgpT3jIm8aRXDcPrQiGXFBH4p2H4XmA7iYMrPsI8NxVgZ7kNX0q1+FGJZJama0tINHRAg==}
     engines: {node: '>=22.19.0'}
@@ -386,6 +401,11 @@ packages:
     peerDependencies:
       effect: ^4.1.4
       redis: '>=5.1.0 <7.0.0'
+
+  '@effect/sql-sqlite-do@4.1.4':
+    resolution: {integrity: sha512-qeL9J7hgjvKmZu86d6jnzjts+lqxz/Lm/KOPka71++fl30sx9QoQLdHgmzC92S0TydC5EGO7i7rJRhLv4FV+qw==}
+    peerDependencies:
+      effect: ^4.1.4
 
   '@effect/sql-sqlite-node@4.1.4':
     resolution: {integrity: sha512-vEB3Xv7TftvZscuyee8doM1rXr0Dle5jxpuvjaEBlZkGAsUt0YvGudnOfEvUHMicE8wEuDQfpjWXM1q9HjNKUA==}
@@ -2383,6 +2403,12 @@ snapshots:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
 
+  '@effect/platform-cloudflare@4.1.4(effect@4.1.4)':
+    dependencies:
+      '@cloudflare/workers-types': 5.20261110.1
+      '@effect/sql-sqlite-do': 4.1.4(effect@4.1.4)
+      effect: 4.1.4
+
   '@effect/platform-node-shared@4.1.4(effect@4.1.4)':
     dependencies:
       '@types/ws': 8.18.2
@@ -2401,6 +2427,10 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@effect/sql-sqlite-do@4.1.4(effect@4.1.4)':
+    dependencies:
+      effect: 4.1.4
 
   '@effect/sql-sqlite-node@4.1.4(effect@4.1.4)':
     dependencies:

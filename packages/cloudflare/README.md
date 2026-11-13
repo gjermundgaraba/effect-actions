@@ -1,55 +1,40 @@
 # effect-actions-cloudflare
 
-`@gjermundgaraba/effect-actions-cloudflare` serves Effect RPC from Cloudflare Durable Objects, over WebSockets the runtime holds while an object hibernates and over an object's stub, and calls it from a Worker: any plain `RpcGroup`, with no action at all, served by Effect's own `RpcServer`. [effect-actions](https://github.com/gjermundgaraba/effect-actions) bindings are the option: the same routes `ActionRpc.layer`, `ActionHttp.layer` and `ActionMcp.layerHttp` serve elsewhere, in an object, with events followed over its sockets, over MCP or by webhook across its hibernation. It is released with `@gjermundgaraba/effect-actions`, at the same version, and requires it.
+`@gjermundgaraba/effect-actions-cloudflare` runs [effect-actions](https://github.com/gjermundgaraba/effect-actions) entities on Cloudflare Durable Objects through Effect Cluster: each entity id is one object, with its own SQLite database, and a Worker in front serves every entity's actions and events over JSON and MCP. It is released with `@gjermundgaraba/effect-actions`, at the same version, and requires it and `@effect/platform-cloudflare`.
 
 ```sh
-pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflare effect@~4.1.4
+pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflare @effect/platform-cloudflare@~4.1.4 effect@~4.1.4
 ```
 
-Its declarations name the Workers runtime's types, such as `Fetcher`: generate them with `wrangler types`, or install `@cloudflare/workers-types`, as a Worker project does.
+Its declarations name the Workers runtime's types: generate them with `wrangler types`, or install `@cloudflare/workers-types`, as a Worker project does.
 
-Serve an Effect `RpcGroup` from an object, over WebSockets the runtime holds while it hibernates:
-
-```ts
-class ChatRoom extends ActionDurableObject.make({
-  services: () =>
-    Layer.mergeAll(layerSql, Layer.effect(Room)(ActionDurableObject.name)),
-  routes: RpcServer.layer(RoomRpcs).pipe(
-    Layer.provide(handlers),
-    Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" }))
-  ),
-}) {}
-```
-
-Or serve actions there, authenticated, as `ActionRpc.layer` serves them elsewhere:
+Declare an entity with the core's `ActionEntity`, keyed by its input:
 
 ```ts
-routes: ActionRpc.layer(RoomRpc, room).pipe(
-  Layer.provide(ActionDurableObject.layerWebSocket({ path: "/rpc" })),
-  Layer.provide(authenticate),
-),
-```
-
-Call an object's own API, an Effect `RpcGroup` it serves as its `calls`, from a Worker or another object with Cloudflare's own RPC, a new stub for each call, its declared errors typed:
-
-```ts
-Effect.gen(function* () {
-  const lobby = yield* DurableObjectClient.make(LobbyCalls);
-
-  return yield* lobby(() => env.CHAT_LOBBY.getByName("lobby")).previews();
+const Room = ActionEntity.make("Room", RoomRpc, {
+  key: { readMessages: byRoom, postMessage: byRoom },
 });
 ```
 
-Call an object's routes from a Worker with the core's own clients, through the stub:
+Run it on Durable Objects, under the cluster layer whose clients send a caller's credential intact, and serve it from the Worker:
 
 ```ts
-ActionHttp.client(RoomHttp, { baseUrl: "https://room" }).pipe(
-  Effect.provide(
-    DurableObjectClient.layerHttpClient(env.CHAT_ROOM.getByName("design"))
+Layer.mergeAll(
+  ActionEntity.layer(Room, messages, { services: roomServices }),
+  ActionHttp.layer(RoomHttp, ActionEntity.reaching(Room))
+).pipe(
+  Layer.provideMerge(
+    ActionCluster.layer({
+      entities: [Room],
+      entityNamespace: env.CLUSTER_ENTITY,
+      workflowNamespace: env.CLUSTER_WORKFLOW,
+      queueNamespace: env.CLUSTER_QUEUE,
+      singletonNamespace: env.CLUSTER_SINGLETON,
+    })
   )
 );
 ```
 
-Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/): one Durable Object per room, served over hibernating WebSockets, JSON and its stub, with an alarm and a Worker in front. In a project that installs it, both are in `node_modules/@gjermundgaraba/effect-actions-cloudflare/`.
+Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/): a room per entity, a lobby told of each room's activity, a day-old expiry scheduled with `DeliverAt`, and a Worker in front. In a project that installs it, both are in `node_modules/@gjermundgaraba/effect-actions-cloudflare/`.
 
 MIT licensed.

@@ -58,7 +58,7 @@ export interface Feed {
    */
   readonly requestBound?: true | undefined;
   /**
-   * Authenticates the subscriber, checks `input` by `Action.InputCheck` and authorizes it, as
+   * Authenticates the subscriber, checks `input` by `InputCheck` and authorizes it, as
    * `poll` and `stream` do first.
    */
   readonly admit: (input: ErasedValue) => Effect.Effect<void, unknown, unknown>;
@@ -194,7 +194,7 @@ const answeredPage = ({
 const checkRun = (
   event: Event.Any,
   source: Event.Check<Event.Any, unknown>,
-  { wakes, polls }: Checking
+  { wakes }: Checking
 ): Run => {
   const occurrenceOf = occurrencesOf(event);
 
@@ -228,8 +228,7 @@ const checkRun = (
                 }),
               })),
             cursor,
-            woken,
-            polls
+            woken
           )
         )
       ),

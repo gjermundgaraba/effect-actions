@@ -1,15 +1,8 @@
 import { Effect, Layer, Predicate, Schedule, Schema } from "effect";
 import type { Context, Scope, Stream, Types } from "effect";
 import type { HttpRouter, HttpServerRequest } from "effect/http";
-import {
-  Rpc,
-  RpcClient,
-  RpcGroup,
-  RpcMiddleware,
-  RpcSchema,
-  RpcServer,
-} from "effect/rpc";
-import type { RpcClientError } from "effect/rpc";
+import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcServer } from "effect/rpc";
+import type { RpcClientError, RpcSchema } from "effect/rpc";
 
 import type {
   Any as Authentication,
@@ -66,12 +59,9 @@ import {
   nativeOf,
   streamedOf,
   streamedTransport,
-  streams,
   verifyingNative,
 } from "./erased.js";
-import type { ProgressedOf, SubscriptionKeeper } from "./erased.js";
-
-export type { KeptSubscription, SubscriptionKeeper } from "./erased.js";
+import type { ProgressedOf } from "./erased.js";
 
 type BindingError = Action.Errors[number];
 
@@ -481,39 +471,6 @@ export interface LayerOptions<
   readonly middleware?: M;
 }
 
-/** The key a protocol sets to its `SubscriptionKeeper` on its `RpcServer.Protocol` service. */
-export const subscriptionKeeper: unique symbol = Symbol.for(
-  "effect-actions/ActionRpc/subscriptionKeeper"
-);
-
-const isSubscriptionKeeper = (kept: unknown): kept is SubscriptionKeeper =>
-  Predicate.hasProperty(kept, "keep") && Predicate.isFunction(kept.keep);
-
-const keeperOf = (
-  protocol: RpcServer.Protocol["Service"]
-): SubscriptionKeeper | undefined => {
-  const kept = Predicate.hasProperty(protocol, subscriptionKeeper)
-    ? protocol[subscriptionKeeper]
-    : undefined;
-
-  return isSubscriptionKeeper(kept) ? kept : undefined;
-};
-
-/**
- * The key a protocol answering each call once sets to `true` on its `RpcServer.Protocol`
- * service, as the Cloudflare package's stub protocol does, since Effect's protocol has no flag of
- * its own for it: `layer` refuses to serve a streaming action, an event type or a native stream
- * rpc on it, where a stream is answered with a defect at its first element and one with none
- * waits for good.
- */
-export const unaryProtocol: unique symbol = Symbol.for(
-  "effect-actions/ActionRpc/unary"
-);
-
-const isUnary = (protocol: RpcServer.Protocol["Service"]) =>
-  Predicate.hasProperty(protocol, unaryProtocol) &&
-  protocol[unaryProtocol] === true;
-
 /**
  * Serve the binding's actions and event types among `implementations` with Effect's own
  * `RpcServer`, or those its `actions` lists, as `ActionHttp.layer` selects them, under the
@@ -540,7 +497,6 @@ const isUnary = (protocol: RpcServer.Protocol["Service"]) =>
  * - An action declaring `progress` streams it to every call, a client's call without `onProgress` too, its values handed on one at a time, so a slow reader drops the oldest; under `RpcSerialization.layerJson` over HTTP they arrive with the answer, at the end.
  * - A failure after an action's progress or its first element ends its stream rpc as it ends any call: a declared failure as the typed failure, a defect as `Internal server error`.
  * - The binding's native `rpcs` are served on the same protocol with their own schemas, every one, whatever `actions` lists, and their handlers are owed until provided: `Rpc.rpcs.toLayer(handlers)`; a native rpc's defect or undeclared failure is answered as Effect's server answers it, never `Internal server error`, and only its verifier's defect is.
- * - On a protocol answering each call once, one setting `unaryProtocol`, such as a Durable Object stub's, the build fails while it would serve a streaming action, an event type or a native stream rpc.
  */
 export function layer<const B extends Any, const Apps extends Served>(
   binding: B,
@@ -598,33 +554,11 @@ export function layer(
         );
       }
 
-      const protocol = yield* RpcServer.Protocol;
-      const keeper = keeperOf(protocol);
-
-      if (isUnary(protocol)) {
-        const streamed = [...actions.filter(streams), ...eventTypes].map(
-          ({ name }) => name
-        );
-
-        const nativeStreams = natives.flatMap((rpc) =>
-          RpcSchema.isStreamSchema(rpc.successSchema) ? [rpc._tag] : []
-        );
-
-        if (streamed.length + nativeStreams.length > 0) {
-          return yield* Effect.die(
-            new Error(
-              `ActionRpc.layer serves a protocol answering each call once, and ${[...streamed, ...nativeStreams].join(", ")} stream: serve them over a socket or HTTP, and on this protocol the others, ${nativeStreams.length > 0 ? "from a binding whose rpcs do not stream, " : ""}listed in actions`
-            )
-          );
-        }
-      }
-
       const { handlers: byName, authenticating } = yield* handlersOf(binding, {
         apps,
         events,
         authentication,
         middleware,
-        keeper,
         delivery: "stream",
       });
 

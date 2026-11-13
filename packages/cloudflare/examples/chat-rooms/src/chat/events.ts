@@ -9,7 +9,7 @@ const idOf = Schema.decodeUnknownOption(
   Schema.NumberFromString.pipe(Schema.check(Schema.isInt()))
 );
 
-const nextPoll = "30 seconds";
+const nextPoll = "2 seconds";
 
 export const messageEvents = Event.implement(
   MessagePosted,

@@ -24,7 +24,6 @@ export type Wakes = (
 
 export interface Checking {
   readonly wakes: Wakes;
-  readonly polls: boolean;
   readonly revision: (key: string | undefined) => Effect.Effect<string>;
 }
 
@@ -78,7 +77,7 @@ const ofKey = (event: Event.Any, key: string) => `${event.name}\u0000=${key}`;
  * - The handlers announcing and the surfaces serving must share one, as they share a store: built separately, as a test building its handlers under a `provide` of their own does, each has its own, and an announcement reaches no subscriber of the other.
  * - An event no implementation attached here has no subscribers here: `publish` does nothing for it, and `notify` only moves its revision, so a current source attached later answers the change.
  * - `notify` of a log source and `publish` to a check source die naming the other: a check source reads your store, so write there and notify; a log source keeps what you publish.
- * - Implementations attach only to one `layerMemory`, `Stored.layerEvents` or `makeEvents` made: built over another, such as `Events.of` in a test, they die, naming all three.
+ * - Implementations attach only to one `layerMemory` or `Stored.layerEvents` made: built over another, such as `Events.of` in a test, they die, naming both.
  */
 export class Events extends Context.Service<
   Events,
@@ -119,7 +118,7 @@ export const attachmentsOf = (
     return attachments === undefined
       ? Effect.die(
           new Error(
-            "This Event.Events serves no event implementation: provide Event.layerMemory or Stored.layerEvents, or one Event.makeEvents builds"
+            "This Event.Events serves no event implementation: provide Event.layerMemory or Stored.layerEvents"
           )
         )
       : Effect.succeed(attachments);
@@ -158,26 +157,13 @@ const holding = <A>(
     () => Effect.sync(() => set.delete(value))
   );
 
-/** `makeEvents`' options: where it keeps logs, and whether check sources are read on a timer. */
+/** `makeEvents`' options: where it keeps logs and revisions. */
 export interface MakeEventsOptions {
   /**
    * The storage of `event`'s log, made at its first attachment: the core keeps the log's cursors,
    * bounds and expiry over it.
    */
   readonly log: (event: Event.Any) => LogStorage<ErasedEmitted>;
-  /**
-   * Whether a check source's subscribers also read it again on a timer, each page's `nextPoll`,
-   * besides when notified; defaults to `true`. `false` where a pending timer would keep the host
-   * awake, as it keeps a Durable Object from hibernating: its sources are read when notified, and
-   * 5 seconds after a read that fails.
-   */
-  readonly polls?: boolean | undefined;
-  /**
-   * Whether a log source's `emit` is consumed; defaults to `true`. `false` where the host does not
-   * last, as a Durable Object is evicted while idle and misses what a stream sends meanwhile: a
-   * log source fed by `emit` dies as it attaches, naming `publish`.
-   */
-  readonly emits?: boolean | undefined;
   /**
    * Where check and current sources' revisions are kept; defaults to memory, a new epoch with each
    * `makeEvents`. A host keeping its logs in storage keeps them there too, so a subscriber's
@@ -187,21 +173,19 @@ export interface MakeEventsOptions {
 }
 
 /**
- * An `Events` for as long as the scope lasts, over the log storage `log` makes: what a host keeping
- * logs elsewhere, such as a Durable Object's storage, provides as `Events`, its subscribers' wakes
- * in memory and its logs where `log` keeps them.
+ * An `Events` for as long as the scope lasts, over the log storage `log` makes: what
+ * `Stored.layerEvents` provides over SQL, its subscribers' wakes in memory and its logs where
+ * `log` keeps them.
  *
  * **Gotchas**
  *
- * - Make it once per host, around the handlers that announce and the surfaces that serve, as `layerMemory` is built.
- * - A log's storage is made once per event for the life of the scope, its position read on every append and read: a storage emptied behind its back, as `storage.deleteAll` empties one, starts a new epoch, and a cursor from before reads a gap.
+ * - Make it once per database, around the handlers that announce and the surfaces that serve, as `layerMemory` is built.
+ * - A log's storage is made once per event for the life of the scope, its position read on every append and read: a storage emptied behind its back starts a new epoch, and a cursor from before reads a gap.
  */
 export const makeEvents = (
   options: MakeEventsOptions
 ): Effect.Effect<Events["Service"], never, Scope.Scope> =>
   Effect.gen(function* () {
-    const polls = options.polls ?? true;
-    const emits = options.emits ?? true;
     const revisions = options.revisions ?? memoryRevisions();
     const scope = yield* Effect.scope;
 
@@ -302,7 +286,6 @@ export const makeEvents = (
     attached.set(events, {
       check: (event) =>
         Effect.map(holding(checkOf(event).attached, {}), (): Checking => ({
-          polls,
           wakes: (key) =>
             Effect.flatMap(Queue.sliding<undefined>(1), (woken) =>
               Effect.as(
@@ -328,14 +311,6 @@ export const makeEvents = (
         })),
       log: (event, bounds, emit) =>
         Effect.suspend(() => {
-          if (emit !== undefined && !emits) {
-            return Effect.die(
-              new Error(
-                `Event "${event.name}" has a log source fed by emit, which this Event.Events does not consume, as its host does not last between requests (publish each occurrence with Event.Events.publish as the host receives it, such as in a call or a route)`
-              )
-            );
-          }
-
           const kept = logs.get(event) ?? {
             log: makeLog(makeLogStore(options.log(event), bounds)),
             waiting: new Set(),

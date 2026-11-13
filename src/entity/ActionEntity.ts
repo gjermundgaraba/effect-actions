@@ -23,7 +23,6 @@ import type {
   Run,
   ServingEvents,
 } from "../contract/feed.js";
-import { forwarded } from "../contract/forwarded.js";
 import { Implementation, memoized } from "../contract/implementation.js";
 import type {
   ErasedAuthorize,
@@ -52,6 +51,7 @@ import {
   watchedOf,
 } from "../rpc/erased.js";
 import type { ErasedCall } from "../rpc/erased.js";
+import { forwarded } from "./forwarded.js";
 
 type Contract<B extends ActionRpc.Any> =
   | B["actions"][number]
@@ -411,7 +411,6 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
         authentication,
         middleware: [],
         delivery: "poll",
-        keeper: undefined,
       }),
       built
     );

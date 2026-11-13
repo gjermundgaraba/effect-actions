@@ -96,10 +96,6 @@ import {
 } from "./streamed.js";
 import type { SuccessOf } from "./streamed.js";
 
-export { placed } from "./placed.js";
-
-export type { Placed } from "./placed.js";
-
 export type { Client } from "./client.js";
 
 export type { MethodError, WatchError } from "./client.js";

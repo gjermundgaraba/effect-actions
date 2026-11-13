@@ -1,8 +1,8 @@
 # chat-rooms
 
-Chat rooms on Cloudflare: each room is one Durable Object, holding its messages in its own SQLite database and its pages' WebSockets while it hibernates. Members read, post and delete messages in the rooms they belong to over the room's socket, or the Worker's JSON routes and MCP endpoint, which reach every room. A page follows its room through an event, `MessagePosted`, its subscription kept while the object hibernates; an agent polls it over MCP. A message expires a day after it was posted, when the room's alarm runs. A lobby, one more object, keeps when each room was last active: each room tells it its latest activity over its stub, with Cloudflare's own RPC, and a page follows it, every preview whole at each change. The Worker in front serves the rooms' JSON routes and MCP endpoint itself, sending each call on to the room its input names, serves the previews, asking the lobby, and forwards a page's socket, `/rooms/<room>/rpc`, to the room's object and `/lobby/rpc` to the lobby's.
+Chat rooms on Cloudflare, on Effect Cluster: each room is one entity, `Room`, and so one Durable Object holding its messages in its own SQLite database. Members read, post and delete messages in the rooms they belong to over the Worker's JSON routes and MCP endpoint, which reach every room through `ActionEntity.reaching`. A page follows its room through an event, `MessagePosted`, which the Worker polls from the room; an agent polls it over MCP. A message expires a day after it was posted: posting schedules a persisted tell to the room itself, delivered by `DeliverAt`. A lobby, one more entity, keeps when each room was last active: each room tells it its latest activity and the version of its messages, from a persisted tell the room sends itself, carrying no credential, and a page follows it, every preview whole at each change.
 
-Start here to serve actions from Durable Objects. The same chat on a long-lived server is live-rpc, in the core package's `examples/`.
+Start here to run actions on Cloudflare. The same chat on a long-lived server is live-rpc, in the core package's `examples/`.
 
 ## Run it
 
@@ -14,19 +14,24 @@ vp test packages/cloudflare/examples/chat-rooms
 
 The tests run inside the Workers runtime, on the Worker `wrangler.jsonc` describes, with `@cloudflare/vitest-plugin`. `browser.ts` is imported by a page, not run. The tokens are fixed names (`ada`, `grace`): replace them before deploying anything.
 
-In a project that installs the package, copy this directory out of `node_modules/@gjermundgaraba/effect-actions-cloudflare/examples/`. It imports both packages by name and needs `effect` beside them, `@cloudflare/workers-types` for its `tsconfig.json`, and `wrangler` to serve it (`wrangler dev`, `wrangler deploy` in its directory). Its tests need `vitest`, `@effect/vitest` and `@cloudflare/vitest-plugin`; `vite.config.ts` imports `defineConfig` from the repository's toolchain, `vite-plus`, which is Vitest's `vitest/config` elsewhere.
+In a project that installs the package, copy this directory out of `node_modules/@gjermundgaraba/effect-actions-cloudflare/examples/`. It imports both packages by name and needs `effect` and `@effect/platform-cloudflare` beside them, `@cloudflare/workers-types` for its `tsconfig.json`, and `wrangler` to serve it (`wrangler dev`, `wrangler deploy` in its directory). Its tests need `vitest`, `@effect/vitest` and `@cloudflare/vitest-plugin`; `vite.config.ts` imports `defineConfig` from the repository's toolchain, `vite-plus`, which is Vitest's `vitest/config` elsewhere.
 
 ## When you copy this
 
 Each trap below is shown in the code of the files it names.
 
-- **A page sends its token on each message**, as a browser WebSocket sets no header on its upgrade: `src/browser.ts`; `test/worker.test.ts` connects both ways.
-- **The room is the object's name**, and only a room `DemoRoomName` lists is reached: `src/chat/Chat.ts`, `src/worker.ts`.
-- **The Worker serves every room, each room answers**, through the placement `rooms`: `src/routes.ts`.
-- **A page reads, then watches from the last message it holds**: `src/browser.ts`, `src/chat/events.ts`.
-- **`postMessage` notifies `MessagePosted`**: `src/chat/handlers.ts`, `src/chat/events.ts`.
-- **Objects call each other over their stubs, not their `fetch`**: `src/lobby/Calls.ts`, `src/platform/lobby-stubs.ts`.
-- **A room tells the lobby its latest activity, and the lobby notifies**: `tellLobby` in `src/platform/lobby-stubs.ts`, `src/lobby/handlers.ts`.
+- **One initializer builds the whole application, keeping the first runtime to finish for the isolate, and nothing slow builds after the cluster**: `quickOnceTheClusterIsBuilt` in `src/application.ts`, registered by `src/worker.ts`'s import.
+- **The room is the entity's id**, and only a room `DemoRoomName` lists is reached: `src/chat/Chat.ts`, `src/entities.ts`, `roomOfAddress` in `src/routes.ts`.
+- **Each room builds its stores over its own database, as it activates**: `services` in `src/routes.ts`.
+- **The Worker serves every room, each room answers**: `src/routes.ts`.
+- **A change sends its follow-ups before it writes**, its expiry and its tell to the lobby, so a crash after the write still runs them, and they read what it wrote only because they run after it, the room serving one call at a time and no handler answering through `Rpc.fork`: `followUpsRunAfterThisCall` in `src/chat/handlers.ts`, `concurrency: 1` in `src/routes.ts`.
+- **A post schedules its expiry once per hour's window**: `src/chat/Tells.ts`, `src/chat/handlers.ts`, `src/platform/cluster-clients.ts`.
+- **A failed task logs its cause and sends itself a retry later**, as Effect replays only a crash, until it succeeds, scheduling the retry fails or the room cannot be built when it is delivered, the last two leaving the task to a later change: `src/retry.ts`, `src/chat/handlers.ts`.
+- **Each change asks the lobby in the room's one slot, for 2 seconds at most**, then leaves the change to the next change or a retry, each reading the room's latest again, so while the lobby takes no call, or answers late, as an ask queued behind other rooms' in the lobby's one slot does, a call reaching the room behind n asks waits up to 2n seconds; the lobby finishes a call the room stopped waiting for, and records and announces a change in one transaction: `src/chat/handlers.ts`, `src/lobby/Changes.ts`, `src/platform/sql-previews.ts`.
+- **Changes may arrive in no set order, so the lobby keeps only a newer version**: `room_version` in `src/platform/sql-messages.ts`, `src/platform/sql-previews.ts`.
+- **Every processed tell keeps its row**, which the runtime never prunes: one expiry a room an hour, one retry a minute at most while a task fails, and one lobby tell for each post or delete, refused or failed ones included, and for each run of an expiry, its retries included: `src/chat/Tells.ts`, `src/retry.ts`.
+- **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
+- **A room's tells keep no credential**: `src/platform/cluster-clients.ts`, `test/worker.test.ts`.
 - **The lobby's event is a whole value**, followed with no read first: `src/lobby/events.ts`, `src/browser.ts`.
 
 ## Layout
@@ -34,64 +39,61 @@ Each trap below is shown in the code of the files it names.
 ```text
 src/
 ├── chat/
-│   ├── Chat.ts        contract: the rooms, the message, its errors, the room's actions
-│   ├── room.ts        Room, the room an instance holds: a startup service
-│   ├── activity.ts    Activity, where a room says it changed: the lobby
+│   ├── Chat.ts        contract: the rooms, the message, its errors, the room's actions and event
+│   ├── Tells.ts       the room's own rpcs: its expiry, its tell to the lobby and their retry, and the expiry's window
+│   ├── room.ts        Room, the room an entity holds: read from its address
+│   ├── mailbox.ts     RoomMailbox, how a room tells itself
 │   ├── store.ts       MessageStore, the service the handlers call
 │   ├── events.ts      MessagePosted's check source, read from the store
-│   ├── authorize.ts   the one authorization rule: a member of the instance's room
-│   └── handlers.ts    Action.implement: contract to store
+│   ├── authorize.ts   the one authorization rule: a member of the entity's room
+│   └── handlers.ts    Action.implement: contract to store, and the room's own rpcs' handlers
 ├── identity/
 │   ├── Identity.ts    contract: CurrentMember and the Login descriptor
 │   ├── members.ts     the demo members
 │   └── verifier.ts    Authentication.layer: tokens to members, server only
 ├── lobby/
-│   ├── Lobby.ts       contract: the previews, the Worker's action and the lobby's event
-│   ├── Calls.ts       the lobby's own API over its stub, for the rooms and the Worker
+│   ├── Lobby.ts       contract: the previews action and event
+│   ├── Changes.ts     the lobby's own rpc: a room's change, a volatile call
+│   ├── client.ts      LobbyClient, how a room asks the lobby to record its change
 │   ├── store.ts       PreviewStore, the previews the lobby keeps
 │   ├── events.ts      PreviewsChanged's current source, the whole value
-│   ├── host.ts        LobbyHost, the lobby's object as the Worker reaches it
-│   └── handlers.ts    the Worker's action, and the lobby's calls recording a room's activity
+│   └── handlers.ts    the previews action, and the rpc recording a room's change
 ├── platform/
-│   ├── sql-store.ts   MessageStore over the object's SQLite database, and its alarm
-│   ├── kv-previews.ts PreviewStore over the lobby's synchronous key-value storage
-│   └── lobby-stubs.ts LobbyHost, Activity and the room's task over the lobby's stub
+│   ├── object-sql.ts    the entity's own SQLite database, as SqlClient
+│   ├── sql-messages.ts  MessageStore over the entity's SQLite database
+│   ├── sql-previews.ts  PreviewStore over the lobby's
+│   └── cluster-clients.ts  RoomMailbox and LobbyClient over the entities' clients
 ├── Api.ts             the JSON bindings: a room's and the lobby's
-├── Rpc.ts             the RPC bindings: a room's actions and event, and the lobby's event
-├── routes.ts          each object's routes, the lobby's calls over its stub, the Worker's routes
-├── worker.ts          entrypoint: the room's and the lobby's classes and the Worker's fetch
-├── rooms-entrypoint.ts  the rooms' activity for another Worker, a program per call
-├── browser.ts         client module: a page's socket, its room and the lobby
+├── Rpc.ts             the entities' bindings
+├── entities.ts        Room and Lobby, the entities, each with its own rpcs
+├── retry.ts           a failed task's later tries: logged, backed off to an hour
+├── routes.ts          each entity's layer and services, and the Worker's routes
+├── application.ts     the initializer: the whole application, once per isolate
+├── worker.ts          entrypoint: the four classes and the Worker's fetch
+├── rooms-entrypoint.ts  the rooms' activity for another Worker
+├── browser.ts         client module: a page's room and the lobby, over JSON
 └── env.d.ts           the bindings' types, as `wrangler types` writes them
 test/
-├── platform/          the store against a real object's database
-├── support/           a page's socket, upgraded through the Worker
-└── worker.test.ts     through the Worker's fetch: sockets, JSON routes, MCP, the lobby, the alarm
+└── worker.test.ts     through the Worker's fetch: JSON routes, MCP, the lobby, the expiry, the mailboxes
 ```
 
-- **An instance is built per wake.** The runtime evicts an idle object and constructs a new instance for its next event, which builds its services and routes again: anything in memory is gone, and `layerSql` creates its table if it is not there. The database and the sockets stay.
-- **The room is a startup service, the caller is not.** An instance holds one room, so the authorizer yields `Room` once, when it is built, as a builder yields a store. `CurrentMember` comes from authentication, per message.
-- **The entrypoint chooses everything.** `worker.ts` gives a room's object the SQLite store, the room, its name, and the lobby's stub as its services, which an instance builds once for the routes, the task and the alarm; it gives the lobby's object its store, and the Worker's handler the lobby's stub.
-- **The Worker forwards a socket, the object answers.** Forwarding a request forwards its upgrade, so the Worker passes a page's socket request to the room's object unchanged but its path; every other call it serves itself, through the placement.
+- **An entity is built per wake.** The runtime evicts an idle object and builds the entity again for its next message, its `services` and builders included: anything in memory is gone, and `layerSqlMessages` creates its table if it is not there. The database and the mailbox stay.
+- **The room is an activation service, the caller is not.** An entity holds one room, so the authorizer yields `Room` once, as it is built. `CurrentMember` comes from authentication, per call.
+- **The initializer chooses everything.** `application.ts` gives each entity its stores, the room its name and the lobby's mailbox, and the Worker its routes, all over `ActionCluster.layer`.
 
 ## Where to look
 
 | To see | Read |
 | --- | --- |
-| A Durable Object class serving actions, and its alarm | `src/worker.ts` |
-| Rpcs on hibernating WebSockets beside JSON routes, in one object | `src/routes.ts` |
-| An authorizer that yields the instance's room once, when it is built | `src/chat/authorize.ts`, `src/chat/handlers.ts` |
-| A store over the object's SQLite database, setting its alarm with `Alarm` | `src/platform/sql-store.ts` |
-| A startup service read from the object's state, its name | `src/worker.ts` |
-| A Worker calling an object's own API over its stub, with Cloudflare's RPC | `src/lobby/Calls.ts`, `src/routes.ts`, `src/platform/lobby-stubs.ts` |
-| An object telling another of a change, which notifies its own event | `src/platform/lobby-stubs.ts`, `src/lobby/handlers.ts` |
-| An event sent as a whole value, followed with no read first | `src/lobby/events.ts`, `src/browser.ts`, `test/worker.test.ts` |
-| Routing requests and upgrades from the Worker to an object | `src/worker.ts` |
-| A page's socket client, its token on each message | `src/browser.ts` |
-| An event a page watches on its socket, kept while the object hibernates | `src/chat/events.ts`, `src/browser.ts`, `test/worker.test.ts` |
-| A Worker serving every room's actions and event, each in the room it names | `src/routes.ts`, `src/worker.ts`, `test/worker.test.ts` |
+| The four classes, bindings and migration a cluster needs | `src/worker.ts`, `wrangler.jsonc` |
+| One initializer building the application once per isolate | `src/application.ts` |
+| An entity's stores over its own SQLite, built per activation | `src/routes.ts`, `src/platform/object-sql.ts`, `src/platform/sql-messages.ts` |
+| An authorizer that yields the entity's room once, when it is built | `src/chat/authorize.ts`, `src/routes.ts` |
+| A Worker serving every room's actions and event, each in the room it names | `src/routes.ts`, `test/worker.test.ts` |
 | One MCP endpoint for every room, its event polled | `src/routes.ts`, `test/worker.test.ts` |
-| A room refusing a call that names another room | `src/chat/Chat.ts`, `src/worker.ts`, `test/worker.test.ts` |
-| Refusing a page of another version with a close code it reads | `src/routes.ts`, `src/browser.ts` |
-| Testing on the Workers runtime: an eviction, the alarm, the database | `test/worker.test.ts`, `test/platform/` |
-| A socket that keeps the token of its upgrade request | `test/worker.test.ts` |
+| A room refusing a call that names another room | `src/entities.ts`, `test/worker.test.ts` |
+| A persisted tell scheduled by `DeliverAt`, one per `PrimaryKey`, handled per activation | `src/chat/Tells.ts`, `src/chat/handlers.ts`, `src/platform/cluster-clients.ts` |
+| An entity calling another with a change, which notifies its own event in the same transaction | `src/chat/handlers.ts`, `src/lobby/handlers.ts`, `src/platform/sql-previews.ts` |
+| An event sent as a whole value, followed with no read first | `src/lobby/events.ts`, `src/browser.ts`, `test/worker.test.ts` |
+| Another Worker reaching the entities through the booted runtime | `src/rooms-entrypoint.ts` |
+| Testing on the Workers runtime: an eviction, a scheduled tell, a planted failure, the mailboxes | `test/worker.test.ts` |

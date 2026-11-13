@@ -1,25 +1,27 @@
+import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { Effect, Schema } from "effect";
 
+import { initialize } from "./application.js";
 import { DemoRoomName } from "./chat/Chat.js";
-import { LobbyHost } from "./lobby/host.js";
-import { layerLobbyHost } from "./platform/lobby-stubs.js";
+import { Lobby } from "./entities.js";
 
 const decodeRoom = Schema.decodeUnknownEffect(DemoRoomName);
 
 export class RoomsEntrypoint extends WorkerEntrypoint {
   async latestAt(room: string) {
-    return await Effect.runPromise(
-      Effect.flatMap(decodeRoom(room), (name) =>
-        LobbyHost.use((lobby) =>
-          Effect.map(
-            lobby.previews,
-            (previews) =>
-              previews.find((preview) => preview.room === name)?.latestAt ??
-              null
-          )
-        )
-      ).pipe(Effect.provide(layerLobbyHost))
+    const context = await initialize(this.env);
+
+    return await Effect.runPromiseWith(context)(
+      Effect.gen(function* () {
+        const name = yield* decodeRoom(room);
+        const lobbies = yield* ActionEntity.client(Lobby);
+        const { previews } = yield* lobbies("lobby").previews();
+
+        return (
+          previews.find((preview) => preview.room === name)?.latestAt ?? null
+        );
+      })
     );
   }
 }

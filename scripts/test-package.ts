@@ -178,6 +178,10 @@ try {
           cloudflare,
           "@cloudflare/workers-types"
         ),
+        "@effect/platform-cloudflare": versionIn(
+          cloudflare,
+          "@effect/platform-cloudflare"
+        ),
         effect: versionIn(root, "effect"),
         typescript: manifest.devDependencies.typescript,
       },

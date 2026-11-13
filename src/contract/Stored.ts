@@ -18,12 +18,12 @@ import { Idempotency, Kept, keptFor } from "./idempotency.js";
  *
  * **Gotchas**
  *
- * - Written for SQLite, such as a Durable Object's through `@effect/sql-sqlite-do`'s `SqliteClient`, and tested on `@effect/sql-sqlite-node`'s: another dialect is unsupported.
+ * - Written for SQLite, such as a cluster entity's own on a Durable Object, `CloudflareCluster.DurableObjectSqlClient`, and tested on `@effect/sql-sqlite-node`'s and on workerd: another dialect is unsupported.
  * - Build it once per database, as `Event.layerMemory` is built once per process: two builds over one database each wake only their own subscribers, and their appends to one log collide, dying on the table's key.
  * - Logs are kept by their event's name: two event types of one name attached to one build die, naming it.
  * - A `key` holding a lone surrogate, not well-formed UTF-16, is kept with U+FFFD in its place: its occurrences no longer reach that key's subscribers.
  * - A query that fails dies: the database is the host's own, and nothing else can answer for it.
- * - Each append and read of a log is a transaction, joining the caller's: on a Durable Object, build `@effect/sql-sqlite-do`'s `SqliteClient` with `storage`, not `db` alone, or every one dies; an occurrence published in a transaction that rolls back is not kept, though its subscribers are woken to read nothing.
+ * - Each append and read of a log is a transaction, joining the caller's: on a Durable Object, `CloudflareCluster.DurableObjectSqlClient` is `@effect/sql-sqlite-do`'s `SqliteClient` built with `storage`, and one built with `db` alone fails every one, which dies; an occurrence published in a transaction that rolls back is not kept, though its subscribers are woken to read nothing.
  */
 export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
   Layer.effect(Events)(
