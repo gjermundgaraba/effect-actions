@@ -104,7 +104,6 @@ const lint: ReturnType<typeof config> = config({
         "examples/{build-events,kitchen-sink}/src/server.ts",
         "examples/build-events/test/support/memory.ts",
         "examples/kitchen-sink/test/support/services.ts",
-        "tests/entity/reaching-events.test.ts",
         "tests/support/webhook.ts",
         "tests/webhook/{delivery,mcp,persist}.test.ts",
         "tests/webhook/webhook-types.test-d.ts",

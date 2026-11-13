@@ -137,6 +137,7 @@ Recheck these on an upgrade of the dependency named.
   - A handler receives an `Entity.Request` and, second, the rpc server's options, whose `headers` are the envelope's, so `ActionEntity.layer` passes `request.payload` and that second argument to the erased handler, which authenticates from its `headers`.
   - `Entity.client`'s client is a Proxy keyed by tag, and `RpcGroup.Rpcs` drops string tags from its type, so `ActionEntity.client` calls it by tag through the erased call.
   - An rpc is volatile unless annotated `ClusterSchema.Persisted`, and an entity's concurrency defaults to 1, so a stream rpc holds its one slot until it ends.
+  - `Sharding` retries a volatile request's `EntityNotAssignedToRunner` every `sendRetryInterval` (100 ms by default) without limit, failing it only while the runner shuts down or the entity's manager is not alive, so a watch through `ActionEntity` does not retry it.
   - `Entity.makeTestClient` joins `RpcClient.makeNoSerialization` to `RpcServer.makeNoSerialization`, with no runner, mailbox or encoding.
 - Effect, elsewhere:
   - `Layer.build` forks the memo map around its caller, so `implementation.ts` builds into the map itself.

@@ -10,8 +10,8 @@ import {
   ShardingConfig,
   Snowflake,
 } from "effect/cluster";
-import { HttpClient, HttpClientRequest } from "effect/http";
-import { Dns } from "effect/net";
+import { Headers, HttpClient, HttpClientRequest } from "effect/http";
+import { RpcClient } from "effect/rpc";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Event from "../../src/contract/Event.js";
@@ -19,6 +19,7 @@ import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
+import { DeclaredFailure } from "../../src/rpc/erased.js";
 import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
@@ -46,7 +47,7 @@ const Ticker = ActionEntity.make(
 
 const TickerHttp = ActionHttp.make([Ticked], { authentication: Principal });
 
-const failingPolls = (fails: (call: number) => boolean) => {
+const failingPolls = (fails: (call: number) => boolean, lasting: boolean) => {
   let calls = 0;
 
   const runners = Layer.effect(
@@ -65,9 +66,14 @@ const failingPolls = (fails: (call: number) => boolean) => {
 
             if (fails(calls)) {
               return Effect.fail(
-                new ClusterError.PersistenceError({
-                  cause: new Error("storage down"),
-                })
+                lasting
+                  ? new ClusterError.AlreadyProcessingMessage({
+                      envelopeId: message.envelope.requestId,
+                      address: message.envelope.address,
+                    })
+                  : new ClusterError.PersistenceError({
+                      cause: new Error("storage down"),
+                    })
               );
             }
           }
@@ -86,7 +92,10 @@ const failingPolls = (fails: (call: number) => boolean) => {
   );
 };
 
-const makeTicker = (fails: (call: number) => boolean = () => false) => {
+const makeTicker = (
+  fails: (call: number) => boolean = () => false,
+  lasting = false
+) => {
   const counted = { checks: 0, callbacks: 0, hooked: 0, unhooked: 0 };
   const ticks: number[] = [];
 
@@ -145,15 +154,12 @@ const makeTicker = (fails: (call: number) => boolean = () => false) => {
     })
   ).pipe(
     Layer.provide(signIn),
-    Layer.provide(Webhook.layer()),
-    Layer.provide([
-      Testing.layer(receiver),
-      Dns.layerStatic({ hosts: { "hooks.example.com": ["93.184.216.34"] } }),
-    ])
+    Layer.provide(Webhook.layer({ resolveCallbacks: false })),
+    Layer.provide(Testing.layer(receiver))
   );
 
   const entities = ActionEntity.layer(Ticker, ticking).pipe(
-    Layer.provideMerge(failingPolls(fails)),
+    Layer.provideMerge(failingPolls(fails, lasting)),
     Layer.provide([signIn, Event.layerMemory])
   );
 
@@ -272,6 +278,47 @@ describe("ActionEntity.reaching's event streams", () => {
   );
 
   it.live(
+    "end on a cluster failure no retry outlasts, which the HTTP stream reports as Failed and opens again under a hook of its own",
+    () => {
+      const { counted, ticks, server } = makeTicker((call) => call === 2, true);
+
+      return Effect.gen(function* () {
+        const http = yield* ActionHttp.client(TickerHttp, {
+          transformClient: HttpClient.mapRequest(
+            HttpClientRequest.bearerToken("alice")
+          ),
+        });
+
+        const received: number[] = [];
+
+        ticks.push(1);
+
+        const watched = yield* Effect.forkScoped(
+          http.watch(Ticked, { room: "a" }, { cursor: "0" }).pipe(
+            Stream.take(2),
+            Stream.runForEach((item) =>
+              Effect.sync(() => {
+                received.push(item._tag === "Occurrence" ? item.data.at : -1);
+              })
+            )
+          )
+        );
+
+        yield* until(() => received.length === 1);
+
+        ticks.push(2);
+
+        yield* Fiber.join(watched);
+        yield* until(() => counted.unhooked === 2);
+
+        expect(received).toStrictEqual([1, 2]);
+        expect(counted).toMatchObject({ hooked: 2, unhooked: 2 });
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 30_000 }
+  );
+
+  it.live(
     "release the subscription hook their polls hold in the entity as each closes, leaving another stream's of the same input held",
     () => {
       const { counted, server } = makeTicker();
@@ -312,4 +359,176 @@ describe("ActionEntity.reaching's event streams", () => {
     },
     { timeout: 30_000 }
   );
+});
+
+const signedIn = (token: string) =>
+  Stream.updateService(
+    RpcClient.CurrentHeaders,
+    Headers.merge(Headers.fromInput({ authorization: `Bearer ${token}` }))
+  );
+
+describe("ActionEntity.client's watches", () => {
+  it.live(
+    "each hold a subscription hook of their own in the entity, which each releases as it ends, interrupted or done",
+    () => {
+      const { counted, ticks, server } = makeTicker();
+
+      return Effect.gen(function* () {
+        const a = (yield* ActionEntity.client(Ticker))("a");
+
+        const watched = (options?: Event.WatchOptions) =>
+          a.watch(Ticked, { room: "a" }, options).pipe(signedIn("alice"));
+
+        const first = yield* Effect.forkScoped(Stream.runDrain(watched()));
+
+        yield* until(() => counted.hooked === 1);
+
+        const second = yield* Effect.forkScoped(
+          Stream.runDrain(watched({ mode: "poll" }))
+        );
+
+        yield* until(() => counted.hooked === 2);
+        yield* Fiber.interrupt(first);
+        yield* until(() => counted.unhooked === 1);
+
+        const checked = counted.checks;
+
+        yield* until(() => counted.checks > checked);
+
+        const whileSecondOpen = { ...counted };
+
+        yield* Fiber.interrupt(second);
+        yield* until(() => counted.unhooked === 2);
+
+        ticks.push(1);
+
+        const taken = yield* Stream.runCollect(
+          watched({ cursor: "0" }).pipe(Stream.take(1))
+        );
+
+        yield* until(() => counted.unhooked === 3);
+
+        expect(whileSecondOpen).toMatchObject({ hooked: 2, unhooked: 1 });
+        expect(taken).toMatchObject([{ _tag: "Occurrence", data: { at: 1 } }]);
+        expect(counted).toMatchObject({ hooked: 3, unhooked: 3 });
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "ask the entity again after a transient cluster failure, from where the watch reached, under the hook it held",
+    () => {
+      const { counted, ticks, server } = makeTicker((call) => call === 2);
+
+      return Effect.gen(function* () {
+        const a = (yield* ActionEntity.client(Ticker))("a");
+        const received: number[] = [];
+
+        ticks.push(1);
+
+        const watched = yield* Effect.forkScoped(
+          a.watch(Ticked, { room: "a" }, { cursor: "0" }).pipe(
+            signedIn("alice"),
+            Stream.take(2),
+            Stream.runForEach((item) =>
+              Effect.sync(() => {
+                received.push(item._tag === "Occurrence" ? item.data.at : -1);
+              })
+            )
+          )
+        );
+
+        yield* until(() => received.length === 1);
+
+        ticks.push(2);
+
+        yield* Fiber.join(watched);
+        yield* until(() => counted.unhooked === 1);
+
+        expect(received).toStrictEqual([1, 2]);
+        expect(counted).toMatchObject({ hooked: 1, unhooked: 1 });
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 30_000 }
+  );
+});
+
+const rpcOfRoomA = Effect.map(Ticker.client, (clientFor) => {
+  const rpcs = clientFor("a");
+
+  return (
+    tag: string,
+    payload: Schema.Json,
+    headers: Record<string, string>
+  ) => {
+    const answer = rpcs[tag]?.(payload, { headers });
+
+    return answer !== undefined && Effect.isEffect(answer)
+      ? answer
+      : Effect.die(new Error(`no unary rpc ${tag}`));
+  };
+});
+
+const refusalOf = (refused: unknown) =>
+  refused instanceof DeclaredFailure ? refused.json : refused;
+
+describe("An entity's release rpc", () => {
+  it.live(
+    "frees the hook a watch's polls hold for their own principal alone, and refuses a caller without a credential",
+    () => {
+      const { counted, server } = makeTicker();
+
+      return Effect.gen(function* () {
+        const sent = yield* rpcOfRoomA;
+        const input = { room: "a" };
+        const watch = "6f1c2a4e-8b3d-4c5e-9a7f-0d1e2f3a4b5c";
+        const polled = { input, cursor: null, watch };
+        const released = { input, watch };
+        const asBob = { authorization: "Bearer bob" };
+
+        yield* sent("ticked", polled, asAlice.headers);
+        yield* sent("ticked/release", released, asBob);
+
+        const refused = yield* Effect.flip(
+          sent("ticked/release", released, {})
+        );
+
+        yield* sent("ticked", polled, asAlice.headers);
+
+        const beforeAlice = { ...counted };
+
+        yield* sent("ticked/release", released, asAlice.headers);
+        yield* until(() => counted.unhooked > beforeAlice.unhooked);
+
+        expect(refusalOf(refused)).toMatchObject({ _tag: "Unauthenticated" });
+        expect(beforeAlice).toMatchObject({ hooked: 1, unhooked: 0 });
+        expect(counted).toMatchObject({ hooked: 1, unhooked: 1 });
+      }).pipe(Effect.scoped, Effect.provide(server));
+    }
+  );
+
+  it.live("refuses a watch that is no UUID with InvalidInput", () => {
+    const { counted, server } = makeTicker();
+
+    return Effect.gen(function* () {
+      const sent = yield* rpcOfRoomA;
+      const input = { room: "a" };
+      const watch = "w".repeat(36);
+
+      const refusals = yield* Effect.forEach(
+        [
+          ["ticked", { input, cursor: null, watch }],
+          ["ticked/release", { input, watch }],
+        ] as const,
+        ([tag, payload]) => Effect.flip(sent(tag, payload, asAlice.headers))
+      );
+
+      expect(refusals.map(refusalOf)).toMatchObject([
+        { _tag: "InvalidInput" },
+        { _tag: "InvalidInput" },
+      ]);
+      expect(counted).toMatchObject({ checks: 0, hooked: 0 });
+    }).pipe(Effect.scoped, Effect.provide(server));
+  });
 });

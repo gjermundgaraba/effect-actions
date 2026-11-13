@@ -40,7 +40,12 @@ export interface WebhookTransport<E, R> {
 
 export interface Transport<E, R> {
   readonly name: string;
-  readonly poll: (cursor: string | null) => Effect.Effect<Page, E, R>;
+  readonly poll: (
+    cursor: string | null,
+    watch?: string
+  ) => Effect.Effect<Page, E, R>;
+  /** Present where polls naming a `watch` hold a hook of their own, which this frees. */
+  readonly release?: ((watch: string) => Effect.Effect<void, E, R>) | undefined;
   readonly stream: (cursor: string | null) => Stream.Stream<Fed, E, R>;
   readonly webhook?: WebhookTransport<E, R> | undefined;
   readonly transient?: ((error: E) => boolean) | undefined;
@@ -109,17 +114,35 @@ const reconnecting = <E, R>(
       );
 };
 
+const closeTimeout = Duration.seconds(5);
+
+const closing = <E, R>(closed: Effect.Effect<void, E, R>) =>
+  closed.pipe(Effect.timeout(closeTimeout), Effect.ignore({ log: "Debug" }));
+
 export const polling =
   <E, R>(
-    poll: (cursor: string | null) => Effect.Effect<Page, E, R>,
+    { poll, release }: Pick<Transport<E, R>, "poll" | "release">,
     transient: ((error: E) => boolean) | undefined
   ) =>
   (cursor: string | null): Stream.Stream<Fed, E, R> =>
-    reconnecting(transient, (at) => paged(poll, at), cursor);
+    release === undefined
+      ? reconnecting(transient, (at) => paged(poll, at), cursor)
+      : Stream.unwrap(
+          Effect.map(
+            Effect.acquireRelease(
+              Effect.sync(() => globalThis.crypto.randomUUID()),
+              (watch) => closing(release(watch))
+            ),
+            (watch) =>
+              reconnecting(
+                transient,
+                (at) => paged((from) => poll(from, watch), at),
+                cursor
+              )
+          )
+        );
 
 const capacity = 16;
-
-const unsubscribeTimeout = Duration.seconds(5);
 
 const delivered = <E, R>(
   webhook: WebhookTransport<E, R>,
@@ -195,7 +218,7 @@ export const watching = <E, R, SE = never>(
   R
 > => {
   const { transient } = transport;
-  const polled = polling(transport.poll, transient);
+  const polled = polling(transport, transient);
 
   const webhooked = (
     { baseUrl, ttl }: Event.WebhookDelivery,
@@ -237,9 +260,7 @@ export const watching = <E, R, SE = never>(
         };
 
         yield* Effect.addFinalizer(() =>
-          webhook
-            .unsubscribe({ delivery: { url } })
-            .pipe(Effect.timeout(unsubscribeTimeout), Effect.ignore)
+          closing(webhook.unsubscribe({ delivery: { url } }))
         );
 
         return reconnecting(

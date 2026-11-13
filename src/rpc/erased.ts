@@ -177,15 +177,17 @@ export const erasedOf = (
     )
   );
 
+const Watch = Schema.String.check(Schema.isUUID());
+
 const PollOf = (event: Event.Any) =>
   Schema.Struct({
     ...SubscriptionOf(event).fields,
     maxEvents: Schema.optionalKey(Schema.Finite),
-    watch: Schema.optionalKey(Schema.String),
+    watch: Schema.optionalKey(Watch),
   });
 
 const ReleaseOf = (event: Event.Any) =>
-  Schema.Struct({ input: event.input, watch: Schema.String });
+  Schema.Struct({ input: event.input, watch: Watch });
 
 const watcherOf = (principal: string | undefined, watch: string) =>
   JSON.stringify([principal ?? null, watch]);
@@ -304,15 +306,17 @@ export const actionMethodOf = (
       );
 };
 
+type Calling = (tag: string) => ErasedMethod;
+
 export type EventTransport = (
   event: Event.Any,
   binding: Declaring,
-  method: ErasedMethod
+  calling: Calling
 ) => (input: Schema.Json) => Transport<unknown, never>;
 
 export const streamedTransport =
   (silenceEnds: boolean): EventTransport =>
-  (event, binding, method) => {
+  (event, binding, calling) => {
     const decode = Schema.decodeUnknownEffect(
       Schema.toCodecJson(PushedOf(event))
     );
@@ -320,7 +324,7 @@ export const streamedTransport =
     const failed = failedOf(Schema.Union(eventErrors(event, binding)));
 
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const call = method as JsonStreamMethod;
+    const call = calling(event.name) as JsonStreamMethod;
 
     return (input) =>
       transportOf(
@@ -360,19 +364,31 @@ export const pollOf = (
     );
 };
 
-export const releaseOf =
-  (method: ErasedMethod) =>
-  (payload: { readonly input: Schema.Json; readonly watch: string }) =>
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    Effect.asVoid((method as JsonMethod)(payload));
+export const watchedOf = (
+  event: Event.Any,
+  binding: Declaring,
+  calling: Calling
+) => {
+  const poll = pollOf(event, binding, calling(event.name));
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const release = calling(releaseTag(event.name)) as JsonMethod;
+
+  return (
+    input: Schema.Json
+  ): Pick<Transport<unknown, never>, "poll" | "release"> => ({
+    poll: (cursor, watch) =>
+      poll({ input, cursor, ...(watch === undefined ? {} : { watch }) }),
+    release: (watch) => Effect.asVoid(release({ input, watch })),
+  });
+};
 
 export const polledTransport =
   (transient: (error: unknown) => boolean): EventTransport =>
-  (event, binding, method) => {
-    const poll = pollOf(event, binding, method);
+  (event, binding, calling) => {
+    const watched = watchedOf(event, binding, calling);
 
-    return (input) =>
-      polledTransportOf(event, (cursor) => poll({ input, cursor }), transient);
+    return (input) => polledTransportOf(event, watched(input), transient);
   };
 
 interface ClientBinding extends Declaring {
@@ -415,8 +431,7 @@ export const methodsOf = (
 
   const feeds = new Map(
     binding.events.map(
-      (event) =>
-        [event.name, transport(event, binding, calling(event.name))] as const
+      (event) => [event.name, transport(event, binding, calling)] as const
     )
   );
 
