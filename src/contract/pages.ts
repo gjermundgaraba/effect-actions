@@ -1,7 +1,7 @@
-import { Duration, Effect, Option, Stream } from "effect";
+import { Duration, Effect, Option, Schema, Stream } from "effect";
 
 import type * as Event from "./Event.js";
-import { Checked, Gap } from "./occurrence.js";
+import { Checked, Gap, OccurrenceOf } from "./occurrence.js";
 
 /** One poll's answer, as a surface sends it and a client reads it. */
 export interface Page {
@@ -11,6 +11,25 @@ export interface Page {
   readonly hasMore: boolean;
   readonly nextPoll: Duration.Duration;
 }
+
+const pageWith = <O extends Schema.Top>(occurrence: O) =>
+  Schema.Struct({
+    events: Schema.Array(occurrence),
+    cursor: Schema.NullOr(Schema.String),
+    truncated: Schema.Boolean,
+    hasMore: Schema.Boolean,
+    nextPoll: Schema.DurationFromMillis,
+  }).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
+
+export const pageOf = <E extends Event.Any>(event: E) =>
+  pageWith(OccurrenceOf(event));
+
+/**
+ * The answer of an event type's poll, as an HTTP poll and an rpc's `<event>/poll` answer it,
+ * `{ events, cursor, truncated, hasMore, nextPollMs }`, its occurrences left undecoded: `hasMore`
+ * when more are ready at once, and `nextPollMs` how long its client waits before it polls again.
+ */
+export const AnyPage = pageWith(Schema.Unknown);
 
 /** What a feed's stream yields: what a subscriber receives, and where it has read up to. */
 export type Fed = Event.Received<Event.Any> | Checked;

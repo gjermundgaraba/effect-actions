@@ -65,7 +65,9 @@ import {
 import type { Delivery, ProgressedOf } from "./erased.js";
 import { isRpcTransient } from "./watch.js";
 
-export { Page, Poll, pollTag, Release, releaseTag } from "./erased.js";
+export { AnyPage as Page } from "../contract/pages.js";
+
+export { Poll, pollTag, Release, releaseTag } from "./erased.js";
 
 type BindingError = Action.Errors[number];
 

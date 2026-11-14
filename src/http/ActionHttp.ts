@@ -70,6 +70,7 @@ import type {
 } from "../contract/implementation.js";
 import { listed } from "../contract/listed.js";
 import type { Only } from "../contract/listed.js";
+import type { pageOf } from "../contract/pages.js";
 import type { SubscriptionOf } from "../contract/push.js";
 import { provideServed, servingOf } from "../contract/serving.js";
 import { declared } from "../contract/status.js";
@@ -91,7 +92,7 @@ import {
   servedSent,
   webhookEndpointsOf,
 } from "./events.js";
-import type { pageOf, sentOf } from "./events.js";
+import type { sentOf } from "./events.js";
 import { credentialNames } from "./redacted.js";
 import { SchemaErrors, schemaErrors } from "./schema-errors.js";
 import {

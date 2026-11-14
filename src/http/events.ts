@@ -9,7 +9,7 @@ import { assertDistinctTags } from "../contract/declared.js";
 import { Refusal } from "../contract/errors.js";
 import * as Event from "../contract/Event.js";
 import type { Feed } from "../contract/feed.js";
-import { OccurrenceOf } from "../contract/occurrence.js";
+import { pageOf } from "../contract/pages.js";
 import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import type { AnySubscription } from "../contract/push.js";
 import { declared } from "../contract/status.js";
@@ -19,15 +19,6 @@ import {
   WebhookSubscriptionOf,
 } from "../contract/subscribe.js";
 import { acceptsEventStream } from "./streamed.js";
-
-export const pageOf = <E extends Event.Any>(event: E) =>
-  Schema.Struct({
-    events: Schema.Array(OccurrenceOf(event)),
-    cursor: Schema.NullOr(Schema.String),
-    truncated: Schema.Boolean,
-    hasMore: Schema.Boolean,
-    nextPoll: Schema.DurationFromMillis,
-  }).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
 
 export const sentOf = <E extends Event.Any>(event: E) =>
   HttpApiSchema.StreamSse({

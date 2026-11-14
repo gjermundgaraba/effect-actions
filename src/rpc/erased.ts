@@ -41,7 +41,7 @@ import type {
   ErasedHandler,
   ErasedValue,
 } from "../contract/implementation.js";
-import { OccurrenceOf } from "../contract/occurrence.js";
+import { pageOf } from "../contract/pages.js";
 import { answerFrom, elementsFrom } from "../contract/progress.js";
 import type { Reporting, Progressed } from "../contract/progress.js";
 import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
@@ -245,29 +245,6 @@ const ReleaseOf = (event: Event.Any) =>
 const watcherOf = (principal: string | undefined, watch: string) =>
   JSON.stringify([principal ?? null, watch]);
 
-const pageFields = {
-  cursor: Schema.NullOr(Schema.String),
-  truncated: Schema.Boolean,
-  hasMore: Schema.Boolean,
-  nextPoll: Schema.DurationFromMillis,
-};
-
-/**
- * The answer of an event type's poll rpc, as an HTTP poll answers it,
- * `{ events, cursor, truncated, hasMore, nextPollMs }`, its occurrences left undecoded: `hasMore`
- * when more are ready at once, and `nextPollMs` how long its client waits before it polls again.
- */
-export const Page = Schema.Struct({
-  events: Schema.Array(Schema.Unknown),
-  ...pageFields,
-}).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
-
-const PageOf = (event: Event.Any) =>
-  Schema.Struct({
-    events: Schema.Array(OccurrenceOf(event)),
-    ...pageFields,
-  }).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
-
 export type ErasedCall<T = unknown> = (
   tag: string,
   payload: Schema.Json,
@@ -412,7 +389,7 @@ export const pollOf = (
   binding: Declaring,
   method: ErasedMethod
 ) => {
-  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(PageOf(event)));
+  const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(pageOf(event)));
 
   const failed = failedOf(Schema.Union(eventErrors(event, binding)));
 
@@ -766,7 +743,7 @@ const pollHandlerOf = (
   authentication: Authentication | undefined
 ) => {
   const decode = decodeInput({ input: PollOf(feed.event) });
-  const encode = Schema.encodeEffect(Schema.toCodecJson(PageOf(feed.event)));
+  const encode = Schema.encodeEffect(Schema.toCodecJson(pageOf(feed.event)));
 
   return servedCall(steps, callBoundaryOf(error), (payload) =>
     Effect.gen(function* () {
