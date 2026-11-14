@@ -20,7 +20,7 @@ In a project that installs the package, copy this directory out of `node_modules
 
 Each trap below is shown in the code of the files it names.
 
-- **One initializer builds the whole application, keeping the first runtime to finish for the isolate, and nothing slow builds after the cluster**: `quickOnceTheClusterIsBuilt` in `src/application.ts`, registered by `src/worker.ts`'s import.
+- **One initializer, `ActionCluster.initializer`, builds the whole application, and nothing slow builds after the cluster**: `quickOnceTheClusterIsBuilt` in `src/application.ts`, registered by `src/worker.ts`'s import.
 - **The room is the entity's id**, and only a room `DemoRoomName` lists is reached: `src/chat/Chat.ts`, `src/entities.ts`, `roomOfAddress` in `src/routes.ts`.
 - **The Worker serves every room, and each room builds its stores over its own database as it activates**: `services` in `src/routes.ts`.
 - **A post writes its message and wakes its followers in one transaction, and the table keeps one message per author and `request`**, so a post whose notification fails keeps nothing, and a page sending it again with its `request`, even after the room failed past its write, is answered with the first message, notifying nothing; the page sends it again only after a transport failure: `src/platform/sql-messages.ts`, `src/chat/handlers.ts`, `src/browser.ts`.
@@ -53,7 +53,7 @@ src/
 ├── entities.ts        Room, the entity
 ├── routes.ts          the entity's layer and services, and the Worker's routes
 ├── application.ts     the initializer: the whole application, once per isolate
-├── worker.ts          entrypoint: the four classes, the room's sockets and the Worker's fetch
+├── worker.ts          entrypoint: the four classes, and the Worker's handler routing a room's socket
 ├── browser.ts         client module: a page's room over JSON and its socket
 └── env.d.ts           the bindings' types, as `wrangler types` writes them
 test/

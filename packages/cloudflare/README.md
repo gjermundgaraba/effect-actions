@@ -45,6 +45,21 @@ class ClusterEntity extends ActionClusterEntity.make({
 }) {}
 ```
 
+The package owns the Worker's wiring: one initializer builds the application once per isolate, and the Worker's handler hands a page's upgrade to its room's object and serves every other request from the application's routes:
+
+```ts
+const initialize = CloudflareDurableObjects.setInitializer(
+  ActionCluster.initializer(application)
+);
+
+ActionCluster.handler(initialize, {
+  sockets: {
+    entityNamespace: (env) => env.CLUSTER_ENTITY,
+    routes: [{ entity: Room, path: /^\/rooms\/(?<id>[^/]+)\/rpc$/u }],
+  },
+});
+```
+
 Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/): a room per entity, a page's socket to its room, its posts by webhook, and a Worker in front serving JSON and MCP. In a project that installs it, both are in `node_modules/@gjermundgaraba/effect-actions-cloudflare/`.
 
 MIT licensed.

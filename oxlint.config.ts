@@ -96,7 +96,7 @@ const lint: ReturnType<typeof config> = config({
     },
     {
       files: [
-        "packages/cloudflare/examples/chat-rooms/src/{application,platform/object-sql,worker}.ts",
+        "packages/cloudflare/examples/chat-rooms/src/{application,platform/object-sql}.ts",
         "packages/cloudflare/examples/chat-rooms/test/{support,worker.test}.ts",
         "packages/cloudflare/src/cluster/ActionCluster.ts",
         "packages/cloudflare/src/host/ActionClusterEntity.ts",
@@ -130,8 +130,6 @@ const lint: ReturnType<typeof config> = config({
     },
     {
       files: [
-        "packages/cloudflare/examples/chat-rooms/src/worker.ts",
-        "packages/cloudflare/tests/worker.ts",
         "tests/cli/cli-types.test-d.ts",
         "tests/contract/{client-types,contract-types}.test-d.ts",
         "tests/contract/client.test.ts",

@@ -13,16 +13,14 @@ import {
   Effect,
   Layer,
   Logger,
-  ManagedRuntime,
   Redacted,
+  Schedule,
   Schema,
 } from "effect";
-import type { Scope } from "effect";
 import type { Entity } from "effect/cluster";
 import { ClusterSchema } from "effect/cluster";
 import {
   FetchHttpClient,
-  HttpEffect,
   HttpRouter,
   HttpServer,
   HttpServerRequest,
@@ -371,7 +369,34 @@ const recording = Logger.layer([
   }),
 ]);
 
-const application = (env: Cloudflare.Env) =>
+const edgeLog = HttpRouter.middleware(
+  (httpEffect) =>
+    Effect.tap(httpEffect, () =>
+      Effect.flatMap(
+        Effect.service(HttpServerRequest.HttpServerRequest),
+        ({ headers }) => Effect.log("edge", headers)
+      )
+    ),
+  { global: true }
+);
+
+const stall = { requested: false, released: false, builds: 0 };
+
+const stallingTheFirstBuild = Effect.suspend(() => {
+  stall.builds += 1;
+
+  return stall.requested && stall.builds === 1
+    ? Effect.sleep("50 millis").pipe(
+        Effect.repeat({
+          until: () => stall.released,
+          schedule: Schedule.spaced("50 millis"),
+        }),
+        Effect.andThen(Effect.die(new Error("planted: the stalled build")))
+      )
+    : Effect.void;
+});
+
+const served = (env: Cloudflare.Env) =>
   Layer.mergeAll(
     ActionEntity.layer(Seer, [...seeing, crashing], {
       services: Layer.merge(
@@ -392,11 +417,9 @@ const application = (env: Cloudflare.Env) =>
     keeping,
     Layer.mergeAll(
       ActionHttp.layer(SeerHttp, ActionEntity.reaching(Seer)),
-      ActionHttp.layer(BoardHttp, ActionEntity.reaching(Board))
-    ).pipe(
-      Layer.provideMerge(HttpRouter.layer),
-      Layer.provide(HttpServer.layerServices)
-    )
+      ActionHttp.layer(BoardHttp, ActionEntity.reaching(Board)),
+      edgeLog
+    ).pipe(Layer.provide(HttpServer.layerServices))
   ).pipe(
     Layer.provide(signIn),
     Layer.provideMerge(
@@ -411,23 +434,11 @@ const application = (env: Cloudflare.Env) =>
     Layer.provideMerge(recording)
   );
 
-type Application = Layer.Success<ReturnType<typeof application>>;
-
-let running: ManagedRuntime.ManagedRuntime<Application, never> | undefined;
+const application = (env: Cloudflare.Env) =>
+  Layer.unwrap(Effect.as(stallingTheFirstBuild, served(env)));
 
 export const initialize = CloudflareDurableObjects.setInitializer(
-  async (env: Cloudflare.Env) => {
-    if (running !== undefined) {
-      return await running.context();
-    }
-
-    const runtime = ManagedRuntime.make(application(env));
-    const context = await runtime.context();
-
-    running = runtime;
-
-    return context;
-  }
+  ActionCluster.initializer(application)
 );
 
 const started = { invoke: 0, hold: 0, acknowledge: 0 };
@@ -484,24 +495,22 @@ export class ClusterEntity extends Host {
   }
 }
 
+const handled = ActionCluster.handler(initialize, {
+  sockets: {
+    entityNamespace: (env) => env.CLUSTER_ENTITY,
+    routes: [Seer, Board, Tally].map((entity) => ({
+      entity,
+      path: new RegExp(`^/sockets/${entity.type}/(?<id>[^/]+)$`, "u"),
+    })),
+  },
+});
+
 export default {
   async fetch(request: Request, env: Cloudflare.Env) {
     const { pathname } = new URL(request.url);
 
     if (pathname === "/stubs") {
       return Response.json({ started, finished, instances });
-    }
-
-    const socketOf = /^\/sockets\/(?<type>[^/]+)\/(?<id>[^/]+)$/u.exec(
-      pathname
-    )?.groups;
-
-    const [type, id] = [socketOf?.["type"], socketOf?.["id"]];
-
-    if (type !== undefined && id !== undefined) {
-      return await env.CLUSTER_ENTITY.getByName(
-        CloudflareCluster.encodeName(type, id)
-      ).fetch(request);
     }
 
     if (pathname === "/logged") {
@@ -512,20 +521,13 @@ export default {
       return Response.json(received.splice(0));
     }
 
-    const context = await initialize(env);
+    if (pathname === "/stall" || pathname === "/release") {
+      stall.requested = true;
+      stall.released = pathname === "/release";
 
-    return await HttpEffect.toWebHandlerWith<
-      Application,
-      HttpServerRequest.HttpServerRequest | Scope.Scope
-    >(context)(
-      Context.get(context, HttpRouter.HttpRouter).asHttpEffect(),
-      (app) =>
-        Effect.tap(app, () =>
-          Effect.flatMap(
-            Effect.service(HttpServerRequest.HttpServerRequest),
-            ({ headers }) => Effect.log("edge", headers)
-          )
-        )
-    )(request);
+      return Response.json({ builds: stall.builds });
+    }
+
+    return await handled.fetch(request, env);
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

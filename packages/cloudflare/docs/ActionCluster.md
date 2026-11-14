@@ -4,18 +4,16 @@ Import `@gjermundgaraba/effect-actions-cloudflare/ActionCluster`. An application
 
 ## Deploy the four classes
 
-The runtime's four Durable Object classes, `ClusterEntity`, `ClusterWorkflow`, `ClusterDurableQueue` and `ClusterSingleton`, are exported from the Worker's module, bound in `wrangler.jsonc` and created by a SQLite migration; `ActionCluster.layer` takes the four namespaces. The example's `ClusterEntity` is `ActionClusterEntity.make`'s class, which runs the same entity program as Effect's and serves its rooms' sockets besides, in [ActionClusterEntity.md](ActionClusterEntity.md); an application serving no sockets re-exports Effect's own. The example's [`chat-rooms/wrangler.jsonc`](../examples/chat-rooms/wrangler.jsonc) is the whole configuration: its one migration, `cluster-v1`, creates the four, and a new application writes the same. One replacing classes of its own, as the earlier chat-rooms' `ChatRoom` and `ChatLobby`, keeps its deployed migrations and adds, before the one creating the four, a step deleting those classes, which deletes every object of theirs and its stored data.
+The runtime's four Durable Object classes, `ClusterEntity`, `ClusterWorkflow`, `ClusterDurableQueue` and `ClusterSingleton`, are exported from the Worker's module, bound in `wrangler.jsonc` and created by a SQLite migration; `ActionCluster.layer` takes the four namespaces. The example's `ClusterEntity` is `ActionClusterEntity.make`'s class, which runs the same entity program as Effect's and serves its rooms' sockets besides, in [ActionClusterEntity.md](ActionClusterEntity.md); an application serving no sockets re-exports Effect's own. The example's [`chat-rooms/wrangler.jsonc`](../examples/chat-rooms/wrangler.jsonc) is the whole configuration: its one migration, `cluster-v1`, creates the four, and a new application writes the same. One replacing Durable Object classes of its own keeps its deployed migrations and adds, before the one creating the four, a step deleting those classes, which deletes every object of theirs and its stored data.
+
+The module's default export is `ActionCluster.handler(initialize, { sockets })`, the Worker's `fetch`: it hands a page's upgrade at `/rooms/<room>/rpc` to the room's object without waiting on the initializer, its route's `id` admitting a demo room alone, and answers every other request with the application's routes. Its JSDoc holds the rules.
 
 ```ts example=chat-rooms/src/worker.ts
-import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
+import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/ActionCluster";
 import * as ActionClusterEntity from "@gjermundgaraba/effect-actions-cloudflare/ActionClusterEntity";
-import { Context, Schema } from "effect";
-import type { Scope } from "effect";
-import { HttpEffect, HttpRouter } from "effect/http";
-import type { HttpServerRequest } from "effect/http";
+import { Schema } from "effect";
 
 import { initialize } from "./application.js";
-import type { Application } from "./application.js";
 import { DemoRoomName } from "./chat/Chat.js";
 import { Room } from "./entities.js";
 import { protocolVersion, unsupportedProtocol } from "./Rpc.js";
@@ -34,49 +32,36 @@ export class ClusterEntity extends ActionClusterEntity.make({
 
 const isRoom = Schema.is(DemoRoomName);
 
-const roomSocket = /^\/rooms\/(?<room>[^/]+)\/rpc$/u;
-
-export default {
-  async fetch(request: Request, env: Cloudflare.Env) {
-    const room = roomSocket.exec(new URL(request.url).pathname)?.groups?.room;
-
-    if (room !== undefined && isRoom(room)) {
-      return await env.CLUSTER_ENTITY.getByName(
-        CloudflareCluster.encodeName(Room.type, room)
-      ).fetch(request);
-    }
-
-    const context = await initialize(env);
-
-    return await HttpEffect.toWebHandlerWith<
-      Application,
-      HttpServerRequest.HttpServerRequest | Scope.Scope
-    >(context)(Context.get(context, HttpRouter.HttpRouter).asHttpEffect())(
-      request
-    );
+export default ActionCluster.handler(initialize, {
+  sockets: {
+    entityNamespace: (env) => env.CLUSTER_ENTITY,
+    routes: [
+      {
+        entity: Room,
+        path: /^\/rooms\/(?<id>[^/]+)\/rpc$/u,
+        id: (room) => (isRoom(room) ? room : undefined),
+      },
+    ],
   },
-} satisfies ExportedHandler<Cloudflare.Env>;
+});
 ```
 
 ## Boot once per isolate
 
-Every object of the four classes, and the Worker's `fetch`, waits for the one initializer `CloudflareDurableObjects.setInitializer` registers, which builds the application: the entity layers, the Worker's routes and `ActionCluster.layer` beneath them, in one `ManagedRuntime`. Register exactly one, from the Worker's module. Each call builds a fresh runtime, disposing it when it fails, and the first to finish is kept for the isolate: the build must finish within 15 seconds, as one still pending is treated as abandoned and a waiting object calls the initializer again, and a stalled build finishing after its replacement is disposed. Its entities' registrations go with it: the stalled build registered them first, so its replacement's were refused, and the kept runtime then serves no entity. So nothing slow, such as a migration or a remote fetch, builds after `ActionCluster.layer`, as `quickOnceTheClusterIsBuilt` names: run it before, or in a request.
+Every object of the four classes, and the Worker's handler, waits for the one initializer `CloudflareDurableObjects.setInitializer` registers. Register exactly one, from the Worker's module: `ActionCluster.initializer(application)`, which builds the application, the entity layers and the Worker's routes with `ActionCluster.layer` beneath them, over `HttpRouter.layer`, and keeps the first runtime to finish for the isolate. A build still pending after 15 seconds is abandoned and another started, and the entities a stalled build registered refuse its replacement's, so nothing slow, such as a migration or a remote fetch, builds above `ActionCluster.layer`, as `quickOnceTheClusterIsBuilt` names: run it before, or in a request. Its JSDoc holds the rules.
 
 ```ts example=chat-rooms/src/application.ts
 import * as CloudflareDurableObjects from "@effect/platform-cloudflare/CloudflareDurableObjects";
 import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/ActionCluster";
-import { Layer, ManagedRuntime } from "effect";
-import { HttpRouter, HttpServer } from "effect/http";
+import { Layer } from "effect";
+import { HttpServer } from "effect/http";
 
 import { Room } from "./entities.js";
 import { entities, workerRoutes } from "./routes.js";
 
 const quickOnceTheClusterIsBuilt = Layer.mergeAll(
   entities,
-  workerRoutes.pipe(
-    Layer.provideMerge(HttpRouter.layer),
-    Layer.provide(HttpServer.layerServices)
-  )
+  workerRoutes.pipe(Layer.provide(HttpServer.layerServices))
 );
 
 const application = (env: Cloudflare.Env) =>
@@ -92,34 +77,8 @@ const application = (env: Cloudflare.Env) =>
     )
   );
 
-export type Application = Layer.Success<ReturnType<typeof application>>;
-
-let running: ManagedRuntime.ManagedRuntime<Application, never> | undefined;
-
 export const initialize = CloudflareDurableObjects.setInitializer(
-  async (env: Cloudflare.Env) => {
-    if (running !== undefined) {
-      return await running.context();
-    }
-
-    const runtime = ManagedRuntime.make(Layer.orDie(application(env)));
-
-    const context = await runtime.context().catch(async (error: unknown) => {
-      await runtime.dispose();
-
-      throw error;
-    });
-
-    running ??= runtime;
-
-    if (running === runtime) {
-      return context;
-    }
-
-    await runtime.dispose();
-
-    return await running.context();
-  }
+  ActionCluster.initializer(application)
 );
 ```
 

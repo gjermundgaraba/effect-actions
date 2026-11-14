@@ -12,7 +12,6 @@ import {
   opened,
   settledStubs,
   stubs,
-  upgrade,
   watchingIn,
 } from "../support/socket.js";
 import { boards, following, notes } from "../support/watch.js";
@@ -325,7 +324,12 @@ describe("ActionClusterEntity's sockets", () => {
             )
         );
 
-        const unserved = yield* upgrade("Nobody", "x");
+        const unserved = yield* Effect.promise(
+          async () =>
+            await objectOf("Nobody", "x").fetch("https://object/", {
+              headers: { upgrade: "websocket" },
+            })
+        );
 
         expect([plain.status, unserved.status]).toStrictEqual([426, 404]);
       })
