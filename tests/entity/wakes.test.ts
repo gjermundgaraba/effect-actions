@@ -1,7 +1,7 @@
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
 import type { Duration } from "effect";
-import { Effect, Layer, Option, Schedule, Schema } from "effect";
+import { Context, Effect, Layer, Option, Schedule, Schema } from "effect";
 import { SingleRunner } from "effect/cluster";
 import { Digest } from "effect/crypto";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -36,6 +36,10 @@ const runner = SingleRunner.layer({
   shardingConfig: { entityMessagePollInterval: "250 millis" },
   runnerStorage: "memory",
 }).pipe(Layer.orDie, Layer.provide(Digest.layerWebCrypto));
+
+class Ticks extends Context.Service<Ticks, readonly number[]>()(
+  "test/wakes/Ticks"
+) {}
 
 interface Attempt {
   readonly at: number;
@@ -74,12 +78,12 @@ const makeWorld = ({
       {
         notified: true,
         check: (_input: { readonly room: string }, cursor: string | null) =>
-          Effect.succeed({
-            cursor: String(ticks.length),
-            events: ticks
-              .slice(cursor === null ? ticks.length : Number(cursor))
+          Effect.map(Ticks, (held) => ({
+            cursor: String(held.length),
+            events: held
+              .slice(cursor === null ? held.length : Number(cursor))
               .map((at) => ({ eventId: `tick-${at}`, data: { at } })),
-          }),
+          })),
       }
     ),
     { authorize: Event.allowAll }
@@ -103,10 +107,15 @@ const makeWorld = ({
     return new Response(null, { status });
   };
 
-  const entities = ActionEntity.layer(Ticker, ticking, {
-    services: Webhook.layer({ persist: true, resolveCallbacks: false }).pipe(
+  const services = Layer.merge(
+    Webhook.layer({ persist: true, resolveCallbacks: false }).pipe(
       Layer.provide(Testing.layer(receiver))
     ),
+    Layer.succeed(Ticks)(ticks)
+  );
+
+  const entities = ActionEntity.layer(Ticker, ticking, {
+    services,
     maxIdleTime,
   }).pipe(
     Layer.provideMerge(runner),

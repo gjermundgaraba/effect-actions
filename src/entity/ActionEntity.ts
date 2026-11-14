@@ -272,8 +272,8 @@ export interface LayerOptions<
 > {
   /**
    * What each entity id builds for itself as it activates, before its implementations'
-   * builders and its native rpcs' handlers, which read it: a store over the entity's own
-   * database, its `Event.Events`. It may read `Entity.CurrentAddress` and what the activation
+   * builders and its native rpcs' handlers, which read it, as its handlers do per call: a store
+   * over the entity's own database, its `Event.Events`. It may read `Entity.CurrentAddress` and what the activation
    * provides, such as a Durable Object's `DurableObjectSqlClient`.
    *
    * **Gotchas**
@@ -322,6 +322,7 @@ type Activation =
 type PerCall<
   B extends ActionRpc.Any,
   Apps extends Served,
+  ROut,
   A extends Action.Any = B["actions"][number],
   E extends Event.Any = B["events"][number],
 > = Exclude<
@@ -329,16 +330,18 @@ type PerCall<
   | Activation
   | HttpServerRequest.HttpServerRequest
   | HttpServerRequest.ParsedSearchParams
+  | ROut
 >;
 
-type NoPerCall<B extends ActionRpc.Any, Apps extends Served> = [
-  PerCall<B, Apps>,
+type NoPerCall<B extends ActionRpc.Any, Apps extends Served, ROut> = [
+  PerCall<B, Apps, ROut>,
 ] extends [never]
   ? unknown
   : {
-      readonly "An entity provides no service per call: yield it in the implementation's builder, where it is a startup service": PerCall<
+      readonly "An entity provides no service per call but services' output: yield it in the implementation's builder, where it is a startup service, or build it in layer's services": PerCall<
         B,
-        Apps
+        Apps,
+        ROut
       >;
     };
 
@@ -401,7 +404,8 @@ type NativeHandler = (
  * **Gotchas**
  *
  * - What the application provides to this layer is shared by every entity of the runner; what an implementation builds, each entity id builds for itself: state held in a builder is that entity's alone.
- * - A handler, an authorizer or an event source reading per call a service other than its caller is a type error naming that service: an entity provides nothing per call, so yield it in the builder, where it is a startup service, one value for every caller and entity id.
+ * - A handler, an authorizer or an event source reading per call a service other than its caller and `services`' output is a type error naming that service: an entity provides nothing else per call, so yield it in the builder, where it is a startup service, one value for every caller and entity id, or build it in `services`, one per entity id.
+ * - `services`' output lies under each call's own context, so a service it outputs that a call provides too, its caller or its request, is the call's.
  * - `Action.layer` above it shares no build with it: each entity id runs its implementations' builders again, beside the run `Action.layer` made for the other surfaces.
  * - A builder that fails or dies is a defect of the entity's activation, never a failure of the layer: Effect's own runners log it and build again, 500 ms later and growing to 10 seconds apart, while its calls wait, and the Cloudflare runtime fails the calls waiting on that build, the next call building again.
  * - A handler's defect or undeclared failure ends that call with an `Error` whose message is `Internal server error`, as on `ActionRpc.layer`, and the call is not run again; Effect's own runners keep the entity's handlers for its next call, and the Cloudflare runtime builds them again, so what its builders and `services` held in memory is gone.
@@ -418,7 +422,7 @@ export function layer<
   RX = never,
 >(
   entity: Entity<Type, B, N>,
-  implementations: Apps & NoPerCall<B, Apps>,
+  implementations: Apps & NoPerCall<B, Apps, ROut>,
   ...options: NativeLayerOptions<N, ROut, RIn, Handlers, RX>
 ): EntityLayer<B, Apps, N, ROut, RIn, Handlers, RX>;
 export function layer<Type extends string, B extends ActionRpc.Any>(
@@ -528,7 +532,10 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
                 callOf(request, rpc)
               );
 
-              return Effect.provideService(answer, InputCheck, check);
+              return answer.pipe(
+                Effect.provideService(InputCheck, check),
+                Effect.provideContext(built)
+              );
             },
           ] as const;
         }

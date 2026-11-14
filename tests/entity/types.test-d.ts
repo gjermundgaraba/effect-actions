@@ -1,6 +1,6 @@
 import { expectTypeOf } from "@effect/vitest";
-import { Context, Effect, Redacted, Schema } from "effect";
-import type { Layer, Stream } from "effect";
+import { Context, Effect, Layer, Redacted, Schema } from "effect";
+import type { Stream } from "effect";
 import { Entity } from "effect/cluster";
 import type { ClusterError, Sharding } from "effect/cluster";
 import { HttpServerRequest } from "effect/http";
@@ -145,6 +145,25 @@ const readingPerCall = Action.implement(
 
 // @ts-expect-error -- an entity provides no service per call, so a handler reads none.
 ActionEntity.layer(Room, [readingPerCall, changes]);
+
+const tenantPerEntity = Layer.succeed(Tenant)("acme");
+
+const servedTenantPerCall = ActionEntity.layer(
+  Room,
+  [readingPerCall, changes],
+  { services: tenantPerEntity }
+);
+
+expectTypeOf<Tenant>().not.toExtend<
+  Layer.Services<typeof servedTenantPerCall>
+>();
+
+ActionEntity.layer(
+  Room,
+  // @ts-expect-error -- services' output is provided per call, but no other service.
+  [readingPerCall, changes],
+  { services: Layer.succeed(Rooms)(new Map()) }
+);
 
 const authorizingPerCall = Action.implement(
   [Get, Open],

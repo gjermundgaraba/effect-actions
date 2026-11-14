@@ -12,7 +12,7 @@ import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import { CurrentActor } from "../support/app/authorization.js";
+import { actors, CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
 import { signIn } from "../support/rooms.js";
 
@@ -74,11 +74,14 @@ const gates = {
   marked: Deferred.makeUnsafe<"done" | "interrupted">(),
 };
 
-const services = Layer.sync(Tally)(() => {
-  builds.services += 1;
+const services = Layer.merge(
+  Layer.sync(Tally)(() => {
+    builds.services += 1;
 
-  return { count: 0 };
-});
+    return { count: 0 };
+  }),
+  Layer.succeed(CurrentActor)(actors.bob)
+);
 
 const rpcs = Effect.map(
   Tally,
@@ -117,11 +120,13 @@ const rpcs = Effect.map(
 
 const peek = Action.implement(
   Peek,
-  Effect.map(
-    Tally,
-    (tally) => () =>
-      Effect.map(CurrentActor, ({ id }) => ({ count: tally.count, by: id }))
-  ),
+  () =>
+    Effect.gen(function* () {
+      const { count } = yield* Tally;
+      const { id } = yield* CurrentActor;
+
+      return { count, by: id };
+    }),
   { authorize: Action.allowAll }
 );
 
@@ -134,7 +139,7 @@ const signedIn = RpcClient.withHeaders({ authorization: "Bearer alice" });
 
 describe("ActionEntity's native rpcs and services", () => {
   it.live(
-    "builds services per entity id, shared by its native rpcs' handlers and its implementations, the natives authenticating nothing",
+    "builds services per entity id, shared by its native rpcs' handlers and its actions' handlers per call, under the caller, the natives authenticating nothing",
     () =>
       Effect.gen(function* () {
         builds.services = 0;

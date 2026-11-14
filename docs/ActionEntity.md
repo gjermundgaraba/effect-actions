@@ -30,7 +30,7 @@ Each entity id builds the implementations itself, when the cluster first sends i
 
 What each entity id must build for itself, such as a store over its own database or `Event.Events` kept there by `Stored.layerEvents`, goes in the layer's `services` option: each entity id builds it as it activates, before its implementations' builders, which read it. The handlers of `make`'s native rpcs go in the layer's `rpcs` option, as Effect's `Entity.toLayer` takes them: each receives Effect's own `Entity.Request`, and an Effect building them runs after `services`, whose output it reads.
 
-An entity provides nothing per call but the caller, so a handler, an authorizer or an event source reading any other service per call is a type error naming it: yield the service in the builder, where it is a startup service. The rules, and what a defect does, are on `ActionEntity.layer`.
+An entity provides nothing per call but the caller and what `services` built, so a handler, an authorizer or an event source reading any other service per call is a type error naming it: yield the service in the builder, where it is a startup service, or build it in `services`. The rules, and what a defect does, are on `ActionEntity.layer`.
 
 The example's carts build `CurrentCart` from the entity's address in `services`, and read their items from a store, which the entrypoint provides to the layer, so no state lives in the entity between calls, and the cluster may stop it while idle:
 

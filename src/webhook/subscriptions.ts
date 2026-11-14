@@ -715,7 +715,11 @@ export const makeWebhooks = (
           principal,
           kept: { input: record.input, identity: record.identity },
           secret,
-          context: Context.add(built, feed.event.caller, identity),
+          context: Context.add(
+            Context.merge(built, snapshotOf(yield* Effect.context<unknown>())),
+            feed.event.caller,
+            identity
+          ),
           expiresAt,
           health: restoredHealth,
           watermark: record.watermark,
