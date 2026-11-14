@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Effect, Exit, Fiber, Layer, Schema } from "effect";
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect";
 import {
   ClusterSchema,
   Entity,
@@ -36,7 +36,7 @@ const Hold = Rpc.make("hold");
 const Count = Rpc.make("count", { success: Schema.Int });
 
 const Mark = Rpc.make("mark", {
-  payload: { id: Schema.String, uninterruptible: Schema.Boolean },
+  payload: { uninterruptible: Schema.Boolean },
 });
 
 const Natives = RpcGroup.make(Bump, Inspect, Hold, Count, Mark);
@@ -67,7 +67,12 @@ const Counter = ActionEntity.make(
 
 const builds = { services: 0 };
 
-const marked: string[] = [];
+const gates = {
+  held: Deferred.makeUnsafe<undefined>(),
+  released: Deferred.makeUnsafe<undefined>(),
+  marking: Deferred.makeUnsafe<undefined>(),
+  marked: Deferred.makeUnsafe<"done" | "interrupted">(),
+};
 
 const services = Layer.sync(Tally)(() => {
   builds.services += 1;
@@ -86,14 +91,23 @@ const rpcs = Effect.map(
           headers: { ...headers },
           requestId: String(requestId),
         }),
-      hold: () => Rpc.fork(Effect.sleep("3 seconds")),
+      hold: () =>
+        Rpc.fork(
+          Effect.andThen(
+            Deferred.succeed(gates.held, undefined),
+            Deferred.await(gates.released)
+          )
+        ),
       count: () => Effect.map(Tally, ({ count }) => count),
-      mark: ({ payload: { id, uninterruptible } }) => {
-        const work = Effect.andThen(
-          Effect.sleep("400 millis"),
-          Effect.sync(() => {
-            marked.push(id);
-          })
+      mark: ({ payload: { uninterruptible } }) => {
+        const { marking, marked } = gates;
+
+        const work = Effect.gen(function* () {
+          yield* Deferred.succeed(marking, undefined);
+          yield* Effect.sleep("400 millis");
+          yield* Deferred.succeed(marked, "done");
+        }).pipe(
+          Effect.onInterrupt(() => Deferred.succeed(marked, "interrupted"))
         );
 
         return uninterruptible ? Rpc.uninterruptible(work) : work;
@@ -187,12 +201,19 @@ describe("ActionEntity's native rpcs and services", () => {
       Effect.gen(function* () {
         const natives = yield* Counter.client;
 
-        yield* Effect.forkChild(natives("f").hold());
-        yield* Effect.sleep("50 millis");
+        gates.held = yield* Deferred.make<undefined>();
+        gates.released = yield* Deferred.make<undefined>();
+
+        const holding = yield* Effect.forkChild(natives("f").hold());
+
+        yield* Deferred.await(gates.held);
 
         expect(
           yield* natives("f").bump().pipe(Effect.timeout("1 second"))
         ).toBe(1);
+
+        yield* Deferred.succeed(gates.released, undefined);
+        yield* Fiber.join(holding);
       }).pipe(Effect.scoped, Effect.provide(counters))
   );
 
@@ -215,21 +236,23 @@ describe("ActionEntity's native rpcs and services", () => {
       Effect.gen(function* () {
         const natives = yield* Counter.client;
 
-        const interrupted = (id: string, uninterruptible: boolean) =>
+        const interrupted = (uninterruptible: boolean) =>
           Effect.gen(function* () {
+            gates.marking = yield* Deferred.make<undefined>();
+            gates.marked = yield* Deferred.make<"done" | "interrupted">();
+
             const call = yield* Effect.forkChild(
-              natives(id).mark({ id, uninterruptible })
+              natives("m").mark({ uninterruptible })
             );
 
-            yield* Effect.sleep("150 millis");
+            yield* Deferred.await(gates.marking);
             yield* Fiber.interrupt(call);
-            yield* Effect.sleep("600 millis");
 
-            return marked.filter((mark) => mark === id);
+            return yield* Deferred.await(gates.marked);
           });
 
-        expect(yield* interrupted("kept", true)).toStrictEqual(["kept"]);
-        expect(yield* interrupted("stopped", false)).toStrictEqual([]);
+        expect(yield* interrupted(true)).toBe("done");
+        expect(yield* interrupted(false)).toBe("interrupted");
       }).pipe(Effect.scoped, Effect.provide(counters))
   );
 
