@@ -280,6 +280,7 @@ export interface LayerOptions<
    *
    * - Each entity id builds it again at each activation: what it holds in memory is that activation's alone, as an implementation builder's is, where a service provided to `layer` is the runner's, shared by every entity id.
    * - It fails or dies as a builder does: a defect of the activation, which the runtime handles as the builder's.
+   * - A handler reading its output per call, where it is written inline as a `Layer.merge` or another generic combinator's result, is a type error naming that output, which TypeScript infers too late: assign the layer to a `const` first.
    * - A `Webhook.layer` here holds the entity's webhook subscriptions and delivers them from its activation: give it `persist`, so a later activation restores them; each retry wait is a wake the entity sends itself, so a stopped entity is built again to retry, on Effect's SQL runners up to `entityMessagePollInterval` after it is due, each wake a row of the runtime's messages, kept once processed.
    * - A webhook subscription to a check source not `notified` is refused with `Event.SubscriptionError`, reason `Unsupported`, and a warning saying why, its polls and unsubscribes still served: its reads on a timer would be cut by Effect's reaper and keep a Durable Object awake.
    * - A webhook subscription past its expiry ends at its next delivery, and its kept record at the next activation, on no timer: until then it holds its subscription hook.
