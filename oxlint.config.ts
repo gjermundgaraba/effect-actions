@@ -100,7 +100,7 @@ const lint: ReturnType<typeof config> = config({
         "packages/cloudflare/examples/chat-rooms/test/{support,worker.test}.ts",
         "packages/cloudflare/src/cluster/ActionCluster.ts",
         "packages/cloudflare/src/host/ActionClusterEntity.ts",
-        "packages/cloudflare/tests/{worker,cluster/{eviction,redaction}.test,support/socket}.ts",
+        "packages/cloudflare/tests/{worker,cluster/{eviction,handler,redaction}.test,support/socket}.ts",
         "src/webhook/{address,subscriptions,Webhook}.ts",
         "examples/{build-events,kitchen-sink}/src/server.ts",
         "examples/build-events/test/support/memory.ts",

@@ -495,12 +495,16 @@ export class ClusterEntity extends Host {
   }
 }
 
+export const foreignOrigin = "https://elsewhere.example";
+
 const handled = ActionCluster.handler(initialize, {
   sockets: {
     entityNamespace: (env) => env.CLUSTER_ENTITY,
     routes: [Seer, Board, Tally].map((entity) => ({
       entity,
       path: new RegExp(`^/sockets/${entity.type}/(?<id>[^/]+)$`, "u"),
+      id: (sent: string, request: Request) =>
+        request.headers.get("origin") === foreignOrigin ? undefined : sent,
     })),
   },
 });
