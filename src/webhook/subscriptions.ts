@@ -280,15 +280,16 @@ export const makeWebhooks = (
       );
 
     const retried = (subscription: Held) =>
-      Effect.suspend(() =>
-        subscription.retryingAt === undefined
-          ? Effect.void
-          : Effect.andThen(
-              waitedUntil(subscription.retryingAt),
-              Effect.sync(() => {
-                subscription.retryingAt = undefined;
-              })
-            )
+      Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        Effect.andThen(
+          subscription.retryingAt === undefined ||
+            subscription.retryingAt <= now
+            ? Effect.void
+            : waitedUntil(subscription.retryingAt),
+          Effect.sync(() => {
+            subscription.retryingAt = undefined;
+          })
+        )
       );
 
     const attempted = (

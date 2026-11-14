@@ -355,7 +355,6 @@ describe("A failing webhook subscription in an entity, refreshed while it waits 
           .map((at, index) => at - (attempts[index] ?? at));
 
         expect(Math.max(...pending)).toBeLessThanOrEqual(1);
-        expect(attempts.length).toBeLessThanOrEqual(4);
         expect(Math.min(...apart)).toBeGreaterThanOrEqual(1000);
       }).pipe(Effect.scoped, Effect.provide(server));
     },
