@@ -3,7 +3,7 @@ import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/Action
 import { Layer, ManagedRuntime } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
 
-import { Lobby, Room } from "./entities.js";
+import { Room } from "./entities.js";
 import { entities, workerRoutes } from "./routes.js";
 
 const quickOnceTheClusterIsBuilt = Layer.mergeAll(
@@ -18,7 +18,7 @@ const application = (env: Cloudflare.Env) =>
   quickOnceTheClusterIsBuilt.pipe(
     Layer.provideMerge(
       ActionCluster.layer({
-        entities: [Room, Lobby],
+        entities: [Room],
         entityNamespace: env.CLUSTER_ENTITY,
         workflowNamespace: env.CLUSTER_WORKFLOW,
         queueNamespace: env.CLUSTER_QUEUE,

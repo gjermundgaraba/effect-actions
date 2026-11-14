@@ -17,16 +17,6 @@ export const Message = Schema.Struct({
 
 export type Message = typeof Message.Type;
 
-export class MessageNotFound extends Schema.TaggedError<
-  MessageNotFound,
-  { readonly brand: unique symbol }
->()("MessageNotFound", { id: Schema.Int }, { httpApiStatus: 404 }) {}
-
-export class NotAuthor extends Schema.TaggedError<
-  NotAuthor,
-  { readonly brand: unique symbol }
->()("NotAuthor", { id: Schema.Int }, { httpApiStatus: 403 }) {}
-
 const inRoom = { room: DemoRoomName };
 
 const signedIn = { caller: CurrentMember } as const;
@@ -41,7 +31,7 @@ export const ReadMessages = Action.make("readMessages", {
 
 export const PostMessage = Action.make("postMessage", {
   ...signedIn,
-  description: "Post a message to the room. It expires a day later.",
+  description: "Post a message to the room.",
   input: {
     ...inRoom,
     text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
@@ -57,15 +47,7 @@ export const PostMessage = Action.make("postMessage", {
   idempotencyKey: "request",
 });
 
-export const DeleteMessage = Action.make("deleteMessage", {
-  ...signedIn,
-  description: "Delete one of your own messages from the room.",
-  input: { ...inRoom, id: Schema.Int },
-  error: [MessageNotFound, NotAuthor],
-  readOnly: false,
-});
-
-export const Messages = [ReadMessages, PostMessage, DeleteMessage] as const;
+export const Messages = [ReadMessages, PostMessage] as const;
 
 export const MessagePosted = Event.make("message.posted", {
   description: "A message posted to the room.",

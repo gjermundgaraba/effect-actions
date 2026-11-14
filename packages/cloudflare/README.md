@@ -45,6 +45,6 @@ class ClusterEntity extends ActionClusterEntity.make({
 }) {}
 ```
 
-Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/): a room per entity, a lobby told of each room's activity, a day-old expiry scheduled with `DeliverAt`, a page's socket to its room, and a Worker in front. In a project that installs it, both are in `node_modules/@gjermundgaraba/effect-actions-cloudflare/`.
+Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/): a room per entity, a page's socket to its room, its posts by webhook, and a Worker in front serving JSON and MCP. In a project that installs it, both are in `node_modules/@gjermundgaraba/effect-actions-cloudflare/`.
 
 MIT licensed.

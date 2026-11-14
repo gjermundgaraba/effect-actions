@@ -5,10 +5,9 @@ import { Headers, HttpClient, HttpClientRequest } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 
-import { LobbyHttp, RoomHttp } from "./Api.js";
+import { RoomHttp } from "./Api.js";
 import { MessagePosted } from "./chat/Chat.js";
 import type { DemoRoomName } from "./chat/Chat.js";
-import { PreviewsChanged } from "./lobby/Lobby.js";
 import { protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
 
 export const overSocket = RpcClient.layerProtocolSocket({
@@ -55,14 +54,6 @@ export const openRoom = (baseUrl: string, room: DemoRoomName, token: string) =>
               })
             )
         ),
-      remove: (id: number) =>
-        client.deleteMessage({ room, id }).pipe(
-          Effect.as("removed" as const),
-          Effect.catchTags({
-            MessageNotFound: () => Effect.succeed("removed" as const),
-            NotAuthor: () => Effect.succeed("not-yours" as const),
-          })
-        ),
     };
   });
 
@@ -80,12 +71,4 @@ export const followRoom = (room: DemoRoomName, token: string) =>
             )
           )
         )
-  );
-
-export const followLobby = (baseUrl: string) =>
-  Effect.map(ActionHttp.client(LobbyHttp, { baseUrl }), (client) =>
-    client.watch(PreviewsChanged, {}).pipe(
-      Stream.filter((received) => Predicate.isTagged(received, "Occurrence")),
-      Stream.map(({ data }) => data.previews)
-    )
   );

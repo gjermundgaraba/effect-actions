@@ -17,8 +17,6 @@ export {
   ClusterWorkflow,
 } from "@effect/platform-cloudflare/CloudflareDurableObjects";
 
-export { RoomsEntrypoint } from "./rooms-entrypoint.js";
-
 export class ClusterEntity extends ActionClusterEntity.make({
   initialize,
   sockets: [Room],

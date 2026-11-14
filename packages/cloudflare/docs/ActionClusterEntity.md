@@ -13,13 +13,10 @@ import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 
 import { MessagePosted, Messages } from "./chat/Chat.js";
 import { Login } from "./identity/Identity.js";
-import { Previews, PreviewsChanged } from "./lobby/Lobby.js";
 
 export const RoomRpc = ActionRpc.make([...Messages, MessagePosted], {
   authentication: Login,
 });
-
-export const LobbyRpc = ActionRpc.make([Previews, PreviewsChanged]);
 
 export const protocolVersion = "1";
 
@@ -38,10 +35,9 @@ import { Headers, HttpClient, HttpClientRequest } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 
-import { LobbyHttp, RoomHttp } from "./Api.js";
+import { RoomHttp } from "./Api.js";
 import { MessagePosted } from "./chat/Chat.js";
 import type { DemoRoomName } from "./chat/Chat.js";
-import { PreviewsChanged } from "./lobby/Lobby.js";
 import { protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
 
 export const overSocket = RpcClient.layerProtocolSocket({
@@ -88,14 +84,6 @@ export const openRoom = (baseUrl: string, room: DemoRoomName, token: string) =>
               })
             )
         ),
-      remove: (id: number) =>
-        client.deleteMessage({ room, id }).pipe(
-          Effect.as("removed" as const),
-          Effect.catchTags({
-            MessageNotFound: () => Effect.succeed("removed" as const),
-            NotAuthor: () => Effect.succeed("not-yours" as const),
-          })
-        ),
     };
   });
 
@@ -114,14 +102,6 @@ export const followRoom = (room: DemoRoomName, token: string) =>
           )
         )
   );
-
-export const followLobby = (baseUrl: string) =>
-  Effect.map(ActionHttp.client(LobbyHttp, { baseUrl }), (client) =>
-    client.watch(PreviewsChanged, {}).pipe(
-      Stream.filter((received) => Predicate.isTagged(received, "Occurrence")),
-      Stream.map(({ data }) => data.previews)
-    )
-  );
 ```
 
 ## What the socket holds
@@ -130,13 +110,13 @@ The host keeps no state in memory between messages but the calls it is forwardin
 
 ## What a post costs
 
-Every call into an entity object, from the Worker, from another object or from the object itself, is one Durable Object stub call, `invoke`. A post a socket watches costs **1 + T + P** stub calls, measured on the example's room with two pages watching it:
+Every call into an entity object, from the Worker, from another object or from the object itself, is one Durable Object stub call, `invoke`. A post a socket watches costs **1 + T + P** stub calls, measured on the example's room with two pages watching it, where it is 3:
 
 - **1**, the post itself, the Worker's call into the room;
-- **T**, the follow-up tells the post's handler sends: 2 for every post in the example, the room's persisted tell to itself, `tellLobby`, and the lobby's `roomChanged` that tell sends, plus 1 more, the room's `expire` tell to itself, for the first post of an hour's window;
+- **T**, the calls and tells the post's handler sends, none in the example;
 - **P**, the parked polls on that object, each asked again once, by the host, through the room's own `Entity.client`.
 
-No `hold` or `acknowledge` is called: a poll is unary. A page's next poll after an answer reaches the object as a socket message, not a stub call, and is parked at once when nothing changed since the answer and the answer's call was under 30 seconds earlier; later it is sent to the entity, one stub call, which renews a subscription hook's lease. An application that sends no tells has T = 0; the lobby, watched over HTTP, adds no P. The example's test of these counts, "costs each post 1 + T + P stub calls", runs the Worker through [`chat-rooms/test/worker.ts`](../examples/chat-rooms/test/worker.ts), which exports a `ClusterEntity` counting each `invoke` by object and tag.
+No `hold` or `acknowledge` is called: a poll is unary. A page's next poll after an answer reaches the object as a socket message, not a stub call, and is parked at once when nothing changed since the answer and the answer's call was under 30 seconds earlier; later it is sent to the entity, one stub call, which renews a subscription hook's lease. A page watching over HTTP adds no P. The example's test of these counts, "costs each post 1 + P stub calls", runs the Worker through [`chat-rooms/test/worker.ts`](../examples/chat-rooms/test/worker.ts), which exports a `ClusterEntity` counting each `invoke` by object and tag.
 
 ## Test on workerd
 

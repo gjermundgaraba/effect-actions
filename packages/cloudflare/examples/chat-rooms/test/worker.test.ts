@@ -5,42 +5,19 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { evictDurableObject, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import {
-  Duration,
-  Effect,
-  Fiber,
-  Layer,
-  Schedule,
-  Schema,
-  Stream,
-} from "effect";
+import { Effect, Layer, Schedule, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { Socket } from "effect/socket";
 
-import { LobbyHttp, RoomHttp } from "../src/Api.js";
+import { RoomHttp } from "../src/Api.js";
 import { initialize } from "../src/application.js";
-import type { Application } from "../src/application.js";
-import {
-  followLobby,
-  followRoom,
-  openRoom,
-  overSocket,
-} from "../src/browser.js";
+import { followRoom, openRoom, overSocket } from "../src/browser.js";
 import { MessagePosted, PostMessage } from "../src/chat/Chat.js";
 import type { DemoRoomName } from "../src/chat/Chat.js";
-import { Expire } from "../src/chat/Tells.js";
-import { Lobby, Room } from "../src/entities.js";
+import { Room } from "../src/entities.js";
 import { Login } from "../src/identity/Identity.js";
 import { protocolVersion } from "../src/Rpc.js";
-import {
-  baseUrl,
-  deliverNow,
-  evict,
-  objectOf,
-  rowsIn,
-  sqlIn,
-  worker,
-} from "./support.js";
+import { baseUrl, evict, objectOf, rowsIn, sqlIn, worker } from "./support.js";
 
 const socketTo = (room: DemoRoomName) =>
   overSocket.pipe(
@@ -112,88 +89,10 @@ const arrivedIn = (received: readonly unknown[]) => (count: number) =>
     (length) => length >= count
   );
 
-const hour = 60 * 60 * 1000;
-
-const day = 24 * hour;
-
-const expiryOf = (postedAt: number) => {
-  const due = new Date(postedAt + day);
-
-  const itsHour = Date.UTC(
-    due.getUTCFullYear(),
-    due.getUTCMonth(),
-    due.getUTCDate(),
-    due.getUTCHours()
-  );
-
-  return itsHour === due.getTime() ? itsHour : itsHour + hour;
-};
-
 const failing = (type: string, id: string, trigger: string) =>
   Effect.acquireRelease(sqlIn(type, id, trigger), () =>
     sqlIn(type, id, "DROP TRIGGER IF EXISTS planted_failure")
   );
-
-const Tells = Schema.Array(
-  Schema.Struct({
-    deliver_at: Schema.NullOr(Schema.Int),
-    processed: Schema.Int,
-    at: Schema.NullOr(Schema.Int),
-  })
-);
-
-const tellsOf = (type: string, id: string, tag: string) =>
-  Effect.promise(
-    async () =>
-      await runInDurableObject(objectOf(type, id), (_, state) =>
-        state.storage.sql
-          .exec(
-            "SELECT deliver_at, processed, json_extract(envelope, '$.payload.at') AS at FROM cluster_messages WHERE json_extract(envelope, '$.tag') = ?",
-            tag
-          )
-          .toArray()
-      )
-  ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Tells)), Effect.orDie);
-
-const inApplication = <A, E>(effect: Effect.Effect<A, E, Application>) =>
-  Effect.flatMap(
-    Effect.promise(async () => await initialize(env)),
-    (context) => Effect.provideContext(effect, context)
-  );
-
-const expireNow = (room: DemoRoomName, at = Date.now()) =>
-  inApplication(
-    Effect.flatMap(Room.client, (rooms) =>
-      rooms(room).expire(new Expire({ at }), { discard: true })
-    )
-  );
-
-const toldTheLobby = (room: DemoRoomName) =>
-  eventually(
-    Effect.map(tellsOf("Room", room, "tellLobby"), (tells) =>
-      tells.filter(({ processed }) => processed === 0)
-    ),
-    (pending) => pending.length === 0
-  );
-
-const Versions = Schema.Array(
-  Schema.fromJsonString(Schema.Struct({ version: Schema.Int }))
-);
-
-const versionIn = (room: DemoRoomName) =>
-  rowsIn(
-    "Lobby",
-    "lobby",
-    `SELECT version FROM previews WHERE room = '${room}'`
-  ).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(Versions)),
-    Effect.map((rows) => rows[0]?.version ?? 0),
-    Effect.orDie
-  );
-
-const generalIn = (
-  previews: ReadonlyArray<{ room: string; latestAt: number | null }>
-) => previews.find(({ room }) => room === "general")?.latestAt;
 
 const StubCalls = Schema.Struct({
   invokes: Schema.Array(
@@ -249,26 +148,6 @@ const parkedIn = (room: DemoRoomName, sockets: number) =>
     Effect.timeout("20 seconds")
   );
 
-const LastPosted = Schema.Array(Schema.Struct({ at: Schema.Int }));
-
-const lastPostedAt = (room: DemoRoomName) =>
-  Effect.promise(
-    async () =>
-      await runInDurableObject(objectOf("Room", room), (_, state) => {
-        try {
-          return state.storage.sql
-            .exec("SELECT at FROM messages ORDER BY id DESC LIMIT 1")
-            .toArray();
-        } catch {
-          return [];
-        }
-      })
-  ).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(LastPosted)),
-    Effect.map((rows) => rows[0]?.at ?? null),
-    Effect.orDie
-  );
-
 const counted = (
   calls: ReadonlyArray<{ readonly object: string; readonly tag: string }>
 ) => {
@@ -283,12 +162,6 @@ const counted = (
 
   return counts;
 };
-
-const timed = <A, E>(call: Effect.Effect<A, E>) =>
-  Effect.map(Effect.timed(call), ([took, value]) => ({
-    took: Duration.toMillis(took),
-    value,
-  }));
 
 describe("the Worker and its rooms", () => {
   it.effect("reads the messages posted after an id", () =>
@@ -417,51 +290,6 @@ describe("the Worker and its rooms", () => {
     }).pipe(Effect.provide(worker))
   );
 
-  it.effect("refuses to delete another member's message", () =>
-    Effect.gen(function* () {
-      const ada = yield* openRoom(baseUrl, "general", "ada");
-      const grace = yield* openRoom(baseUrl, "general", "grace");
-
-      const posted = yield* ada.post("Mine.");
-
-      expect(yield* grace.remove(posted.id)).toBe("not-yours");
-      expect(yield* grace.read(posted.id - 1)).toStrictEqual([posted]);
-    }).pipe(Effect.provide(worker))
-  );
-
-  it.live(
-    "deletes a member's own message, the room no longer reading it and the lobby showing the message before it",
-    () =>
-      Effect.gen(function* () {
-        const ada = yield* openRoom(baseUrl, "general", "ada");
-        const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl });
-
-        const kept = yield* ada.post("Kept.");
-
-        yield* Effect.sleep("5 millis");
-
-        const deleted = yield* ada.post("Deleted.");
-
-        expect(deleted.at).toBeGreaterThan(kept.at);
-
-        yield* eventually(
-          lobby.previews(),
-          ({ previews }) => generalIn(previews) === deleted.at
-        );
-
-        expect(yield* ada.remove(deleted.id)).toBe("removed");
-        expect(yield* ada.read(kept.id - 1)).toStrictEqual([kept]);
-
-        const { previews } = yield* eventually(
-          lobby.previews(),
-          (answer) => generalIn(answer.previews) === kept.at
-        );
-
-        expect(generalIn(previews)).toBe(kept.at);
-      }).pipe(Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
   it.live(
     "follows a room through MessagePosted over its socket, from the last id a page read, across the room's eviction",
     () =>
@@ -544,7 +372,7 @@ describe("the Worker and its rooms", () => {
   );
 
   it.live(
-    "costs each post 1 + T + P stub calls with two pages watching: the post, its tellLobby and the lobby's roomChanged, its expire on an hour's first post, and one re-poll a page",
+    "costs each post 1 + P stub calls with two pages watching: the post, and one re-poll a page",
     () =>
       Effect.gen(function* () {
         const page = yield* openRoom(baseUrl, "general", "ada");
@@ -568,18 +396,10 @@ describe("the Worker and its rooms", () => {
         yield* watching(socketTo("general"));
         yield* watching(socketTo("general"));
         yield* parkedIn("general", 2);
-        yield* sqlIn(
-          "Room",
-          "general",
-          "UPDATE messages SET at = at - ?",
-          day / 24
-        );
 
         const posts = [
           { text: "Counted, the first.", evicted: false },
           { text: "Counted, after an eviction.", evicted: true },
-          { text: "Counted, the third.", evicted: false },
-          { text: "Counted, after another eviction.", evicted: true },
         ];
 
         const outcomes = yield* Effect.forEach(posts, ({ text, evicted }) =>
@@ -588,18 +408,14 @@ describe("the Worker and its rooms", () => {
               yield* evict("Room", "general");
             }
 
-            const latest = yield* lastPostedAt("general");
             const before = yield* settledStubCalls;
             const arrived = received.length;
-            const posted = yield* page.post(text);
 
+            yield* page.post(text);
             yield* arrivedIn(received)(arrived + 2);
             yield* parkedIn("general", 2);
 
             const after = yield* settledStubCalls;
-
-            const expires =
-              latest === null || expiryOf(latest) !== expiryOf(posted.at);
 
             return {
               calls: counted(after.invokes.slice(before.invokes.length)),
@@ -608,29 +424,19 @@ describe("the Worker and its rooms", () => {
                 acknowledge:
                   after.others.acknowledge - before.others.acknowledge,
               },
-              expected: {
-                "Room/general postMessage": 1,
-                "Room/general tellLobby": 1,
-                "Lobby/lobby roomChanged": 1,
-                "Room/general message.posted": 2,
-                ...(expires ? { "Room/general expire": 1 } : {}),
-              },
             };
           })
         );
 
-        const [first] = outcomes;
-
-        expect(
-          Object.values(first?.calls ?? {}).reduce((sum, n) => sum + n, 0)
-        ).toBe(6);
-
-        for (const { calls, others, expected } of outcomes) {
-          expect(calls).toStrictEqual(expected);
+        for (const { calls, others } of outcomes) {
+          expect(calls).toStrictEqual({
+            "Room/general postMessage": 1,
+            "Room/general message.posted": 2,
+          });
           expect(others).toStrictEqual({ hold: 0, acknowledge: 0 });
         }
       }).pipe(Effect.scoped, Effect.provide(worker)),
-    { timeout: 120_000 }
+    { timeout: 60_000 }
   );
 
   it.live(
@@ -677,327 +483,6 @@ describe("the Worker and its rooms", () => {
   );
 
   it.live(
-    "shows both rooms' latest posts in the lobby once their persisted tells land, and keeps no credential in any mailbox",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-
-        const general = yield* json.postMessage({
-          room: "general",
-          text: "Seen from the lobby.",
-        });
-
-        const design = yield* json.postMessage({
-          room: "design",
-          text: "Seen from the lobby too.",
-        });
-
-        const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl });
-
-        const { previews } = yield* eventually(lobby.previews(), (answer) =>
-          answer.previews.every(
-            ({ room, latestAt }) =>
-              latestAt === (room === "general" ? general.at : design.at)
-          )
-        );
-
-        expect(previews).toStrictEqual([
-          { room: "general", latestAt: general.at },
-          { room: "design", latestAt: design.at },
-        ]);
-
-        const mailboxes = [
-          ...(yield* rowsIn(
-            "Room",
-            "general",
-            "SELECT * FROM cluster_messages"
-          )),
-          ...(yield* rowsIn(
-            "Room",
-            "design",
-            "SELECT * FROM cluster_messages"
-          )),
-          ...(yield* rowsIn(
-            "Lobby",
-            "lobby",
-            "SELECT * FROM cluster_messages"
-          )),
-        ];
-
-        expect(mailboxes.some((row) => row.includes("tellLobby"))).toBe(true);
-        expect(mailboxes.some((row) => row.includes("expire"))).toBe(true);
-
-        for (const row of mailboxes) {
-          expect(row).not.toContain("authorization");
-          expect(row).not.toContain("Bearer");
-        }
-      }).pipe(Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "sends a page following the lobby, signed out, the previews at once, then whole at each change",
-    () =>
-      Effect.gen(function* () {
-        const grace = yield* jsonAs("grace");
-
-        const { messages } = yield* grace.readMessages({
-          room: "general",
-          after: 0,
-        });
-
-        const before = messages.at(-1)?.at ?? null;
-
-        const received: Array<
-          ReadonlyArray<{ room: string; latestAt: number | null }>
-        > = [];
-
-        yield* Effect.flatMap(followLobby(baseUrl), (previews) =>
-          Stream.runForEach(previews, (each) =>
-            Effect.sync(() => received.push(each))
-          )
-        ).pipe(Effect.forkScoped);
-
-        yield* arrivedIn(received)(1);
-
-        const posted = yield* grace.postMessage({
-          room: "general",
-          text: "Seen by the lobby's pages.",
-        });
-
-        yield* eventually(
-          Effect.sync(() => received.map(generalIn)),
-          (seen) => seen.includes(posted.at)
-        );
-
-        expect(received[0]?.length).toBe(2);
-        expect(generalIn(received[0] ?? [])).toBe(before);
-        expect(received.map(generalIn)).toContain(posted.at);
-      }).pipe(Effect.scoped, Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "deletes a day-old message when its expiry tell is delivered",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-
-        const posted = yield* json.postMessage({
-          room: "design",
-          text: "Gone in a day.",
-        });
-
-        yield* sqlIn(
-          "Room",
-          "design",
-          "UPDATE messages SET at = at - ? WHERE id = ?",
-          day,
-          posted.id
-        );
-        yield* deliverNow("Room", "design", "expire");
-
-        const { messages } = yield* eventually(
-          json.readMessages({ room: "design", after: posted.id - 1 }),
-          (read) => read.messages.length === 0
-        );
-
-        expect(messages).toStrictEqual([]);
-      }).pipe(Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "keeps a message younger than a day when an expiry is delivered",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-
-        const [old, young] = yield* Effect.forEach(["Old.", "Young."], (text) =>
-          json.postMessage({ room: "design", text })
-        );
-
-        if (old === undefined || young === undefined) {
-          return yield* Effect.die(new Error("two posts expected"));
-        }
-
-        const minute = 60 * 1000;
-
-        yield* sqlIn(
-          "Room",
-          "design",
-          "UPDATE messages SET at = at - ? WHERE id = ?",
-          day,
-          old.id
-        );
-        yield* sqlIn(
-          "Room",
-          "design",
-          "UPDATE messages SET at = at - ? WHERE id = ?",
-          day - minute,
-          young.id
-        );
-        yield* expireNow("design");
-
-        const { messages } = yield* eventually(
-          json.readMessages({ room: "design", after: old.id - 1 }),
-          (read) => read.messages.length < 2
-        );
-
-        expect(messages).toStrictEqual([
-          { ...young, at: young.at - (day - minute) },
-        ]);
-      }).pipe(Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "answers another Worker's call of RoomsEntrypoint as the lobby keeps it, and refuses a room it does not list",
-    () =>
-      Effect.gen(function* () {
-        const posted = yield* (yield* jsonAs("grace")).postMessage({
-          room: "general",
-          text: "Seen from another Worker.",
-        });
-
-        const refused = yield* Effect.flip(
-          Effect.tryPromise(
-            async () => await exports.RoomsEntrypoint.latestAt("kitchen")
-          )
-        );
-
-        const latestAt = yield* eventually(
-          Effect.promise(
-            async () => await exports.RoomsEntrypoint.latestAt("general")
-          ),
-          (at) => at === posted.at
-        );
-
-        expect(latestAt).toBe(posted.at);
-        expect(String(refused.cause)).toContain(
-          'Expected "general" | "design"'
-        );
-      }).pipe(Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "gives up an expiry that keeps failing, its tell processed, and expires the day-old message at the next one",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-
-        const posted = yield* json.postMessage({
-          room: "general",
-          text: "Expired by the next expiry.",
-        });
-
-        yield* sqlIn(
-          "Room",
-          "general",
-          "UPDATE messages SET at = at - ? WHERE id = ?",
-          day,
-          posted.id
-        );
-
-        yield* failing(
-          "Room",
-          "general",
-          "CREATE TRIGGER planted_failure BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'planted'); END"
-        );
-
-        const lobbyTells = Effect.map(
-          tellsOf("Room", "general", "tellLobby"),
-          (tells) => tells.length
-        );
-
-        const toldBefore = yield* lobbyTells;
-        const failedAt = Date.now();
-
-        yield* expireNow("general", failedAt);
-
-        yield* eventually(
-          Effect.map(tellsOf("Room", "general", "expire"), (tells) =>
-            tells.filter(
-              ({ at, processed }) => at === failedAt && processed === 1
-            )
-          ),
-          (processed) => processed.length > 0
-        );
-
-        expect((yield* lobbyTells) - toldBefore).toBe(3);
-        expect(
-          (yield* json.readMessages({ room: "general", after: posted.id - 1 }))
-            .messages
-        ).toStrictEqual([{ ...posted, at: posted.at - day }]);
-
-        yield* sqlIn("Room", "general", "DROP TRIGGER planted_failure");
-        yield* expireNow("general");
-
-        const { messages } = yield* eventually(
-          json.readMessages({ room: "general", after: posted.id - 1 }),
-          (read) => read.messages.length === 0
-        );
-
-        expect(messages).toStrictEqual([]);
-      }).pipe(Effect.scoped, Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "answers a post the lobby fails to record, and shows the room's latest at its next change",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-        const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl });
-
-        yield* lobby.previews();
-
-        yield* failing(
-          "Lobby",
-          "lobby",
-          "CREATE TRIGGER planted_failure BEFORE INSERT ON previews BEGIN SELECT RAISE(ABORT, 'planted'); END"
-        );
-
-        const missed = yield* json.postMessage({
-          room: "design",
-          text: "Missed by the lobby.",
-        });
-
-        yield* toldTheLobby("design");
-
-        expect(
-          (yield* json.readMessages({ room: "design", after: missed.id - 1 }))
-            .messages
-        ).toStrictEqual([missed]);
-        expect(
-          (yield* lobby.previews()).previews.find(
-            ({ room }) => room === "design"
-          )?.latestAt
-        ).not.toBe(missed.at);
-
-        yield* sqlIn("Lobby", "lobby", "DROP TRIGGER planted_failure");
-
-        const posted = yield* json.postMessage({
-          room: "design",
-          text: "Shown at the next change.",
-        });
-
-        const { previews } = yield* eventually(lobby.previews(), (answer) =>
-          answer.previews.some(
-            ({ room, latestAt }) => room === "design" && latestAt === posted.at
-          )
-        );
-
-        expect(previews).toContainEqual({
-          room: "design",
-          latestAt: posted.at,
-        });
-      }).pipe(Effect.scoped, Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
     "polls a room over one MCP connection across the room's eviction",
     () =>
       Effect.gen(function* () {
@@ -1032,54 +517,6 @@ describe("the Worker and its rooms", () => {
           { _tag: "Occurrence", data: after },
         ]);
       }).pipe(Effect.scoped, Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "schedules one expiry for the posts of one hour's window, and the expiry the next window",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-
-        const posted = yield* Effect.forEach([1, 2, 3], (n) =>
-          json.postMessage({ room: "general", text: `In one window, ${n}.` })
-        );
-
-        const scheduled = yield* tellsOf("Room", "general", "expire");
-
-        for (const { at } of posted) {
-          expect(
-            scheduled.filter((tell) => tell.at === expiryOf(at))
-          ).toHaveLength(1);
-        }
-
-        yield* sqlIn(
-          "Room",
-          "general",
-          "UPDATE messages SET at = at + ?",
-          2 * hour
-        );
-
-        const { messages } = yield* json.readMessages({
-          room: "general",
-          after: 0,
-        });
-
-        const oldest = Math.min(...messages.map(({ at }) => at));
-
-        yield* expireNow("general");
-
-        const nexts = yield* eventually(
-          Effect.map(tellsOf("Room", "general", "expire"), (tells) =>
-            tells.filter((tell) => tell.at === expiryOf(oldest))
-          ),
-          (found) => found.length > 0
-        );
-
-        expect(nexts).toMatchObject([
-          { processed: 0, deliver_at: expiryOf(oldest) },
-        ]);
-      }).pipe(Effect.provide(worker)),
     { timeout: 30_000 }
   );
 
@@ -1146,141 +583,6 @@ describe("the Worker and its rooms", () => {
 
         expect(messages).toStrictEqual([posted]);
       }).pipe(Effect.scoped, Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "sends a page following the lobby a room's next change after an announcement failed",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("grace");
-
-        const received: Array<
-          ReadonlyArray<{ room: string; latestAt: number | null }>
-        > = [];
-
-        yield* Effect.flatMap(followLobby(baseUrl), (previews) =>
-          Stream.runForEach(previews, (each) =>
-            Effect.sync(() => received.push(each))
-          )
-        ).pipe(Effect.forkScoped);
-
-        yield* arrivedIn(received)(1);
-
-        yield* failing(
-          "Lobby",
-          "lobby",
-          "CREATE TRIGGER planted_failure BEFORE INSERT ON effect_actions_event_revision BEGIN SELECT RAISE(ABORT, 'planted'); END"
-        );
-
-        const missed = yield* json.postMessage({
-          room: "general",
-          text: "Its announcement failed.",
-        });
-
-        yield* toldTheLobby("general");
-
-        expect(received.map(generalIn)).not.toContain(missed.at);
-
-        yield* sqlIn("Lobby", "lobby", "DROP TRIGGER planted_failure");
-
-        const posted = yield* json.postMessage({
-          room: "general",
-          text: "Announced at the next change.",
-        });
-
-        yield* eventually(
-          Effect.sync(() => received.map(generalIn)),
-          (seen) => seen.includes(posted.at)
-        );
-
-        expect(received.map(generalIn)).toContain(posted.at);
-      }).pipe(Effect.scoped, Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "keeps the preview of a room's highest version, whatever order its changes arrive in",
-    () =>
-      Effect.gen(function* () {
-        const from = (yield* versionIn("design")) + 1;
-
-        const versions = [7, 2, 19, 0, 11, 5, 16, 3, 13, 9];
-
-        yield* inApplication(
-          Effect.flatMap(Lobby.client, (lobbies) =>
-            Effect.forEach(versions, (offset) =>
-              lobbies("lobby").roomChanged({
-                preview: { room: "design", latestAt: from + offset },
-                version: from + offset,
-              })
-            )
-          )
-        );
-
-        yield* sqlIn(
-          "Room",
-          "design",
-          "UPDATE room_version SET version = ?",
-          from + Math.max(...versions)
-        );
-
-        const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl });
-
-        expect(
-          (yield* lobby.previews()).previews.find(
-            ({ room }) => room === "design"
-          )?.latestAt
-        ).toBe(from + Math.max(...versions));
-      }).pipe(Effect.provide(worker)),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "answers a room's posts, and its reads within 2.5 seconds each behind one change's ask, while the lobby takes no call, and shows the latest change it was asked once it takes calls again",
-    () =>
-      Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
-        const lobby = yield* ActionHttp.client(LobbyHttp, { baseUrl });
-
-        yield* json.postMessage({ room: "general", text: "Before the hang." });
-
-        const hanging = yield* Effect.forkChild(
-          Effect.promise(async () => {
-            await runInDurableObject(
-              objectOf("Lobby", "lobby"),
-              async (_, state) => {
-                await state.blockConcurrencyWhile(async () => {
-                  await scheduler.wait(8000);
-                });
-              }
-            );
-          })
-        );
-
-        yield* Effect.sleep("200 millis");
-
-        const calls = yield* Effect.forEach([1, 2], (n) =>
-          Effect.all([
-            timed(json.postMessage({ room: "general", text: `Hung ${n}.` })),
-            timed(json.readMessages({ room: "general", after: 0 })),
-          ])
-        );
-
-        for (const [post, read] of calls) {
-          expect(post.took).toBeLessThan(2500);
-          expect(read.took).toBeLessThan(2500);
-        }
-
-        yield* Fiber.join(hanging);
-
-        const last = calls.at(-1)?.[0].value.at;
-
-        yield* eventually(
-          lobby.previews(),
-          ({ previews }) => generalIn(previews) === last
-        );
-      }).pipe(Effect.provide(worker)),
     { timeout: 30_000 }
   );
 });

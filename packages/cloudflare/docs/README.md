@@ -19,7 +19,7 @@ Where things are, in a project that installs the package: these pages in `node_m
 
 | Read | When you need to |
 | --- | --- |
-| [ActionCluster.md](ActionCluster.md) | deploy entities on Durable Objects, boot the application once per isolate, serve them from the Worker, schedule a tell, test them on workerd |
+| [ActionCluster.md](ActionCluster.md) | deploy entities on Durable Objects, boot the application once per isolate, serve them from the Worker, deliver their events by webhook, test them on workerd |
 | [ActionClusterEntity.md](ActionClusterEntity.md) | follow an entity's events from a page over a WebSocket the object keeps while it hibernates, refuse a page built against other rpcs, count the stub calls a post costs |
 | [ActionCluster-failures.md](ActionCluster-failures.md) | find what workerd's, the compiler's or Effect's message means, and the fix |
 | [ActionClusterEntity-failures.md](ActionClusterEntity-failures.md) | find what a page's socket error or workerd's test message means, and the fix |

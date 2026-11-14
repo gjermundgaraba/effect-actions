@@ -6,7 +6,6 @@ export {
   ClusterDurableQueue,
   ClusterSingleton,
   ClusterWorkflow,
-  RoomsEntrypoint,
 } from "../src/worker.js";
 
 const Envelope = Schema.Struct({ tag: Schema.String });

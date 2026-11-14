@@ -6,23 +6,16 @@ import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import { Effect, Layer, Schema } from "effect";
 import { Entity } from "effect/cluster";
 
-import { LobbyHttp, RoomHttp } from "./Api.js";
+import { RoomHttp } from "./Api.js";
 import { DemoRoomName } from "./chat/Chat.js";
 import { messageEvents } from "./chat/events.js";
-import { messages, roomTells } from "./chat/handlers.js";
+import { messages } from "./chat/handlers.js";
 import { Room as CurrentRoom } from "./chat/room.js";
-import { Lobby, Room } from "./entities.js";
+import { Room } from "./entities.js";
 import { Login } from "./identity/Identity.js";
 import { authenticate } from "./identity/verifier.js";
-import { previewEvents } from "./lobby/events.js";
-import { lobby, roomChanges } from "./lobby/handlers.js";
-import {
-  layerLobbyClient,
-  layerRoomMailbox,
-} from "./platform/cluster-clients.js";
 import { layerObjectSql } from "./platform/object-sql.js";
 import { layerSqlMessages } from "./platform/sql-messages.js";
-import { layerSqlPreviews } from "./platform/sql-previews.js";
 import { layerWebhookDelivery } from "./platform/webhook-delivery.js";
 
 const roomOfAddress = Layer.effect(CurrentRoom)(
@@ -44,41 +37,19 @@ const roomServices = Layer.mergeAll(
   Stored.layerIdempotency,
   roomWebhooks
 ).pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(
-      layerSqlMessages,
-      roomOfAddress,
-      layerRoomMailbox,
-      layerLobbyClient
-    )
-  ),
+  Layer.provideMerge(Layer.mergeAll(layerSqlMessages, roomOfAddress)),
   Layer.provideMerge(layerObjectSql)
 );
 
-const lobbyServices = Layer.mergeAll(Stored.layerEvents, layerSqlPreviews).pipe(
-  Layer.provideMerge(layerObjectSql)
-);
-
-export const entities = Layer.mergeAll(
-  ActionEntity.layer(Room, [messages, messageEvents], {
-    services: roomServices,
-    rpcs: roomTells,
-    concurrency: 1,
-  }).pipe(Layer.provide(authenticate)),
-  ActionEntity.layer(Lobby, [lobby, previewEvents], {
-    services: lobbyServices,
-    rpcs: roomChanges,
-  })
-);
+export const entities = ActionEntity.layer(Room, [messages, messageEvents], {
+  services: roomServices,
+}).pipe(Layer.provide(authenticate));
 
 const inRooms = ActionEntity.reaching(Room);
 
-const inLobby = ActionEntity.reaching(Lobby);
-
 export const workerRoutes = Layer.mergeAll(
   ActionHttp.layer(RoomHttp, inRooms),
-  ActionHttp.layer(LobbyHttp, inLobby),
-  ActionMcp.layerHttp([...inRooms, ...inLobby], {
+  ActionMcp.layerHttp(inRooms, {
     name: "chat-rooms",
     version: "1.0.0",
     authentication: Login,
