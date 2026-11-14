@@ -272,6 +272,8 @@ const subscribeOverHttp = (
     )
   );
 
+const carol = "https://hooks.example.com/carol";
+
 const occurrencesIn = (
   received: ReadonlyArray<{ readonly url: string; readonly body: string }>,
   url: string
@@ -307,13 +309,16 @@ describe("ActionEntity.reaching's events by webhook", () => {
           },
         });
 
+        yield* subscribeOverHttp("subscribe", "b", carol);
+
         ticks.push(1);
 
         yield* until(
           () =>
             occurrencesIn(received, delivery.url).length === 1 &&
             occurrencesIn(received, "https://hooks.example.com/bob").length ===
-              1
+              1 &&
+            occurrencesIn(received, carol).length === 1
         );
 
         const unsubscribed = yield* subscribeOverHttp(
@@ -336,9 +341,11 @@ describe("ActionEntity.reaching's events by webhook", () => {
           delivery: { mode: "webhook", url: "https://hooks.example.com/bob" },
         });
 
+        yield* until(() => counted.unhooked === 2);
+
         ticks.push(3);
 
-        yield* Effect.sleep("1 second");
+        yield* until(() => occurrencesIn(received, carol).length === 3);
 
         expect(unsubscribedOverMcp).toMatchObject({ result: {} });
         expect(
