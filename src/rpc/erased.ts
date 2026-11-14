@@ -48,11 +48,11 @@ import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import { concealed } from "../contract/reported.js";
 import { answeringOf, Answering, elementOf } from "../contract/stream.js";
 import {
+  deliveryUnsupported,
   Subscribed,
   WebhookCancellationOf,
   WebhookSubscriptionOf,
 } from "../contract/subscribe.js";
-import type { AnyWebhookSubscription } from "../contract/subscribe.js";
 import { watching } from "../contract/watch.js";
 import type { Transport } from "../contract/watch.js";
 import {
@@ -892,16 +892,19 @@ export const handlersOf = Effect.fnUntraced(function* (
       : { feeds: yield* acquireFeeds(events), webhooks: Option.none() };
 
   const heldAnswers = (feed: Feed) => {
+    const answers = webhookAnswers(feed, authentication, webhooks);
+
     if (!feed.polls || Option.isNone(webhooks)) {
-      return webhookAnswers(feed, authentication, webhooks);
+      return answers;
     }
 
-    const refused = webhookAnswers(feed, authentication, Option.none());
-
     return {
-      ...refused,
-      subscribe: (payload: AnyWebhookSubscription) =>
-        Effect.andThen(pollingRefused(feed), refused.subscribe(payload)),
+      ...answers,
+      subscribe: () =>
+        Effect.andThen(
+          pollingRefused(feed),
+          Effect.fail(deliveryUnsupported(feed.event.name, "webhook"))
+        ),
     };
   };
 

@@ -142,11 +142,12 @@ const Stored = Schema.Array(
   Schema.Struct({
     headers: Schema.NullOr(Schema.String),
     payload: Schema.String,
+    deliver_at: Schema.Int,
   })
 );
 
 const storedWakes = Effect.flatMap(SqlClient.SqlClient, (sql) =>
-  sql`SELECT headers, payload FROM cluster_messages WHERE tag = 'effect-actions/wake'`.pipe(
+  sql`SELECT headers, payload, deliver_at FROM cluster_messages WHERE tag = 'effect-actions/wake'`.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Stored))
   )
 ).pipe(Effect.orDie);
@@ -194,16 +195,22 @@ const pollOf = (room: string) =>
 const deliveredIn = ({ attempts }: Seen) =>
   attempts.some(({ status }) => status === 200);
 
-const lastWait = ({ attempts, stops }: Seen) => {
+const lastWait = Effect.fnUntraced(function* ({ attempts, stops }: Seen) {
   const delivered = attempts.findIndex(({ status }) => status === 200);
   const cut = attempts[delivered - 1]?.at ?? Number.NaN;
   const ended = attempts[delivered]?.at ?? Number.NaN;
 
+  const due = Math.min(
+    ...(yield* storedWakes)
+      .map(({ deliver_at }) => deliver_at)
+      .filter((at) => at > cut)
+  );
+
   return {
-    ms: ended - cut,
+    ms: due - cut,
     stoppedWithin: stops.some((at) => cut < at && at < ended),
   };
-};
+});
 
 const occurrencesOf = ({ attempts }: Seen) =>
   attempts
@@ -229,7 +236,7 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
           30_000
         );
 
-        const wait = lastWait(seen);
+        const wait = yield* lastWait(seen);
 
         expect(answered.status).toBe(200);
         expect(wait.ms).toBeLessThan(10_000);
@@ -262,7 +269,7 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
           60_000
         );
 
-        const wait = lastWait(seen);
+        const wait = yield* lastWait(seen);
         const wakes = yield* storedWakes;
 
         expect(answered.status).toBe(200);

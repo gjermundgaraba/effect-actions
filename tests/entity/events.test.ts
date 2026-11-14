@@ -446,7 +446,7 @@ describe("ActionEntity.reaching's events by webhook", () => {
   );
 
   it.live(
-    "refuses, in an entity holding a Webhook.layer, a webhook subscription to a check source not notified, with Unsupported before any callback, logging why, and serves its polls",
+    "refuses, in an entity holding a Webhook.layer, a webhook subscription to a check source not notified, with Unsupported before any callback, logging why, and serves its polls and unsubscribes",
     () => {
       const { counted, ticks, received, server } = makeTicker({
         entityWebhooks: true,
@@ -474,6 +474,12 @@ describe("ActionEntity.reaching's events by webhook", () => {
           delivery: { mode: "webhook", ...delivery },
         });
 
+        const unsubscribed = yield* subscribeOverHttp(
+          "unsubscribe",
+          "a",
+          delivery.url
+        );
+
         const hookedBeforePoll = counted.hooked;
 
         ticks.push(1);
@@ -499,6 +505,9 @@ describe("ActionEntity.reaching's events by webhook", () => {
         });
         expect(overMcp).toMatchObject({
           error: { data: { feature: "deliveryMode", value: "webhook" } },
+        });
+        expect(yield* unsubscribed.json).toMatchObject({
+          reason: { _tag: "NotSubscribed" },
         });
         expect(received).toStrictEqual([]);
         expect(hookedBeforePoll).toBe(0);

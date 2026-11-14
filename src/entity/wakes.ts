@@ -1,4 +1,4 @@
-import { Clock, DateTime, Deferred, Duration, Effect, Schema } from "effect";
+import { Clock, DateTime, Duration, Effect, Latch, Schema } from "effect";
 import { ClusterSchema, DeliverAt } from "effect/cluster";
 import { Rpc } from "effect/rpc";
 
@@ -26,7 +26,7 @@ export const makeWake = <E>(
   Effect.map(Clock.Clock, (clock) => {
     const waiting = new Set<{
       readonly at: number;
-      readonly woken: Deferred.Deferred<number>;
+      readonly woken: Latch.Latch;
     }>();
 
     const slept = (at: number) =>
@@ -36,12 +36,12 @@ export const makeWake = <E>(
 
     const until = (at: number) =>
       Effect.suspend(() => {
-        const waiter = { at, woken: Deferred.makeUnsafe<number>() };
+        const waiter = { at, woken: Latch.makeUnsafe() };
 
         waiting.add(waiter);
 
         return Effect.raceFirst(
-          Effect.asVoid(Deferred.await(waiter.woken)),
+          waiter.woken.await,
           send(new WakeAt({ at })).pipe(
             Effect.matchCauseEffect({
               onSuccess: () => Effect.never,
@@ -64,7 +64,7 @@ export const makeWake = <E>(
           Effect.sync(() => {
             for (const waiter of waiting) {
               if (waiter.at <= payload.at) {
-                Deferred.doneUnsafe(waiter.woken, Effect.succeed(payload.at));
+                waiter.woken.openUnsafe();
               }
             }
           })
