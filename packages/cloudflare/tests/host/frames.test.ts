@@ -1,13 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import { runInDurableObject } from "cloudflare:test";
-import { Effect } from "effect";
+import { Effect, Predicate } from "effect";
 import { RpcMessage, RpcSerialization } from "effect/rpc";
 
 import * as ActionClusterEntity from "../../src/host/ActionClusterEntity.js";
+import { Pinned } from "../board.js";
 import {
   evict,
   objectOf,
   openHostOf,
+  pollOf,
   raw,
   stubs,
   until,
@@ -172,6 +176,61 @@ describe("ActionClusterEntity's frames", () => {
         );
 
         expect(closed).toStrictEqual([1012]);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "answers a parked poll whose rpc a deploy removed with Unknown request tag, at the object's next settle, as a live frame of that tag is",
+    () =>
+      Effect.gen(function* () {
+        const board = "removed-tag";
+        const { socket, received } = yield* raw("Board", board);
+        const removed = ActionRpc.pollTag("board.removed");
+
+        pollOf(socket, Pinned.name, board)("1", crypto.randomUUID(), null);
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 1
+        );
+
+        yield* Effect.promise(async () => {
+          await runInDurableObject(objectOf("Board", board), (_, state) => {
+            const gate = state.storage.sql.exec(Stored.changeSignal).one()[
+              "signal"
+            ];
+
+            for (const held of state.getWebSockets()) {
+              const attachment: unknown = held.deserializeAttachment();
+
+              if (Predicate.isObject(attachment)) {
+                held.serializeAttachment({
+                  ...attachment,
+                  parked: [
+                    {
+                      id: "2",
+                      tag: removed,
+                      payload: { input: { board }, cursor: "0" },
+                      headers: [],
+                      gate,
+                    },
+                  ],
+                });
+              }
+            }
+          });
+        });
+
+        socket.send(String(parser.encode(RpcMessage.constEof)));
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 2
+        );
+
+        expect(received[1]).toContain('"requestId":"2"');
+        expect(received[1]).toContain(`Unknown request tag: ${removed}`);
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
   );

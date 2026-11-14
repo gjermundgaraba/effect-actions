@@ -145,6 +145,8 @@ const encodeExit = (rpc: Rpc.AnyWithProps, exit: Exit.Exit<unknown, unknown>) =>
     >
   )(exit);
 
+const unknownTag = (tag: string) => `Unknown request tag: ${tag}`;
+
 const reply = (
   socket: WebSocket,
   served: Served,
@@ -160,6 +162,8 @@ const reply = (
     const rpc = served.rpcs.get(tag);
 
     if (rpc === undefined) {
+      send(socket, died(id, unknownTag(tag)));
+
       return;
     }
 
@@ -260,13 +264,16 @@ export const makeSockets = (options: {
         return [];
       }
 
-      const asked = held.parked.filter(moved);
+      const asking = (entry: Parked) =>
+        moved(entry) || !served.rpcs.has(entry.tag);
+
+      const asked = held.parked.filter(asking);
 
       if (
         asked.length === 0 ||
         !kept(socket, {
           ...held,
-          parked: without(held.parked, moved),
+          parked: without(held.parked, asking),
           calls: [...held.calls, ...asked.map(({ id }) => id)],
         })
       ) {
@@ -422,7 +429,7 @@ export const makeSockets = (options: {
       const rpc = served.rpcs.get(tag);
 
       if (rpc === undefined) {
-        send(socket, died(id, `Unknown request tag: ${tag}`));
+        send(socket, died(id, unknownTag(tag)));
 
         return;
       }
