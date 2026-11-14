@@ -1,7 +1,8 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Exit, Schedule, Schema, Scope, Stream } from "effect";
+import { Effect, Exit, Schema, Scope, Stream } from "effect";
 
 import { BoardRpc, Logged, Pinned } from "../board.js";
+import { eventually } from "../support/eventually.js";
 import {
   clientOver,
   evictIfRunning,
@@ -138,15 +139,14 @@ const scenario = (commands: readonly Command[]) =>
     yield* Effect.sync(() =>
       watchers.map(({ received }) => received.length)
     ).pipe(
-      Effect.repeat({
-        until: (lengths) =>
+      eventually(
+        (lengths) =>
           lengths.every(
             (length, index) =>
               length >= pinned.length - (watchers[index]?.from ?? 0)
           ),
-        schedule: Schedule.spaced("100 millis"),
-      }),
-      Effect.timeout("30 seconds"),
+        "30 seconds"
+      ),
       Effect.ignore
     );
 

@@ -2,9 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import { runInDurableObject } from "cloudflare:test";
-import { Effect, Predicate, Schedule } from "effect";
+import { Effect, Predicate } from "effect";
 
 import { BoardRpc, Pinned, Polled } from "../board.js";
+import { eventually } from "../support/eventually.js";
 import {
   answeredEarlier,
   clientOver,
@@ -21,29 +22,27 @@ import { throughWorker } from "../support/worker.js";
 
 const parkedIn = (board: string, count: number) =>
   heldIn("Board", board).pipe(
-    Effect.repeat({
-      until: (held) =>
+    eventually(
+      (held) =>
         held.length === 1 &&
         held.every(
           ({ calls, parked }) => calls.length === 0 && parked.length === count
         ),
-      schedule: Schedule.spaced("100 millis"),
-    }),
-    Effect.timeout("20 seconds")
+      "20 seconds"
+    )
   );
 
 const parkedAs = (board: string, id: string) =>
   heldIn("Board", board).pipe(
-    Effect.repeat({
-      until: (held) =>
+    eventually(
+      (held) =>
         held.some(({ parked }) =>
           parked.some(
             (entry) => Predicate.isObject(entry) && entry["id"] === id
           )
         ),
-      schedule: Schedule.spaced("100 millis"),
-    }),
-    Effect.timeout("20 seconds")
+      "20 seconds"
+    )
   );
 
 const signalIn = (board: string) =>

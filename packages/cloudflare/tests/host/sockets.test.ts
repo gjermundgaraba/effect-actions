@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { exports } from "cloudflare:workers";
-import { Effect, Predicate, Queue, Schedule, Schema, Stream } from "effect";
+import { Effect, Predicate, Queue, Schema, Stream } from "effect";
 import { RpcClient } from "effect/rpc";
 
 import { BoardRpc, Logged, Pinned } from "../board.js";
+import { eventually } from "../support/eventually.js";
 import {
   clientOver,
   evict,
@@ -327,11 +328,7 @@ describe("ActionClusterEntity's sockets", () => {
         });
 
         yield* Effect.sync(() => socket.closed).pipe(
-          Effect.repeat({
-            until: (closed) => closed.length > 0,
-            schedule: Schedule.spaced("50 millis"),
-          }),
-          Effect.timeout("10 seconds")
+          eventually((closed) => closed.length > 0)
         );
 
         expect(socket.closed[0]?.code).toBe(1012);
@@ -346,11 +343,7 @@ describe("ActionClusterEntity's sockets", () => {
         const socket = yield* opened("Board", "versions", {}, "0");
 
         yield* Effect.sync(() => socket.closed).pipe(
-          Effect.repeat({
-            until: (closed) => closed.length > 0,
-            schedule: Schedule.spaced("20 millis"),
-          }),
-          Effect.timeout("5 seconds")
+          eventually((closed) => closed.length > 0, "5 seconds")
         );
 
         expect(socket.closed).toStrictEqual([

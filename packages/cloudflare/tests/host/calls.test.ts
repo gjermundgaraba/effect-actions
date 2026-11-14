@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { runInDurableObject } from "cloudflare:test";
-import { Cause, Effect, Exit, Fiber, Schedule } from "effect";
+import { Cause, Effect, Exit, Fiber } from "effect";
 
+import { eventually } from "../support/eventually.js";
 import {
   clientOver,
   evict,
@@ -22,13 +23,7 @@ const lingered = (seen: string[]) =>
   });
 
 const until = (seen: string[], tag: string) =>
-  lingered(seen).pipe(
-    Effect.repeat({
-      until: (tags) => tags.includes(tag),
-      schedule: Schedule.spaced("50 millis"),
-    }),
-    Effect.timeout("10 seconds")
-  );
+  lingered(seen).pipe(eventually((tags) => tags.includes(tag)));
 
 describe("ActionClusterEntity's calls", () => {
   it.live(
@@ -155,13 +150,7 @@ describe("ActionClusterEntity's calls", () => {
         const exit = yield* Fiber.join(call);
         const whenFailed = [...(yield* lingered(seen))];
 
-        yield* lingered(seen).pipe(
-          Effect.repeat({
-            until: (tags) => tags.length > 1,
-            schedule: Schedule.spaced("50 millis"),
-          }),
-          Effect.timeout("10 seconds")
-        );
+        yield* lingered(seen).pipe(eventually((tags) => tags.length > 1));
 
         expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
         expect(whenFailed).toStrictEqual(["linger-started"]);

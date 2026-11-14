@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { runInDurableObject } from "cloudflare:test";
 import { exports } from "cloudflare:workers";
-import { Duration, Effect, Schedule, Schema } from "effect";
+import { Duration, Effect, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { RoomHttp } from "../src/Api.js";
@@ -13,6 +13,7 @@ import {
   evict,
   objectOf,
   rowsIn,
+  within,
   worker,
 } from "./support.js";
 
@@ -163,20 +164,6 @@ const json = ActionHttp.client(RoomHttp, {
 
 const post = (room: DemoRoomName, text: string) =>
   Effect.flatMap(json, (rooms) => rooms.postMessage({ room, text }));
-
-const within = <A, E>(
-  check: Effect.Effect<A, E>,
-  until: (value: A) => boolean,
-  seconds: number
-) =>
-  check.pipe(
-    Effect.repeat({ until, schedule: Schedule.spaced("200 millis") }),
-    Effect.timeoutOrElse({
-      duration: Duration.seconds(seconds),
-      orElse: () =>
-        Effect.die(new Error(`Never held within ${String(seconds)} seconds`)),
-    })
-  );
 
 const hibernated = (room: DemoRoomName) =>
   evict("Room", room).pipe(

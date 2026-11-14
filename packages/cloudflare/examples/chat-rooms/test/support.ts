@@ -5,7 +5,7 @@ import {
   runInDurableObject,
 } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { Effect, Layer } from "effect";
+import { Duration, Effect, Layer, Schedule } from "effect";
 import { FetchHttpClient } from "effect/http";
 
 export const baseUrl = "https://chat.example";
@@ -61,3 +61,17 @@ export const evict = (type: string, id: string) =>
   Effect.promise(async () => {
     await evictDurableObject(objectOf(type, id));
   });
+
+export const within = <A, E>(
+  check: Effect.Effect<A, E>,
+  until: (value: A) => boolean,
+  seconds: number
+) =>
+  check.pipe(
+    Effect.repeat({ until, schedule: Schedule.spaced("50 millis") }),
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(seconds),
+      orElse: () =>
+        Effect.die(new Error(`Never held within ${String(seconds)} seconds`)),
+    })
+  );

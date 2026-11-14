@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Schedule } from "effect";
+import { Effect } from "effect";
 
 import { BoardRpc, Hooked, hooks, Leased, Pinned } from "../board.js";
+import { eventually } from "../support/eventually.js";
 import {
   answeredEarlier,
   clientOver,
@@ -72,11 +73,7 @@ describe("ActionClusterEntity's subscription hooks", () => {
         const before = yield* instancesOf(board);
 
         yield* Effect.sync(() => hooksOf(board)).pipe(
-          Effect.repeat({
-            until: (seen) => seen.length > 1,
-            schedule: Schedule.spaced("100 millis"),
-          }),
-          Effect.timeout("40 seconds")
+          eventually((seen) => seen.length > 1, "40 seconds")
         );
         yield* Effect.sleep("25 seconds");
         yield* http.pin({ board, n: 1 });

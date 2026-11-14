@@ -1,9 +1,10 @@
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { exports } from "cloudflare:workers";
-import { Effect, Layer, Schedule, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { SeerHttp } from "../worker.js";
+import { eventually } from "./eventually.js";
 
 export const throughWorker = FetchHttpClient.layer.pipe(
   Layer.provide(
@@ -60,7 +61,6 @@ export const gathered = <A>(
 
         return all;
       }),
-      Effect.repeat({ until: done, schedule: Schedule.spaced("50 millis") }),
-      Effect.timeout("10 seconds")
+      eventually(done)
     );
   });

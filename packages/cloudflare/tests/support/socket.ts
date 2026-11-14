@@ -7,6 +7,8 @@ import type { Context } from "effect";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 
+import { eventually } from "./eventually.js";
+
 export const objectOf = (type: string, id: string) =>
   env.CLUSTER_ENTITY.getByName(CloudflareCluster.encodeName(type, id));
 
@@ -143,10 +145,7 @@ export const answeredEarlier = (
   });
 
 export const until = <A>(read: () => A, done: (value: A) => boolean) =>
-  Effect.sync(read).pipe(
-    Effect.repeat({ until: done, schedule: Schedule.spaced("50 millis") }),
-    Effect.timeout("10 seconds")
-  );
+  Effect.sync(read).pipe(eventually(done));
 
 export const reconnecting = (type: string, id: string) =>
   Layer.build(
@@ -222,15 +221,14 @@ export const heldIn = (type: string, id: string) =>
 
 export const watchingIn = (type: string, id: string, sockets: number) =>
   heldIn(type, id).pipe(
-    Effect.repeat({
-      until: (held) =>
+    eventually(
+      (held) =>
         held.length === sockets &&
         held.every(
           ({ calls, parked }) => calls.length === 0 && parked.length === 1
         ),
-      schedule: Schedule.spaced("100 millis"),
-    }),
-    Effect.timeout("20 seconds")
+      "20 seconds"
+    )
   );
 
 const Counts = Schema.Struct({
@@ -253,13 +251,7 @@ export const stubs = Effect.promise(
 ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Stubs)), Effect.orDie);
 
 export const invokedSince = (finished: number) =>
-  stubs.pipe(
-    Effect.repeat({
-      until: (counts) => counts.finished.invoke > finished,
-      schedule: Schedule.spaced("50 millis"),
-    }),
-    Effect.timeout("10 seconds")
-  );
+  stubs.pipe(eventually((counts) => counts.finished.invoke > finished));
 
 export const settledStubs = stubs.pipe(
   Effect.repeat({

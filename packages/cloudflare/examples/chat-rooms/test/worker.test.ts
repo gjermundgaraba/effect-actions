@@ -17,7 +17,15 @@ import type { DemoRoomName } from "../src/chat/Chat.js";
 import { Room } from "../src/entities.js";
 import { Login } from "../src/identity/Identity.js";
 import { protocolVersion } from "../src/Rpc.js";
-import { baseUrl, evict, objectOf, rowsIn, sqlIn, worker } from "./support.js";
+import {
+  baseUrl,
+  evict,
+  objectOf,
+  rowsIn,
+  sqlIn,
+  within,
+  worker,
+} from "./support.js";
 
 const socketTo = (room: DemoRoomName) =>
   overSocket.pipe(
@@ -74,19 +82,11 @@ const agentAs = (token: string) =>
     ),
   });
 
-const eventually = <A, E>(
-  check: Effect.Effect<A, E>,
-  until: (value: A) => boolean
-) =>
-  check.pipe(
-    Effect.repeat({ until, schedule: Schedule.spaced("50 millis") }),
-    Effect.timeout("10 seconds")
-  );
-
 const arrivedIn = (received: readonly unknown[]) => (count: number) =>
-  eventually(
+  within(
     Effect.sync(() => received.length),
-    (length) => length >= count
+    (length) => length >= count,
+    10
   );
 
 const failing = (type: string, id: string, trigger: string) =>
