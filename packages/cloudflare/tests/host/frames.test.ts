@@ -13,6 +13,7 @@ import {
   openHostOf,
   pollOf,
   raw,
+  settledStubs,
   stubs,
   until,
   upgrade,
@@ -222,6 +223,8 @@ describe("ActionClusterEntity's frames", () => {
           });
         });
 
+        const before = yield* settledStubs;
+
         socket.send(String(parser.encode(RpcMessage.constEof)));
 
         yield* until(
@@ -229,8 +232,11 @@ describe("ActionClusterEntity's frames", () => {
           (messages) => messages.length >= 2
         );
 
+        const after = yield* settledStubs;
+
         expect(received[1]).toContain('"requestId":"2"');
         expect(received[1]).toContain(`Unknown request tag: ${removed}`);
+        expect(after.started.invoke).toBe(before.started.invoke);
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
   );

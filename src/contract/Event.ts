@@ -211,11 +211,12 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
    * as a store only that server's handlers write is: its streams and webhook deliveries then ask
    * `check` again only when notified, on no timer, so an idle Cloudflare Durable Object holding
    * them hibernates. Defaults to `false`, asking again at each page's `nextPoll` too. A polling
-   * client polls at `nextPoll` either way.
+   * client polls at `nextPoll` either way, and an rpc's poll page says `notified`, so a host that
+   * holds polls, as the Cloudflare package's socket host does, holds one of this source alone.
    *
    * **Gotchas**
    *
-   * - A change no `notify` on that server announces, as another server's write to a shared database or an upstream's own, reaches its streams and webhooks only with the next `notify`.
+   * - A change no `notify` on that server announces, as another server's write to a shared database or an upstream's own, reaches its streams, its webhooks and a poll a host holds only with the next `notify`.
    * - A `notify` that `check` runs before it can read the write waits for the next `notify` too: notify after the write commits, or inside its transaction only where `check` reads through the same connection, as one SQLite client's reads wait for its transaction.
    */
   readonly notified?: boolean | undefined;
