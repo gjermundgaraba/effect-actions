@@ -207,7 +207,9 @@ export const makeSockets = (options: {
   readonly sockets: () => readonly WebSocket[];
   readonly waitUntil: (promise: Promise<unknown>) => void;
 }) => {
-  const { gate, now } = options;
+  const { now } = options;
+
+  const signal = Effect.exit(Effect.sync(options.gate));
 
   let passing = false;
   let again = false;
@@ -247,7 +249,7 @@ export const makeSockets = (options: {
       );
     });
 
-  const due = (current: number) =>
+  const due = (moved: (entry: Parked) => boolean) =>
     options.sockets().flatMap((socket) => {
       const held = attachmentOf(socket);
 
@@ -258,20 +260,20 @@ export const makeSockets = (options: {
         return [];
       }
 
-      const moved = held.parked.filter((entry) => entry.gate !== current);
+      const asked = held.parked.filter(moved);
 
       if (
-        moved.length === 0 ||
+        asked.length === 0 ||
         !kept(socket, {
           ...held,
-          parked: without(held.parked, (entry) => entry.gate !== current),
-          calls: [...held.calls, ...moved.map(({ id }) => id)],
+          parked: without(held.parked, moved),
+          calls: [...held.calls, ...asked.map(({ id }) => id)],
         })
       ) {
         return [];
       }
 
-      return moved.map((entry) => ({ socket, served, entry }));
+      return asked.map((entry) => ({ socket, served, entry }));
     });
 
   const polled = (
@@ -280,7 +282,7 @@ export const makeSockets = (options: {
     entry: Omit<Parked, "gate">
   ): Effect.Effect<boolean> =>
     Effect.gen(function* () {
-      const read = yield* Effect.exit(Effect.sync(gate));
+      const read = yield* signal;
 
       if (Exit.isFailure(read)) {
         yield* reply(socket, served, entry, Exit.failCause(read.cause));
@@ -338,26 +340,21 @@ export const makeSockets = (options: {
       return false;
     });
 
-  const pass: Effect.Effect<void> = Effect.suspend(() => {
-    const current = gate();
+  const pass = Effect.gen(function* () {
+    const read = yield* signal;
 
-    return current === undefined
-      ? Effect.void
-      : Effect.forEach(
-          due(current),
-          ({ socket, served, entry }) =>
-            tracked(socket, entry.id, polled(socket, served, entry)),
-          { concurrency: "unbounded" }
-        ).pipe(
-          Effect.tap((exits) =>
-            Effect.sync(() => {
-              again ||= exits.some(
-                (exit) => Exit.isSuccess(exit) && exit.value
-              );
-            })
-          ),
-          Effect.asVoid
-        );
+    if (Exit.isSuccess(read) && read.value === undefined) {
+      return;
+    }
+
+    const exits = yield* Effect.forEach(
+      due((entry) => Exit.isFailure(read) || entry.gate !== read.value),
+      ({ socket, served, entry }) =>
+        tracked(socket, entry.id, polled(socket, served, entry)),
+      { concurrency: "unbounded" }
+    );
+
+    again ||= exits.some((exit) => Exit.isSuccess(exit) && exit.value);
   });
 
   const passes = async () => {
@@ -382,33 +379,42 @@ export const makeSockets = (options: {
     options.waitUntil(passes());
   };
 
-  const parkedAgain = (socket: WebSocket, request: Request) => {
-    const poll = Option.getOrUndefined(decodePoll(request.payload));
+  const parkedAgain = (socket: WebSocket, request: Request) =>
+    Effect.gen(function* () {
+      const poll = Option.getOrUndefined(decodePoll(request.payload));
 
-    if (poll?.watch === undefined) {
-      return false;
-    }
+      if (poll?.watch === undefined) {
+        return false;
+      }
 
-    const answer = attachmentOf(socket)?.answered.find(
-      ({ watch }) => watch === poll.watch
-    );
+      const answer = attachmentOf(socket)?.answered.find(
+        ({ watch }) => watch === poll.watch
+      );
 
-    forget(socket, poll.watch);
+      forget(socket, poll.watch);
 
-    return (
-      answer !== undefined &&
-      answer.cursor === poll.cursor &&
-      answer.gate === gate() &&
-      now() - answer.at < Duration.toMillis(uncalledWithin) &&
-      park(socket, {
-        id: request.id,
-        tag: request.tag,
-        payload: request.payload,
-        headers: request.headers,
-        gate: answer.gate,
-      })
-    );
-  };
+      if (
+        answer === undefined ||
+        answer.cursor !== poll.cursor ||
+        now() - answer.at >= Duration.toMillis(uncalledWithin)
+      ) {
+        return false;
+      }
+
+      const read = yield* signal;
+
+      return (
+        Exit.isSuccess(read) &&
+        read.value === answer.gate &&
+        park(socket, {
+          id: request.id,
+          tag: request.tag,
+          payload: request.payload,
+          headers: request.headers,
+          gate: answer.gate,
+        })
+      );
+    });
 
   const requested = (socket: WebSocket, served: Served, request: Request) =>
     Effect.gen(function* () {
@@ -427,7 +433,7 @@ export const makeSockets = (options: {
         return;
       }
 
-      if (served.polls.has(tag) && parkedAgain(socket, request)) {
+      if (served.polls.has(tag) && (yield* parkedAgain(socket, request))) {
         return;
       }
 

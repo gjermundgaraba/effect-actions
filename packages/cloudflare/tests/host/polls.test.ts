@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import { runInDurableObject } from "cloudflare:test";
 import { Effect, Predicate, Schedule } from "effect";
@@ -57,6 +58,19 @@ const signalIn = (board: string) =>
       })
   );
 
+const drift = (type: string, id: string) =>
+  Effect.promise(async () => {
+    await runInDurableObject(objectOf(type, id), (_, state) => {
+      for (const [table, column] of [
+        ["effect_actions_event_revision", "name"],
+        ["effect_actions_event_position", "event"],
+      ] as const) {
+        state.storage.sql.exec(`DROP TABLE IF EXISTS ${table}`);
+        state.storage.sql.exec(`CREATE TABLE ${table} (${column} TEXT)`);
+      }
+    });
+  });
+
 describe("ActionClusterEntity's polls", () => {
   it.live(
     "reads Stored.changeSignal from an object's SQLite, which fails with no such table before the entity first activates, then moves with each pin",
@@ -89,16 +103,7 @@ describe("ActionClusterEntity's polls", () => {
       Effect.gen(function* () {
         const room = "drifted";
 
-        yield* Effect.promise(async () => {
-          await runInDurableObject(objectOf("Tally", room), (_, state) => {
-            state.storage.sql.exec(
-              "CREATE TABLE effect_actions_event_revision (name TEXT)"
-            );
-            state.storage.sql.exec(
-              "CREATE TABLE effect_actions_event_position (event TEXT)"
-            );
-          });
-        });
+        yield* drift("Tally", room);
 
         const { socket, received } = yield* raw("Tally", room);
 
@@ -110,6 +115,98 @@ describe("ActionClusterEntity's polls", () => {
         );
 
         expect(received[0]).toContain("no such column");
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "answers a parked poll with a defect when the change signal fails as the object settles",
+    () =>
+      Effect.gen(function* () {
+        const board = "drifted-parked";
+        const { socket, received } = yield* raw("Board", board);
+        const poll = pollOf(socket, Pinned.name, board);
+
+        poll("1", crypto.randomUUID(), null);
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 1
+        );
+
+        poll("2", crypto.randomUUID(), "0");
+        yield* parkedAs(board, "2");
+        yield* drift("Board", board);
+        socket.send(JSON.stringify({ _tag: "Eof" }));
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 2
+        );
+
+        expect(received[1]).toContain('"requestId":"2"');
+        expect(received[1]).toContain("no such column");
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "answers a page's next poll with a defect when the change signal fails, and the other calls of its message as before",
+    () =>
+      Effect.gen(function* () {
+        const board = "drifted-next";
+        const { socket, received } = yield* raw("Board", board);
+        const poll = pollOf(socket, Pinned.name, board);
+        const watch = crypto.randomUUID();
+
+        poll("0", crypto.randomUUID(), null);
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 1
+        );
+
+        poll("1", watch, null);
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 2
+        );
+
+        yield* drift("Board", board);
+
+        socket.send(
+          JSON.stringify([
+            {
+              _tag: "Request",
+              id: "2",
+              tag: ActionRpc.pollTag(Pinned.name),
+              payload: { input: { board }, cursor: "0", watch },
+              headers: [],
+            },
+            {
+              _tag: "Request",
+              id: "3",
+              tag: "later",
+              payload: { board, n: 0, at: Date.now() + 3_600_000 },
+              headers: [],
+            },
+          ])
+        );
+
+        yield* until(
+          () => received,
+          (messages) => messages.length >= 4
+        );
+
+        const answers = received.slice(2);
+
+        expect(
+          answers.find((message) => message.includes('"requestId":"2"'))
+        ).toContain("no such column");
+        expect(
+          answers.find((message) => message.includes('"requestId":"3"'))
+        ).toContain('"_tag":"Success"');
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
   );
