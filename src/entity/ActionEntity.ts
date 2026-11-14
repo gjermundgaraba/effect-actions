@@ -636,14 +636,14 @@ export type Client<B extends ActionRpc.Any> = {
 
 const entityCallOf = (
   rpcs: ReturnType<Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>>,
-  headers?: Headers.Headers
+  headers: Headers.Headers | undefined
 ): ErasedCall =>
-  erasedCallOf((tag, payload, options) => {
+  erasedCallOf((tag, payload) => {
     const method = rpcs[tag];
 
     return method === undefined
       ? Effect.die(new Error(`ActionEntity: no rpc ${tag}`))
-      : method(payload, headers === undefined ? options : { headers });
+      : method(payload, headers === undefined ? undefined : { headers });
   });
 
 const reachOf =

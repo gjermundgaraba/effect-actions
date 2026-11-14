@@ -10,7 +10,7 @@ import {
   SchemaTransformation,
   Stream,
 } from "effect";
-import type { Context, Duration } from "effect";
+import type { Duration } from "effect";
 import { HttpClientRequest, HttpServerRequest } from "effect/http";
 import type { Headers } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
@@ -244,40 +244,32 @@ const ReleaseOf = (event: Event.Any) =>
 const watcherOf = (principal: string | undefined, watch: string) =>
   JSON.stringify([principal ?? null, watch]);
 
-interface ErasedCallOptions {
-  readonly headers?: Headers.Input | undefined;
-  readonly context?: Context.Context<never> | undefined;
-}
-
 export interface ErasedCall {
   readonly unary: (
     tag: string,
-    payload: Schema.Json,
-    options?: ErasedCallOptions
+    payload: Schema.Json
   ) => Effect.Effect<Schema.Json, unknown>;
   readonly stream: (
     tag: string,
-    payload: Schema.Json,
-    options?: ErasedCallOptions
+    payload: Schema.Json
   ) => Stream.Stream<Schema.Json, unknown>;
 }
 
 export const erasedCallOf = (
   send: (
     tag: string,
-    payload: Schema.Json,
-    options?: ErasedCallOptions
+    payload: Schema.Json
   ) => Effect.Effect<Schema.Json, unknown> | Stream.Stream<Schema.Json, unknown>
 ): ErasedCall => ({
-  unary: (tag, payload, options) => {
-    const answer = send(tag, payload, options);
+  unary: (tag, payload) => {
+    const answer = send(tag, payload);
 
     return Effect.isEffect(answer)
       ? answer
       : Effect.die(new Error(`The rpc ${tag} streams, called as unary`));
   },
-  stream: (tag, payload, options) => {
-    const answer = send(tag, payload, options);
+  stream: (tag, payload) => {
+    const answer = send(tag, payload);
 
     return Stream.isStream(answer)
       ? answer
