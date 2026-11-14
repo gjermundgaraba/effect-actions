@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import type { Redacted } from "effect";
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Predicate, Schema } from "effect";
 import { TestRunner } from "effect/cluster";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
@@ -8,6 +8,7 @@ import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
+import { DeclaredFailure } from "../../src/rpc/erased.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
@@ -72,7 +73,7 @@ describe("ActionEntity's key check", () => {
   );
 
   it.live(
-    "runs once the entity verified the caller and before the authorizer, on a call, a poll and a webhook subscribe and unsubscribe",
+    "runs once the entity verified the caller and before the authorizer, on a call, a poll, a release and a webhook subscribe and unsubscribe",
     () => {
       const steps: string[] = [];
 
@@ -131,8 +132,8 @@ describe("ActionEntity's key check", () => {
         const elsewhere = { room: "kitchen" };
         const delivery = { url: "https://hooks.example.com/alice" };
 
-        const sent = (tag: string, payload: Schema.Json, token?: string) =>
-          Effect.flip(
+        const outcomeOf = (tag: string, payload: Schema.Json, token?: string) =>
+          Effect.match(
             unaryOf(
               lobby[tag]?.(
                 payload,
@@ -141,17 +142,31 @@ describe("ActionEntity's key check", () => {
                   : { headers: { authorization: `Bearer ${token}` } }
               ),
               tag
-            )
+            ),
+            {
+              onSuccess: () => "answered",
+              onFailure: (failure) =>
+                failure instanceof DeclaredFailure &&
+                Predicate.hasProperty(failure.json, "_tag") &&
+                Predicate.isString(failure.json._tag)
+                  ? failure.json._tag
+                  : "undeclared",
+            }
           );
 
         const signedIn = [
-          yield* sent("guarded", elsewhere, "alice"),
-          yield* sent(
+          yield* outcomeOf("guarded", elsewhere, "alice"),
+          yield* outcomeOf(
             ActionRpc.pollTag(Moved.name),
             { input: elsewhere, cursor: null },
             "alice"
           ),
-          yield* sent(
+          yield* outcomeOf(
+            ActionRpc.releaseTag(Moved.name),
+            { input: elsewhere, watch: crypto.randomUUID() },
+            "alice"
+          ),
+          yield* outcomeOf(
             "room.moved/subscribe",
             {
               input: elsewhere,
@@ -159,26 +174,20 @@ describe("ActionEntity's key check", () => {
             },
             "alice"
           ),
-          yield* sent(
+          yield* outcomeOf(
             "room.moved/unsubscribe",
             { input: elsewhere, delivery },
             "alice"
           ),
         ];
 
-        const signedOut = yield* sent("guarded", elsewhere);
-
-        for (const refused of signedIn) {
-          expect(refused).toMatchObject({ json: { _tag: "Forbidden" } });
-        }
-
-        expect(signedOut).toMatchObject({ json: { _tag: "Unauthenticated" } });
-        expect(steps).toStrictEqual([
-          "verified",
-          "verified",
-          "verified",
-          "verified",
-        ]);
+        expect(signedIn).toStrictEqual(
+          Array.from({ length: 5 }, () => "Forbidden")
+        );
+        expect(yield* outcomeOf("guarded", elsewhere)).toBe("Unauthenticated");
+        expect(steps).toStrictEqual(
+          Array.from({ length: 5 }, () => "verified")
+        );
       }).pipe(Effect.scoped, Effect.provide(guarding));
     }
   );
