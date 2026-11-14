@@ -72,7 +72,7 @@ ActionEntity.make("Room", Rpc, { key: { get: byRoom, open: byRoom } });
 
 ActionEntity.make(
   "Room",
-  // @ts-expect-error -- an entity serves no native rpcs.
+  // @ts-expect-error -- an entity's binding holds no native rpcs.
   ActionRpc.make([Open], { rpcs: RpcGroup.make(NativeRpc.make("ping")) }),
   { key: { open: byRoom } }
 );
