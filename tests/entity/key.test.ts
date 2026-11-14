@@ -11,6 +11,7 @@ import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
+import { unaryOf } from "../support/rpc.js";
 import { secretOf } from "../support/webhook.js";
 
 const room = { room: Schema.String };
@@ -130,18 +131,18 @@ describe("ActionEntity's key check", () => {
         const elsewhere = { room: "kitchen" };
         const delivery = { url: "https://hooks.example.com/alice" };
 
-        const sent = (tag: string, payload: Schema.Json, token?: string) => {
-          const answer = lobby[tag]?.(
-            payload,
-            token === undefined
-              ? undefined
-              : { headers: { authorization: `Bearer ${token}` } }
+        const sent = (tag: string, payload: Schema.Json, token?: string) =>
+          Effect.flip(
+            unaryOf(
+              lobby[tag]?.(
+                payload,
+                token === undefined
+                  ? undefined
+                  : { headers: { authorization: `Bearer ${token}` } }
+              ),
+              tag
+            )
           );
-
-          return answer !== undefined && Effect.isEffect(answer)
-            ? Effect.flip(answer)
-            : Effect.die(new Error(`no unary rpc ${tag}`));
-        };
 
         const signedIn = [
           yield* sent("guarded", elsewhere, "alice"),
