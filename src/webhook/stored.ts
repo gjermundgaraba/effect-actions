@@ -40,6 +40,9 @@ export interface Storage {
 
 export const storePrefix = "effect-actions/webhook/";
 
+export const entityStorePrefix = (entityType: string, entityId: string) =>
+  `effect-actions/entity-webhook/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/`;
+
 const flushTimeout = Duration.seconds(5);
 
 class UnfinishedWrites extends Schema.TaggedError<

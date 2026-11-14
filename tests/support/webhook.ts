@@ -3,6 +3,8 @@ import { setImmediate as nextTurn } from "node:timers/promises";
 import { afterAll, vi } from "@effect/vitest";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import type { Queue } from "effect";
+import { Entity } from "effect/cluster";
+import type { EntityAddress } from "effect/cluster";
 import {
   FetchHttpClient,
   HttpClient,
@@ -120,6 +122,7 @@ export interface WorldOptions extends Webhook.Options {
     | undefined;
   readonly delivering?: boolean | undefined;
   readonly wake?: Wake["Service"] | undefined;
+  readonly entity?: EntityAddress.EntityAddress | undefined;
 }
 
 let inFlight = 0;
@@ -152,6 +155,7 @@ export const makeWorld = ({
   callbacks,
   delivering = true,
   wake,
+  entity,
   ...options
 }: WorldOptions = {}) => {
   const changes: Change[] = [];
@@ -265,7 +269,12 @@ export const makeWorld = ({
     kept === undefined
       ? Webhook.layer(options)
       : Webhook.layer({ ...options, persist: true }).pipe(
-          Layer.provide(Layer.succeed(KeyValueStore.KeyValueStore, kept))
+          Layer.provide(Layer.succeed(KeyValueStore.KeyValueStore, kept)),
+          Layer.provide(
+            entity === undefined
+              ? Layer.empty
+              : Layer.succeed(Entity.CurrentAddress, entity)
+          )
         )
   ).pipe(
     Layer.provide(wake === undefined ? Layer.empty : Layer.succeed(Wake, wake))

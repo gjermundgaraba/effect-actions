@@ -11,6 +11,7 @@ import {
   Schema,
   Scope,
 } from "effect";
+import { EntityAddress, EntityId, EntityType, ShardId } from "effect/cluster";
 import { HttpClient } from "effect/http";
 import { Dns } from "effect/net";
 import { KeyValueStore } from "effect/persistence";
@@ -47,15 +48,84 @@ const slept = (at: number) =>
     Effect.sleep(Duration.millis(at - now))
   );
 
-const keptIds = (store: KeyValueStore.KeyValueStore) =>
-  KeyValueStore.prefix(store, records).keys;
+const keptIds = (
+  store: KeyValueStore.KeyValueStore,
+  prefix: string = records
+) => KeyValueStore.prefix(store, prefix).keys;
 
 const failing: typeof acknowledging = (body) =>
   body["type"] === undefined
     ? new Response(null, { status: 500 })
     : acknowledging(body);
 
+const lobby = EntityAddress.make({
+  shardId: ShardId.make("default", 1),
+  entityType: EntityType.make("Room"),
+  entityId: EntityId.make("lobby"),
+});
+
 describe("webhook subscriptions kept by persist", () => {
+  it.effect(
+    "keeps a root layer's and an entity's subscriptions on one store apart, each restoring its own",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+        const root = makeWorld({ kept: store });
+        const entity = makeWorld({ kept: store, entity: lobby });
+
+        const rootGrant = yield* subscribed(secretOf(1)).pipe(
+          Effect.provide(root.server)
+        );
+
+        const entityGrant = yield* subscribed(secretOf(2)).pipe(
+          Effect.provide(entity.server)
+        );
+
+        const rootAgain = makeWorld({ kept: store });
+        const entityAgain = makeWorld({ kept: store, entity: lobby });
+
+        rootAgain.world.changes.push({ id: "c1", by: "bob" });
+        entityAgain.world.changes.push({ id: "c1", by: "bob" });
+
+        yield* until(
+          () => events(rootAgain.world.received).length === 1,
+          60
+        ).pipe(Effect.provide(rootAgain.server));
+
+        yield* until(
+          () => events(entityAgain.world.received).length === 1,
+          60
+        ).pipe(Effect.provide(entityAgain.server));
+
+        const signed = (
+          secret: string,
+          delivery: (typeof rootAgain.world.received)[number] | undefined
+        ) =>
+          Effect.promise(
+            async () =>
+              delivery !== undefined && (await signedBy(secret, delivery))
+          );
+
+        expect({
+          root: yield* keptIds(store),
+          entity: yield* keptIds(
+            store,
+            "effect-actions/entity-webhook/Room/lobby/"
+          ),
+          rootSigned: yield* signed(secretOf(1), rootAgain.world.received[0]),
+          entitySigned: yield* signed(
+            secretOf(2),
+            entityAgain.world.received[0]
+          ),
+        }).toStrictEqual({
+          root: [rootGrant.id],
+          entity: [entityGrant.id],
+          rootSigned: true,
+          entitySigned: true,
+        });
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
+  );
+
   it.effect(
     "restores a kept subscription as its surface builds again, delivering on from its watermark",
     () =>
