@@ -27,7 +27,7 @@ export default ActionCluster.handler(initialize, {
     routes: [
       {
         entity: Room,
-        path: /^\/rooms\/(?<id>[^/]+)\/rpc$/u,
+        path: "/rooms/:id/rpc",
         id: (room) => (isRoom(room) ? room : undefined),
       },
     ],

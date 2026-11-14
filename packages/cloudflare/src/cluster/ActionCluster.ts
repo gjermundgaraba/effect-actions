@@ -142,8 +142,8 @@ export interface HandlerOptions<Env> {
         readonly routes: ReadonlyArray<{
           /** The entity whose objects serve the sockets, one of `ActionClusterEntity.make`'s `sockets`. */
           readonly entity: ActionEntity.Any;
-          /** The pathname matched, whose named group `id` holds the entity id as the page sent it. */
-          readonly path: RegExp;
+          /** The pathname matched, a `URLPattern` pathname such as `/rooms/:id/rpc`, whose group `id` holds the entity id as the page sent it; a pattern naming no `id` matches no request. */
+          readonly path: string;
           /** The entity id for the `id` group the page sent in `request`, or `undefined` to answer the request as one matching no route; by default, the group as sent. */
           readonly id?:
             | ((sent: string, request: Request) => string | undefined)
@@ -153,25 +153,30 @@ export interface HandlerOptions<Env> {
     | undefined;
 }
 
-const objectOf = <Env>(
-  { entityNamespace, routes }: NonNullable<HandlerOptions<Env>["sockets"]>,
-  env: Env,
-  request: Request
-) => {
-  const { pathname } = new URL(request.url);
+const objectsOf = <Env>({
+  entityNamespace,
+  routes,
+}: NonNullable<HandlerOptions<Env>["sockets"]>) => {
+  const patterns = routes.map(({ entity, path, id = Function.identity }) => ({
+    entity,
+    id,
+    pattern: new URLPattern({ pathname: path }),
+  }));
 
-  for (const { entity, path, id = Function.identity } of routes) {
-    const sent = path.exec(pathname)?.groups?.["id"];
-    const entityId = sent === undefined ? undefined : id(sent, request);
+  return (env: Env, request: Request) => {
+    for (const { entity, id, pattern } of patterns) {
+      const sent = pattern.exec(request.url)?.pathname.groups["id"];
+      const entityId = sent === undefined ? undefined : id(sent, request);
 
-    if (entityId !== undefined) {
-      return entityNamespace(env).getByName(
-        CloudflareCluster.encodeName(entity.type, entityId)
-      );
+      if (entityId !== undefined) {
+        return entityNamespace(env).getByName(
+          CloudflareCluster.encodeName(entity.type, entityId)
+        );
+      }
     }
-  }
 
-  return undefined;
+    return undefined;
+  };
 };
 
 /**
@@ -185,13 +190,13 @@ const objectOf = <Env>(
  * **Gotchas**
  *
  * - A socket route reaches the object without waiting on the initializer and judges nothing itself: the object answers a request that is no upgrade 426, an entity not in `ActionClusterEntity.make`'s `sockets` 404, and accepts any `Origin`, so refuse a page of another site in the route's `id`, which reads the request.
- * - A path with the `g` or `y` flag keeps its `lastIndex` between requests, so it misses every other request: give one with neither.
  */
 export const handler = <Env>(
   initialize: (env: Env) => PromiseLike<Context.Context<HttpRouter.HttpRouter>>,
   options: HandlerOptions<Env> = {}
 ) => {
-  const { sockets } = options;
+  const objectOf =
+    options.sockets === undefined ? undefined : objectsOf(options.sockets);
 
   const serve = async (request: Request, env: Env) => {
     const context = await initialize(env);
@@ -206,8 +211,7 @@ export const handler = <Env>(
 
   return {
     fetch: async (request: Request, env: Env): Promise<Response> => {
-      const object =
-        sockets === undefined ? undefined : objectOf(sockets, env, request);
+      const object = objectOf?.(env, request);
 
       return object === undefined
         ? await serve(request, env)

@@ -55,7 +55,7 @@ const initialize = CloudflareDurableObjects.setInitializer(
 ActionCluster.handler(initialize, {
   sockets: {
     entityNamespace: (env) => env.CLUSTER_ENTITY,
-    routes: [{ entity: Room, path: /^\/rooms\/(?<id>[^/]+)\/rpc$/u }],
+    routes: [{ entity: Room, path: "/rooms/:id/rpc" }],
   },
 });
 ```

@@ -495,7 +495,7 @@ const handled = ActionCluster.handler(initialize, {
     entityNamespace: (env) => env.CLUSTER_ENTITY,
     routes: [Seer, Board, Tally].map((entity) => ({
       entity,
-      path: new RegExp(`^/sockets/${entity.type}/(?<id>[^/]+)$`, "u"),
+      path: `/sockets/${entity.type}/:id`,
       id: (sent: string, request: Request) =>
         request.headers.get("origin") === foreignOrigin ? undefined : sent,
     })),
