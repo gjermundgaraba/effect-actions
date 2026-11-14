@@ -14,7 +14,7 @@ import type { Context, Duration } from "effect";
 import { HttpClientRequest, HttpServerRequest } from "effect/http";
 import type { Headers } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
-import { Rpc, RpcGroup, RpcSchema } from "effect/rpc";
+import { Rpc, RpcGroup } from "effect/rpc";
 import type { RpcMiddleware } from "effect/rpc";
 
 import { providerOf } from "../authentication/provider.js";
@@ -513,7 +513,6 @@ export const polledTransport =
 interface ClientBinding extends Declaring {
   readonly actions: readonly Action.Any[];
   readonly events: readonly Event.Any[];
-  readonly rpcs: RpcGroup.Any;
 }
 
 export const methodsOf = (
@@ -524,28 +523,14 @@ export const methodsOf = (
     (action) => [action.name, actionMethodOf(action, binding)] as const
   );
 
-  const natives = [...nativeOf(binding.rpcs).requests.values()].map(
-    (rpc) => [rpc._tag, RpcSchema.isStreamSchema(rpc.successSchema)] as const
-  );
-
   const transports = binding.events.map(
     (event) => [event.name, transport(event, binding)] as const
   );
 
   return (call: ErasedCall) => {
-    const methods = Object.fromEntries<unknown>([
-      ...actions.map(([name, method]) => [name, method(call)] as const),
-      ...natives.map(
-        ([tag, streamed]) =>
-          [
-            tag,
-            (payload: Schema.Json, options?: ErasedCallOptions) =>
-              streamed
-                ? call.stream(tag, payload, options)
-                : call.unary(tag, payload, options),
-          ] as const
-      ),
-    ]);
+    const methods = Object.fromEntries<unknown>(
+      actions.map(([name, method]) => [name, method(call)] as const)
+    );
 
     if (transports.length === 0) {
       return methods;

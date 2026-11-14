@@ -129,6 +129,24 @@ describe("ActionRpc native rpcs", () => {
       })
   );
 
+  it.effect(
+    "hands a native stream rpc's chunks over a queue under asQueue, as Effect's own client does",
+    () =>
+      Effect.gen(function* () {
+        const chunks = yield* withProtected((client) =>
+          Effect.flatMap(
+            client.countdown(
+              { from: 2 },
+              { asQueue: true, headers: { authorization: "Bearer alice" } }
+            ),
+            (queue) => Stream.runCollect(Stream.fromQueue(queue))
+          )
+        );
+
+        expect(chunks).toStrictEqual(["alice:2", "alice:1"]);
+      })
+  );
+
   it.effect("authenticates each message of a native rpc by its own token", () =>
     Effect.gen(function* () {
       const callers = yield* withProtected((client) =>

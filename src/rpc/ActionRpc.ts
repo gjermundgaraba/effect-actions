@@ -729,13 +729,24 @@ export function client(
         ({ supportsAck }) => !supportsAck
       ),
     ]),
-    ([call, silenceEnds]) =>
-      methodsOf(
+    ([call, silenceEnds]) => ({
+      ...methodsOf(
         binding,
         delivery === "stream"
           ? streamedTransport(silenceEnds)
           : polledTransport(isRpcTransient, pollResentAfter)
-      )(erasedCallOf(call))
+      )(erasedCallOf(call)),
+      ...Object.fromEntries(
+        [...nativeOf(binding.rpcs).requests.keys()].map(
+          (tag) =>
+            [
+              tag,
+              (payload: unknown, callOptions?: Parameters<typeof call>[2]) =>
+                call(tag, payload, callOptions),
+            ] as const
+        )
+      ),
+    })
   );
 }
 
