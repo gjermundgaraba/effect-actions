@@ -92,18 +92,8 @@ export const RoomRpc = ActionRpc.make(
 
 export const signIn = Authentication.layer(Login, verify);
 
-const byRoom = ({ room: named }: { readonly room: string }) => named;
-
 export const Room = ActionEntity.make("Room", RoomRpc, {
-  key: {
-    echo: byRoom,
-    post: byRoom,
-    read: byRoom,
-    shut: byRoom,
-    boom: byRoom,
-    tally: byRoom,
-    "room.posted": byRoom,
-  },
+  key: ({ room: named }) => named,
 });
 
 export const makeRooms = () => {

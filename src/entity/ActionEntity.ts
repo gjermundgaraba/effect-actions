@@ -74,14 +74,17 @@ type Contract<B extends ActionRpc.Any> =
   | B["events"][number];
 
 /**
- * The key of each action and event type of the binding `B`, by its name: the id of the entity
- * that serves a call or a subscription, read from its input.
+ * The key of the binding `B`'s actions and event types, the id of the entity that serves a call
+ * or a subscription, read from its input: one function of every input, `({ room }) => room`, or
+ * one by the name of each action and event type.
  */
-export type Keys<B extends ActionRpc.Any> = {
-  readonly [C in Contract<B> as C["name"]]: (
-    input: C["input"]["Type"]
-  ) => string;
-};
+export type Keys<B extends ActionRpc.Any> =
+  | ((input: Contract<B>["input"]["Type"]) => string)
+  | {
+      readonly [C in Contract<B> as C["name"]]: (
+        input: C["input"]["Type"]
+      ) => string;
+    };
 
 type ErasedRpc =
   ReturnType<typeof erasedOf> extends RpcGroup.RpcGroup<infer R> ? R : never;
@@ -115,9 +118,12 @@ export interface Any {
   >;
 }
 
-interface ErasedKeys {
-  readonly [name: string]: (input: Action.Any["input"]["Type"]) => string;
-}
+type ErasedKey = (input: Action.Any["input"]["Type"]) => string;
+
+type ErasedKeys = ErasedKey | { readonly [name: string]: ErasedKey };
+
+const keyOf = (keys: ErasedKeys, name: string): ErasedKey | undefined =>
+  Predicate.isFunction(keys) ? keys : keys[name];
 
 const namedBy =
   (keys: ErasedKeys) =>
@@ -125,7 +131,7 @@ const namedBy =
     contract: Action.Any | Event.Any,
     input: Action.Any["input"]["Type"]
   ): string | undefined => {
-    const named: unknown = keys[contract.name]?.(input);
+    const named: unknown = keyOf(keys, contract.name)?.(input);
 
     return Predicate.isString(named) ? named : undefined;
   };
@@ -141,8 +147,14 @@ type WithoutNatives<B extends ActionRpc.Any> = [
 /** `make`'s options. */
 export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
   /**
-   * By the name of each action and event type of the binding, the entity id its input names:
-   * `{ PostMessage: ({ room }) => room }`. Every one needs a key.
+   * The entity id an input names: one function every action and event input of the binding
+   * reads, `({ room }) => room`, or, where their inputs differ, one by the name of each,
+   * `{ postMessage: ({ room }) => room }`.
+   *
+   * **Gotchas**
+   *
+   * - One function takes the union of the binding's inputs, so it reads only a field every one declares: a field one input lacks is a type error.
+   * - By name, every action and event type needs a key: one left out is a type error, and throws as the entity is made.
    */
   readonly key: Keys<B>;
   /**
@@ -199,12 +211,12 @@ export const make = <
   const keys: ErasedKeys = options.key;
 
   const unkeyed = [...binding.actions, ...binding.events].filter(
-    ({ name }) => !Predicate.isFunction(keys[name])
+    ({ name }) => !Predicate.isFunction(keyOf(keys, name))
   );
 
   if (unkeyed.length > 0) {
     throw new Error(
-      `ActionEntity.make: key holds none for ${unkeyed.map(({ name }) => name).join(", ")} (give key a function for each action and event type of the binding, by name)`
+      `ActionEntity.make: key holds none for ${unkeyed.map(({ name }) => name).join(", ")} (give key one function of every input, or one for each action and event type of the binding, by name)`
     );
   }
 

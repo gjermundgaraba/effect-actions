@@ -12,7 +12,7 @@ Declare an entity with the core's `ActionEntity`, keyed by its input:
 
 ```ts
 const Room = ActionEntity.make("Room", RoomRpc, {
-  key: { readMessages: byRoom, postMessage: byRoom },
+  key: ({ room }) => room,
 });
 ```
 

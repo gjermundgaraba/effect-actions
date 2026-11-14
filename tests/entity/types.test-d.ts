@@ -70,6 +70,15 @@ const Room = ActionEntity.make("Room", Rpc, {
 // @ts-expect-error -- every action and event type of the binding needs a key.
 ActionEntity.make("Room", Rpc, { key: { get: byRoom, open: byRoom } });
 
+expectTypeOf(
+  ActionEntity.make("Room", Rpc, { key: ({ room }) => room }).key
+).toEqualTypeOf<ActionEntity.Keys<typeof Rpc>>();
+
+ActionEntity.make("Room", Rpc, {
+  // @ts-expect-error -- one key reads only a field every input of the binding declares.
+  key: ({ id }: { readonly id: string }) => id,
+});
+
 ActionEntity.make(
   "Room",
   // @ts-expect-error -- an entity's binding holds no native rpcs.
