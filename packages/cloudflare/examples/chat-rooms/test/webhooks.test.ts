@@ -178,6 +178,19 @@ const within = <A, E>(
     })
   );
 
+const hibernated = (room: DemoRoomName) =>
+  evict("Room", room).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(15),
+      orElse: () =>
+        Effect.die(
+          new Error(
+            `The room ${room} could not be evicted within 15 seconds: something it runs holds it awake`
+          )
+        ),
+    })
+  );
+
 const Count = Schema.Array(
   Schema.fromJsonString(Schema.Struct({ count: Schema.Int }))
 );
@@ -266,7 +279,7 @@ describe("the rooms' webhooks", () => {
         const before = yield* instancesOf("general");
 
         yield* answer(path, 200);
-        yield* evict("Room", "general");
+        yield* hibernated("general");
 
         const delivered = yield* within(
           postsAt(path),
@@ -457,7 +470,44 @@ describe("the rooms' webhooks", () => {
   );
 
   it.live(
-    "keeps a subscribed room awake while its subscription lives, and lets it hibernate once the subscription expired, delivering nothing after",
+    "lets a subscribed room hibernate while idle, before its first post and after a delivery, and delivers each post sent after from a new instance",
+    () =>
+      Effect.gen(function* () {
+        const path = "/hooks/hibernating";
+
+        yield* subscribed("general", path);
+
+        const subscribedIn = yield* instancesOf("general");
+
+        yield* hibernated("general");
+        yield* post("general", "After hibernating.");
+        yield* within(postsAt(path), (all) => all.length > 0, 15);
+
+        const deliveredFrom = yield* instancesOf("general");
+
+        yield* hibernated("general");
+        yield* post("general", "After hibernating again.");
+
+        const delivered = yield* within(
+          postsAt(path),
+          (all) => all.length > 1,
+          15
+        );
+
+        expect(ofPosts(delivered)).toStrictEqual([
+          { status: 200, type: undefined, text: "After hibernating." },
+          { status: 200, type: undefined, text: "After hibernating again." },
+        ]);
+        expect(deliveredFrom.length).toBeGreaterThan(subscribedIn.length);
+        expect((yield* instancesOf("general")).length).toBeGreaterThan(
+          deliveredFrom.length
+        );
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 60_000 }
+  );
+
+  it.live(
+    "delivers nothing after a subscription expired, its room hibernating from its last delivery until the expiry",
     () =>
       Effect.gen(function* () {
         const path = "/hooks/expiring";
@@ -468,34 +518,19 @@ describe("the rooms' webhooks", () => {
 
         yield* post("design", "Before the expiry.");
         yield* within(postsAt(path), (all) => all.length > 0, 15);
-
-        const delivering = yield* instancesOf("design");
-
-        yield* Effect.sleep("25 seconds");
-        yield* post("design", "While subscribed.");
-        yield* within(postsAt(path), (all) => all.length > 1, 15);
-
-        const awake = yield* instancesOf("design");
+        yield* hibernated("design");
 
         yield* Effect.sleep(
           Duration.millis(Math.max(0, granted + 65_000 - Date.now()))
         );
-        yield* Effect.sleep("25 seconds");
-
-        const expired = yield* instancesOf("design");
 
         yield* post("design", "After the expiry.");
         yield* Effect.sleep("5 seconds");
 
-        const after = yield* instancesOf("design");
-
-        expect(awake).toStrictEqual(delivering);
-        expect(after.length).toBeGreaterThan(expired.length);
         expect(ofPosts(yield* postsAt(path))).toStrictEqual([
           { status: 200, type: undefined, text: "Before the expiry." },
-          { status: 200, type: undefined, text: "While subscribed." },
         ]);
       }).pipe(Effect.provide(worker)),
-    { timeout: 150_000 }
+    { timeout: 120_000 }
   );
 });
