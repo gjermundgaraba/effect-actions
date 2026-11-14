@@ -37,7 +37,7 @@ export const sqlIn = (
   type: string,
   id: string,
   statement: string,
-  ...bindings: number[]
+  ...bindings: Array<string | number>
 ) =>
   Effect.promise(async () => {
     await runInDurableObject(objectOf(type, id), (_, state) => {
@@ -50,8 +50,9 @@ export const deliverNow = (type: string, id: string, tag: string) =>
     sqlIn(
       type,
       id,
-      `UPDATE cluster_messages SET deliver_at = ? WHERE processed = 0 AND deliver_at IS NOT NULL AND json_extract(envelope, '$.tag') = '${tag}'`,
-      Date.now()
+      "UPDATE cluster_messages SET deliver_at = ? WHERE processed = 0 AND deliver_at IS NOT NULL AND json_extract(envelope, '$.tag') = ?",
+      Date.now(),
+      tag
     ),
     Effect.promise(async () => await runDurableObjectAlarm(objectOf(type, id)))
   );
