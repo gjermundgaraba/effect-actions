@@ -151,7 +151,7 @@ const occurrencesOf = (event: Event.Any) => {
 const isOccurrence = (fed: Fed): fed is ErasedOccurrence =>
   Predicate.isTagged(fed, "Occurrence");
 
-const pageOf = (
+const pageFrom = (
   items: ReadonlyArray<ErasedOccurrence | Gap>,
   { truncated, ...page }: Omit<Page, "events">
 ): Page => {
@@ -189,7 +189,7 @@ const answeredPage = ({
   readonly answered: Event.Page<Event.Any>;
   readonly items: ReadonlyArray<ErasedOccurrence | Gap>;
 }): Page =>
-  pageOf(items, {
+  pageFrom(items, {
     cursor: answered.cursor,
     truncated: answered.truncated === true,
     hasMore: answered.hasMore === true,
@@ -350,7 +350,7 @@ const logRun = (
         ]),
         ([key, read]) =>
           Effect.map(received(input, key, read), (items) =>
-            pageOf(items, {
+            pageFrom(items, {
               cursor: read.cursor,
               truncated: read.truncated,
               hasMore: read.hasMore,

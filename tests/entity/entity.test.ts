@@ -37,7 +37,7 @@ const Page = Schema.Struct({
   nextPollMs: Schema.Finite,
 });
 
-const pageOf = Schema.decodeUnknownEffect(Page);
+const decodePage = Schema.decodeUnknownEffect(Page);
 
 const poll = (entityId: string, cursor: string | null, maxEvents?: number) =>
   Effect.gen(function* () {
@@ -58,7 +58,7 @@ const poll = (entityId: string, cursor: string | null, maxEvents?: number) =>
       return yield* Effect.die(new Error("a streamed poll"));
     }
 
-    const { events, ...page } = yield* pageOf(yield* answer);
+    const { events, ...page } = yield* decodePage(yield* answer);
 
     return { ...page, texts: events.map(({ data }) => data.text) };
   });
