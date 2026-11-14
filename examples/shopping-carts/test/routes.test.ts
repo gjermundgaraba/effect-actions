@@ -8,11 +8,12 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { CartHttp } from "../src/Api.js";
 import { cartLimit } from "../src/cart/Cart.js";
+import { layerSqlCarts } from "../src/platform/sql-carts.js";
 import { entities, routes } from "../src/routes.js";
 
 const server = Testing.layer(routes).pipe(
   Layer.provideMerge(entities),
-  Layer.provide(TestRunner.layer),
+  Layer.provide([TestRunner.layer, layerSqlCarts]),
   Layer.provide(Layer.orDie(SqliteClient.layer({ filename: ":memory:" })))
 );
 

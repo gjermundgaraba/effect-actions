@@ -8,7 +8,6 @@ import { carts } from "./cart/handlers.js";
 import { CurrentCart } from "./cart/held.js";
 import { Cart } from "./entities.js";
 import { authenticate } from "./identity/verifier.js";
-import { layerSqlCarts } from "./platform/sql-carts.js";
 
 const cartOfAddress = Layer.effect(CurrentCart)(
   Effect.map(Entity.CurrentAddress, ({ entityId }) => entityId)
@@ -16,7 +15,7 @@ const cartOfAddress = Layer.effect(CurrentCart)(
 
 export const entities = ActionEntity.layer(Cart, carts, {
   services: cartOfAddress,
-}).pipe(Layer.provide([authenticate, layerSqlCarts]));
+}).pipe(Layer.provide(authenticate));
 
 export const routes = ActionHttp.layer(
   CartHttp,

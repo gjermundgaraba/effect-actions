@@ -18,7 +18,7 @@ Beside what [Run one](../README.md#run-one) lists, it needs `@effect/sql-sqlite-
 Each trap below is shown in the code of the files it names.
 
 - **A cart is its entity's id, and its shopper's own**: the handlers and their rule read `CurrentCart`, which `routes.ts` builds from `Entity.CurrentAddress`, so another shopper's call reaches that cart and is refused: `src/cart/handlers.ts`, `src/routes.ts`.
-- **A cart's limit needs no lock**: an entity id runs one call at a time, so reading the items and adding one never interleave, as the test's concurrent adds show: `src/cart/handlers.ts`, `test/routes.test.ts`.
+- **A cart's limit needs no lock**: an entity id runs one call at a time, so reading the items and adding one never interleave: `src/cart/handlers.ts`.
 - **The items live in the database, not in the entity**: the cluster stops an idle entity and builds it again for its next call: `src/platform/sql-carts.ts`.
 - **One process, one runner**: a cluster of several processes uses Effect's other runners in place of `layerSingleRunner`: `src/platform/cluster.ts`, `src/server.ts`.
 
@@ -41,6 +41,6 @@ src/
 ├── Api.ts, Rpc.ts     the HTTP binding, and the RPC binding the entity serves
 ├── entities.ts        Cart, the entity: which cart each action's input names
 ├── routes.ts          the entity's layer, and the JSON routes reaching it
-└── server.ts          entrypoint: both, on SingleRunner and a SQLite file
+└── server.ts          entrypoint: both, with CartStore over SQL, on SingleRunner and one SQLite file
 test/routes.test.ts    the routes and the entity, in memory on TestRunner
 ```

@@ -34,7 +34,7 @@ What each entity id must build for itself, such as a store over its own database
 
 An entity provides nothing per call but the caller, so a handler, an authorizer or an event source reading any other service per call is a type error naming it: yield the service in the builder, where it is a startup service. The rules, and what a defect does, are on `ActionEntity.layer`.
 
-The example's carts build `CurrentCart` from the entity's address in `services`, and read their items from a store provided to the layer, so no state lives in the entity between calls, and the cluster may stop it while idle:
+The example's carts build `CurrentCart` from the entity's address in `services`, and read their items from a store, which the entrypoint provides to the layer, so no state lives in the entity between calls, and the cluster may stop it while idle:
 
 ```ts example=shopping-carts/src/routes.ts
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
@@ -47,7 +47,6 @@ import { carts } from "./cart/handlers.js";
 import { CurrentCart } from "./cart/held.js";
 import { Cart } from "./entities.js";
 import { authenticate } from "./identity/verifier.js";
-import { layerSqlCarts } from "./platform/sql-carts.js";
 
 const cartOfAddress = Layer.effect(CurrentCart)(
   Effect.map(Entity.CurrentAddress, ({ entityId }) => entityId)
@@ -55,7 +54,7 @@ const cartOfAddress = Layer.effect(CurrentCart)(
 
 export const entities = ActionEntity.layer(Cart, carts, {
   services: cartOfAddress,
-}).pipe(Layer.provide([authenticate, layerSqlCarts]));
+}).pipe(Layer.provide(authenticate));
 
 export const routes = ActionHttp.layer(
   CartHttp,
@@ -106,11 +105,12 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { CartHttp } from "../src/Api.js";
 import { cartLimit } from "../src/cart/Cart.js";
+import { layerSqlCarts } from "../src/platform/sql-carts.js";
 import { entities, routes } from "../src/routes.js";
 
 const server = Testing.layer(routes).pipe(
   Layer.provideMerge(entities),
-  Layer.provide(TestRunner.layer),
+  Layer.provide([TestRunner.layer, layerSqlCarts]),
   Layer.provide(Layer.orDie(SqliteClient.layer({ filename: ":memory:" })))
 );
 
