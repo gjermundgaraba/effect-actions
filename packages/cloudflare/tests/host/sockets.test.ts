@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { exports } from "cloudflare:workers";
-import { Effect, Predicate, Queue, Schedule, Stream } from "effect";
+import { Effect, Predicate, Queue, Schedule, Schema, Stream } from "effect";
 import { RpcClient } from "effect/rpc";
 
 import { BoardRpc, Logged, Pinned } from "../board.js";
@@ -19,6 +19,10 @@ import { throughWorker } from "../support/worker.js";
 import { Seer } from "../worker.js";
 
 const SeerRpc = Seer.binding;
+
+const Read = Schema.Struct({
+  headers: Schema.Record(Schema.String, Schema.String),
+});
 
 describe("ActionClusterEntity's sockets", () => {
   it.live(
@@ -142,6 +146,52 @@ describe("ActionClusterEntity's sockets", () => {
           "x-note": "upgrade",
         });
         expect(refused._tag).toBe("Unauthenticated");
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "hands a handler the same headers of one request over a socket as through ActionEntity.reaching, those ActionEntity.forwardedHeaders keeps",
+    () =>
+      Effect.gen(function* () {
+        const room = "same-headers";
+
+        const owned = {
+          connection: "Upgrade",
+          "content-type": "application/json",
+          "sec-websocket-version": "13",
+          "accept-language": "nb",
+          "mcp-session-id": "session",
+        };
+
+        const kept = {
+          authorization: "Bearer alice",
+          cookie: "theme=dark",
+          "x-note": "same",
+        };
+
+        const socket = yield* opened("Seer", room, { ...owned, ...kept });
+
+        const overSocket = yield* (yield* clientOver(
+          SeerRpc,
+          socket
+        )).readHeaders({ room });
+
+        const reached = yield* Effect.promise(async () => {
+          const response = await exports.default.fetch(
+            "https://worker.example/api/readHeaders",
+            {
+              method: "POST",
+              headers: { ...owned, ...kept },
+              body: JSON.stringify({ room }),
+            }
+          );
+
+          return await response.json();
+        }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Read)));
+
+        expect(overSocket.headers).toStrictEqual(reached.headers);
+        expect(reached.headers).toStrictEqual(kept);
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
   );

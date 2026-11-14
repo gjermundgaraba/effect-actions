@@ -201,7 +201,13 @@ const hostOf = (
         return new Response(null, { status: 101, webSocket: client });
       }
 
-      if (!sockets.accept(server, name, [...request.headers])) {
+      if (
+        !sockets.accept(
+          server,
+          name,
+          Object.entries(ActionEntity.forwardedHeaders(request.headers))
+        )
+      ) {
         return new Response(
           "The headers a socket keeps exceed its attachment: send fewer or smaller cookies to this path, or the token on each message",
           { status: 431 }
@@ -332,9 +338,9 @@ class Host<Env> extends DurableObject<Env> {
  * object hibernates, for the entities of `sockets`. The Worker hands a page's upgrade to the
  * entity's object, `getByName(CloudflareCluster.encodeName(type, id)).fetch(request)`; each call
  * on the socket is forwarded into that entity through `Entity.client`, with the upgrade's
- * headers under its own, its own winning, and answered as the entity answers it. A page calls
- * with `ActionRpc.client(binding, { delivery: "poll" })`, over `RpcClient.layerProtocolSocket`
- * and `RpcSerialization.layerJson`. Guide: `docs/ActionClusterEntity.md` in this package.
+ * headers `ActionEntity.forwardedHeaders` keeps under its own, its own winning, and answered as
+ * the entity answers it. A page calls with `ActionRpc.client(binding, { delivery: "poll" })`,
+ * over `RpcClient.layerProtocolSocket` and `RpcSerialization.layerJson`. Guide: `docs/ActionClusterEntity.md` in this package.
  *
  * **Gotchas**
  *

@@ -67,6 +67,8 @@ import type { ErasedCall } from "../rpc/erased.js";
 import { forwarded } from "./forwarded.js";
 import { makeWake, wakeTag, WakeRpc } from "./wakes.js";
 
+export { forwardedHeaders } from "./forwarded.js";
+
 type Contract<B extends ActionRpc.Any> =
   | B["actions"][number]
   | B["events"][number];
@@ -674,7 +676,7 @@ type Nothing<C extends Action.Any | Event.Any> = {
  *
  * - The caller's credential is verified by the surface serving these and again by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity.
  * - A refusal by the entity, a credential expired since the surface verified it included, ends a stream after it answered 200, where the surface's own refusal would have answered its 401 or 403.
- * - Every header of the caller's request is sent on but its connection's, its body's, what it accepts and an MCP request's routing headers (`mcp-*`).
+ * - The caller's request's headers are sent on as `forwardedHeaders` keeps them: its connection's, its body's, what it accepts and an MCP request's routing headers are not.
  * - A credential in the query, an API key the serving surface's HTTP binding reads `in: "query"`, never reaches the entity, whose binding reads headers alone, so it refuses the call with `Unauthenticated`: read the key from a header on the HTTP binding too.
  * - A call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends only the headers `RpcClient.withHeaders` sets around it: without them the entity refuses a protected one with `Unauthenticated`.
  * - A call to an entity no runner is assigned waits without an answer, an HTTP request without a response, as Effect's entity client retries `EntityNotAssignedToRunner` every `sendRetryInterval`, 100 milliseconds by default, without limit: bound it with a timeout, such as the host's request timeout.
