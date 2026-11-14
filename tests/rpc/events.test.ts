@@ -85,8 +85,10 @@ const changes = Event.implement(
   }
 );
 
+const unchanged = () => Effect.succeed({ cursor: "0", events: [] });
+
 const counts = Event.implement(Counted, {
-  check: () => Effect.succeed({ cursor: "0", events: [] }),
+  check: unchanged,
 });
 
 const Rpc = ActionRpc.make([Posted, Changed, Counted], {
@@ -319,6 +321,56 @@ describe("RPC events", () => {
 });
 
 describe("ActionRpc.layer's poll rpc", () => {
+  it.effect(
+    "answers a page notified where the server learns of each change, a log or a notified check, and not for a check source that is not notified",
+    () =>
+      Effect.gen(function* () {
+        const counted = ActionRpc.make([Counted]);
+
+        const notifiedOf = <E, R>(rpcs: Layer.Layer<never, E, R>) =>
+          Effect.gen(function* () {
+            const client = yield* RpcClient.make(
+              erasedOf([], [Counted], "ActionRpc.layer")
+            );
+
+            const answer = client[ActionRpc.pollTag(Counted.name)]?.({
+              input: {},
+              cursor: null,
+            });
+
+            return answer !== undefined && Effect.isEffect(answer)
+              ? yield* answer
+              : yield* Effect.die(new Error("No unary poll rpc"));
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(overHttp(rpcs)),
+            Effect.map((page) =>
+              Predicate.isObject(page) ? page["notified"] : page
+            )
+          );
+
+        const notified = [
+          yield* notifiedOf(
+            ActionRpc.layer(counted, Event.implement(Counted, { log: {} }))
+          ),
+          yield* notifiedOf(
+            ActionRpc.layer(
+              counted,
+              Event.implement(Counted, { notified: true, check: unchanged })
+            )
+          ),
+          yield* notifiedOf(
+            ActionRpc.layer(
+              counted,
+              Event.implement(Counted, { check: unchanged })
+            )
+          ),
+        ];
+
+        expect(notified).toStrictEqual([true, true, false]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
   it.effect(
     "sets a protected event's subscription hook up for each principal polling without a watch, as that caller",
     () =>

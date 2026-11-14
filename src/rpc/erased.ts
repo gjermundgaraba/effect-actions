@@ -41,7 +41,7 @@ import type {
   ErasedHandler,
   ErasedValue,
 } from "../contract/implementation.js";
-import { pageOf } from "../contract/pages.js";
+import { pageOf, rpcPageOf } from "../contract/pages.js";
 import { answerFrom, elementsFrom } from "../contract/progress.js";
 import type { Reporting, Progressed } from "../contract/progress.js";
 import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
@@ -786,7 +786,7 @@ const pollHandlerOf = (
   check: Checking
 ) => {
   const decode = decodeInput({ input: PollOf(feed.event) });
-  const encode = Schema.encodeEffect(Schema.toCodecJson(pageOf(feed.event)));
+  const encode = Schema.encodeEffect(Schema.toCodecJson(rpcPageOf(feed.event)));
 
   return servedCall(steps, callBoundaryOf(error), (payload) =>
     Effect.gen(function* () {
@@ -801,7 +801,7 @@ const pollHandlerOf = (
 
       const page = yield* feed.poll(input, cursor, { subscriber, maxEvents });
 
-      return yield* encode(page);
+      return yield* encode({ ...page, notified: !feed.polls });
     })
   );
 };

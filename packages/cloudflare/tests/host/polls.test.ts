@@ -3,17 +3,19 @@ import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import { runInDurableObject } from "cloudflare:test";
 import { Effect, Predicate, Schedule } from "effect";
 
-import { Pinned } from "../board.js";
+import { BoardRpc, Pinned, Polled } from "../board.js";
 import {
   answeredEarlier,
+  clientOver,
   heldIn,
   objectOf,
+  opened,
   pollOf,
   raw,
   settledStubs,
   until,
 } from "../support/socket.js";
-import { boards } from "../support/watch.js";
+import { boards, following, notes } from "../support/watch.js";
 import { throughWorker } from "../support/worker.js";
 
 const parkedIn = (board: string, count: number) =>
@@ -155,74 +157,86 @@ describe("ActionClusterEntity's polls", () => {
   );
 
   it.live(
-    "answers a change a check source's upstream holds when the page sends its poll again, not when the object settles, and never the parked poll the page interrupted",
+    "answers each change to a check source that is not notified within its nextPoll, though no handler moved the change signal",
     () =>
       Effect.gen(function* () {
-        const board = "upstream";
+        const board = "unnotified";
+        const http = yield* boards;
+        const socket = yield* opened("Board", board);
+
+        yield* http.pin({ board, n: 1 });
+
+        const pins = yield* following(
+          (yield* clientOver(BoardRpc, socket)).watch(
+            Polled,
+            { board },
+            { cursor: "0" }
+          )
+        );
+
+        const first = yield* notes(pins, 1);
+
+        const unnotified = (n: number) =>
+          Effect.andThen(
+            Effect.promise(async () => {
+              await runInDurableObject(objectOf("Board", board), (_, state) => {
+                state.storage.sql.exec(
+                  "INSERT INTO board_notes (n) VALUES (?)",
+                  n
+                );
+              });
+            }),
+            notes(pins, 1).pipe(Effect.timeout("5 seconds"))
+          );
+
+        const eight = yield* unnotified(8);
+        const nine = yield* unnotified(9);
+
+        expect([first, eight, nine]).toStrictEqual([
+          [{ n: 1 }],
+          [{ n: 8 }],
+          [{ n: 9 }],
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(throughWorker)),
+    { timeout: 60_000 }
+  );
+
+  it.live(
+    "never answers a parked poll the page interrupted, and answers the poll sent after it once the change signal moves",
+    () =>
+      Effect.gen(function* () {
+        const board = "interrupted";
         const http = yield* boards;
         const { socket, received } = yield* raw("Board", board);
         const poll = pollOf(socket, Pinned.name, board);
         const watch = crypto.randomUUID();
 
-        poll("0", crypto.randomUUID(), null);
+        poll("1", watch, null);
 
         yield* until(
           () => received,
           (messages) => messages.length >= 1
         );
 
-        poll("1", watch, null);
+        poll("2", watch, "0");
+        yield* parkedAs(board, "2");
+
+        socket.send(JSON.stringify({ _tag: "Interrupt", requestId: "2" }));
+        poll("3", watch, "0");
+        yield* parkedAs(board, "3");
+        yield* http.pin({ board, n: 9 });
 
         yield* until(
           () => received,
           (messages) => messages.length >= 2
         );
 
-        poll("2", watch, "0");
-
-        yield* parkedIn(board, 1);
-
-        yield* Effect.promise(async () => {
-          await runInDurableObject(objectOf("Board", board), (_, state) => {
-            state.storage.sql.exec("INSERT INTO board_notes (n) VALUES (8)");
-          });
-        });
-
-        yield* http.later({ board, n: 0, at: Date.now() + 3_600_000 });
-        yield* settledStubs;
-        yield* Effect.sleep("2 seconds");
-
-        const settled = received.length;
-
-        socket.send(JSON.stringify({ _tag: "Interrupt", requestId: "2" }));
-        poll("3", watch, "0");
-
-        yield* until(
-          () => received,
-          (messages) => messages.length >= 3
-        );
-
-        poll("4", watch, "1");
-        yield* parkedAs(board, "4");
-        yield* http.pin({ board, n: 9 });
-
-        yield* until(
-          () => received,
-          (messages) => messages.length >= 4
-        );
-
         yield* settledStubs;
         yield* Effect.sleep("1 second");
 
-        expect(
-          received.filter((message) => message.includes('"requestId":"2"'))
-        ).toStrictEqual([]);
-        expect(settled).toBe(2);
-        expect(received[2]).toContain('"requestId":"3"');
-        expect(received[2]).toContain('"data":{"n":8}');
-        expect(received[3]).toContain('"requestId":"4"');
-        expect(received[3]).toContain('"data":{"n":9}');
-        expect(received).toHaveLength(4);
+        expect(received[1]).toContain('"requestId":"3"');
+        expect(received[1]).toContain('"data":{"n":9}');
+        expect(received).toHaveLength(2);
       }).pipe(Effect.scoped, Effect.provide(throughWorker)),
     { timeout: 60_000 }
   );

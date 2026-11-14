@@ -304,27 +304,25 @@ export const makeSockets = (options: {
         ? Option.getOrUndefined(decodePage(exit.value))
         : undefined;
 
-      const unchanged =
+      const holding =
         before !== undefined &&
-        poll !== undefined &&
         page !== undefined &&
-        page.events.length === 0 &&
-        !page.hasMore &&
-        page.cursor === poll.cursor;
+        page.notified &&
+        !page.hasMore;
 
-      if (unchanged && park(socket, { ...entry, gate: before })) {
+      if (
+        holding &&
+        poll !== undefined &&
+        page.events.length === 0 &&
+        page.cursor === poll.cursor &&
+        park(socket, { ...entry, gate: before })
+      ) {
         return true;
       }
 
       yield* reply(socket, served, entry, exit);
 
-      if (
-        before !== undefined &&
-        poll?.watch !== undefined &&
-        page !== undefined &&
-        page.cursor !== null &&
-        !page.hasMore
-      ) {
+      if (holding && poll?.watch !== undefined && page.cursor !== null) {
         const { watch } = poll;
         const { cursor } = page;
 

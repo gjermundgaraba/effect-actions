@@ -58,6 +58,14 @@ export const Leased = Event.make("board.leased", {
   caller: Action.Anyone,
 });
 
+export const Polled = Event.make("board.polled", {
+  description:
+    "A note pinned to the board, read from its table by a source that is not notified.",
+  input: onBoard,
+  payload: Note,
+  caller: Action.Anyone,
+});
+
 export const Pin = Action.make("pin", {
   description:
     "Pin a note to the board: a row of its table and an entry of its log.",
@@ -76,7 +84,16 @@ export const Later = Action.make("later", {
   caller: Action.Anyone,
 });
 
-const contracts = [Pin, Later, Pinned, Logged, Heard, Hooked, Leased] as const;
+const contracts = [
+  Pin,
+  Later,
+  Pinned,
+  Logged,
+  Heard,
+  Hooked,
+  Leased,
+  Polled,
+] as const;
 
 export const BoardRpc = ActionRpc.make(contracts);
 
@@ -124,6 +141,8 @@ const pinned = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* sql`INSERT INTO board_notes (n) VALUES (${n})`;
       yield* events.notify(Pinned);
+      yield* events.notify(Hooked);
+      yield* events.notify(Leased);
       yield* events.publish(Logged, { data: { n } });
     }).pipe(Effect.orDie);
 });
@@ -150,7 +169,7 @@ const pinning = Action.implement(
 
 const Count = Schema.Array(Schema.Struct({ count: Schema.Int }));
 
-const fromTable = Effect.map(SqlClient.SqlClient, (sql) => ({
+const polledTable = Effect.map(SqlClient.SqlClient, (sql) => ({
   check: (_input: unknown, cursor: string | null) =>
     Effect.gen(function* () {
       const [{ count } = { count: 0 }] =
@@ -173,7 +192,14 @@ const fromTable = Effect.map(SqlClient.SqlClient, (sql) => ({
     }).pipe(Effect.orDie),
 }));
 
+const fromTable = Effect.map(polledTable, (source) => ({
+  ...source,
+  notified: true,
+}));
+
 const pinnedFromTable = Event.implement(Pinned, fromTable);
+
+const polledFromTable = Event.implement(Polled, polledTable);
 
 export const hooks: string[] = [];
 
@@ -217,6 +243,7 @@ export const boardImplementations = [
   pinnedFromTable,
   hookedFromTable,
   leasedFromTable,
+  polledFromTable,
   fromLog,
   fromWire,
 ];

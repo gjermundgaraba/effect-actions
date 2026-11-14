@@ -12,24 +12,39 @@ export interface Page {
   readonly nextPoll: Duration.Duration;
 }
 
-const pageWith = <O extends Schema.Top>(occurrence: O) =>
-  Schema.Struct({
-    events: Schema.Array(occurrence),
-    cursor: Schema.NullOr(Schema.String),
-    truncated: Schema.Boolean,
-    hasMore: Schema.Boolean,
-    nextPoll: Schema.DurationFromMillis,
-  }).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
+const pageFields = <O extends Schema.Top>(occurrence: O) => ({
+  events: Schema.Array(occurrence),
+  cursor: Schema.NullOr(Schema.String),
+  truncated: Schema.Boolean,
+  hasMore: Schema.Boolean,
+  nextPoll: Schema.DurationFromMillis,
+});
+
+const nextPollKey = { nextPoll: "nextPollMs" } as const;
 
 export const pageOf = <E extends Event.Any>(event: E) =>
-  pageWith(OccurrenceOf(event));
+  Schema.Struct(pageFields(OccurrenceOf(event))).pipe(
+    Schema.encodeKeys(nextPollKey)
+  );
+
+const rpcPageWith = <O extends Schema.Top>(occurrence: O) =>
+  Schema.Struct({ ...pageFields(occurrence), notified: Schema.Boolean }).pipe(
+    Schema.encodeKeys(nextPollKey)
+  );
+
+export const rpcPageOf = <E extends Event.Any>(event: E) =>
+  rpcPageWith(OccurrenceOf(event));
 
 /**
- * The answer of an event type's poll, as an HTTP poll and an rpc's `<event>/poll` answer it,
- * `{ events, cursor, truncated, hasMore, nextPollMs }`, its occurrences left undecoded: `hasMore`
- * when more are ready at once, and `nextPollMs` how long its client waits before it polls again.
+ * The answer of an rpc's `<event>/poll`, `{ events, cursor, truncated, hasMore, nextPollMs,
+ * notified }`, its occurrences left undecoded: an HTTP poll's page and `notified`. `hasMore` is
+ * set when more are ready at once, `nextPollMs` is how long its client waits before it polls
+ * again, and `notified` is `true` when the server learns of each change to the event's source as
+ * it is made, an append to its log or a `notify`, so a host may hold a poll that found nothing
+ * until one, and `false` when only reading the source again finds a change, as for a check source
+ * not `notified` or an event `ActionEntity.reaching` reaches.
  */
-export const AnyPage = pageWith(Schema.Unknown);
+export const AnyPage = rpcPageWith(Schema.Unknown);
 
 /** What a feed's stream yields: what a subscriber receives, and where it has read up to. */
 export type Fed = Event.Received<Event.Any> | Checked;
