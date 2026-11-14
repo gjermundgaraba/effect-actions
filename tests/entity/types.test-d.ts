@@ -51,7 +51,9 @@ const Changed = Event.make("changed", {
   caller: Action.Anyone,
 });
 
-const SignedIn = Authentication.make("entity-types.SignedIn", Actor);
+const SignedIn = Authentication.make("entity-types.SignedIn", Actor, {
+  principal: (actor) => actor,
+});
 
 const signIn = Authentication.layer(SignedIn, (token) =>
   Effect.succeed(Redacted.value(token))

@@ -653,10 +653,12 @@ describe("ActionEntity on a TestRunner", () => {
 describe("ActionEntity.make's authentication", () => {
   it("refuses a binding reading its API key from the query, naming the key and the fix", () => {
     const InQuery = Authentication.make("entity.InQuery", CurrentActor, {
+      principal: (actor) => actor.id,
       security: HttpApiSecurity.apiKey({ in: "query", key: "api_key" }),
     });
 
     const InHeader = Authentication.make("entity.InHeader", CurrentActor, {
+      principal: (actor) => actor.id,
       security: HttpApiSecurity.apiKey({ in: "header", key: "x-api-key" }),
     });
 

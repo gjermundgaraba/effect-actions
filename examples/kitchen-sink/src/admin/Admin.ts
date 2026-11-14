@@ -24,6 +24,7 @@ export const OperatorKey = Authentication.make(
   "tracker.OperatorKey",
   Operator,
   {
+    principal: (operator) => operator.id,
     security: HttpApiSecurity.apiKey({ in: "header", key: "x-operator-key" }),
   }
 );

@@ -31,7 +31,9 @@ export const app = Action.implement(
   { authorize: Action.allowAll }
 );
 
-export const Login = Authentication.make("tenant.Login", Actor);
+export const Login = Authentication.make("tenant.Login", Actor, {
+  principal: (actor) => actor,
+});
 
 export const Http = ActionHttp.make([Who, Public], { authentication: Login });
 

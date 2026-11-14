@@ -360,6 +360,7 @@ describe("ActionRpc native rpcs", () => {
         >()("Unavailable", {}) {}
 
         const Down = Authentication.make("native-test.Down", CurrentActor, {
+          principal: (actor) => actor.id,
           error: Unavailable,
         });
 

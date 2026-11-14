@@ -166,7 +166,9 @@ if (!Read.readOnly || Write.readOnly) {
   throw new Error("Published readOnly metadata failed");
 }
 
-const Login = Authentication.make("consumer.Login", Identity);
+const Login = Authentication.make("consumer.Login", Identity, {
+  principal: (identity) => identity,
+});
 
 const authenticate = Authentication.layer(Login, (token: Redacted.Redacted) =>
   Effect.succeed(Redacted.value(token))

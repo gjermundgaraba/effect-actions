@@ -16,7 +16,9 @@ type FourHundred = Numbering<400, 6>;
 
 type TwoHundred = Numbering<200, 6>;
 
-const Login = Authentication.make("large.Login", Caller);
+const Login = Authentication.make("large.Login", Caller, {
+  principal: (caller) => caller,
+});
 
 const authorize: Action.Authorize<FourHundred[number]> = (action) =>
   action.readOnly ? Effect.void : Effect.fail(new Action.Forbidden());

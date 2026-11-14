@@ -96,7 +96,9 @@ class Caller extends Context.Service<Caller, string>()(
   "surfaces-agree/Caller"
 ) {}
 
-const SignedIn = Authentication.make("surfaces-agree.SignedIn", Caller);
+const SignedIn = Authentication.make("surfaces-agree.SignedIn", Caller, {
+  principal: (caller) => caller,
+});
 
 const signIn = Authentication.layer(SignedIn, (token) =>
   Effect.succeed(Redacted.value(token))

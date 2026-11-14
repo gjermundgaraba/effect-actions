@@ -24,7 +24,9 @@ class Unavailable extends Schema.TaggedError<
   { readonly brand: unique symbol }
 >()("Unavailable", {}) {}
 
-const Login = Authentication.make("cli-watch-types.Login", Caller);
+const Login = Authentication.make("cli-watch-types.Login", Caller, {
+  principal: (caller) => caller,
+});
 
 const Ticked = Event.make("clock.ticked", {
   description: "",

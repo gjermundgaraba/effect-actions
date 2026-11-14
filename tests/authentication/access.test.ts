@@ -35,7 +35,13 @@ class Scopes extends Context.Service<Scopes, readonly string[]>()(
 
 class Caller extends Context.Service<Caller, string>()("access-test/Caller") {}
 
-const TokenScopesLogin = Authentication.make("access-test.ScopesLogin", Scopes);
+const TokenScopesLogin = Authentication.make(
+  "access-test.ScopesLogin",
+  Scopes,
+  {
+    principal: (scopes) => scopes.join(","),
+  }
+);
 
 const grantTokenListedScopes = Authentication.layer(
   TokenScopesLogin,
@@ -45,7 +51,9 @@ const grantTokenListedScopes = Authentication.layer(
     )
 );
 
-const AnyTokenLogin = Authentication.make("access-test.AnyCaller", Caller);
+const AnyTokenLogin = Authentication.make("access-test.AnyCaller", Caller, {
+  principal: (caller) => caller,
+});
 
 const anyone = Authentication.layer(AnyTokenLogin, () =>
   Effect.succeed("anyone")

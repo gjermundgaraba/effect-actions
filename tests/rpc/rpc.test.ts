@@ -631,6 +631,7 @@ it.effect(
     }) {}
 
     const Checked = Authentication.make("rpc-test.Checked", Caller, {
+      principal: (caller) => caller.id,
       error: Unavailable,
     });
 
@@ -730,7 +731,9 @@ describe("ActionRpc selection", () => {
     "dies when the provider is another descriptor's of the binding's name",
     () =>
       Effect.gen(function* () {
-        const Impostor = Authentication.make("example.Login", CurrentActor);
+        const Impostor = Authentication.make("example.Login", CurrentActor, {
+          principal: (actor) => actor.id,
+        });
 
         const server = servedAtRpcOverHttp(
           ActionRpc.layer(Rpc, userActions)

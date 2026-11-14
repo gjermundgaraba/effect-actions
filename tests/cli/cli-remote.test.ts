@@ -450,6 +450,7 @@ it.effect(
       ) {}
 
       const Login = Authentication.make("cli-remote.Login", Caller, {
+        principal: (caller) => caller.id,
         error: Unavailable,
       });
 
@@ -524,6 +525,7 @@ it.effect(
       }) {}
 
       const Login = Authentication.make("cli-remote.RpcLogin", Caller, {
+        principal: (caller) => caller.id,
         error: Unavailable,
       });
 

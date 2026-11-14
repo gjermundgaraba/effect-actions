@@ -1233,7 +1233,9 @@ describe("a binding's errors", () => {
       caller: CurrentActor,
     });
 
-    const Elsewhere = Authentication.make("bindings.Elsewhere", Stranger);
+    const Elsewhere = Authentication.make("bindings.Elsewhere", Stranger, {
+      principal: (stranger) => stranger.id,
+    });
 
     const changes = Event.implement(
       Changed,
@@ -1285,6 +1287,7 @@ describe("a binding's errors", () => {
     });
 
     const Verifying = Authentication.make("bindings.Verifying", CurrentActor, {
+      principal: (actor) => actor.id,
       error: Schema.TaggedStruct("Down", { retry: Schema.Finite }),
     });
 
@@ -1961,6 +1964,7 @@ describe("security from the contracts", () => {
 
   it("states a descriptor's other native scheme, as Effect documents it", () => {
     const Session = Authentication.make("bindings.Session", CurrentActor, {
+      principal: (actor) => actor.id,
       security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
     });
 
@@ -1979,10 +1983,12 @@ describe("security from the contracts", () => {
 
   it("keeps two descriptors' schemes apart in one document, each under its name", () => {
     const Session = Authentication.make("bindings.Session", CurrentActor, {
+      principal: (actor) => actor.id,
       security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
     });
 
     const Key = Authentication.make("bindings.Key", CurrentActor, {
+      principal: (actor) => actor.id,
       security: HttpApiSecurity.apiKey({ in: "header", key: "x-api-key" }),
     });
 

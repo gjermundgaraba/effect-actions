@@ -32,6 +32,7 @@ export const Login = Authentication.make("tracker.Login", CurrentMember, {
 });
 
 export const Session = Authentication.make("tracker.Session", CurrentMember, {
+  principal: (member) => member.id,
   security: HttpApiSecurity.apiKey({ in: "cookie", key: "tracker_session" }),
 });
 

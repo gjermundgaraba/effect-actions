@@ -78,7 +78,9 @@ describe("InputCheck", () => {
           "tests/input-check/Reader"
         ) {}
 
-        const Login = Authentication.make("input-check.Login", Reader);
+        const Login = Authentication.make("input-check.Login", Reader, {
+          principal: (reader) => reader,
+        });
 
         const Shelf = Action.make("shelf", {
           description: "Read a shelf as its reader.",
@@ -218,7 +220,9 @@ describe("InputCheck", () => {
           "tests/input-check/WatchReader"
         ) {}
 
-        const Login = Authentication.make("input-check.WatchLogin", Reader);
+        const Login = Authentication.make("input-check.WatchLogin", Reader, {
+          principal: (reader) => reader,
+        });
 
         const Shelved = Event.make("shelf.shelved", {
           description: "A shelf, whole, as its reader sees it.",

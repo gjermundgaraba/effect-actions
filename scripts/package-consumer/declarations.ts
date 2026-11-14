@@ -13,7 +13,9 @@ export class Principal extends Context.Service<Principal, string>()(
   "declarations/Principal"
 ) {}
 
-export const Login = Authentication.make("declarations.Login", Principal);
+export const Login = Authentication.make("declarations.Login", Principal, {
+  principal: (principal) => principal,
+});
 
 export const Whoami = Action.make("whoami", {
   description: "The signed-in principal",
@@ -35,6 +37,7 @@ export class Unavailable extends Schema.TaggedError<
 >()("Unavailable", {}, { httpApiStatus: 503 }) {}
 
 export const Checked = Authentication.make("declarations.Checked", Principal, {
+  principal: (principal) => principal,
   error: Unavailable,
 });
 

@@ -68,7 +68,9 @@ class Private extends Schema.TaggedError<
   message: Schema.String,
 }) {}
 
-const Login = Authentication.make("test.Login", Identity);
+const Login = Authentication.make("test.Login", Identity, {
+  principal: (identity) => identity.id,
+});
 
 class Unavailable extends Schema.TaggedError<
   Unavailable,
@@ -85,6 +87,7 @@ class Expired extends Schema.TaggedError<
 >()("Expired", {}, { httpApiStatus: 401 }) {}
 
 const Checked = Authentication.make("test.Checked", Identity, {
+  principal: (identity) => identity.id,
   error: [Unavailable, Expired],
 });
 
@@ -101,6 +104,7 @@ const MismatchedCookie = Authentication.make(
   "test.MismatchedCookie",
   Identity,
   {
+    principal: (identity) => identity.id,
     security: HttpApiSecurity.apiKey({ in: "cookie", key: "__Secure-session" }),
   }
 );
@@ -133,21 +137,30 @@ const authenticate = Authentication.layer(Login, verify);
 describe("Authentication.make", () => {
   it("refuses a name that is no OpenAPI component key, which the name becomes", () => {
     for (const name of ["app/Login", "app:Login", "Log in", ""]) {
-      expect(() => Authentication.make(name, Identity)).toThrow(
+      expect(() =>
+        Authentication.make(name, Identity, {
+          principal: (identity) => identity.id,
+        })
+      ).toThrow(
         `Invalid authentication name: ${JSON.stringify(name)}, not an OpenAPI key: use only letters, digits, "_", "." and "-"`
       );
     }
 
-    expect(Authentication.make("app.Login-2_x", Identity).name).toBe(
-      "app.Login-2_x"
-    );
+    expect(
+      Authentication.make("app.Login-2_x", Identity, {
+        principal: (identity) => identity.id,
+      }).name
+    ).toBe("app.Login-2_x");
   });
 
   it("refuses a security that is no native scheme, such as the record of schemes it once took", () => {
     for (const security of [{}, { bearer: HttpApiSecurity.bearer }, "Bearer"]) {
       expect(() =>
-        // @ts-expect-error -- Plain JavaScript can pass anything.
-        Authentication.make("test.Refused", Identity, { security })
+        Authentication.make("test.Refused", Identity, {
+          principal: (identity) => identity.id,
+          // @ts-expect-error -- Plain JavaScript can pass anything.
+          security,
+        })
       ).toThrow(
         "Authentication takes one native HttpApiSecurity scheme as `security`: omit it for Bearer, or give one scheme, such as `HttpApiSecurity.basic`, never a record of them"
       );
@@ -160,7 +173,9 @@ describe("a protected action's descriptor", () => {
     "test/Other"
   ) {}
 
-  const OtherLogin = Authentication.make("test.OtherLogin", Other);
+  const OtherLogin = Authentication.make("test.OtherLogin", Other, {
+    principal: (other) => other.id,
+  });
 
   const refused =
     "Protected action 'identify' requires its matching authentication descriptor (give it the authentication whose identity the action's caller names)";
@@ -889,6 +904,7 @@ describe("Authentication.protect", () => {
 
   it("authenticates under another scheme, as its actions are", async () => {
     const Session = Authentication.make("test.ProtectSession", Identity, {
+      principal: (identity) => identity.id,
       security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
     });
 
@@ -1072,19 +1088,25 @@ describe("an error a descriptor declares", () => {
     >()("Forbidden", {}) {}
 
     expect(() =>
-      Authentication.make("test.Builtin", Identity, { error: Forbidden })
+      Authentication.make("test.Builtin", Identity, {
+        principal: (identity) => identity.id,
+        error: Forbidden,
+      })
     ).toThrow(
       'Authentication "test.Builtin": error _tag "Forbidden" names two error schemas'
     );
     expect(
-      Authentication.make("test.Builtin", Identity, { error: Action.Forbidden })
-        .error
+      Authentication.make("test.Builtin", Identity, {
+        principal: (identity) => identity.id,
+        error: Action.Forbidden,
+      }).error
     ).toStrictEqual([Action.Forbidden]);
   });
 
   it("is refused where two of its error schemas share a _tag", () => {
     expect(() =>
       Authentication.make("test.Shared", Identity, {
+        principal: (identity) => identity.id,
         error: [
           Schema.TaggedStruct("Down", {}),
           Schema.TaggedStruct("Down", { retry: Schema.Finite }),
@@ -1113,11 +1135,13 @@ const withSession = (sending: Request, session: string) => {
 
 const declaredWithCookieNamedAtStartup = (cookie: string) =>
   Authentication.make("test.DeploymentSession", Identity, {
+    principal: (identity) => identity.id,
     security: HttpApiSecurity.apiKey({ in: "cookie", key: cookie }),
   });
 
 describe("a scheme other than Bearer", () => {
   const Session = Authentication.make("test.Session", Identity, {
+    principal: (identity) => identity.id,
     security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
   });
 
@@ -1295,14 +1319,17 @@ describe("a scheme other than Bearer", () => {
             authentication: Authentication.make(
               "test.MismatchedSession",
               Identity,
-              binding
+              { ...binding, principal: (identity) => identity.id }
             ),
           }),
           identify
         ).pipe(
           Layer.provide(
             Authentication.layer(
-              Authentication.make("test.MismatchedSession", Identity, provider),
+              Authentication.make("test.MismatchedSession", Identity, {
+                ...provider,
+                principal: (identity) => identity.id,
+              }),
               () => Effect.succeed({ id: "alice" })
             )
           )
@@ -1342,6 +1369,7 @@ describe("a scheme other than Bearer", () => {
           Layer.provide(
             Authentication.layer(
               Authentication.make("test.MismatchedCookie", Identity, {
+                principal: (identity) => identity.id,
                 security: HttpApiSecurity.apiKey({
                   in: "cookie",
                   key: "session",
@@ -1376,6 +1404,7 @@ describe("a scheme other than Bearer", () => {
 
 describe("Basic", () => {
   const Basic = Authentication.make("test.Basic", Identity, {
+    principal: (identity) => identity.id,
     security: HttpApiSecurity.basic,
   });
 
@@ -1550,6 +1579,7 @@ describe("a public action beside protected ones", () => {
 
   it("verifies a public MCP call's cookie only when it presents one", async () => {
     const Cookie = Authentication.make("test.Cookie", Identity, {
+      principal: (identity) => identity.id,
       security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
     });
 
@@ -1580,6 +1610,7 @@ describe("a public action beside protected ones", () => {
 
   it("verifies a public MCP call's Basic credentials only when it presents some", async () => {
     const Basic = Authentication.make("test.Basic", Identity, {
+      principal: (identity) => identity.id,
       security: HttpApiSecurity.basic,
     });
 

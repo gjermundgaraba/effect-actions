@@ -52,7 +52,9 @@ const Counted = Event.make("counter.counted", {
   caller: Action.Anyone,
 });
 
-const Login = Authentication.make("rpc-events.Login", CurrentActor);
+const Login = Authentication.make("rpc-events.Login", CurrentActor, {
+  principal: (actor) => actor.id,
+});
 
 const changes = Event.implement(
   Changed,

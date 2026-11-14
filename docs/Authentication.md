@@ -26,7 +26,9 @@ export class CurrentUser extends Context.Service<CurrentUser, User>()(
   "notes-service/CurrentUser"
 ) {}
 
-export const Login = Authentication.make("notes-service.Login", CurrentUser);
+export const Login = Authentication.make("notes-service.Login", CurrentUser, {
+  principal: (user) => user.id,
+});
 
 export const WhoAmI = Action.make("whoAmI", {
   description: "Show who the credential identifies and which scopes it holds.",

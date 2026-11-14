@@ -40,10 +40,12 @@ const app = Action.implement(
 const key = "k-7f3a9c";
 
 const QueryKey = Authentication.make("test.QueryKey", Identity, {
+  principal: (identity) => identity.id,
   security: HttpApiSecurity.apiKey({ in: "query", key: "api_key" }),
 });
 
 const HeaderKey = Authentication.make("test.HeaderKey", Identity, {
+  principal: (identity) => identity.id,
   security: HttpApiSecurity.apiKey({ in: "header", key: "x-tenant-key" }),
 });
 

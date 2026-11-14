@@ -50,7 +50,9 @@ export {
 
 class Caller extends Context.Service<Caller, string>()("tests/Caller") {}
 
-const Login = Authentication.make("tests.Login", Caller);
+const Login = Authentication.make("tests.Login", Caller, {
+  principal: (caller) => caller,
+});
 
 const Whoami = Action.make("whoami", {
   description: "Answer the authorization header the entity received.",

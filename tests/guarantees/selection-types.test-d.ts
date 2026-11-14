@@ -186,7 +186,9 @@ class Login extends Context.Service<Login, { readonly id: string }>()(
   "selection/Login"
 ) {}
 
-const Auth = Authentication.make("selection.Auth", Login);
+const Auth = Authentication.make("selection.Auth", Login, {
+  principal: (login) => login.id,
+});
 
 export const explicitTypes = () => {
   // @ts-expect-error -- The options listing actions are not given.

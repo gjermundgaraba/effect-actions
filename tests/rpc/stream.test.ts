@@ -49,7 +49,9 @@ const Build = Action.make("build", {
   caller: CurrentActor,
 });
 
-const Login = Authentication.make("rpc-stream.Login", CurrentActor);
+const Login = Authentication.make("rpc-stream.Login", CurrentActor, {
+  principal: (actor) => actor.id,
+});
 
 const lines = (count: number) =>
   Stream.map(Stream.range(1, count), (n) => ({ n }));
