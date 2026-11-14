@@ -25,7 +25,7 @@ import { challengeIn, Login, secretOf } from "../support/webhook.js";
 const Ticker = ActionEntity.make(
   "Ticker",
   ActionRpc.make([Ticked], { authentication: Login }),
-  { key: { ticked: ({ room }) => room } }
+  { key: ({ room }) => room }
 );
 
 const TickerHttp = ActionHttp.make([Ticked], { authentication: Login });
@@ -354,7 +354,7 @@ const Unkept = Authentication.make("wakes.Unkept", CurrentActor, {
 const UnkeptTicker = ActionEntity.make(
   "UnkeptTicker",
   ActionRpc.make([Ticked], { authentication: Unkept }),
-  { key: { ticked: ({ room }) => room } }
+  { key: ({ room }) => room }
 );
 
 describe("Webhook.layer with persist in an entity's services", () => {

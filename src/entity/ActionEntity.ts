@@ -75,16 +75,11 @@ type Contract<B extends ActionRpc.Any> =
 
 /**
  * The key of the binding `B`'s actions and event types, the id of the entity that serves a call
- * or a subscription, read from its input: one function of every input, `({ room }) => room`, or
- * one by the name of each action and event type.
+ * or a subscription, read from its input: one function of every input, `({ room }) => room`.
  */
-export type Keys<B extends ActionRpc.Any> =
-  | ((input: Contract<B>["input"]["Type"]) => string)
-  | {
-      readonly [C in Contract<B> as C["name"]]: (
-        input: C["input"]["Type"]
-      ) => string;
-    };
+export type Key<B extends ActionRpc.Any> = (
+  input: Contract<B>["input"]["Type"]
+) => string;
 
 type ErasedRpc =
   ReturnType<typeof erasedOf> extends RpcGroup.RpcGroup<infer R> ? R : never;
@@ -101,7 +96,7 @@ export interface Entity<
   N extends Rpc.Any = never,
 > extends Cluster.Entity<Type, ErasedRpc | N> {
   readonly binding: B;
-  readonly key: Keys<B>;
+  readonly key: Key<B>;
 }
 
 /**
@@ -118,20 +113,10 @@ export interface Any {
   >;
 }
 
-type ErasedKey = (input: Action.Any["input"]["Type"]) => string;
-
-type ErasedKeys = ErasedKey | { readonly [name: string]: ErasedKey };
-
-const keyOf = (keys: ErasedKeys, name: string): ErasedKey | undefined =>
-  Predicate.isFunction(keys) ? keys : keys[name];
-
 const namedBy =
-  (keys: ErasedKeys) =>
-  (
-    contract: Action.Any | Event.Any,
-    input: Action.Any["input"]["Type"]
-  ): string | undefined => {
-    const named: unknown = keyOf(keys, contract.name)?.(input);
+  (key: (input: Action.Any["input"]["Type"]) => string) =>
+  (input: Action.Any["input"]["Type"]): string | undefined => {
+    const named: unknown = key(input);
 
     return Predicate.isString(named) ? named : undefined;
   };
@@ -148,15 +133,13 @@ type WithoutNatives<B extends ActionRpc.Any> = [
 export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
   /**
    * The entity id an input names: one function every action and event input of the binding
-   * reads, `({ room }) => room`, or, where their inputs differ, one by the name of each,
-   * `{ postMessage: ({ room }) => room }`.
+   * reads, `({ room }) => room`.
    *
    * **Gotchas**
    *
-   * - One function takes the union of the binding's inputs, so it reads only a field every one declares: a field one input lacks is a type error.
-   * - By name, every action and event type needs a key: one left out is a type error, and throws as the entity is made.
+   * - It takes the union of the binding's inputs, so it reads only a field every one declares: a field one input lacks is a type error.
    */
-  readonly key: Keys<B>;
+  readonly key: Key<B>;
   /**
    * The entity's own native rpcs, beside its actions and event types, with their own schemas:
    * `RpcGroup.make(Expire)`, such as a persisted tell the entity sends itself with `DeliverAt`.
@@ -205,18 +188,6 @@ export const make = <
   if (natives.length > 0) {
     throw new Error(
       `ActionEntity.make: the binding of ${type} holds native rpcs, ${natives.join(", ")} (give them to ActionEntity.make's rpcs, unauthenticated)`
-    );
-  }
-
-  const keys: ErasedKeys = options.key;
-
-  const unkeyed = [...binding.actions, ...binding.events].filter(
-    ({ name }) => !Predicate.isFunction(keyOf(keys, name))
-  );
-
-  if (unkeyed.length > 0) {
-    throw new Error(
-      `ActionEntity.make: key holds none for ${unkeyed.map(({ name }) => name).join(", ")} (give key one function of every input, or one for each action and event type of the binding, by name)`
     );
   }
 
@@ -491,7 +462,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
       contract: Action.Any | Event.Any,
       input: Action.Any["input"]["Type"]
     ) => {
-      const entityId = named(contract, input);
+      const entityId = named(input);
 
       return entityId === address.entityId
         ? Effect.void
@@ -657,7 +628,7 @@ const reachOf =
     const named = namedBy(entity.key);
 
     return (contract, input) => {
-      const entityId = named(contract, input);
+      const entityId = named(input);
 
       return entityId === undefined
         ? Effect.fail(

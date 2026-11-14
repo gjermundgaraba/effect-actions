@@ -238,7 +238,7 @@ const SeerRpc = ActionRpc.make([Whoami, Seen], { authentication: Login });
 const SeerHttp = ActionHttp.make([Whoami, Seen], { authentication: Login });
 
 const Seer = ActionEntity.make("Seer", SeerRpc, {
-  key: { whoami: ({ room }) => room, seen: ({ room }) => room },
+  key: ({ room }) => room,
 });
 
 const seeing = [
@@ -401,7 +401,7 @@ const Hooked = Event.make("hooked", {
 const Hooks = ActionEntity.make(
   "Hooks",
   ActionRpc.make([Hooked], { authentication: Login }),
-  { key: { hooked: ({ room }) => room } }
+  { key: ({ room }) => room }
 );
 
 describe("ActionEntity.reaching's polls", () => {
@@ -485,7 +485,7 @@ describe("ActionEntity.reaching's key", () => {
       const Prober = ActionEntity.make(
         "Prober",
         ActionRpc.make([Probe, Probed]),
-        { key: { probe: () => owner.id, probed: () => owner.id } }
+        { key: () => owner.id }
       );
 
       const sourced = Event.implement(Probed, {
@@ -545,7 +545,7 @@ const Lines = Action.make("lines", {
 });
 
 const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
-  key: { lines: ({ room }) => room },
+  key: ({ room }) => room,
 });
 
 describe("ActionEntity.reaching's stream answer", () => {

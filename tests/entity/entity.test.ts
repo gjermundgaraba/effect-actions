@@ -138,7 +138,7 @@ const Count = Action.make("count", {
 });
 
 const Counter = ActionEntity.make("Counter", ActionRpc.make([Count]), {
-  key: { count: ({ room }) => room },
+  key: ({ room }) => room,
 });
 
 const Lines = Action.make("lines", {
@@ -150,7 +150,7 @@ const Lines = Action.make("lines", {
 });
 
 const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
-  key: { lines: ({ room }) => room },
+  key: ({ room }) => room,
 });
 
 describe("ActionEntity's stream answer", () => {
@@ -239,7 +239,7 @@ describe("ActionEntity's key", () => {
       const unset: Owner = owner;
 
       const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
-        key: { probe: () => owner.id },
+        key: () => owner.id,
       });
 
       const probing = Action.implement(Probe, () =>

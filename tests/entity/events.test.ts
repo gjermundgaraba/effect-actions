@@ -48,7 +48,7 @@ const signIn = Authentication.layer(Principal, verify);
 const Ticker = ActionEntity.make(
   "Ticker",
   ActionRpc.make([Ticked], { authentication: Principal }),
-  { key: { ticked: ({ room }) => room } }
+  { key: ({ room }) => room }
 );
 
 const TickerHttp = ActionHttp.make([Ticked], { authentication: Principal });

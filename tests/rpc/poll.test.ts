@@ -14,7 +14,7 @@ import { makeMessages, Posted, settle, texts } from "../support/events.js";
 import { overHttp, rpcRoutes, unaryOf } from "../support/rpc.js";
 
 const Board = ActionEntity.make("Board", ActionRpc.make([Posted]), {
-  key: { "message.posted": () => "board" },
+  key: () => "board",
 });
 
 const rpcs = ActionEntity.bindingRpcs(Board);

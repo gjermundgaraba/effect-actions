@@ -144,15 +144,7 @@ export const Seer = ActionEntity.make(
   "Seer",
   ActionRpc.make(contracts, { authentication: Login }),
   {
-    key: {
-      linger: byRoom,
-      whoami: byRoom,
-      seen: byRoom,
-      readHeaders: byRoom,
-      streamHeaders: byRoom,
-      relay: byRoom,
-      crash: byRoom,
-    },
+    key: byRoom,
     rpcs: SeerTasks,
   }
 );
@@ -285,7 +277,7 @@ export const Kept = Event.make("kept", {
 export const Keeper = ActionEntity.make(
   "Keeper",
   ActionRpc.make([Kept], { authentication: Unkept }),
-  { key: { kept: byRoom } }
+  { key: byRoom }
 );
 
 const keeping = ActionEntity.layer(

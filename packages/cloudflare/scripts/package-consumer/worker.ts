@@ -28,7 +28,7 @@ export const Ping = Action.make("ping", {
 });
 
 export const Room = ActionEntity.make("Room", ActionRpc.make([Ping]), {
-  key: { ping: ({ room }) => room },
+  key: ({ room }) => room,
 });
 
 const options = (env: Env) => ({

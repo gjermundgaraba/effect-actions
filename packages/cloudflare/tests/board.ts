@@ -99,17 +99,7 @@ export const BoardTells = RpcGroup.make(
   Rpc.make("delayed", { payload: Delayed })
 ).annotateRpcs(ClusterSchema.Persisted, true);
 
-const byBoard = ({ board }: { readonly board: string }) => board;
-
-const key = {
-  pin: byBoard,
-  later: byBoard,
-  "board.pinned": byBoard,
-  "board.logged": byBoard,
-  "board.heard": byBoard,
-  "board.hooked": byBoard,
-  "board.leased": byBoard,
-};
+const key = ({ board }: { readonly board: string }) => board;
 
 export const Board = ActionEntity.make("Board", BoardRpc, {
   key,

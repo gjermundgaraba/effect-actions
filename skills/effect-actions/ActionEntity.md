@@ -6,7 +6,7 @@ The example is [shopping-carts](node_modules/@gjermundgaraba/effect-actions/exam
 
 ## Define an entity
 
-Bind the actions and event types with `ActionRpc.make`, as for any RPC server ([ActionRpc.md](ActionRpc.md#bind-actions-to-rpcs)), then give `ActionEntity.make` the entity type's name, the binding, and a `key`, which reads the entity id from the input: one function of every input, such as `({ cart }) => cart`, so every contract of an entity names its entity in its input. Where the inputs name it differently, give a key by the name of each action and event type instead; a field one input lacks, or a contract without a key, is a type error.
+Bind the actions and event types with `ActionRpc.make`, as for any RPC server ([ActionRpc.md](ActionRpc.md#bind-actions-to-rpcs)), then give `ActionEntity.make` the entity type's name, the binding, and a `key`, which reads the entity id from the input: one function of every input, such as `({ cart }) => cart`, so every contract of an entity names its entity in its input. A field one input lacks is a type error.
 
 ```ts example=shopping-carts/src/entities.ts
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";

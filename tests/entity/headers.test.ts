@@ -38,10 +38,7 @@ const Reader = ActionEntity.make(
   "Reader",
   ActionRpc.make([ReadHeaders, StreamHeaders], { authentication: Login }),
   {
-    key: {
-      readHeaders: ({ room }) => room,
-      streamHeaders: ({ room }) => room,
-    },
+    key: ({ room }) => room,
   }
 );
 

@@ -60,7 +60,7 @@ const Counter = ActionEntity.make(
   "Counter",
   ActionRpc.make([Peek], { authentication: Login }),
   {
-    key: { peek: ({ counter }) => counter },
+    key: ({ counter }) => counter,
     rpcs: Natives,
   }
 );
@@ -271,10 +271,7 @@ describe("ActionEntity's native rpcs and services", () => {
           "Clash",
           ActionRpc.make([Peek, Peeked], { authentication: Login }),
           {
-            key: {
-              peek: ({ counter }) => counter,
-              peeked: ({ counter }) => counter,
-            },
+            key: ({ counter }) => counter,
             rpcs: RpcGroup.make(Rpc.make(tag)),
           }
         )
@@ -289,10 +286,7 @@ describe("ActionEntity's native rpcs and services", () => {
       "Peeking",
       ActionRpc.make([Peek, Peeked], { authentication: Login }),
       {
-        key: {
-          peek: ({ counter }) => counter,
-          peeked: ({ counter }) => counter,
-        },
+        key: ({ counter }) => counter,
       }
     );
 

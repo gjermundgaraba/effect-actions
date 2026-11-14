@@ -30,7 +30,7 @@ const Peek = Action.make("peek", {
 
 const binding = ActionRpc.make([Peek]);
 
-const key = { peek: ({ counter }: { readonly counter: string }) => counter };
+const key = ({ counter }: { readonly counter: string }) => counter;
 
 const Counter = ActionEntity.make("Counter", binding, { key, rpcs: Natives });
 
