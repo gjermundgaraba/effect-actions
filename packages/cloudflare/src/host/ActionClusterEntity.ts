@@ -339,7 +339,7 @@ class Host<Env> extends DurableObject<Env> {
  * entity's object, `getByName(CloudflareCluster.encodeName(type, id)).fetch(request)`; each call
  * on the socket is forwarded into that entity through `Entity.client`, with the upgrade's
  * headers `ActionEntity.forwardedHeaders` keeps under its own, its own winning, and answered as
- * the entity answers it. A page calls with `ActionRpc.client(binding, { delivery: "poll" })`,
+ * the entity answers it. A page calls with `ActionRpc.client(binding)`, watching with `mode: "poll"`,
  * over `RpcClient.layerProtocolSocket` and `RpcSerialization.layerJson`. Guide: `docs/ActionClusterEntity.md` in this package.
  *
  * **Gotchas**

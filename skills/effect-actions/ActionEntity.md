@@ -76,7 +76,7 @@ The surface authenticates a protected call with its own binding's descriptor and
 
 An event is followed through the entity's poll rpc, so no watcher holds an entity open; a stream polls it from the surface. What crosses the two hops, and what does not, is on `ActionEntity.reaching`.
 
-A server outside the cluster that forwards a socket's calls into the entity, as the Cloudflare package's socket host does, forwards the rpcs of `ActionEntity.bindingRpcs(entity)` alone, never the entity's native rpcs, which authenticate nothing; its clients call them with `ActionRpc.client(binding, { delivery: "poll" })`.
+A server outside the cluster that forwards a socket's calls into the entity, as the Cloudflare package's socket host does, forwards the rpcs of `ActionEntity.bindingRpcs(entity)` alone, never the entity's native rpcs, which authenticate nothing; its clients call them with `ActionRpc.client(binding)`, whose watch polls them.
 
 ## Watch an event
 

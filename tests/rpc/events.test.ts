@@ -220,7 +220,7 @@ describe("RPC events", () => {
   );
 
   it.effect(
-    "fails a poll with Unsupported, and an input that does not encode with InvalidInput, sending nothing",
+    "fails an input that does not encode with InvalidInput, sending nothing",
     () =>
       Effect.gen(function* () {
         const log = makeMessages();
@@ -234,13 +234,9 @@ describe("RPC events", () => {
 
         log.post("general", "sent");
 
-        const [polled, invalid, refusedRequests, watched] = yield* Effect.gen(
+        const [invalid, refusedRequests, watched] = yield* Effect.gen(
           function* () {
             const rpc = yield* ActionRpc.client(ActionRpc.make([Posted]));
-
-            const poll = yield* Effect.flip(
-              Stream.runDrain(rpc.watch(Posted, {}, { mode: "poll" }))
-            );
 
             const input = yield* Effect.flip(
               // @ts-expect-error -- A channel is a string.
@@ -250,7 +246,6 @@ describe("RPC events", () => {
             const before = requests;
 
             return [
-              poll,
               input,
               before,
               yield* rpc
@@ -269,14 +264,6 @@ describe("RPC events", () => {
           )
         );
 
-        expect(polled).toMatchObject({
-          _tag: "SubscriptionError",
-          reason: {
-            _tag: "Unsupported",
-            feature: "deliveryMode",
-            value: "poll",
-          },
-        });
         expect(invalid).toMatchObject({ _tag: "InvalidInput" });
         expect(refusedRequests).toBe(0);
         expect([watched, requests]).toMatchObject([[{ eventId: "m1" }], 1]);
@@ -284,14 +271,14 @@ describe("RPC events", () => {
   );
 
   it.effect(
-    "serves the event types its actions list alone, a watch of another failing with NotServed",
+    "serves the event types its actions list alone, a watch of another failing with NotServed, with no mode or with mode stream",
     () =>
       Effect.gen(function* () {
         const log = makeMessages();
 
         log.post("general", "before");
 
-        const [posted, counted] = yield* Effect.gen(function* () {
+        const [posted, counted, streamed] = yield* Effect.gen(function* () {
           const client = yield* ActionRpc.client(Rpc);
 
           return [
@@ -299,6 +286,9 @@ describe("RPC events", () => {
               .watch(Posted, {}, { cursor: "0" })
               .pipe(Stream.take(1), Stream.runCollect),
             yield* Effect.flip(Stream.runDrain(client.watch(Counted))),
+            yield* Effect.flip(
+              Stream.runDrain(client.watch(Counted, {}, { mode: "stream" }))
+            ),
           ] as const;
         }).pipe(
           Effect.scoped,
@@ -315,6 +305,11 @@ describe("RPC events", () => {
           { _tag: "Occurrence", eventId: "m1", cursor: "1" },
         ]);
         expect(counted).toMatchObject({
+          _tag: "SubscriptionError",
+          event: "counter.counted",
+          reason: { _tag: "NotServed" },
+        });
+        expect(streamed).toMatchObject({
           _tag: "SubscriptionError",
           event: "counter.counted",
           reason: { _tag: "NotServed" },

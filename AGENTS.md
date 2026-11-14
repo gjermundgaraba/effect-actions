@@ -112,7 +112,7 @@ Recheck these on an upgrade of the dependency named.
 - Effect, RPC:
   - `reconnectUntil` copies `defaultRetryPolicy` from effect 4.1.4 `src/rpc/RpcClient.ts`, which Effect does not export.
   - Only the HTTP protocol lacks chunk acknowledgement (`supportsAck: false`), so only it gets a watch's silence rule.
-  - The HTTP protocol reads any status's body as frames, and the server answers an unserved tag with `Unknown request tag: <tag>`; `tests/rpc/rpc.test.ts` pins that message, `tests/rpc/events.test.ts` what the client does with both.
+  - The HTTP protocol reads any status's body as frames, and the server answers an unserved tag with `Unknown request tag: <tag>`; `tests/rpc/rpc.test.ts` pins that message, `tests/rpc/events.test.ts` what the client does with both, and `ActionRpc.client`'s watch with no `mode` polls where its stream rpc is answered with it, as `tests/rpc/poll.test.ts` fails if it does not.
 - Effect, MCP (4.1.4):
   - `registerToolkit` sends every success as `structuredContent` plus one JSON text block, with no option, so `ActionMcp` registers tools through `addTool`; since 4.1.3 a success without a value is sent with no content and no `structuredContent`, though it lists a `null` output schema, where `ActionMcp` sends `null`.
   - `addTool` reads the `McpServer.middleware` stacks, `visibility` included, from its `services`, and lays the rest under each request's context, less the request's own keys, so `ActionMcp` passes its build context there.

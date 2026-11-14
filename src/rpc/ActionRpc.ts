@@ -194,7 +194,7 @@ export interface Binding<
    *
    * **Gotchas**
    *
-   * - It holds no event's `<event>/poll` or `<event>/release`, which `layer` serves beside its stream rpc: a native client of it watches by stream alone; poll through `client` with `delivery: "poll"`.
+   * - It holds no event's `<event>/poll` or `<event>/release`, which `layer` serves beside its stream rpc: a native client of it watches by stream alone; poll through `client`, whose watch takes `mode: "poll"`.
    * - `layer` hands the protocol an action's and an event type's values as their JSON, the native `rpcs`' as they are: under a codec other than a JSON serialization's, such as schema-binary's or a protocol passing values, `RpcClient.make(Rpc.group)` decodes an action's answer or an event's occurrence by its own schema and fails; call actions and watch events through `client`, which hands them over as JSON too.
    */
   readonly group: RpcGroup.RpcGroup<
@@ -508,7 +508,7 @@ export interface LayerOptions<
  * - An `ErrorReporter` is given only what ends a call with `Internal server error`, never a declared failure, a refusal or `InvalidInput`, unlike `ActionHttp.layer`'s `Info`: an alert counting declared failures counts none from rpcs.
  * - Over a protocol with no router, such as `RpcServer.layerProtocolSocketServer` or `layerProtocolStdio`, there is no route: a provider publishing a `protectedResource` leaves `HttpRouter` owed; the request a handler or a verifier reads is, on every protocol, one holding the message's headers, at `/`, with no query or body.
  * - An event's stream rpc takes `{ input, cursor }`, a `cursor` omitted or `null` reading from now, and streams `Checked`, `Occurrence`, `Gap` and `Failed`, a `Checked` every 30 seconds; over `RpcServer.layerProtocolHttp` serialize with `RpcSerialization.layerNdjson`: under `layerJson` a response is sent once its streams end, so a watch never answers.
- * - Beside it, an event's `<event>/poll` answers a `Page` and its `<event>/release` frees a watch's subscription hook, as an `ActionEntity`'s do, so a `client` under either `delivery` watches the layer.
+ * - Beside it, an event's `<event>/poll` answers a `Page` and its `<event>/release` frees a watch's subscription hook, as an `ActionEntity`'s do, so a `client`'s watch in either `mode` watches the layer.
  * - A subscription refused when it starts or later ends its stream rpc with the refusal as the typed failure; a source's failure no refusal explains is logged and reported once, sent as a bare `Failed`, and read again from where it reached after 5 seconds.
  * - A stream is read only as fast as its client reads it: a slow reader of a log source falls behind its log, and receives a `Gap`.
  * - An action declaring `progress` streams it to every call, a client's call without `onProgress` too, its values handed on one at a time, so a slow reader drops the oldest; under `RpcSerialization.layerJson` over HTTP they arrive with the answer, at the end.
@@ -625,7 +625,7 @@ type Method<A extends Action.Any, E extends BindingError> = Call<
 /**
  * What a watch of `W` over the binding `B` may fail with: a refusal, when it starts or later,
  * `InvalidInput`, the binding's errors, an `Event.SubscriptionError` (`Unsupported` for a
- * `mode` other than the client's `delivery`, `NotServed` for an event the server does not serve), or
+ * webhook `mode`, `NotServed` for an event the server does not serve), or
  * Effect's own `RpcClientError` that no reconnect outlasts. An element that does not decode is a defect, as for a call.
  */
 export type WatchError<W extends Event.Any, B extends Any> =
@@ -659,29 +659,17 @@ export type Client<B extends Any> = {
 
 /**
  * `client`'s options: the native `RpcClient.make` options, `spanPrefix`, `spanAttributes`,
- * `generateRequestId` and `disableTracing`, and `delivery`. `flatten` changes the client's
- * shape, which the method types cannot follow.
+ * `generateRequestId` and `disableTracing`. `flatten` changes the client's shape, which the
+ * method types cannot follow.
  */
-export interface ClientOptions extends Omit<
+export type ClientOptions = Omit<
   NonNullable<Parameters<typeof RpcClient.make>[1]>,
   "flatten"
-> {
-  /**
-   * How `watch` follows an event: `"stream"`, the default, holds its stream rpc open; `"poll"`
-   * calls its `<event>/poll` for each page and its `<event>/release` as the watch ends.
-   * `ActionRpc.layer` serves both, an `ActionEntity` and the Cloudflare package's socket host the
-   * polls alone, the rpcs `ActionEntity.bindingRpcs(entity)` holds.
-   *
-   * **Gotchas**
-   *
-   * - Under `"poll"`, a poll unanswered for `pollResentAfter` is sent again from the same cursor, the first interrupted, so a server that holds a poll until something changes, as the Cloudflare package's socket host does, reads it again at least that often.
-   */
-  readonly delivery?: "stream" | "poll" | undefined;
-}
+>;
 
 /**
- * How long a watch under `delivery: "poll"` waits for a poll's answer, 4 minutes, before it
- * sends the poll again from the same cursor and interrupts the first.
+ * How long a polling watch waits for a poll's answer, 4 minutes, before it sends the poll again
+ * from the same cursor and interrupts the first.
  */
 export const pollResentAfter = Duration.minutes(4);
 
@@ -698,7 +686,9 @@ export const pollResentAfter = Duration.minutes(4);
  * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
  * - A browser WebSocket cannot set an `Authorization` header on its upgrade, so under Bearer a protected call without its own token fails with `Unauthenticated`, `A bearer token is required.`: send the token on each call with `RpcClient.withHeaders`.
  * - The socket belongs to the Layer providing the protocol, not to the `Scope` around the client: provided around one call, it opens a socket for that call alone.
- * - Under the default `delivery`, `watch(event, input, options)` holds the event's stream rpc open, as `Action.client`'s does; `mode: "poll"` fails with `Event.SubscriptionError`, reason `Unsupported`: poll with `delivery: "poll"`; under either, a watch of an event the server does not serve fails with `Event.SubscriptionError`, reason `NotServed`, as over HTTP.
+ * - `watch(event, input, options)` with no `mode` holds the event's stream rpc open, as `Action.client`'s does, and polls instead, for that watch, where the server answers the stream rpc `Unknown request tag`, as an `ActionEntity` and the Cloudflare package's socket host do: one round trip more per watch, which `mode: "poll"` skips.
+ * - `mode: "poll"` calls the event's `<event>/poll` for each page and its `<event>/release` as the watch ends, a poll unanswered for `pollResentAfter` sent again from the same cursor, the first interrupted, so a server that holds a poll until something changes, as the Cloudflare package's socket host does, reads it again at least that often.
+ * - A watch of an event the server does not serve fails with `Event.SubscriptionError`, reason `NotServed`, as over HTTP, whatever its `mode`; a webhook `mode` fails with reason `Unsupported`.
  * - A watch reconnects after the protocol's socket or HTTP transport fails, a response ends before its stream does, as a server's restart ends it, a status a server sends while it recovers, or, over Effect's HTTP protocol, 60 seconds without an element, a socket's own pings telling a dead one, a second later and doubling to 30 seconds, each reconnect logged as a warning; a declared error, a refusal included, or a socket's close with an application's code, 4000 to 4999, ends it.
  * - A native rpc of the binding's `rpcs` is the native client's method: a stream rpc's is a `Stream`, its headers given as its options' `headers`, since `RpcClient.withHeaders` wraps an Effect.
  */
@@ -714,12 +704,12 @@ export function client<const B extends Any>(
 >;
 export function client(
   binding: Any,
-  { delivery = "stream", ...options }: ClientOptions = {}
+  options: ClientOptions = {}
 ): Effect.Effect<object, never, RpcClient.Protocol | Scope.Scope> {
   return Effect.map(
     Effect.all([
       RpcClient.make(
-        erasedOf(binding.actions, binding.events, [delivery]).merge(
+        erasedOf(binding.actions, binding.events, deliveries).merge(
           nativeOf(binding.rpcs)
         ),
         { ...options, flatten: true }
@@ -732,9 +722,10 @@ export function client(
     ([call, silenceEnds]) => ({
       ...methodsOf(
         binding,
-        delivery === "stream"
-          ? streamedTransport(silenceEnds)
-          : polledTransport(isRpcTransient, pollResentAfter)
+        streamedTransport(
+          silenceEnds,
+          polledTransport(isRpcTransient, pollResentAfter)
+        )
       )(erasedCallOf(call)),
       ...Object.fromEntries(
         [...nativeOf(binding.rpcs).requests.keys()].map(

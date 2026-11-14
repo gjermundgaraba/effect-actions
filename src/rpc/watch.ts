@@ -64,29 +64,25 @@ export const isUnknownTag = (tag: string) => {
     );
 };
 
-export const transportOf = (
+export const streamingOf = (
   event: Event.Any,
   stream: StreamMethod,
-  silenceEnds: boolean
-): Transport<unknown, never> => {
-  const notServed = Stream.fail(
-    Event.SubscriptionError.of(event.name, new Event.NotServed())
+  silenceEnds: boolean,
+  streamOnly: boolean
+): Transport<unknown, never>["stream"] => {
+  const unserved = Stream.fail(
+    streamOnly
+      ? Event.SubscriptionError.of(event.name, new Event.NotServed())
+      : deliveryUnsupported(event.name, "push")
   );
 
   const unknownTag = isUnknownTag(event.name);
 
-  return {
-    name: event.name,
-    poll: () => Effect.fail(deliveryUnsupported(event.name, "poll")),
-    stream: (cursor) =>
-      stream(cursor).pipe(
-        Stream.catchCauseIf(unknownTag, () => notServed),
-        silenceEnds
-          ? receivedFrom("RPC", event.name)
-          : readOn("RPC", event.name)
-      ),
-    transient: isRpcTransient,
-  };
+  return (cursor) =>
+    stream(cursor).pipe(
+      Stream.catchCauseIf(unknownTag, () => unserved),
+      silenceEnds ? receivedFrom("RPC", event.name) : readOn("RPC", event.name)
+    );
 };
 
 export const polledTransportOf = (

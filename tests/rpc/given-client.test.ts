@@ -2,7 +2,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema, Stream } from "effect";
 
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-import { methodsOf, streamedTransport } from "../../src/rpc/erased.js";
+import {
+  methodsOf,
+  polledTransport,
+  streamedTransport,
+} from "../../src/rpc/erased.js";
 import type { ErasedCall } from "../../src/rpc/erased.js";
 import { Login } from "../support/app/binding.js";
 import { GetUser, Status, WhoAmI } from "../support/app/contracts.js";
@@ -16,7 +20,13 @@ function clientThrough<const B extends ActionRpc.Any>(
   call: ErasedCall
 ): ActionRpc.Client<B>;
 function clientThrough(binding: ActionRpc.Any, call: ErasedCall): object {
-  return methodsOf(binding, streamedTransport(false))(call);
+  return methodsOf(
+    binding,
+    streamedTransport(
+      false,
+      polledTransport(() => false)
+    )
+  )(call);
 }
 
 class Unreachable extends Schema.TaggedError<

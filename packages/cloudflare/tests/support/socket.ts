@@ -182,10 +182,7 @@ export const reconnecting = (type: string, id: string) =>
 export const clientOver = <B extends ActionRpc.Any>(
   binding: B,
   socket: { readonly protocol: Context.Context<RpcClient.Protocol> }
-) =>
-  ActionRpc.client(binding, { delivery: "poll" }).pipe(
-    Effect.provideContext(socket.protocol)
-  );
+) => ActionRpc.client(binding).pipe(Effect.provideContext(socket.protocol));
 
 export const evict = (type: string, id: string) =>
   Effect.promise(async () => {

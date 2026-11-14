@@ -250,8 +250,8 @@ export const make = <
 /**
  * The rpcs of `entity`'s binding, as its `protocol` holds them without its native rpcs: one per
  * action, and per event type its poll and its `<event>/release`. What a surface outside the
- * cluster may forward to the entity, as the Cloudflare package's socket host does, and what
- * `ActionRpc.client` with `delivery: "poll"` calls.
+ * cluster may forward to the entity, as the Cloudflare package's socket host does, which
+ * `ActionRpc.client`'s watch polls, finding no stream rpc.
  */
 export const bindingRpcs = (entity: Any): RpcGroup.RpcGroup<ErasedRpc> =>
   erasedOf(entity.binding.actions, entity.binding.events, ["poll"]);

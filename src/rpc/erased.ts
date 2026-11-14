@@ -61,7 +61,7 @@ import {
   webhookAnswers,
 } from "../contract/webhooks.js";
 import type { WebhookHolder } from "../contract/webhooks.js";
-import { isUnknownTag, polledTransportOf, transportOf } from "./watch.js";
+import { isUnknownTag, polledTransportOf, streamingOf } from "./watch.js";
 
 const streams = (action: Action.Any) =>
   !Answering.$is("Value")(answeringOf(action));
@@ -172,14 +172,13 @@ export type Delivery = "stream" | "poll";
 /**
  * The tag of the unary rpc polling the event type `name`, `<name>/poll`, taking `Poll` beside
  * its `input` and answering a `Page`, which `ActionRpc.layer` and an `ActionEntity` serve and
- * `ActionRpc.client` with `delivery: "poll"` calls.
+ * `ActionRpc.client`'s polling watch calls.
  */
 export const pollTag = (name: string) => `${name}/poll`;
 
 /**
  * The tag of the unary rpc releasing a watch of the event type `name`, `<name>/release`, taking
- * `Release` beside its `input`, which `ActionRpc.client` with `delivery: "poll"` calls as its
- * watch ends.
+ * `Release` beside its `input`, which `ActionRpc.client`'s polling watch calls as it ends.
  */
 export const releaseTag = (name: string) => `${name}/release`;
 
@@ -373,10 +372,12 @@ export const actionMethodOf = (
 type EventTransport = (
   event: Event.Any,
   binding: Declaring
-) => (call: ErasedCall) => (input: Schema.Json) => Transport<unknown, never>;
+) => (
+  call: ErasedCall
+) => (input: Schema.Json, streamOnly: boolean) => Transport<unknown, never>;
 
 export const streamedTransport =
-  (silenceEnds: boolean): EventTransport =>
+  (silenceEnds: boolean, polled: EventTransport): EventTransport =>
   (event, binding) => {
     const decode = Schema.decodeUnknownEffect(
       Schema.toCodecJson(PushedOf(event))
@@ -384,18 +385,27 @@ export const streamedTransport =
 
     const failed = failedOf(Schema.Union(eventErrors(event, binding)));
 
-    return (call) => (input) =>
-      transportOf(
-        event,
-        (cursor) =>
-          call.stream(event.name, { input, cursor }).pipe(
-            Stream.catchIf(isDeclared, (failure) =>
-              Stream.fromEffect(failed(failure))
+    const polledThrough = polled(event, binding);
+
+    return (call) => {
+      const polling = polledThrough(call);
+
+      return (input, streamOnly) => ({
+        ...polling(input, streamOnly),
+        stream: streamingOf(
+          event,
+          (cursor) =>
+            call.stream(event.name, { input, cursor }).pipe(
+              Stream.catchIf(isDeclared, (failure) =>
+                Stream.fromEffect(failed(failure))
+              ),
+              Stream.mapEffect((json) => Effect.orDie(decode(json)))
             ),
-            Stream.mapEffect((json) => Effect.orDie(decode(json)))
-          ),
-        silenceEnds
-      );
+          silenceEnds,
+          streamOnly
+        ),
+      });
+    };
   };
 
 export const pollOf = (event: Event.Any, binding: Declaring) => {
@@ -557,7 +567,7 @@ export const methodsOf = (
 
       return Stream.unwrap(
         Effect.map(watchInput(event, input), ({ json }) =>
-          watching(feed(json), watchOptions)
+          watching(feed(json, watchOptions?.mode === "stream"), watchOptions)
         )
       );
     };

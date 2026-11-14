@@ -1,15 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Schema, Stream } from "effect";
 import { TestRunner } from "effect/cluster";
+import { HttpClient } from "effect/http";
 import type { Headers } from "effect/http";
-import { RpcServer } from "effect/rpc";
+import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import { TestClock } from "effect/testing";
 
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
+import * as Testing from "../../src/testing/Testing.js";
 import { makeMessages, Posted, settle, texts } from "../support/events.js";
-import { overHttp } from "../support/rpc.js";
+import { overHttp, rpcRoutes } from "../support/rpc.js";
 
 const Board = ActionEntity.make("Board", ActionRpc.make([Posted]), {
   key: { "message.posted": () => "board" },
@@ -70,9 +72,9 @@ const servingWith = <R>(
 
 const signedOut = ActionRpc.make([Posted]);
 
-describe("ActionRpc.client with delivery poll", () => {
+describe("ActionRpc.client's watch through polls", () => {
   it.live(
-    "follows an event through the polls an entity serves, and releases its watch as it ends",
+    "falls back, with no mode, to the polls of a server serving no stream rpc, as an entity, and releases its watch as it ends",
     () =>
       Effect.gen(function* () {
         const log = makeMessages();
@@ -91,9 +93,7 @@ describe("ActionRpc.client with delivery poll", () => {
         );
 
         const received = yield* Effect.gen(function* () {
-          const client = yield* ActionRpc.client(signedOut, {
-            delivery: "poll",
-          });
+          const client = yield* ActionRpc.client(signedOut);
 
           const watching = yield* client
             .watch(Posted, {}, { cursor: "0" })
@@ -119,6 +119,7 @@ describe("ActionRpc.client with delivery poll", () => {
         );
 
         expect(texts(received)).toStrictEqual(["one", "two"]);
+        expect(forwarded[0]).toMatchObject({ tag: postedPoll, cursor: "0" });
         expect(forwarded.at(-1)).toStrictEqual({
           tag: `${Posted.name}/release`,
         });
@@ -127,7 +128,7 @@ describe("ActionRpc.client with delivery poll", () => {
   );
 
   it.effect(
-    "follows an event through the polls ActionRpc.layer serves beside its stream",
+    "follows an event through the polls ActionRpc.layer serves beside its stream, with mode poll",
     () =>
       Effect.gen(function* () {
         const log = makeMessages();
@@ -136,12 +137,10 @@ describe("ActionRpc.client with delivery poll", () => {
         log.post("general", "two");
 
         const received = yield* Effect.gen(function* () {
-          const client = yield* ActionRpc.client(signedOut, {
-            delivery: "poll",
-          });
+          const client = yield* ActionRpc.client(signedOut);
 
           return yield* client
-            .watch(Posted, {}, { cursor: "0" })
+            .watch(Posted, {}, { cursor: "0", mode: "poll" })
             .pipe(Stream.take(2), Stream.runCollect);
         }).pipe(
           Effect.scoped,
@@ -181,12 +180,10 @@ describe("ActionRpc.client with delivery poll", () => {
         );
 
         const polls = yield* Effect.gen(function* () {
-          const client = yield* ActionRpc.client(signedOut, {
-            delivery: "poll",
-          });
+          const client = yield* ActionRpc.client(signedOut);
 
           yield* client
-            .watch(Posted, {}, { cursor: "0" })
+            .watch(Posted, {}, { cursor: "0", mode: "poll" })
             .pipe(Stream.runDrain, Effect.forkScoped);
 
           yield* settle;
@@ -210,6 +207,65 @@ describe("ActionRpc.client with delivery poll", () => {
           { tag: postedPoll, cursor: "0", watch: first?.watch },
           { tag: postedPoll, cursor: "0", watch: first?.watch },
         ]);
+      })
+  );
+
+  it.effect(
+    "streams, with no mode, from ActionRpc.layer, which serves the stream rpc, sending no poll",
+    () =>
+      Effect.gen(function* () {
+        const log = makeMessages();
+        const sent: string[] = [];
+
+        log.post("general", "one");
+        log.post("general", "two");
+
+        const recording = Layer.effect(HttpClient.HttpClient)(
+          Effect.map(
+            HttpClient.HttpClient,
+            HttpClient.tapRequest(({ body }) =>
+              Effect.sync(() => {
+                if (body._tag === "Uint8Array") {
+                  sent.push(new TextDecoder().decode(body.body));
+                }
+              })
+            )
+          )
+        );
+
+        const received = yield* Effect.gen(function* () {
+          const client = yield* ActionRpc.client(signedOut);
+
+          return yield* client
+            .watch(Posted, {}, { cursor: "0" })
+            .pipe(Stream.take(2), Stream.runCollect);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
+              Layer.provide(RpcSerialization.layerNdjson),
+              Layer.provide(
+                recording.pipe(
+                  Layer.provide(
+                    Testing.layer(
+                      rpcRoutes(
+                        ActionRpc.layer(signedOut, [log.implementation]).pipe(
+                          Layer.provide(Event.layerMemory)
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        );
+
+        expect(texts(received)).toStrictEqual(["one", "two"]);
+        expect(
+          sent.some((body) => body.includes(`"tag":"${Posted.name}"`))
+        ).toBe(true);
+        expect(sent.some((body) => body.includes(postedPoll))).toBe(false);
       })
   );
 });

@@ -59,10 +59,10 @@ export const openRoom = (baseUrl: string, room: DemoRoomName, token: string) =>
 
 export const followRoom = (room: DemoRoomName, token: string) =>
   Effect.map(
-    ActionRpc.client(RoomRpc, { delivery: "poll" }),
+    ActionRpc.client(RoomRpc),
     (client) => (after: number) =>
       client
-        .watch(MessagePosted, { room }, { cursor: String(after) })
+        .watch(MessagePosted, { room }, { cursor: String(after), mode: "poll" })
         .pipe(
           Stream.updateService(
             RpcClient.CurrentHeaders,
