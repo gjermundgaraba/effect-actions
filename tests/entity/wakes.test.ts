@@ -239,7 +239,7 @@ const occurrencesOf = ({ attempts }: Seen) =>
 
 describe("A webhook retry wait in an entity on a SQL runner", () => {
   it.live(
-    "goes on after the reaper stopped the entity in a wait under 10 seconds, its wake building the entity again to deliver, though nothing calls the entity meanwhile",
+    "delivers after a retry wait of a few seconds the reaper cut, its wake building the stopped entity again though nothing calls it meanwhile",
     () => {
       const { seen, tick, server } = makeWorld({
         accepts: ({ stops }) => stops.length > 0,
@@ -271,11 +271,10 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
   );
 
   it.live(
-    "goes on after the reaper stopped the entity in a wait of 10 seconds or more, keeping no credential in its wakes",
+    "delivers after growing retry waits the reaper cut again and again, each wake building the entity anew, and keeps no credential in its stored wakes",
     () => {
       const { seen, tick, server } = makeWorld({
-        accepts: ({ attempts }) =>
-          attempts.length > 0 && Date.now() - (attempts[0]?.at ?? 0) >= 20_000,
+        accepts: ({ stops }) => stops.length >= 2,
         maxIdleTime: "1 second",
       });
 
@@ -286,15 +285,22 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
         yield* until(
           Effect.sync(() => deliveredIn(seen)),
           Boolean,
-          60_000
+          45_000
         );
 
         const wait = yield* lastWait(seen);
         const wakes = yield* storedWakes;
+        const attempts = seen.attempts.map(({ at }) => at);
+
+        const apart = attempts
+          .slice(1)
+          .map((at, index) => at - (attempts[index] ?? at));
 
         expect(answered.status).toBe(200);
-        expect(wait.ms).toBeGreaterThanOrEqual(10_000);
+        expect(seen.stops.length).toBeGreaterThanOrEqual(2);
+        expect(seen.builds).toBeGreaterThanOrEqual(3);
         expect(wait.stoppedWithin).toBe(true);
+        expect(apart.at(-1)).toBeGreaterThan(2 * (apart[0] ?? Infinity));
         expect(wakes).not.toStrictEqual([]);
         expect(
           wakes.filter(({ headers, payload }) =>
@@ -306,7 +312,7 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
         ]);
       }).pipe(Effect.scoped, Effect.provide(server));
     },
-    { timeout: 120_000 }
+    { timeout: 60_000 }
   );
 
   it.live(
