@@ -1,5 +1,5 @@
-import { Effect, Schema } from "effect";
-import { Entity } from "effect/cluster";
+import { Effect, Layer, Schema } from "effect";
+import { Entity, TestRunner } from "effect/cluster";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
@@ -175,3 +175,9 @@ export const makeRooms = () => {
     implementations: [echoing, actions, tallying, posted] as const,
   };
 };
+
+export const onTestRunner = (rooms: ReturnType<typeof makeRooms>) =>
+  ActionEntity.layer(Room, rooms.implementations).pipe(
+    Layer.provideMerge(TestRunner.layer),
+    Layer.provide([signIn, Event.layerMemory])
+  );

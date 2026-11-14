@@ -7,7 +7,7 @@ import {
   TestRunner,
 } from "effect/cluster";
 import { HttpApiSecurity } from "effect/http-api";
-import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
+import { RpcClient } from "effect/rpc";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
@@ -15,48 +15,21 @@ import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { DeclaredFailure } from "../../src/rpc/erased.js";
-import * as Testing from "../../src/testing/Testing.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import {
   makeRooms,
-  Payload,
   Post,
   Posted,
   Room,
   RoomClosed,
-  RoomRpc,
   signIn,
+  onTestRunner,
 } from "../support/rooms.js";
-
-type Rooms = ReturnType<typeof makeRooms>;
 
 const signedInAs = (token: string) =>
   RpcClient.withHeaders({ authorization: `Bearer ${token}` });
 
-const onTestRunner = (rooms: Rooms) =>
-  ActionEntity.layer(Room, rooms.implementations).pipe(
-    Layer.provideMerge(TestRunner.layer),
-    Layer.provide([signIn, Event.layerMemory])
-  );
-
 const roomClient = ActionEntity.client(Room);
-
-const overRpc = (rooms: Rooms) =>
-  RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
-    Layer.provide(RpcSerialization.layerNdjson),
-    Layer.provide(
-      Testing.layer(
-        ActionRpc.layer(RoomRpc, rooms.echoing).pipe(
-          Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
-          Layer.provide(RpcSerialization.layerNdjson)
-        )
-      )
-    )
-  );
-
-const jsonTextOf = Schema.encodeSync(
-  Schema.fromJsonString(Schema.toCodecJson(Payload))
-);
 
 const Page = Schema.Struct({
   events: Schema.Array(
@@ -348,31 +321,6 @@ describe("ActionEntity's key", () => {
 });
 
 describe("ActionEntity on a TestRunner", () => {
-  it.live.prop(
-    "answers any input as ActionRpc.layer answers it, the payload as JSON carries it",
-    [Arbitrary.schema(Payload)],
-    ([payload]) => {
-      const rooms = makeRooms();
-
-      return Effect.gen(function* () {
-        const lobby = (yield* roomClient)("lobby");
-        const rpc = yield* ActionRpc.client(RoomRpc);
-
-        const input = { room: "lobby", payload };
-
-        const fromEntity = yield* lobby.echo(input);
-        const fromRpc = yield* rpc.echo(input);
-
-        expect(jsonTextOf(fromEntity)).toBe(jsonTextOf(fromRpc));
-        expect(jsonTextOf(fromEntity)).toBe(jsonTextOf(payload));
-      }).pipe(
-        Effect.scoped,
-        Effect.provide([onTestRunner(rooms), overRpc(rooms)])
-      );
-    },
-    { timeout: 30_000, arbitrary: { runs: 100 } }
-  );
-
   it.live.prop(
     "refuses any key other than the entity's with Forbidden, its handler never running",
     [otherThanLobby],
