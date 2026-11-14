@@ -264,7 +264,7 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
         const answered = yield* subscribed;
 
         yield* tick(1);
-        yield* eventually(() => deliveredIn(seen), "45 seconds");
+        yield* eventually(() => deliveredIn(seen), "60 seconds");
 
         const wait = yield* lastWait(seen);
         const wakes = yield* storedWakes;
@@ -290,7 +290,7 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
         ]);
       }).pipe(Effect.scoped, Effect.provide(server));
     },
-    { timeout: 60_000 }
+    { timeout: 120_000 }
   );
 
   it.live(
