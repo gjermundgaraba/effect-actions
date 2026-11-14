@@ -25,7 +25,7 @@ export const unsupportedProtocol = 4000;
 
 ## Follow a room from a page
 
-A page connects with `RpcClient.layerProtocolSocket`, whose `retryPolicy`, `ActionRpc.reconnectUntil(unsupportedProtocol)`, connects again after a drop but stops at the refusal, and calls through `ActionRpc.client(RoomRpc, { delivery: "poll" })`: a watch is then a sequence of polls, each a unary call the host forwards and answers, never a stream held open by the object. A page cannot set a browser `WebSocket`'s headers, only the browser's own cookies and `Origin` go with the upgrade, so the page puts its token on each message, through `RpcClient.CurrentHeaders`; the host lays a message's headers over the upgrade's, the message's winning. The page's actions stay on the JSON routes, `openRoom`:
+A page connects with `RpcClient.layerProtocolSocket`, whose `retryPolicy`, `ActionRpc.reconnectUntil(unsupportedProtocol)`, connects again after a drop but stops at the refusal, and calls through `ActionRpc.client(RoomRpc, { delivery: "poll" })`: a watch is then a sequence of polls, each a unary call the host forwards and answers, never a stream held open by the object. A page cannot set a browser `WebSocket`'s headers, only the browser's own cookies and `Origin` go with the upgrade, so the page puts its token on each message, through `RpcClient.CurrentHeaders`; the host lays a message's headers over the upgrade's, those `ActionEntity.forwardedHeaders` keeps, the message's winning. The page's actions stay on the JSON routes, `openRoom`:
 
 ```ts example=chat-rooms/src/browser.ts
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";

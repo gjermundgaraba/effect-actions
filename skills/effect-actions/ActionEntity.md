@@ -72,7 +72,7 @@ A protected action authenticates each call from the headers its envelope carries
 
 ## Reach it from any surface
 
-`ActionEntity.reaching(entity)` returns implementations of the entity's actions and event types that any surface serves beside its own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, given a binding of the same contracts: each call goes through `Entity.client` to the entity its input's key names, with the caller's headers, so one HTTP or MCP endpoint serves every room. The example's `routes` above serve every cart that way.
+`ActionEntity.reaching(entity)` returns implementations of the entity's actions and event types that any surface serves beside its own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, given a binding of the same contracts: each call goes through `Entity.client` to the entity its input's key names, with the caller's headers `ActionEntity.forwardedHeaders` keeps, so one HTTP or MCP endpoint serves every room. The example's `routes` above serve every cart that way.
 
 The surface authenticates a protected call with its own binding's descriptor and the entity authenticates it again, so provide the authentication provider to both.
 
