@@ -32,11 +32,7 @@ const roomWebhooks = Webhook.layer({
   Layer.provide(layerWebhookDelivery)
 );
 
-const roomServices = Layer.mergeAll(
-  Stored.layerEvents,
-  Stored.layerIdempotency,
-  roomWebhooks
-).pipe(
+const roomServices = Layer.merge(Stored.layerEvents, roomWebhooks).pipe(
   Layer.provideMerge(Layer.mergeAll(layerSqlMessages, roomOfAddress)),
   Layer.provideMerge(layerObjectSql)
 );

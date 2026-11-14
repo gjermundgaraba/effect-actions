@@ -16,15 +16,13 @@ export const messages = Action.implement(
     return {
       readMessages: ({ after }) =>
         Effect.map(store.read(after), (read) => ({ messages: read })),
-      postMessage: ({ text }) =>
+      postMessage: ({ text, request }) =>
         Effect.gen(function* () {
           const member = yield* CurrentMember;
           const at = yield* Clock.currentTimeMillis;
 
           return yield* store.post(
-            member.id,
-            text,
-            at,
+            { author: member.id, text, at, request },
             events.notify(MessagePosted)
           );
         }),

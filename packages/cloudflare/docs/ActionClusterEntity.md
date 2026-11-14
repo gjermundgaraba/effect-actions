@@ -110,11 +110,10 @@ The host keeps no state in memory between messages but the calls it is forwardin
 
 ## What a post costs
 
-Every call into an entity object, from the Worker, from another object or from the object itself, is one Durable Object stub call, `invoke`. A post a socket watches costs **1 + T + P** stub calls, measured on the example's room with two pages watching it, where it is 3:
+A post a socket watches, by a handler that sends no calls or tells, costs **1 + P** Durable Object stub calls, `invoke` each, measured on the example's room with two pages watching it, where it is 3:
 
 - **1**, the post itself, the Worker's call into the room;
-- **T**, the calls and tells the post's handler sends, none in the example;
-- **P**, the parked polls on that object, each asked again once, by the host, through the room's own `Entity.client`.
+- **P**, the parked polls on that object, each asked again once, by the host, through the room's own `Entity.client`, which the runtime sends as a stub call to the object itself.
 
 No `hold` or `acknowledge` is called: a poll is unary. A page's next poll after an answer reaches the object as a socket message, not a stub call, and is parked at once when nothing changed since the answer and the answer's call was under 30 seconds earlier; later it is sent to the entity, one stub call, which renews a subscription hook's lease. A page watching over HTTP adds no P. The example's test of these counts, "costs each post 1 + P stub calls", runs the Worker through [`chat-rooms/test/worker.ts`](../examples/chat-rooms/test/worker.ts), which exports a `ClusterEntity` counting each `invoke` by object and tag.
 

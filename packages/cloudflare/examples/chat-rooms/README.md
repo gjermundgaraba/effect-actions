@@ -23,8 +23,9 @@ Each trap below is shown in the code of the files it names.
 - **One initializer builds the whole application, keeping the first runtime to finish for the isolate, and nothing slow builds after the cluster**: `quickOnceTheClusterIsBuilt` in `src/application.ts`, registered by `src/worker.ts`'s import.
 - **The room is the entity's id**, and only a room `DemoRoomName` lists is reached: `src/chat/Chat.ts`, `src/entities.ts`, `roomOfAddress` in `src/routes.ts`.
 - **The Worker serves every room, and each room builds its stores over its own database as it activates**: `services` in `src/routes.ts`.
-- **A post writes its message and wakes its followers in one transaction**, so a post whose notification fails keeps nothing, and a page sending it again with its `request` posts it once; the page sends it again only after a transport failure: `src/platform/sql-messages.ts`, `src/chat/handlers.ts`, `src/browser.ts`.
+- **A post writes its message and wakes its followers in one transaction, and the table keeps one message per author and `request`**, so a post whose notification fails keeps nothing, and a page sending it again with its `request`, even after the room failed past its write, is answered with the first message, notifying nothing; the page sends it again only after a transport failure: `src/platform/sql-messages.ts`, `src/chat/handlers.ts`, `src/browser.ts`.
 - **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; a page built against other rpcs is refused, and stops: `src/browser.ts`, `src/worker.ts`, `src/Rpc.ts`.
+- **A page watches over its socket, which lets the room hibernate**; a stream through the Worker, its JSON `watch` or MCP's `events/stream`, calls the room each `nextPoll`, 2 seconds, while it is open, so the room never hibernates: `followRoom` in `src/browser.ts`, `nextPoll` in `src/chat/events.ts`.
 - **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
 - **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for a wait of 10 seconds or more, and a subscribed room hibernates while idle, as `MessagePosted` is `notified`, asked again only when a post notifies it: `roomWebhooks` in `src/routes.ts`, `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
 
@@ -60,7 +61,7 @@ test/
 ├── webhooks.test.ts   a room's posts by webhook: an eviction, an unsubscribe, a 410, refused callbacks, order, hibernation, expiry
 ├── support.ts         the Worker's client and an object's tables, eviction and alarm
 ├── receiver.ts        the webhook callbacks, answered in Node as Miniflare's outbound service
-└── worker.ts          the test Worker: the stub calls and instances each object counts
+└── worker.ts          the test Worker: the stub calls and instances each object counts, and a failure planted after a call
 ```
 
 - **An entity is built per wake.** The runtime evicts an idle object and builds the entity again for its next message, its `services` and builders included: anything in memory is gone, and `layerSqlMessages` creates its table if it is not there. The database stays.
@@ -80,5 +81,5 @@ test/
 | A room refusing a call that names another room | `src/entities.ts`, `test/worker.test.ts` |
 | A page's socket to its room, kept open while the room hibernates | `src/worker.ts`, `src/browser.ts`, `test/worker.test.ts` |
 | A room's posts delivered by webhook, across its hibernation | `src/routes.ts`, `src/platform/webhook-delivery.ts`, `test/webhooks.test.ts` |
-| A post that writes and notifies in one transaction, posted once when sent again | `src/platform/sql-messages.ts`, `test/worker.test.ts` |
+| A post that writes and notifies in one transaction, posted once per request when sent again | `src/platform/sql-messages.ts`, `test/worker.test.ts` |
 | Testing on the Workers runtime: an eviction, a planted failure, the stub calls a post costs | `test/worker.test.ts` |

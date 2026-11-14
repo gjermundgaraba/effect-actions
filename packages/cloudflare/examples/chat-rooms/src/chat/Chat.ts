@@ -38,13 +38,12 @@ export const PostMessage = Action.make("postMessage", {
     request: Schema.optional(
       Schema.String.annotate({
         description:
-          "A random id for this message, sent again on a retry: it is posted once.",
+          "A random id for this message, sent again on a retry: the room keeps one message per author and request, answering a repeat with it, whatever its text.",
       }).check(Schema.isMaxLength(64))
     ),
   },
   success: Message,
   readOnly: false,
-  idempotencyKey: "request",
 });
 
 export const Messages = [ReadMessages, PostMessage] as const;

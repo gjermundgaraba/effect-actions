@@ -8,7 +8,7 @@ import { invokedSince, stubs } from "../support/socket.js";
 import { asAlice, throughWorker } from "../support/worker.js";
 import { Seen } from "../worker.js";
 
-describe("Stored.layerEvents in an entity on workerd", () => {
+describe("Stored.layerEvents and Stored.layerIdempotency in an entity on workerd", () => {
   it.live(
     "keeps a log source's occurrences across the object's eviction, for a watch resumed from a cursor before them",
     () =>

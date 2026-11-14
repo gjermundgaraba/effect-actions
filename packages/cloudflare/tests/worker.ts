@@ -373,7 +373,9 @@ const application = (env: Cloudflare.Env) =>
   Layer.mergeAll(
     ActionEntity.layer(Seer, [...seeing, crashing], {
       services: Layer.merge(
-        Stored.layerEvents.pipe(Layer.provide(entitySql)),
+        Layer.merge(Stored.layerEvents, Stored.layerIdempotency).pipe(
+          Layer.provide(entitySql)
+        ),
         Layer.sync(Bumps)(() => ({ count: 0 }))
       ),
       rpcs: seerTasks,

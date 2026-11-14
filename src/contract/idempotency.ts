@@ -42,6 +42,7 @@ export const keptFor = 24 * 60 * 60 * 1000;
  *
  * - Provide one per server, around the surfaces: an implementation built in another layer graph keeps its own.
  * - A server waits for a repeat's first call itself, in memory: two servers sharing a store run a call each, the later answer kept.
+ * - An answer is kept only after its handler returns: a crash between the handler's write and the kept answer lets a repeat run the handler again, so make the write itself idempotent where that matters, such as by a unique key on the idempotency key.
  */
 export class Idempotency extends Context.Service<
   Idempotency,

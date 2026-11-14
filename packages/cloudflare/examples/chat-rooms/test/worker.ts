@@ -24,6 +24,8 @@ const others = { hold: 0, acknowledge: 0 };
 
 const instances: string[] = [];
 
+let failingAfter: string | undefined;
+
 export class ClusterEntity extends Counted {
   constructor(...args: ConstructorParameters<typeof Counted>) {
     super(...args);
@@ -40,7 +42,15 @@ export class ClusterEntity extends Counted {
     invokes.push(counted);
 
     try {
-      return await super.invoke(...args);
+      const answer = await super.invoke(...args);
+
+      if (counted.tag === failingAfter) {
+        failingAfter = undefined;
+
+        throw new Error(`planted failure after ${counted.tag}`);
+      }
+
+      return answer;
     } finally {
       invokes[invokes.indexOf(counted)] = { ...counted, settled: true };
     }
@@ -60,8 +70,16 @@ export class ClusterEntity extends Counted {
 
 export default {
   async fetch(request: Request, env: Cloudflare.Env) {
-    if (new URL(request.url).pathname === "/stub-calls") {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/stub-calls") {
       return Response.json({ invokes, others, instances });
+    }
+
+    if (url.pathname === "/fail-after") {
+      failingAfter = url.searchParams.get("tag") ?? undefined;
+
+      return new Response(null, { status: 204 });
     }
 
     return await worker.fetch(request, env);

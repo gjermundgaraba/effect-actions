@@ -94,6 +94,18 @@ const failing = (type: string, id: string, trigger: string) =>
     sqlIn(type, id, "DROP TRIGGER IF EXISTS planted_failure")
   );
 
+const notifiedIn = (room: DemoRoomName) =>
+  rowsIn(
+    "Room",
+    room,
+    "SELECT total(count) AS notified FROM effect_actions_event_revision"
+  );
+
+const failAfterNext = (tag: string) =>
+  Effect.promise(
+    async () => await exports.default.fetch(`${baseUrl}/fail-after?tag=${tag}`)
+  );
+
 const StubCalls = Schema.Struct({
   invokes: Schema.Array(
     Schema.Struct({
@@ -182,7 +194,7 @@ describe("the Worker and its rooms", () => {
   );
 
   it.effect(
-    "posts a message sent again with its request once, answering the repeat as the first across the room's eviction",
+    "posts a message sent again with its request once across the room's eviction, answering and notifying nothing new",
     () =>
       Effect.gen(function* () {
         const json = yield* jsonAs("ada");
@@ -194,6 +206,7 @@ describe("the Worker and its rooms", () => {
         } as const;
 
         const first = yield* json.postMessage(sent);
+        const notified = yield* notifiedIn("general");
 
         yield* evict("Room", "general");
 
@@ -205,6 +218,40 @@ describe("the Worker and its rooms", () => {
         });
 
         expect(messages).toStrictEqual([first]);
+        expect(yield* notifiedIn("general")).toStrictEqual(notified);
+      }).pipe(Effect.provide(worker))
+  );
+
+  it.effect(
+    "posts each message sent without a request, and the same request from two authors, as its own",
+    () =>
+      Effect.gen(function* () {
+        const ada = yield* jsonAs("ada");
+        const grace = yield* jsonAs("grace");
+        const request = crypto.randomUUID();
+
+        const first = yield* ada.postMessage({
+          room: "general",
+          text: "Without one.",
+        });
+
+        const posted = [
+          first,
+          yield* ada.postMessage({ room: "general", text: "Without one." }),
+          yield* ada.postMessage({ room: "general", text: "Ada's.", request }),
+          yield* grace.postMessage({
+            room: "general",
+            text: "Grace's.",
+            request,
+          }),
+        ];
+
+        const { messages } = yield* ada.readMessages({
+          room: "general",
+          after: first.id - 1,
+        });
+
+        expect(messages).toStrictEqual(posted);
       }).pipe(Effect.provide(worker))
   );
 
@@ -521,7 +568,7 @@ describe("the Worker and its rooms", () => {
   );
 
   it.live(
-    "sends a page's post once when the room fails it, sending again only after a transport failure",
+    "does not send a page's post again when the room fails it",
     () =>
       Effect.gen(function* () {
         const page = yield* openRoom(baseUrl, "general", "ada");
@@ -550,14 +597,14 @@ describe("the Worker and its rooms", () => {
   );
 
   it.live(
-    "posts a message once when its first try fails after the write and the page sends it again with its request",
+    "keeps nothing of a post whose notification fails, posting it once when sent again with its request",
     () =>
       Effect.gen(function* () {
         const json = yield* jsonAs("ada");
 
         const sent = {
           room: "general",
-          text: "Failed after its write, then sent again.",
+          text: "Failed with its notification, then sent again.",
           request: crypto.randomUUID(),
         } as const;
 
@@ -582,6 +629,57 @@ describe("the Worker and its rooms", () => {
         });
 
         expect(messages).toStrictEqual([posted]);
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "posts a message once when the room fails after its write and the page sends it again with its request, notifying once",
+    () =>
+      Effect.gen(function* () {
+        const json = yield* jsonAs("ada");
+
+        const sent = {
+          room: "general",
+          text: "Failed after its write, then sent again.",
+          request: crypto.randomUUID(),
+        } as const;
+
+        const last = yield* json.readMessages({ room: "general", after: 0 });
+        const after = last.messages.at(-1)?.id ?? 0;
+        const notified = yield* notifiedIn("general");
+
+        yield* failAfterNext("postMessage");
+
+        const before = yield* settledStubCalls;
+
+        yield* Effect.flip(json.postMessage(sent));
+
+        const { messages: written } = yield* json.readMessages({
+          room: "general",
+          after,
+        });
+
+        const notifiedByTheWrite = yield* notifiedIn("general");
+
+        const posted = yield* json.postMessage(sent);
+        const calls = yield* settledStubCalls;
+
+        const { messages } = yield* json.readMessages({
+          room: "general",
+          after,
+        });
+
+        expect(written).toMatchObject([{ text: sent.text }]);
+        expect(messages).toStrictEqual([posted]);
+        expect(posted).toStrictEqual(written[0]);
+        expect(
+          counted(calls.invokes.slice(before.invokes.length))[
+            "Room/general postMessage"
+          ]
+        ).toBe(2);
+        expect(notifiedByTheWrite).not.toStrictEqual(notified);
+        expect(yield* notifiedIn("general")).toStrictEqual(notifiedByTheWrite);
       }).pipe(Effect.scoped, Effect.provide(worker)),
     { timeout: 30_000 }
   );
