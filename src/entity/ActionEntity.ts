@@ -40,7 +40,6 @@ import type {
   Written,
   WrittenHandler,
 } from "../contract/implementation.js";
-import { InputCheck } from "../contract/input-check.js";
 import type { Reporting } from "../contract/progress.js";
 import { buildersOf, servingOf } from "../contract/serving.js";
 import { elementOf } from "../contract/stream.js";
@@ -63,7 +62,7 @@ import {
   webhookCallsOf,
   webhookRpcsOf,
 } from "../rpc/erased.js";
-import type { ErasedCall, Reach } from "../rpc/erased.js";
+import type { ErasedCall, InputCheck, Reach } from "../rpc/erased.js";
 import { forwarded } from "./forwarded.js";
 import { makeWake, wakeTag, WakeRpc } from "./wakes.js";
 
@@ -447,21 +446,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
       yield* Effect.scope
     ).pipe(Effect.provideService(Wake, wake));
 
-    const { handlers } = yield* Effect.provideContext(
-      handlersOf(binding, {
-        apps,
-        events,
-        authentication,
-        middleware: [],
-        server: "ActionEntity.layer",
-      }),
-      built
-    );
-
-    const check = (
-      contract: Action.Any | Event.Any,
-      input: Action.Any["input"]["Type"]
-    ) => {
+    const check: InputCheck = (contract, input) => {
       const entityId = named(input);
 
       return entityId === address.entityId
@@ -472,6 +457,18 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
             })
           );
     };
+
+    const { handlers } = yield* Effect.provideContext(
+      handlersOf(binding, {
+        apps,
+        events,
+        authentication,
+        middleware: [],
+        server: "ActionEntity.layer",
+        check,
+      }),
+      built
+    );
 
     const natives = yield* Effect.provideContext(
       Effect.isEffect(rpcs) ? rpcs : Effect.succeed(rpcs),
@@ -504,10 +501,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
                 callOf(request, rpc)
               );
 
-              return answer.pipe(
-                Effect.provideService(InputCheck, check),
-                Effect.provideContext(built)
-              );
+              return Effect.provideContext(answer, built);
             },
           ] as const;
         }

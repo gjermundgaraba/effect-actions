@@ -760,7 +760,8 @@ const pollHandlerOf = (
   feed: Feed,
   steps: readonly Step[],
   error: Schema.Union<Action.Errors>,
-  authentication: Authentication | undefined
+  authentication: Authentication | undefined,
+  check: Checking
 ) => {
   const decode = decodeInput({ input: PollOf(feed.event) });
   const encode = Schema.encodeEffect(Schema.toCodecJson(pageOf(feed.event)));
@@ -768,6 +769,8 @@ const pollHandlerOf = (
   return servedCall(steps, callBoundaryOf(error), (payload) =>
     Effect.gen(function* () {
       const { input, cursor, maxEvents, watch } = yield* decode(payload);
+
+      yield* check(input);
 
       const principal = yield* principalOf(feed.event, authentication);
 
@@ -785,13 +788,16 @@ const releaseHandlerOf = (
   feed: Feed,
   steps: readonly Step[],
   error: Schema.Union<Action.Errors>,
-  authentication: Authentication | undefined
+  authentication: Authentication | undefined,
+  check: Checking
 ) => {
   const decode = decodeInput({ input: ReleaseOf(feed.event) });
 
   return servedCall(steps, callBoundaryOf(error), (payload) =>
     Effect.gen(function* () {
       const { input, watch } = yield* decode(payload);
+
+      yield* check(input);
 
       const principal = yield* principalOf(feed.event, authentication);
 
@@ -811,7 +817,8 @@ const webhookHandlersOf = (
   feed: Feed,
   steps: readonly Step[],
   error: Schema.Union<Action.Errors>,
-  answers: ReturnType<typeof webhookAnswers>
+  answers: ReturnType<typeof webhookAnswers>,
+  check: Checking
 ) => {
   const subscribing = decodeInput({ input: WebhookSubscriptionOf(feed.event) });
   const cancelling = decodeInput({ input: WebhookCancellationOf(feed.event) });
@@ -823,6 +830,7 @@ const webhookHandlersOf = (
       subscribeTag(feed.event.name),
       servedCall(steps, boundary, (payload) =>
         Effect.suspend(() => subscribing(payload)).pipe(
+          Effect.tap(({ input }) => check(input)),
           Effect.flatMap(answers.subscribe),
           Effect.flatMap(encode)
         )
@@ -832,6 +840,7 @@ const webhookHandlersOf = (
       unsubscribeTag(feed.event.name),
       servedCall(steps, boundary, (payload) =>
         Effect.suspend(() => cancelling(payload)).pipe(
+          Effect.tap(({ input }) => check(input)),
           Effect.flatMap(answers.unsubscribe),
           Effect.as(null)
         )
@@ -851,17 +860,37 @@ export const verifyingNative = (
 const requested: Step = (effect, { headers }) =>
   withSyntheticRequestFromHeaders(headers)(effect);
 
+/**
+ * What a server checks of each call's and subscription's decoded input, once it has verified its
+ * caller and before the implementation's authorizer: an entity refuses an input whose key names
+ * another entity.
+ */
+export type InputCheck = (
+  contract: Action.Any | Event.Any,
+  input: ErasedValue
+) => Effect.Effect<void, Action.Forbidden>;
+
+type Checking = (input: ErasedValue) => Effect.Effect<void, Action.Forbidden>;
+
 interface HandlersOptions {
   readonly apps: readonly AnyImplementation[];
   readonly events: readonly AnyEventImplementation[];
   readonly authentication: Authentication | undefined;
   readonly middleware: readonly RpcMiddleware.AnyService[];
   readonly server: "ActionRpc.layer" | "ActionEntity.layer";
+  readonly check?: InputCheck | undefined;
 }
 
 export const handlersOf = Effect.fnUntraced(function* (
   binding: Declaring,
-  { apps, events, authentication, middleware, server }: HandlersOptions
+  {
+    apps,
+    events,
+    authentication,
+    middleware,
+    server,
+    check = () => Effect.void,
+  }: HandlersOptions
 ) {
   const holdsWebhooks = server === "ActionEntity.layer";
 
@@ -905,10 +934,13 @@ export const handlersOf = Effect.fnUntraced(function* (
 
   const handlerFor = (
     action: Action.Any,
-    run: ErasedHandler<unknown>,
+    unchecked: ErasedHandler<unknown>,
     steps: readonly Step[],
     error: Schema.Union<Action.Errors>
   ) => {
+    const run: ErasedHandler<unknown> = (input, reporting) =>
+      Effect.andThen(check(action, input), () => unchecked(input, reporting));
+
     const streaming = (sending: Sending) =>
       streamingHandlerOf(action, sending, steps, error);
 
@@ -953,15 +985,16 @@ export const handlersOf = Effect.fnUntraced(function* (
       feeds.flatMap((feed) => {
         const steps = stepsOf(feed.event.caller);
         const error = Schema.Union(eventErrors(feed.event, binding));
+        const checking: Checking = (input) => check(feed.event, input);
 
         return [
           [
             pollTag(feed.event.name),
-            pollHandlerOf(feed, steps, error, authentication),
+            pollHandlerOf(feed, steps, error, authentication, checking),
           ],
           [
             releaseTag(feed.event.name),
-            releaseHandlerOf(feed, steps, error, authentication),
+            releaseHandlerOf(feed, steps, error, authentication, checking),
           ],
         ] as const;
       })
@@ -975,7 +1008,8 @@ export const handlersOf = Effect.fnUntraced(function* (
                 feed,
                 stepsOf(feed.event.caller),
                 webhookErrors(feed.event, binding),
-                heldAnswers(feed)
+                heldAnswers(feed),
+                (input) => check(feed.event, input)
               )
             )
         : []

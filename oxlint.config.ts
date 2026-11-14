@@ -183,7 +183,7 @@ const lint: ReturnType<typeof config> = config({
       files: [
         "packages/cloudflare/scripts/package-consumer/worker.ts",
         "scripts/package-consumer/index.ts",
-        "tests/contract/{client,event,input-check,tracing}.test.ts",
+        "tests/contract/{client,event,tracing}.test.ts",
         "tests/guarantees/{builds.model,registration}.test.ts",
         "tests/toolkit/toolkit.test.ts",
       ],

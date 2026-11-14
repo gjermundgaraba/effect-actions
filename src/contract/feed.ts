@@ -26,7 +26,6 @@ import type {
   Protected,
   Served,
 } from "./implementation.js";
-import { checkInput } from "./input-check.js";
 import { makeLeases } from "./lease.js";
 import type { Leases } from "./lease.js";
 import type { Entry, Log, Logged, Read } from "./log.js";
@@ -66,10 +65,9 @@ export interface Feed {
    */
   readonly webhook?: WebhookHolder | undefined;
   /**
-   * Authenticates the subscriber, checks `input` by `InputCheck` and authorizes it, as
-   * `poll` and `stream` do first.
+   * Authenticates the subscriber and authorizes it, as `poll` and `stream` do first.
    */
-  readonly admit: (input: ErasedValue) => Effect.Effect<void, unknown, unknown>;
+  readonly admit: Effect.Effect<void, unknown, unknown>;
   readonly poll: (
     input: ErasedValue,
     cursor: string | null,
@@ -538,15 +536,12 @@ const guarded = (
 ): Feed => {
   const attributes = { "event.name": event.name };
 
-  const admit = (input: ErasedValue) =>
+  const admit =
     event.caller === Anyone
-      ? checkInput(event, input)
+      ? Effect.void
       : Effect.flatMap(Effect.serviceOption(event.caller), (subscriber) =>
           Option.isSome(subscriber)
-            ? Effect.andThen(
-                checkInput(event, input),
-                Effect.suspend(() => before(event))
-              )
+            ? Effect.suspend(() => before(event))
             : Effect.fail(new Unauthenticated())
         );
 
@@ -557,7 +552,7 @@ const guarded = (
     webhook: run.webhook,
     admit,
     poll: (input, cursor, options) =>
-      Effect.andThen(admit(input), () => run.poll(input, cursor, options)).pipe(
+      Effect.andThen(admit, () => run.poll(input, cursor, options)).pipe(
         Effect.annotateLogs(attributes),
         Effect.withSpan(
           event.name,
@@ -566,7 +561,7 @@ const guarded = (
         )
       ),
     stream: (input) =>
-      Effect.as(admit(input), (cursor: string | null) =>
+      Effect.as(admit, (cursor: string | null) =>
         run
           .stream(input, cursor)
           .pipe(Stream.withSpan(event.name, { attributes }))

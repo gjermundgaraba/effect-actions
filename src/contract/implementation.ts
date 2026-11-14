@@ -21,7 +21,6 @@ import { Unauthenticated } from "./errors.js";
 import type { Refusal } from "./errors.js";
 import type * as Event from "./Event.js";
 import type { AnyEventImplementation, EventOf } from "./feed.js";
-import { checkInput } from "./input-check.js";
 import { reportedTo, streamReportedTo } from "./progress.js";
 import type { Reporting } from "./progress.js";
 import { elementOf } from "./stream.js";
@@ -194,11 +193,7 @@ const dispatch = (
     return yield* Effect.failCause(Cause.fromReasons(reasons));
   });
 
-  const admitted = (input: ErasedValue) =>
-    Effect.andThen(
-      authentication,
-      Effect.andThen(checkInput(action, input), authorization)
-    );
+  const admitted = Effect.andThen(authentication, authorization);
 
   const span = { attributes: actionAttributes };
   const trace = { captureStackTrace: false };
@@ -210,7 +205,7 @@ const dispatch = (
     return (input, sink) =>
       Effect.succeed(
         Stream.unwrap(
-          Effect.map(admitted(input), () =>
+          Effect.map(admitted, () =>
             streamReportedTo(action.progress, sink, (reporting) =>
               streamed(handle(input, reporting))
             )
@@ -233,7 +228,7 @@ const dispatch = (
 
   return (input, sink) =>
     Effect.scoped(
-      admitted(input).pipe(
+      admitted.pipe(
         Effect.andThen(
           Effect.suspend(() =>
             reportedTo(action.progress, sink, (reporting) =>

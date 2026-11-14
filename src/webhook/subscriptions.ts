@@ -350,7 +350,6 @@ export const makeWebhooks = (
 
     const deliverTo = (
       subscription: Held,
-      input: Event.Any["input"]["Type"],
       confirmation: Deferred.Deferred<Confirmed, unknown>
     ) => {
       const encode = encodeUntaggedOf(subscription.feed.event);
@@ -388,7 +387,7 @@ export const makeWebhooks = (
             Effect.gen(function* () {
               const body = yield* asSubscriber(
                 subscription,
-                subscription.feed.admit(input)
+                subscription.feed.admit
               ).pipe(
                 Effect.andThen(Effect.map(encode(occurrence), JSON.stringify))
               );
@@ -470,7 +469,7 @@ export const makeWebhooks = (
               Effect.map(subscription.feed.stream(input), (read) => read(from))
             ),
           cursor,
-          deliverTo(subscription, input, confirmation),
+          deliverTo(subscription, confirmation),
           {
             positions: "watermark",
             resumesUnconfirmed: Deferred.isDoneUnsafe(confirmation),
@@ -830,7 +829,7 @@ export const makeWebhooks = (
 
         return yield* locked(id)(
           Effect.gen(function* () {
-            yield* Effect.catchCause(feed.admit(input), (cause) =>
+            yield* Effect.catchCause(feed.admit, (cause) =>
               terminatedOnRefusal(id, cause)
             );
 
