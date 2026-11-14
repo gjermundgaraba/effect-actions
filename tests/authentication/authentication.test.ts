@@ -153,13 +153,17 @@ describe("Authentication.make", () => {
     ).toBe("app.Login-2_x");
   });
 
-  it("refuses options without a principal, as plain JavaScript may give", () => {
+  it("refuses no principal, as plain JavaScript may give, with no options or without one", () => {
     expect(() =>
-      // @ts-expect-error -- Plain JavaScript can leave it out.
-      Authentication.make("test.Unnamed", Identity, {})
+      // @ts-expect-error -- Plain JavaScript can leave the options out.
+      Authentication.make("test.Unnamed", Identity)
     ).toThrow(
       'Authentication "test.Unnamed" has no principal: give it the stable id of an identity, such as (user) => user.id'
     );
+    expect(() =>
+      // @ts-expect-error -- Plain JavaScript can leave it out.
+      Authentication.make("test.Unnamed", Identity, {})
+    ).toThrow(/has no principal/u);
   });
 
   it("refuses a security that is no native scheme, such as the record of schemes it once took", () => {

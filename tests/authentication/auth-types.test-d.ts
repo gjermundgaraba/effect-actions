@@ -158,14 +158,6 @@ export const declarationTypes = () => {
     return Effect.succeed("s");
   });
 
-  // @ts-expect-error -- Explicit options naming a scheme require the options, which alone hold it.
-  Authentication.make<
-    "auth-types.Gone",
-    Stranger,
-    string,
-    { readonly security: typeof HttpApiSecurity.basic }
-  >("auth-types.Gone", Stranger);
-
   const typo = {
     principal: (stranger: string) => stranger,
     securty: HttpApiSecurity.basic,

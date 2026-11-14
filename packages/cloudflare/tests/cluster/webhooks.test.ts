@@ -6,7 +6,7 @@ import { initialize, Keeper } from "../worker.js";
 
 describe("Webhook.layer with persist in an entity's services on workerd", () => {
   it.live(
-    "fails each call to the entity at once, its activation dying, where the authentication names a principal and no schema",
+    "fails each call to the entity at once, its activation dying, where the authentication names no schema",
     () =>
       Effect.gen(function* () {
         const context = yield* Effect.promise(

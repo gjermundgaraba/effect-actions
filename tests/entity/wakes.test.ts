@@ -468,7 +468,7 @@ const UnkeptTicker = ActionEntity.make(
 
 describe("Webhook.layer with persist in an entity's services", () => {
   it.live(
-    "dies at each activation where the authentication names a principal and no schema, so a call to the entity waits while Effect's runner builds it again",
+    "dies at each activation where the authentication names no schema, so a call to the entity waits while Effect's runner builds it again",
     () => {
       const builds = { count: 0 };
 

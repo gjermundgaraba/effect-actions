@@ -461,6 +461,15 @@ export const make = <
   identity: Context.Key<I, A>,
   options: O & NoInfer<Known<O, Options>> & PrincipalOf<A> & SchemaOf<O, A>
 ): Descriptor<I, A, SecurityOf<O>, Name, ErrorsOf<O>> => {
+  if (
+    !Predicate.hasProperty(options, "principal") ||
+    !Predicate.isFunction(options.principal)
+  ) {
+    throw new TypeError(
+      `Authentication "${name}" has no principal: give it the stable id of an identity, such as (user) => user.id`
+    );
+  }
+
   const security: Security = options.security ?? HttpApiSecurity.bearer;
   const error = errorList(options.error);
   const { principal, schema } = options;
@@ -480,12 +489,6 @@ export const make = <
   ) {
     throw new Error(
       "Authentication takes one native HttpApiSecurity scheme as `security`: omit it for Bearer, or give one scheme, such as `HttpApiSecurity.basic`, never a record of them"
-    );
-  }
-
-  if (!Predicate.isFunction(principal)) {
-    throw new TypeError(
-      `Authentication "${name}" has no principal: give it the stable id of an identity, such as (user) => user.id`
     );
   }
 

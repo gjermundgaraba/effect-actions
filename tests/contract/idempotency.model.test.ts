@@ -214,7 +214,7 @@ const verified = Authentication.layer(Login, (token: Redacted.Redacted) =>
 const Answered = Schema.Literals(["answer", "refuse"]);
 
 it.effect.prop(
-  "keeps each caller's keys apart where the authentication names a principal",
+  "keeps each caller's keys apart by their authentication's principal",
   {
     calls: Schema.Array(
       Schema.Struct({
