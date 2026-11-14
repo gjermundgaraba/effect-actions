@@ -230,7 +230,8 @@ const checkRun = (
                 }),
               })),
             cursor,
-            woken
+            woken,
+            source.notified !== true
           )
         )
       ),

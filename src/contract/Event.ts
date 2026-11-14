@@ -167,7 +167,10 @@ export interface Page<E extends Any> {
   readonly truncated?: boolean | undefined;
   /** More occurrences are ready: the subscriber asks again without waiting. */
   readonly hasMore?: boolean | undefined;
-  /** How long a subscriber waits before it asks again; defaults to 5 seconds. */
+  /**
+   * How long a subscriber waits before it asks again, a `notified` source's streams and webhooks
+   * excepted; defaults to 5 seconds.
+   */
   readonly nextPoll?: Duration.Input | undefined;
 }
 
@@ -203,6 +206,19 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
     input: E["input"]["Type"],
     cursor: string | null
   ) => Effect.Effect<Page<E>, Refusal, R>;
+  /**
+   * Every change `check` reads is announced by an `Events.notify` the server serving it receives,
+   * as a store only that server's handlers write is: its streams and webhook deliveries then ask
+   * `check` again only when notified, on no timer, so an idle Cloudflare Durable Object holding
+   * them hibernates. Defaults to `false`, asking again at each page's `nextPoll` too. A polling
+   * client polls at `nextPoll` either way.
+   *
+   * **Gotchas**
+   *
+   * - A change no `notify` on that server announces, as another server's write to a shared database or an upstream's own, reaches its streams and webhooks only with the next `notify`.
+   * - A `notify` that `check` runs before it can read the write waits for the next `notify` too: notify after the write commits, or inside its transaction only where `check` reads through the same connection, as one SQLite client's reads wait for its transaction.
+   */
+  readonly notified?: boolean | undefined;
   readonly log?: never;
   readonly current?: never;
 }

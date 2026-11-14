@@ -17,6 +17,7 @@ export const messageEvents = Event.implement(
     const store = yield* MessageStore;
 
     return {
+      notified: true,
       check: (_input, cursor) =>
         Effect.gen(function* () {
           const last = yield* store.last;

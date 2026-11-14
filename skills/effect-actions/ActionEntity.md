@@ -46,7 +46,7 @@ The client's `watch(event, input, options)` follows an event by polling its rpc,
 
 A protected event served through `ActionEntity.reaching` is offered webhook delivery ([Webhook.md](Webhook.md)), held by the entity its input's key names: the surface sends each subscribe and unsubscribe there with the caller's headers, and the entity delivers from the `Webhook.layer` in its layer's `services`. An entity without one refuses the subscribe as `Unsupported`.
 
-Give that layer `persist`, so a later activation of the entity restores its subscriptions, each entity id its own, which needs the binding's authentication to name a `schema`, and `ActionEntity.layerClock`, so a wait of 10 seconds or more is a persisted tell the entity sends itself and the runtime may stop the entity until it is due. What the rpcs carrying a subscription are, and why they are not persisted, is on `ActionEntity.make`; the rules for the layer are on `ActionEntity.LayerOptions`' `services`.
+Give that layer `persist`, so a later activation of the entity restores its subscriptions, each entity id its own, which needs the binding's authentication to name a `schema`, and `ActionEntity.layerClock`, so a wait of 10 seconds or more is a persisted tell the entity sends itself and the runtime may stop the entity until it is due. Mark a check source over the entity's own store `notified`, whose deliveries then wait for its `notify` alone, on no timer that would keep a Durable Object awake. What the rpcs carrying a subscription are, and why they are not persisted, is on `ActionEntity.make`; the rules for the layer are on `ActionEntity.LayerOptions`' `services`.
 
 ## Test it
 

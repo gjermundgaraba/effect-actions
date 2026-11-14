@@ -42,7 +42,8 @@ export interface Paged extends Pick<Page, "cursor" | "hasMore" | "nextPoll"> {
 export const pagedFrom = <E, R>(
   read: (cursor: string | null) => Effect.Effect<Paged, E, R>,
   cursor: string | null,
-  woken?: Effect.Effect<void>
+  woken?: Effect.Effect<void>,
+  polls = true
 ): Stream.Stream<Fed, E, R> =>
   Stream.paginate({ cursor, delay: Duration.zero }, (state) => {
     const next = Effect.map(
@@ -65,7 +66,7 @@ export const pagedFrom = <E, R>(
       return Effect.andThen(sleep, next);
     }
 
-    return Effect.andThen(Effect.race(sleep, woken), next);
+    return Effect.andThen(polls ? Effect.race(sleep, woken) : woken, next);
   });
 
 export const paged = <E, R>(

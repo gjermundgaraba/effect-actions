@@ -313,6 +313,53 @@ describe("a check source, watched in process", () => {
     }).pipe(Effect.provide(Event.layerMemory))
   );
 
+  it.effect(
+    "streams a notified source's change when notified, asking it on no timer, while a poll still asks at nextPoll",
+    () =>
+      Effect.gen(function* () {
+        const log = makeMessages();
+        const asked = { stream: 0, poll: 0 };
+        let mode: "stream" | "poll" = "stream";
+
+        const Notified = Event.implement(Posted, {
+          notified: true,
+          check: (input, cursor) => {
+            asked[mode] += 1;
+
+            return log.check(input, cursor);
+          },
+        });
+
+        const client = yield* Action.client(Notified);
+        const events = yield* Event.Events;
+
+        const streamed = yield* client
+          .watch(Posted, {}, { mode: "stream" })
+          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+
+        yield* settle;
+        log.post("general", "unannounced");
+        yield* TestClock.adjust("1 hour");
+        const unnotified = asked.stream;
+        yield* events.notify(Posted);
+        const received = texts(yield* Fiber.join(streamed));
+
+        mode = "poll";
+
+        const polled = yield* client
+          .watch(Posted, {}, { mode: "poll" })
+          .pipe(Stream.runDrain, Effect.forkChild);
+
+        yield* settle;
+        yield* TestClock.adjust("5 seconds");
+        yield* Fiber.interrupt(polled);
+
+        expect(unnotified).toBe(1);
+        expect(received).toStrictEqual(["unannounced"]);
+        expect(asked.poll).toBe(2);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
   it.effect("delivers only what the subscription's input selects", () =>
     Effect.gen(function* () {
       const log = makeMessages();

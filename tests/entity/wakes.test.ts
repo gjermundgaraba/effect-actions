@@ -354,17 +354,22 @@ describe("ActionEntity.layerClock's rows", () => {
   );
 
   it.live(
-    "asks a check source whose nextPoll is 10 seconds or more again through a wake, one row each",
+    "asks a check source whose nextPoll is 10 seconds or more again through a wake",
     () => {
       const { server } = makeWorld({ nextPoll: "10 seconds" });
 
       return Effect.gen(function* () {
         yield* subscribed;
 
-        const polls = yield* until(
-          Effect.suspend(() => wakesBefore(Date.now() + 60_000, false)),
-          (count) => count > 1,
-          35_000
+        const polls = yield* Effect.suspend(() =>
+          wakesBefore(Date.now() + 60_000, false)
+        ).pipe(
+          Effect.repeat({
+            until: (count) => count > 1,
+            schedule: Schedule.spaced("200 millis").pipe(
+              Schedule.upTo({ duration: "35 seconds" })
+            ),
+          })
         );
 
         expect(polls).toBeGreaterThan(1);

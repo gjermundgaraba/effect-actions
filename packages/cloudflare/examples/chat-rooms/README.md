@@ -26,7 +26,7 @@ Each trap below is shown in the code of the files it names.
 - **A post writes its message and wakes its followers in one transaction**, so a post whose notification fails keeps nothing, and a page sending it again with its `request` posts it once; the page sends it again only after a transport failure: `src/platform/sql-messages.ts`, `src/chat/handlers.ts`, `src/browser.ts`.
 - **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; a page built against other rpcs is refused, and stops: `src/browser.ts`, `src/worker.ts`, `src/Rpc.ts`.
 - **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
-- **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for a wait of 10 seconds or more, and a subscribed room stays awake while its subscription lives, as `MessagePosted` is a check source asked again every 2 seconds: `roomWebhooks` in `src/routes.ts`, `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
+- **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for a wait of 10 seconds or more, and a subscribed room hibernates while idle, as `MessagePosted` is `notified`, asked again only when a post notifies it: `roomWebhooks` in `src/routes.ts`, `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
 
 ## Layout
 
@@ -57,7 +57,7 @@ src/
 └── env.d.ts           the bindings' types, as `wrangler types` writes them
 test/
 ├── worker.test.ts     through the Worker's fetch: JSON routes, a page's socket, MCP, the stub calls a post costs
-├── webhooks.test.ts   a room's posts by webhook: an eviction, an unsubscribe, a 410, refused callbacks, order, expiry
+├── webhooks.test.ts   a room's posts by webhook: an eviction, an unsubscribe, a 410, refused callbacks, order, hibernation, expiry
 ├── support.ts         the Worker's client and an object's tables, eviction and alarm
 ├── receiver.ts        the webhook callbacks, answered in Node as Miniflare's outbound service
 └── worker.ts          the test Worker: the stub calls and instances each object counts
@@ -79,6 +79,6 @@ test/
 | One MCP endpoint for every room, its event polled | `src/routes.ts`, `test/worker.test.ts` |
 | A room refusing a call that names another room | `src/entities.ts`, `test/worker.test.ts` |
 | A page's socket to its room, kept open while the room hibernates | `src/worker.ts`, `src/browser.ts`, `test/worker.test.ts` |
-| A room's posts delivered by webhook, across its eviction | `src/routes.ts`, `src/platform/webhook-delivery.ts`, `test/webhooks.test.ts` |
+| A room's posts delivered by webhook, across its hibernation | `src/routes.ts`, `src/platform/webhook-delivery.ts`, `test/webhooks.test.ts` |
 | A post that writes and notifies in one transaction, posted once when sent again | `src/platform/sql-messages.ts`, `test/worker.test.ts` |
 | Testing on the Workers runtime: an eviction, a planted failure, the stub calls a post costs | `test/worker.test.ts` |
