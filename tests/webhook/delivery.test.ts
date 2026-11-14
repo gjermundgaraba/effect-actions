@@ -404,6 +404,10 @@ describe("webhook delivery over HTTP", () => {
         const suspendedAt = events(world.received).length;
 
         yield* subscribed();
+        yield* settled();
+
+        const atRefresh = events(world.received).length;
+
         yield* until(() => events(world.received).length > suspendedAt + 1);
 
         const resumed = yield* subscribed();
@@ -412,7 +416,73 @@ describe("webhook delivery over HTTP", () => {
           active: true,
           lastError: "http_5xx",
         });
+        expect(atRefresh).toBe(suspendedAt + 1);
         expect(events(world.received).length).toBeGreaterThan(suspendedAt + 1);
+      }).pipe(Effect.provide(server));
+    }
+  );
+
+  it.effect(
+    "keeps a failing delivery's retry wait through its refreshes, retrying at its time as the refreshed subscriber, signed with the refreshed secret",
+    () => {
+      const { world, server } = makeWorld();
+
+      return Effect.gen(function* () {
+        yield* subscribed();
+
+        world.answer = (body) =>
+          body["type"] === undefined
+            ? new Response(null, { status: 500 })
+            : acknowledging(body);
+        world.changes.push({ id: "c1", by: "bob" });
+
+        yield* until(() => events(world.received).length >= 1);
+
+        world.known.set("alice", { ...actors.alice, tenantId: "other" });
+
+        const refreshes = yield* Effect.forEach(Array.from({ length: 5 }), () =>
+          subscribed(secretOf(2))
+        );
+
+        yield* settled();
+
+        const whileWaiting = events(world.received).length;
+
+        world.answer = acknowledging;
+        world.changes.push(
+          { id: "acme", by: "bob", onlyTenant: "acme" },
+          { id: "other", by: "bob", onlyTenant: "other" }
+        );
+
+        yield* until(() => events(world.received).length >= 3);
+        yield* passed(5);
+
+        const posted = world.received.filter(
+          (delivery) => bodyOf(delivery)["type"] === undefined
+        );
+
+        const [failed, retried] = posted;
+
+        expect(whileWaiting).toBe(1);
+        expect(
+          refreshes.map(({ deliveryStatus }) => deliveryStatus)
+        ).toMatchObject(
+          Array.from({ length: 5 }, () => ({
+            active: true,
+            lastError: "http_5xx",
+          }))
+        );
+        expect(
+          posted.map((delivery) => bodyOf(delivery)["eventId"])
+        ).toStrictEqual(["c1", "c1", "other"]);
+        expect(
+          Number(retried?.timestamp) - Number(failed?.timestamp)
+        ).toBeGreaterThanOrEqual(1);
+        expect(
+          yield* Effect.promise(async () =>
+            retried === undefined ? false : await signedBy(secretOf(2), retried)
+          )
+        ).toBe(true);
       }).pipe(Effect.provide(server));
     }
   );

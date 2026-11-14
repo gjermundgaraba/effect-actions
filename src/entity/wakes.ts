@@ -29,6 +29,8 @@ export const makeWake = <E>(
       readonly woken: Latch.Latch;
     }>();
 
+    const sent = new Set<number>();
+
     const slept = (at: number) =>
       clock.sleep(
         Duration.millis(Math.max(at - clock.currentTimeMillisUnsafe(), 0))
@@ -42,12 +44,19 @@ export const makeWake = <E>(
 
         return Effect.raceFirst(
           waiter.woken.await,
-          send(new WakeAt({ at })).pipe(
-            Effect.matchCauseEffect({
-              onSuccess: () => Effect.never,
-              onFailure: (cause) => Effect.andThen(reported(cause), slept(at)),
-            })
-          )
+          sent.has(at)
+            ? Effect.never
+            : send(new WakeAt({ at })).pipe(
+                Effect.matchCauseEffect({
+                  onSuccess: () =>
+                    Effect.andThen(
+                      Effect.sync(() => sent.add(at)),
+                      Effect.never
+                    ),
+                  onFailure: (cause) =>
+                    Effect.andThen(reported(cause), slept(at)),
+                })
+              )
         ).pipe(
           Effect.ensuring(
             Effect.sync(() => {
@@ -62,6 +71,12 @@ export const makeWake = <E>(
       woke: ({ payload }: { readonly payload: WakeAt }) =>
         Rpc.fork(
           Effect.sync(() => {
+            for (const each of sent) {
+              if (each <= payload.at) {
+                sent.delete(each);
+              }
+            }
+
             for (const waiter of waiting) {
               if (waiter.at <= payload.at) {
                 waiter.woken.openUnsafe();

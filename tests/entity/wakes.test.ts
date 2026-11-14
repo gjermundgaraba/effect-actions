@@ -146,6 +146,17 @@ const Stored = Schema.Array(
   })
 );
 
+const pendingWakes = Effect.flatMap(SqlClient.SqlClient, (sql) =>
+  sql`SELECT COUNT(*) AS pending FROM cluster_messages WHERE tag = 'effect-actions/wake' AND processed = 0`.pipe(
+    Effect.flatMap(
+      Schema.decodeUnknownEffect(
+        Schema.Tuple([Schema.Struct({ pending: Schema.Int })])
+      )
+    ),
+    Effect.map(([{ pending }]) => pending)
+  )
+).pipe(Effect.orDie);
+
 const storedWakes = Effect.flatMap(SqlClient.SqlClient, (sql) =>
   sql`SELECT headers, payload, deliver_at FROM cluster_messages WHERE tag = 'effect-actions/wake'`.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Stored))
@@ -309,6 +320,43 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
 
         expect(answers).toStrictEqual([200, 200, 200, 200, 200]);
         expect(yield* storedWakes).toStrictEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 60_000 }
+  );
+});
+
+describe("A failing webhook subscription in an entity, refreshed while it waits to retry", () => {
+  it.live(
+    "keeps one wake pending and POSTs only at its retries, however often it is refreshed",
+    () => {
+      const { seen, tick, server } = makeWorld({ accepts: () => false });
+
+      return Effect.gen(function* () {
+        yield* subscribed;
+        yield* tick(1);
+        yield* until(
+          Effect.sync(() => seen.attempts.length),
+          (attempts) => attempts >= 1,
+          15_000
+        );
+
+        const pending = yield* Effect.forEach(Array.from({ length: 20 }), () =>
+          Effect.andThen(
+            Effect.andThen(subscribed, Effect.sleep("100 millis")),
+            pendingWakes
+          )
+        );
+
+        const attempts = seen.attempts.map(({ at }) => at);
+
+        const apart = attempts
+          .slice(1)
+          .map((at, index) => at - (attempts[index] ?? at));
+
+        expect(Math.max(...pending)).toBeLessThanOrEqual(1);
+        expect(attempts.length).toBeLessThanOrEqual(4);
+        expect(Math.min(...apart)).toBeGreaterThanOrEqual(1000);
       }).pipe(Effect.scoped, Effect.provide(server));
     },
     { timeout: 60_000 }

@@ -87,6 +87,7 @@ interface Held {
   expiresAt: number;
   health: Health;
   watermark: string | null;
+  retryingAt: number | undefined;
 }
 
 type Granted = Pick<Held, "secret" | "context" | "kept" | "expiresAt">;
@@ -278,15 +279,26 @@ export const makeWebhooks = (
         now < subscription.expiresAt ? Effect.void : Effect.interrupt
       );
 
+    const retried = (subscription: Held) =>
+      Effect.suspend(() =>
+        subscription.retryingAt === undefined
+          ? Effect.void
+          : Effect.andThen(
+              waitedUntil(subscription.retryingAt),
+              Effect.sync(() => {
+                subscription.retryingAt = undefined;
+              })
+            )
+      );
+
     const attempted = (
       subscription: Held,
       webhookId: string,
       body: string
     ): Effect.Effect<boolean> =>
-      Effect.andThen(
-        unexpired(subscription),
-        post(subscription, webhookId, body)
-      ).pipe(
+      retried(subscription).pipe(
+        Effect.andThen(unexpired(subscription)),
+        Effect.andThen(post(subscription, webhookId, body)),
         Effect.as(true),
         Effect.catch(({ category, final }) =>
           Effect.gen(function* () {
@@ -303,7 +315,7 @@ export const makeWebhooks = (
               return false;
             }
 
-            yield* waitedUntil(retryAt(subscription, at));
+            subscription.retryingAt = retryAt(subscription, at);
 
             return yield* attempted(subscription, webhookId, body);
           })
@@ -602,10 +614,13 @@ export const makeWebhooks = (
         };
       });
 
-    const heldOf = (fields: Omit<Held, "verifiedAs" | "previous">): Held => ({
+    const heldOf = (
+      fields: Omit<Held, "verifiedAs" | "previous" | "retryingAt">
+    ): Held => ({
       ...fields,
       verifiedAs: `${fields.principal}\u0000${fields.url.href}`,
       previous: undefined,
+      retryingAt: undefined,
     });
 
     const keptOf = ({ feed, keyed, input }: Subscribing) =>
