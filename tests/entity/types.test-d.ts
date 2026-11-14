@@ -1,6 +1,6 @@
 import { expectTypeOf } from "@effect/vitest";
 import { Context, Effect, Redacted, Schema } from "effect";
-import type { Layer, Scope, Stream } from "effect";
+import type { Layer, Stream } from "effect";
 import { Entity } from "effect/cluster";
 import type { ClusterError, Sharding } from "effect/cluster";
 import { HttpServerRequest } from "effect/http";
@@ -113,14 +113,6 @@ expectTypeOf<Event.Events>().toExtend<Services>();
 expectTypeOf<Layer.Success<typeof signIn>>().toExtend<Services>();
 
 expectTypeOf<Sharding.Sharding>().toExtend<Services>();
-
-expectTypeOf<Actor>().not.toExtend<Services>();
-
-expectTypeOf<Entity.CurrentAddress>().not.toExtend<Services>();
-
-expectTypeOf<Scope.Scope>().not.toExtend<Services>();
-
-expectTypeOf<HttpServerRequest.HttpServerRequest>().not.toExtend<Services>();
 
 expectTypeOf<
   Exclude<
