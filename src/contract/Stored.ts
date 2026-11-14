@@ -2,7 +2,12 @@ import { Duration, Effect, Layer, Option, Schema } from "effect";
 import { Persistence } from "effect/persistence";
 import { SqlClient } from "effect/sql";
 
-import { createLogTables, sqlRevisions, sqlStorage } from "./event-tables.js";
+import {
+  changeSignalQuery,
+  createLogTables,
+  sqlRevisions,
+  sqlStorage,
+} from "./event-tables.js";
 import type * as Event from "./Event.js";
 import { Events, makeEvents } from "./hub.js";
 import { Idempotency, Kept, keptFor } from "./idempotency.js";
@@ -15,10 +20,9 @@ import { Idempotency, Kept, keptFor } from "./idempotency.js";
  * every one. For a host whose subscribers outlive it, such as a cluster entity on its own
  * SQLite: a watch resumed from a cursor after a restart on the same database receives every
  * occurrence past it within the log's bounds, `maxAge` (10 minutes by default) and `maxEvents`.
- * Its change signal is `(SELECT total(count) FROM effect_actions_event_revision) + (SELECT
- * total(last) FROM effect_actions_event_position)`, which each `notify` and each append to a
- * log, published or emitted, moves, and no read or restart does: a host reads it to learn
- * whether a poll could answer anything new.
+ * Its change signal, which `changeSignal` reads, moves at each `notify` and each append to a
+ * log, published or emitted, and at no read or restart: a host reads it to learn whether a poll
+ * could answer anything new.
  *
  * **Gotchas**
  *
@@ -69,6 +73,19 @@ export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
       });
     }).pipe(Effect.orDie)
   );
+
+/**
+ * The SQL query reading `layerEvents`' change signal from its database, one row whose `signal`
+ * column is the sum of `effect_actions_event_revision`'s counts and of
+ * `effect_actions_event_position`'s `last` sequence numbers: it moves at each `notify` and each
+ * append to a log, and at no read or restart, so a host that runs it after each handler, as the
+ * Cloudflare package's socket host does, learns whether a parked poll could answer anything new.
+ *
+ * **Gotchas**
+ *
+ * - Before `layerEvents` first builds on the database its tables are missing, and the query fails with SQLite's `no such table`: the Cloudflare package's socket host reads that as no signal, answering polls at once as for an entity whose events are kept elsewhere, and fails a poll with a defect on any other failure, as on tables of another shape.
+ */
+export const changeSignal: string = changeSignalQuery;
 
 const decodeKept = Schema.decodeUnknownOption(Kept);
 

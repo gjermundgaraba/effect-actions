@@ -358,12 +358,12 @@ describe("Stored.layerEvents", () => {
   );
 });
 
-const Gate = Schema.Array(Schema.Struct({ gate: Schema.Finite }));
+const Signal = Schema.Array(Schema.Struct({ signal: Schema.Finite }));
 
 const gateOf = (sql: SqlClient.SqlClient) =>
-  sql`SELECT (SELECT total(count) FROM effect_actions_event_revision) + (SELECT total(last) FROM effect_actions_event_position) AS gate`.pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(Gate)),
-    Effect.map((rows) => rows[0]?.gate)
+  sql.unsafe(Stored.changeSignal).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Signal)),
+    Effect.map((rows) => rows[0]?.signal)
   );
 
 describe("Stored.layerEvents' change signal", () => {

@@ -7,6 +7,7 @@ import type {
 } from "@effect/platform-cloudflare/CloudflareDurableObjectPrograms";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import { DurableObject } from "cloudflare:workers";
 import { Effect, Predicate } from "effect";
 import type { Context, Schema, Stream } from "effect";
@@ -40,16 +41,17 @@ export interface Options<Env> {
     | undefined;
 }
 
-const gateQuery =
-  "SELECT (SELECT total(count) FROM effect_actions_event_revision) + (SELECT total(last) FROM effect_actions_event_position) AS gate";
-
 const gateOf = (sql: SqlStorage) => () => {
   try {
-    const { gate } = sql.exec(gateQuery).one();
+    const { signal } = sql.exec(Stored.changeSignal).one();
 
-    return Predicate.isNumber(gate) ? gate : undefined;
-  } catch {
-    return undefined;
+    return Predicate.isNumber(signal) ? signal : undefined;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("no such table")) {
+      return undefined;
+    }
+
+    throw error;
   }
 };
 

@@ -280,7 +280,15 @@ export const makeSockets = (options: {
     entry: Omit<Parked, "gate">
   ): Effect.Effect<boolean> =>
     Effect.gen(function* () {
-      const before = gate();
+      const read = yield* Effect.exit(Effect.sync(gate));
+
+      if (Exit.isFailure(read)) {
+        yield* reply(socket, served, entry, Exit.failCause(read.cause));
+
+        return false;
+      }
+
+      const before = read.value;
       const at = now();
       const upgrade = attachmentOf(socket)?.headers ?? [];
 

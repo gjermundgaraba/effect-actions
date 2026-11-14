@@ -134,6 +134,8 @@ const revisionTable = "effect_actions_event_revision";
 
 const revisionEpochTable = "effect_actions_event_revision_epoch";
 
+export const changeSignalQuery = `SELECT (SELECT total(count) FROM ${revisionTable}) + (SELECT total(last) FROM ${positionTable}) AS signal`;
+
 const Counts = Schema.Array(Schema.Struct({ count: Schema.Int }));
 
 const Epochs = Schema.NonEmptyArray(Schema.Struct({ epoch: Schema.String }));
