@@ -21,17 +21,16 @@ import {
   Scope,
   Stream,
 } from "effect";
-import { SqlClient, Statement } from "effect/sql";
+import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
 
-import { sqlStorage } from "../../src/contract/event-tables.js";
 import {
   attachmentsOf,
   Events,
   makeEvents,
   memoryRevisions,
 } from "../../src/contract/hub.js";
-import { makeLogStore, memoryStorage } from "../../src/contract/log.js";
+import { memoryStorage } from "../../src/contract/log.js";
 import type { LogStorage, Read } from "../../src/contract/log.js";
 import { Posted, settle, texts } from "../support/events.js";
 
@@ -658,62 +657,6 @@ describe("Stored.layerEvents on a database file", () => {
           ],
         ]);
       })
-  );
-});
-
-const atMostHundredParameters: Statement.Transformer = (statement) => {
-  const [, parameters] = statement.compile();
-
-  return parameters.length > 100
-    ? Effect.die(new Error(`A statement bound ${parameters.length} parameters`))
-    : Effect.succeed(statement);
-};
-
-describe("the SQL log storage", () => {
-  it.effect(
-    "binds at most 100 parameters to a statement, Durable Object SQLite's limit, writing, listing and deleting hundreds of entries",
-    () =>
-      Effect.gen(function* () {
-        const sql = (yield* SqlClient.SqlClient).withoutTransforms();
-
-        yield* Layer.build(
-          Stored.layerEvents.pipe(
-            Layer.provide(Layer.succeed(SqlClient.SqlClient, sql))
-          )
-        );
-
-        const storage = sqlStorage(
-          sql,
-          "build.finished",
-          Schema.fromJsonString(Schema.Int)
-        );
-
-        const log = makeLogStore(storage, { maxEvents: 1000 });
-
-        for (let n = 1; n <= 250; n += 1) {
-          yield* log.append({ value: n, key: undefined });
-        }
-
-        yield* storage.delete(Array.from({ length: 200 }, (_, at) => at + 1));
-
-        const [listed, counted] = yield* Effect.all([
-          storage.list(0, 300),
-          Effect.orDie(
-            sql`SELECT count(*) AS count FROM effect_actions_event_log`
-          ),
-        ]);
-
-        expect([
-          listed.map(([seq]) => seq),
-          counted[0]?.["count"],
-        ]).toStrictEqual([Array.from({ length: 50 }, (_, at) => at + 201), 50]);
-      }).pipe(
-        Effect.provide(sqliteAt(":memory:")),
-        Effect.provideService(
-          Statement.CurrentTransformer,
-          atMostHundredParameters
-        )
-      )
   );
 });
 

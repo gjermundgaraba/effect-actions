@@ -42,8 +42,6 @@ const decodePositions = Schema.decodeUnknownEffect(PositionRows);
 
 const decodeEntries = Schema.decodeUnknownEffect(EntryRows);
 
-const seqsPerDelete = 90;
-
 export const sqlStorage = <A>(
   sql: SqlClient.SqlClient,
   name: string,
@@ -119,13 +117,10 @@ export const sqlStorage = <A>(
         ),
         Effect.orDie
       ),
-    delete: (seqs) =>
-      Effect.forEach(
-        Arr.chunksOf(seqs, seqsPerDelete),
-        (chunk) =>
-          sql`DELETE FROM ${entries} WHERE event = ${name} AND ${sql.in("seq", chunk)}`,
-        { discard: true }
-      ).pipe(Effect.orDie),
+    deleteThrough: (seq) =>
+      Effect.orDie(
+        sql`DELETE FROM ${entries} WHERE event = ${name} AND seq <= ${seq}`
+      ),
     transaction: (operation) => Effect.orDie(sql.withTransaction(operation)),
   };
 };

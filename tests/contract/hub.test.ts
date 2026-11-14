@@ -513,13 +513,9 @@ const recordingStorage = () => {
           .slice(0, limit)
           .map(({ seq, stored }) => [seq, stored] as const)
       ),
-    delete: (seqs) =>
+    deleteThrough: (through) =>
       Effect.sync(() => {
-        kept.splice(
-          0,
-          kept.length,
-          ...kept.filter(({ seq }) => !seqs.includes(seq))
-        );
+        kept.splice(0, kept.length, ...kept.filter(({ seq }) => seq > through));
       }),
   };
 

@@ -82,7 +82,8 @@ export interface LogStorage<A> {
     from: number,
     limit: number
   ) => Effect.Effect<ReadonlyArray<readonly [seq: number, listed: Listed<A>]>>;
-  readonly delete: (seqs: readonly number[]) => Effect.Effect<void>;
+  /** Deletes every entry kept up to and including sequence number `seq`. */
+  readonly deleteThrough: (seq: number) => Effect.Effect<void>;
   /**
    * Runs one whole append or read of the log, every call above inside it, holding what those
    * calls wait on, such as a SQL transaction holding the connection: the log takes its own lock
@@ -135,9 +136,13 @@ export const memoryStorage = <A>(): LogStorage<A> => {
 
         return listed;
       }),
-    delete: (seqs) =>
+    deleteThrough: (through) =>
       Effect.sync(() => {
-        for (const seq of seqs) {
+        for (const seq of entries.keys()) {
+          if (seq > through) {
+            return;
+          }
+
           entries.delete(seq);
         }
       }),
@@ -208,13 +213,14 @@ export const makeLogStore = <A>(
       for (let batch = 1; ; batch = 64) {
         const listed = yield* storage.list(0, batch);
         const young = listed.findIndex(([, { at }]) => at >= now - age);
-        const dropped = young === -1 ? listed : listed.slice(0, young);
+        const dropped = young === -1 ? listed.length : young;
+        const newestDropped = listed[dropped - 1];
 
-        if (dropped.length > 0) {
-          yield* storage.delete(dropped.map(([seq]) => seq));
+        if (newestDropped !== undefined) {
+          yield* storage.deleteThrough(newestDropped[0]);
         }
 
-        const first = listed[dropped.length];
+        const first = listed[dropped];
 
         if (first !== undefined) {
           return Math.max(first[0], last - maxEvents + 1);
@@ -240,7 +246,7 @@ export const makeLogStore = <A>(
           );
 
           if (seq > maxEvents) {
-            yield* storage.delete([seq - maxEvents]);
+            yield* storage.deleteThrough(seq - maxEvents);
           }
         })
       ),
