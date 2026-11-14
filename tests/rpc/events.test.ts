@@ -31,6 +31,7 @@ import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
+import { erasedOf } from "../../src/rpc/erased.js";
 import { isRpcTransient } from "../../src/rpc/watch.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
@@ -318,6 +319,64 @@ describe("RPC events", () => {
           event: "counter.counted",
           reason: { _tag: "NotServed" },
         });
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+});
+
+describe("ActionRpc.layer's poll rpc", () => {
+  it.effect(
+    "sets a protected event's subscription hook up for each principal polling without a watch, as that caller",
+    () =>
+      Effect.gen(function* () {
+        const held: string[] = [];
+
+        const hooked = Event.implement(
+          Changed,
+          {
+            check: () => Effect.succeed({ cursor: "0", events: [] }),
+            subscription: () =>
+              Effect.flatMap(CurrentActor, (actor) =>
+                Effect.sync(() => held.push(actor.id))
+              ),
+          },
+          { authorize: Event.allowAll }
+        );
+
+        const pages = yield* Effect.gen(function* () {
+          const client = yield* RpcClient.make(
+            erasedOf([], [Changed], ["poll"])
+          );
+
+          const polled = (token: string) => {
+            const answer = client[ActionRpc.pollTag(Changed.name)]?.({
+              input: {},
+              cursor: null,
+            });
+
+            return answer !== undefined && Effect.isEffect(answer)
+              ? signedInAs(token)(answer)
+              : Effect.die(new Error("No unary poll rpc"));
+          };
+
+          return yield* Effect.forEach(["alice", "bob", "alice"], polled);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            overHttp(
+              ActionRpc.layer(
+                ActionRpc.make([Changed], { authentication: Login }),
+                hooked
+              ).pipe(Layer.provide(Authentication.layer(Login, verify)))
+            )
+          )
+        );
+
+        expect(pages).toMatchObject([
+          { cursor: "0" },
+          { cursor: "0" },
+          { cursor: "0" },
+        ]);
+        expect(held).toStrictEqual(["alice", "bob"]);
       }).pipe(Effect.provide(Event.layerMemory))
   );
 });

@@ -41,6 +41,7 @@ import {
   signIn,
   Tally,
 } from "../support/rooms.js";
+import { call } from "../support/sse.js";
 
 type Rooms = ReturnType<typeof makeRooms>;
 
@@ -398,6 +399,71 @@ describe("ActionEntity.reaching's protected calls and watches", () => {
           twice,
         ]);
       }).pipe(Effect.scoped, Effect.provide(overRpc))
+  );
+});
+
+const Hooked = Event.make("hooked", {
+  description: "Nothing, behind a subscription hook.",
+  input: { room: Schema.String },
+  payload: { by: Schema.String },
+  caller: CurrentActor,
+});
+
+const Hooks = ActionEntity.make(
+  "Hooks",
+  ActionRpc.make([Hooked], { authentication: Login }),
+  { key: { hooked: ({ room }) => room } }
+);
+
+describe("ActionEntity.reaching's polls", () => {
+  it.live(
+    "set a protected event's subscription hook up in the entity for each principal polling over HTTP, as that caller",
+    () =>
+      Effect.gen(function* () {
+        const held: string[] = [];
+
+        const hooked = Event.implement(
+          Hooked,
+          {
+            check: () => Effect.succeed({ cursor: "0", events: [] }),
+            subscription: () =>
+              Effect.flatMap(CurrentActor, (actor) =>
+                Effect.sync(() => held.push(actor.id))
+              ),
+          },
+          { authorize: Event.allowAll }
+        );
+
+        const hooks = ActionEntity.layer(Hooks, hooked).pipe(
+          Layer.provideMerge(TestRunner.layer),
+          Layer.provide([signIn, Event.layerMemory])
+        );
+
+        const statuses = yield* Effect.forEach(
+          ["alice", "bob", "alice"],
+          (token) =>
+            Effect.map(
+              call(
+                "events/hooked",
+                { input: { room: "a" }, cursor: null },
+                { authorization: `Bearer ${token}` }
+              ),
+              (response) => response.status
+            )
+        ).pipe(
+          Effect.provide(
+            Testing.layer(
+              ActionHttp.layer(
+                ActionHttp.make([Hooked], { authentication: Login }),
+                ActionEntity.reaching(Hooks)
+              ).pipe(Layer.provide(authenticate))
+            ).pipe(Layer.provideMerge(hooks))
+          )
+        );
+
+        expect(statuses).toStrictEqual([200, 200, 200]);
+        expect(held).toStrictEqual(["alice", "bob"]);
+      })
   );
 });
 

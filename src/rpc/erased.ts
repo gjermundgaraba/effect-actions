@@ -54,7 +54,11 @@ import {
 } from "../contract/subscribe.js";
 import { watching } from "../contract/watch.js";
 import type { Transport } from "../contract/watch.js";
-import { servedWebhooks, webhookAnswers } from "../contract/webhooks.js";
+import {
+  offersWebhook,
+  servingFeeds,
+  webhookAnswers,
+} from "../contract/webhooks.js";
 import type { WebhookHolder } from "../contract/webhooks.js";
 import { isUnknownTag, polledTransportOf, transportOf } from "./watch.js";
 
@@ -182,12 +186,10 @@ export const subscribeTag = (name: string) => `${name}/subscribe`;
 
 export const unsubscribeTag = (name: string) => `${name}/unsubscribe`;
 
-const heldByWebhook = (event: Event.Any) => event.caller !== Anyone;
-
 export const webhookRpcsOf = (events: readonly Event.Any[]) =>
   RpcGroup.make(
     ...events
-      .filter(heldByWebhook)
+      .filter(offersWebhook)
       .flatMap((event) => [
         unaryOf(subscribeTag(event.name)),
         unaryOf(unsubscribeTag(event.name)),
@@ -878,12 +880,10 @@ export const handlersOf = Effect.fnUntraced(function* (
 
   const bound = yield* acquire(apps, authentication);
 
-  const feeds = yield* acquireFeeds(events);
-
-  const { webhooks } =
+  const { feeds, webhooks } =
     holdsWebhooks === true
-      ? yield* servedWebhooks(feeds, authentication)
-      : { webhooks: Option.none() };
+      ? yield* servingFeeds(events, authentication)
+      : { feeds: yield* acquireFeeds(events), webhooks: Option.none() };
 
   const stepsOf = (caller: Action.Any["caller"]): readonly Step[] =>
     caller === Anyone || authenticating === undefined
@@ -971,7 +971,7 @@ export const handlersOf = Effect.fnUntraced(function* (
     ...Object.fromEntries(
       holdsWebhooks === true
         ? feeds
-            .filter(({ event }) => heldByWebhook(event))
+            .filter(({ event }) => offersWebhook(event))
             .flatMap((feed) =>
               webhookHandlersOf(
                 feed,

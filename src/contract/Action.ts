@@ -228,7 +228,7 @@ export interface Options {
    * - A repeat answers without the progress the first reported.
    * - An answer kept before a deployment changed `success` or an error schema, so that it no longer decodes, is ignored: the call runs again.
    * - An action answering `Action.Stream` throws at `make`: an answer is kept whole.
-   * - A key is each caller's own only where the surface's authentication has `principal`: without one, as over `Action.client`, `ActionToolkit`, the CLI or a public action, another caller sending it with the same input is given the answer, as a model filling the field in may, so make it at random, never from the input.
+   * - A key is each caller's own only on a surface with an authentication, by its `principal`: a public action's callers, and every caller over `Action.client`, `ActionToolkit` or the CLI, share one key space, so another sending it with the same input is given the answer, as a model filling the field in may: make it at random, never from the input.
    */
   readonly idempotencyKey?: string | undefined;
 }

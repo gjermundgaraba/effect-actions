@@ -109,7 +109,7 @@ const maxTtlOf = (input: Duration.Input): Duration.Duration => {
  *
  * **Gotchas**
  *
- * - Only a protected event whose descriptor has `principal` is offered webhook delivery: elsewhere `events/list` lists no `webhook`, and a subscribe is `Unsupported`.
+ * - Only a protected event is offered webhook delivery, each subscription its subscriber's principal's: a public event's `events/list` entry lists no `webhook`, and its subscribe is `Unsupported`.
  * - A `requestScoped` MCP endpoint offers it too, its subscriptions built once with the endpoint: on a host with no lasting process, leave this layer out, as `ActionHttp.layer` says, since each instance keeps its own subscriptions, lost as it ends.
  * - A callback resolving to an address that is not globally reachable, a loopback or a private one included, is never POSTed to unless `allowedCallbacks` trusts it: a local receiver needs a public name, a trusted URL, or a test's `Dns.layerStatic`; an IPv6-only server behind NAT64 cannot deliver to an IPv4-only callback.
  * - Each POST is checked against the address it resolves to, but fetch connects to the name again, so a name rebinding between the check and the connection is not caught: front the server with an egress proxy that refuses private addresses where that matters.

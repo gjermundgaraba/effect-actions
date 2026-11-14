@@ -1,7 +1,7 @@
 import { Context, Effect, Option } from "effect";
 
-import { Anyone, isNamed } from "./caller.js";
-import type { Keyed, Named } from "./caller.js";
+import { Anyone } from "./caller.js";
+import type { Keyed } from "./caller.js";
 import type * as Event from "./Event.js";
 import { acquireFeeds } from "./feed.js";
 import type { AnyEventImplementation, Feed } from "./feed.js";
@@ -35,7 +35,7 @@ export interface Subscription extends AnyWebhookCancellation {
 export interface Subscribing extends AnyWebhookSubscription {
   readonly feed: WebhookFeed;
   readonly principal: string;
-  readonly keyed: Named;
+  readonly keyed: Keyed;
 }
 
 /**
@@ -53,7 +53,7 @@ export class Webhooks extends Context.Service<
   {
     readonly serve: (
       feeds: readonly WebhookFeed[],
-      keyed: Named
+      keyed: Keyed
     ) => Effect.Effect<void, never, unknown>;
     readonly subscribe: (
       subscribing: Subscribing
@@ -70,46 +70,15 @@ export type WebhookHolder = Pick<
   "subscribe" | "unsubscribe"
 >;
 
-const isProtected = (event: Event.Any): event is Protected =>
+/** Whether a surface offers `event` by webhook: a protected one, its caller an identity. */
+export const offersWebhook = (event: Event.Any): event is Protected =>
   event.caller !== Anyone;
 
-export const offersWebhook = (
-  event: Event.Any,
-  keyed: Keyed | undefined
-): event is Protected => isProtected(event) && isNamed(keyed);
+const offeredByWebhook = (feed: Feed): feed is WebhookFeed =>
+  offersWebhook(feed.event);
 
-const offeredByWebhook = (
-  feed: Feed,
-  keyed: Keyed | undefined
-): feed is WebhookFeed => offersWebhook(feed.event, keyed);
-
-/** Whether the surface's own `Webhooks` holds `feed`'s subscriptions: offered, held by no reached entity. */
-export const deliversByWebhook = (
-  feed: Feed,
-  keyed: Keyed | undefined
-): feed is WebhookFeed =>
-  feed.webhook === undefined && offeredByWebhook(feed, keyed);
-
-export const servedWebhooks = (
-  feeds: readonly Feed[],
-  keyed: Keyed | undefined
-): Effect.Effect<
-  { readonly webhooks: Option.Option<Webhooks["Service"]> },
-  never,
-  unknown
-> =>
-  Effect.gen(function* () {
-    const webhooks = yield* Effect.serviceOption(Webhooks);
-
-    if (Option.isSome(webhooks) && isNamed(keyed)) {
-      yield* webhooks.value.serve(
-        feeds.filter((feed) => deliversByWebhook(feed, keyed)),
-        keyed
-      );
-    }
-
-    return { webhooks };
-  });
+const deliversByWebhook = (feed: Feed): feed is WebhookFeed =>
+  feed.webhook === undefined && offeredByWebhook(feed);
 
 export interface Subscriber extends Pick<
   Subscribing,
@@ -128,7 +97,7 @@ export const webhookSubscriber = (
   keyed: Keyed | undefined,
   webhooks: Option.Option<WebhookHolder>
 ): Option.Option<Effect.Effect<Subscriber, never, unknown>> =>
-  isNamed(keyed) && offeredByWebhook(feed, keyed)
+  keyed !== undefined && offeredByWebhook(feed)
     ? Option.map(
         feed.webhook === undefined ? webhooks : Option.some(feed.webhook),
         (holder) =>
@@ -174,31 +143,21 @@ export const webhookAnswers = (
 };
 
 /**
- * The feeds of `events` a surface's layer serves, and the webhooks it offers, served: run as the
- * layer builds, dying where a protected event's subscription hook has no principal to key it by.
+ * The feeds of `events` a surface's layer serves, and the `Webhooks` it offers them by: run as
+ * the layer builds, which serves the webhooks it delivers itself and restores their kept
+ * subscriptions.
  */
 export const servingFeeds = Effect.fnUntraced(function* (
-  surface: string,
   events: readonly AnyEventImplementation[],
   keyed: Keyed | undefined
 ) {
   const feeds = yield* acquireFeeds(events);
+  const webhooks = yield* Effect.serviceOption(Webhooks);
+  const delivered = feeds.filter(deliversByWebhook);
 
-  const unkeyed =
-    keyed?.principal === undefined
-      ? feeds.find(
-          ({ event, release }) =>
-            release !== undefined && event.caller !== Anyone
-        )
-      : undefined;
-
-  if (unkeyed !== undefined) {
-    return yield* Effect.die(
-      new Error(
-        `${surface} event "${unkeyed.event.name}" is protected and has a subscription hook, so its authentication needs principal to tell poll subscribers apart (give Authentication.make a principal, such as (user) => user.id)`
-      )
-    );
+  if (Option.isSome(webhooks) && keyed !== undefined) {
+    yield* webhooks.value.serve(delivered, keyed);
   }
 
-  return { feeds, ...(yield* servedWebhooks(feeds, keyed)) };
+  return { feeds, webhooks };
 });

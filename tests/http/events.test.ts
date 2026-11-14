@@ -3,7 +3,6 @@ import {
   Duration,
   Effect,
   ErrorReporter,
-  Exit,
   Fiber,
   Layer,
   Schema,
@@ -732,38 +731,6 @@ describe("HTTP events", () => {
     expect(() => ActionHttp.make([Pinged, Ping])).toThrow(/pinged/u);
     expect(() => ActionHttp.make([Posted, Posted])).toThrow(/message\.posted/u);
   });
-
-  it.effect(
-    "fails to build where a protected event's subscription hook has no principal to key it",
-    () =>
-      Effect.gen(function* () {
-        const Anonymous = Authentication.make("events.Anonymous", CurrentActor);
-
-        const hooked = Event.implement(
-          Changed,
-          {
-            check: () => Effect.succeed({ cursor: "0", events: [] }),
-            subscription: () => Effect.void,
-          },
-          { authorize: Event.allowAll }
-        );
-
-        const exit = yield* Effect.exit(
-          Layer.build(
-            Testing.layer(
-              ActionHttp.layer(
-                ActionHttp.make([Changed], { authentication: Anonymous }),
-                hooked
-              ).pipe(Layer.provide(Authentication.layer(Anonymous, verify)))
-            )
-          ).pipe(Effect.scoped)
-        );
-
-        expect(Exit.isFailure(exit) ? String(exit.cause) : "built").toContain(
-          "needs principal to tell poll subscribers apart"
-        );
-      }).pipe(Effect.provide(Event.layerMemory))
-  );
 });
 
 const watchedBy = <A, E>(

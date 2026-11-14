@@ -153,6 +153,15 @@ describe("Authentication.make", () => {
     ).toBe("app.Login-2_x");
   });
 
+  it("refuses options without a principal, as plain JavaScript may give", () => {
+    expect(() =>
+      // @ts-expect-error -- Plain JavaScript can leave it out.
+      Authentication.make("test.Unnamed", Identity, {})
+    ).toThrow(
+      'Authentication "test.Unnamed" has no principal: give it the stable id of an identity, such as (user) => user.id'
+    );
+  });
+
   it("refuses a security that is no native scheme, such as the record of schemes it once took", () => {
     for (const security of [{}, { bearer: HttpApiSecurity.bearer }, "Bearer"]) {
       expect(() =>

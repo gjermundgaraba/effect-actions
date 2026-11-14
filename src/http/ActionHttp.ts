@@ -435,7 +435,7 @@ const withinLayerMiddleware = (
  * **Gotchas**
  *
  * - An action and an event type of one name, or an event type listed twice, throw when `make` is called: they would share a client's method.
- * - A protected event type, where `authentication` has `principal`, is bound at `POST <prefix>/events/<name>/subscribe` and `/unsubscribe` too, for `Webhook.layer`'s delivery, and OpenAPI lists both: a binding cannot know whether its server provides that layer, and without it they answer a 409 `Event.SubscriptionError`, reason `Unsupported`.
+ * - A protected event type is bound at `POST <prefix>/events/<name>/subscribe` and `/unsubscribe` too, for `Webhook.layer`'s delivery, and OpenAPI lists both: a binding cannot know whether its server provides that layer, and without it they answer a 409 `Event.SubscriptionError`, reason `Unsupported`.
  */
 export function make<
   const Contracts extends ReadonlyArray<
@@ -506,7 +506,7 @@ export function make(
 
       return [
         eventEndpointOf(event, path, errors),
-        ...(offersWebhook(event, bound.authentication)
+        ...(offersWebhook(event)
           ? webhookEndpointsOf(event, path, errors)
           : []),
       ].map((endpoint) => secured(endpoint, event));
@@ -598,7 +598,6 @@ const jsonContentType = () =>
  * - A subscription is refused as an action's call is, before its stream starts, with the route's 401 or 403; a refusal later ends the stream with Effect's `effect/http-api/stream/failure` event.
  * - A source's failure no refusal explains is logged and reported once, sent as a bare `Failed`, and read again from where it reached after 5 seconds, before the stream's first `Checked` too; a poll's is a 500, which `client`'s `watch` reconnects after.
  * - A stream is read only as fast as its client reads it: a slow reader of a log source falls behind its log, and receives a `Gap`.
- * - A protected event with a `subscription` hook needs `principal` on its descriptor to key poll subscribers: without it the layer fails to build with a message naming the event.
  * - On a host with no lasting process, such as `HttpRouter.toWebHandler` on a serverless platform, serve check sources alone, without a `subscription` hook or `Webhook.layer`: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a `Gap`, and its own leases and webhook subscriptions, lost as it ends.
  */
 export function layer<const H extends AnyHttp, const Apps extends Served>(
@@ -664,7 +663,7 @@ export function layer(
 
       return [
         eventEndpointOf(event, path, errors, servedSent),
-        ...(offersWebhook(event, authentication)
+        ...(offersWebhook(event)
           ? webhookEndpointsOf(event, path, errors)
           : []),
       ].map((endpoint) => routed(endpoint, event));
@@ -677,11 +676,7 @@ export function layer(
     Effect.gen(function* () {
       const bound = yield* acquire(apps, authentication);
 
-      const { feeds, webhooks } = yield* servingFeeds(
-        "ActionHttp",
-        events,
-        authentication
-      );
+      const { feeds, webhooks } = yield* servingFeeds(events, authentication);
 
       const security =
         authentication === undefined
@@ -705,7 +700,7 @@ export function layer(
       );
 
       const webhookAnswered = feeds
-        .filter(({ event }) => offersWebhook(event, authentication))
+        .filter(({ event }) => offersWebhook(event))
         .map(
           (feed) =>
             [

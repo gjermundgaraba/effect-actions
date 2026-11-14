@@ -107,6 +107,12 @@ export const declarationTypes = () => {
       return stranger;
     },
   });
+  // @ts-expect-error -- A descriptor names its identity's principal.
+  Authentication.make("auth-types.Unnamed", Stranger);
+  // @ts-expect-error -- Options without a principal.
+  Authentication.make("auth-types.Unkeyed", Stranger, {
+    security: HttpApiSecurity.basic,
+  });
   Authentication.make("auth-types.NumberPrincipal", Stranger, {
     // @ts-expect-error -- A principal is a string.
     principal: () => 1,

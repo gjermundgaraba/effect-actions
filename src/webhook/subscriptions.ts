@@ -22,7 +22,7 @@ import type { HttpClient } from "effect/http";
 import type { Dns } from "effect/net";
 
 import type { SigningSecret } from "../contract/callback.js";
-import type { Keyed, Named } from "../contract/caller.js";
+import type { Keyed } from "../contract/caller.js";
 import { canonicalInput } from "../contract/canonical.js";
 import type { Codec } from "../contract/codec.js";
 import { sentError } from "../contract/codes.js";
@@ -608,7 +608,7 @@ export const makeWebhooks = (
     const restoredFrom = (
       store: Storage,
       feeds: readonly WebhookFeed[],
-      keyed: Named,
+      keyed: Keyed,
       schema: Codec,
       id: string
     ) =>
@@ -694,7 +694,7 @@ export const makeWebhooks = (
         }
       }).pipe(Effect.catchCause(reported));
 
-    const serve = (feeds: readonly WebhookFeed[], keyed: Named) =>
+    const serve = (feeds: readonly WebhookFeed[], keyed: Keyed) =>
       Effect.gen(function* () {
         const { schema } = keyed;
 

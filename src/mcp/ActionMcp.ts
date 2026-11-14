@@ -515,7 +515,7 @@ const server = <Out, E, R>(
       );
     }
 
-    yield* servingFeeds("MCP", serving.events, serving.authentication);
+    yield* servingFeeds(serving.events, serving.authentication);
     yield* registerTools(apps, authentication);
   });
 
@@ -641,7 +641,6 @@ type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [
  * - Events are 2026-07-28's alone: a 2025 session gets `-32601` for `events/*`, and its `initialize` advertises no events extension.
  * - With `requestScoped`, `events/stream` answers `-32026`, no server outliving a request to push, so events are served by poll, and by webhook where `Webhook.layer` is provided or the event is a protected one `ActionEntity.reaching` serves; their sources, logs, `subscription` hooks' leases and webhook subscriptions are built once with the endpoint, as without it.
  * - On a host with no lasting process, such as a serverless platform, serve check sources alone, without a `subscription` hook: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a gap, and its own leases, lost as it ends.
- * - A protected event with a `subscription` hook needs `principal` on `authentication`, or the endpoint is refused at startup: a poll's hook is held per principal between requests.
  * - A push stream holds its request open while it is read, a heartbeat every 30 seconds: a host's request timeout ends it, and `client`'s `watch` reconnects from its cursor.
  * - A poll's `maxEvents` caps a log source's page, at most 100, and is not honored for a check source, whose page is answered whole since only its last cursor resumes; `maxAgeMs` is accepted and not honored, a log source keeping what its `log.maxAge` and `log.maxEvents` say.
  * - A push stream's failure that no refusal explains, such as an upstream's outage, is `notifications/events/error`, its cause logged and reported, and the stream resumes from where it reached after 5 seconds; a refusal ends it with `notifications/events/terminated`. One before `active`, or a poll's, is a JSON-RPC `-32603`, which `client`'s `watch` reconnects after, as after a 5xx.

@@ -18,15 +18,10 @@ export interface Proving {
 
 export type Called = Pick<Action.Any, "name" | "caller">;
 
-/** What names one caller of a surface: its authentication's `principal`, where it has one. */
+/** What names one caller of a surface: its authentication's `principal`. */
 export interface Keyed {
-  readonly principal?: (identity: Action.Any["input"]["Type"]) => string;
-  readonly schema?: Codec | undefined;
-}
-
-/** A surface's authentication that names each caller: its `principal` given. */
-export interface Named extends Keyed {
   readonly principal: (identity: Action.Any["input"]["Type"]) => string;
+  readonly schema?: Codec | undefined;
 }
 
 export const CallerKeyed = Context.Reference<Keyed | undefined>(
@@ -36,18 +31,14 @@ export const CallerKeyed = Context.Reference<Keyed | undefined>(
   }
 );
 
-export const isNamed = (keyed: Keyed | undefined): keyed is Named =>
-  keyed?.principal !== undefined;
-
+/** The caller's principal: none for a public one, or on a surface with no authentication. */
 export const principalOf = (
   called: Pick<Called, "caller">,
   keyed: Keyed | undefined
 ): Effect.Effect<string | undefined, never, unknown> =>
-  keyed?.principal === undefined || called.caller === Anyone
+  keyed === undefined || called.caller === Anyone
     ? Effect.undefined
-    : Effect.map(Effect.service(called.caller), (identity) =>
-        keyed.principal?.(identity)
-      );
+    : Effect.map(Effect.service(called.caller), keyed.principal);
 
 export const assertAuthentication = (
   contracts: readonly Called[],
