@@ -71,7 +71,7 @@ import {
   streamedTransport,
   verifyingNative,
 } from "./erased.js";
-import type { Delivery, ProgressedOf } from "./erased.js";
+import type { ProgressedOf } from "./erased.js";
 import { isRpcTransient } from "./watch.js";
 
 export { AnyPage as Page } from "../contract/pages.js";
@@ -132,8 +132,6 @@ type EventRpcOf<
   : never;
 
 const authenticatedKey = "effect-actions/ActionRpc/Authenticated";
-
-const deliveries: readonly Delivery[] = ["stream", "poll"];
 
 type RefusalOf<E extends Action.Errors> = Schema.Union<
   ReadonlyArray<typeof Unauthenticated | E[number]>
@@ -352,7 +350,7 @@ export function make(
   const given =
     options.rpcs === undefined ? RpcGroup.make() : nativeOf(options.rpcs);
 
-  const served = erasedOf(actions, events, deliveries).requests;
+  const served = erasedOf(actions, events, "ActionRpc.layer").requests;
 
   for (const tag of given.requests.keys()) {
     if (reservedNames.includes(tag) || served.has(tag)) {
@@ -557,7 +555,7 @@ export function layer(
 
   const middleware = options.middleware ?? [];
 
-  const jsonGroup = erasedOf(actions, eventTypes, deliveries);
+  const jsonGroup = erasedOf(actions, eventTypes, "ActionRpc.layer");
 
   const natives = [...nativeOf(binding.rpcs).requests.values()];
 
@@ -583,8 +581,7 @@ export function layer(
         apps,
         events,
         authentication,
-        middleware,
-        server: "ActionRpc.layer",
+        server: { _tag: "ActionRpc.layer", middleware },
       });
 
       const servedActions = jsonGroup.toLayer(byName);
@@ -717,7 +714,7 @@ export function client(
   return Effect.map(
     Effect.all([
       RpcClient.make(
-        erasedOf(binding.actions, binding.events, deliveries).merge(
+        erasedOf(binding.actions, binding.events, "ActionRpc.layer").merge(
           nativeOf(binding.rpcs)
         ),
         { ...options, flatten: true }

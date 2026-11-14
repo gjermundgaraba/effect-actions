@@ -167,7 +167,19 @@ const unaryOf = (name: string) =>
     error: Declared,
   });
 
-export type Delivery = "stream" | "poll";
+/**
+ * What serves a binding's erased rpcs: `ActionRpc.layer`, which streams each event type beside
+ * polling it, through its `middleware`, or an entity, which only polls them, holds their webhooks
+ * and runs `check` on each input.
+ */
+export type Server =
+  | {
+      readonly _tag: "ActionRpc.layer";
+      readonly middleware: readonly RpcMiddleware.AnyService[];
+    }
+  | { readonly _tag: "ActionEntity.layer"; readonly check: InputCheck };
+
+const streamsEvents = (server: Server["_tag"]) => server === "ActionRpc.layer";
 
 /**
  * The tag of the unary rpc polling the event type `name`, `<name>/poll`, taking `Poll` beside
@@ -199,20 +211,20 @@ export const webhookRpcsOf = (events: readonly Event.Any[]) =>
 const webhookErrors = (event: Event.Any, binding: Declaring) =>
   Schema.Union([...eventErrors(event, binding), Event.SubscriptionError]);
 
+/** The rpcs `server` serves for `actions` and `events`, and its clients call. */
 export const erasedOf = (
   actions: readonly Action.Any[],
   events: readonly Event.Any[],
-  deliveries: readonly Delivery[]
+  server: Server["_tag"]
 ) =>
   RpcGroup.make(
     ...actions.map((action) =>
       streams(action) ? streamOf(action.name) : unaryOf(action.name)
     ),
     ...events.flatMap((event) => [
-      ...(deliveries.includes("stream") ? [streamOf(event.name)] : []),
-      ...(deliveries.includes("poll")
-        ? [unaryOf(pollTag(event.name)), unaryOf(releaseTag(event.name))]
-        : []),
+      ...(streamsEvents(server) ? [streamOf(event.name)] : []),
+      unaryOf(pollTag(event.name)),
+      unaryOf(releaseTag(event.name)),
     ])
   );
 
@@ -886,28 +898,22 @@ interface HandlersOptions {
   readonly apps: readonly AnyImplementation[];
   readonly events: readonly AnyEventImplementation[];
   readonly authentication: Authentication | undefined;
-  readonly middleware: readonly RpcMiddleware.AnyService[];
-  readonly server: "ActionRpc.layer" | "ActionEntity.layer";
-  readonly check?: InputCheck | undefined;
+  readonly server: Server;
 }
 
 export const handlersOf = Effect.fnUntraced(function* (
   binding: Declaring,
-  {
-    apps,
-    events,
-    authentication,
-    middleware,
-    server,
-    check = () => Effect.void,
-  }: HandlersOptions
+  { apps, events, authentication, server }: HandlersOptions
 ) {
-  const holdsWebhooks = server === "ActionEntity.layer";
+  const holdsWebhooks = server._tag === "ActionEntity.layer";
 
-  const listedMiddleware: readonly Step[] = yield* Effect.forEach(
-    middleware,
-    (key) => Effect.service(key)
-  );
+  const check: InputCheck =
+    server._tag === "ActionEntity.layer" ? server.check : () => Effect.void;
+
+  const listedMiddleware: readonly Step[] =
+    server._tag === "ActionRpc.layer"
+      ? yield* Effect.forEach(server.middleware, (key) => Effect.service(key))
+      : [];
 
   const authenticating =
     authentication === undefined
@@ -977,7 +983,7 @@ export const handlersOf = Effect.fnUntraced(function* (
       )
     ),
     ...Object.fromEntries(
-      server === "ActionRpc.layer"
+      streamsEvents(server._tag)
         ? feeds.map(
             (feed) =>
               [

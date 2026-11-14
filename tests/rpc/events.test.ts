@@ -339,7 +339,7 @@ describe("ActionRpc.layer's poll rpc", () => {
 
         const pages = yield* Effect.gen(function* () {
           const client = yield* RpcClient.make(
-            erasedOf([], [Changed], ["poll"])
+            erasedOf([], [Changed], "ActionRpc.layer")
           );
 
           const pollTag = ActionRpc.pollTag(Changed.name);

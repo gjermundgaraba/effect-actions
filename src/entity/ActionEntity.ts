@@ -183,7 +183,7 @@ export const make = <
     );
   }
 
-  const erased = erasedOf(binding.actions, binding.events, ["poll"])
+  const erased = erasedOf(binding.actions, binding.events, "ActionEntity.layer")
     .merge(webhookRpcsOf(binding.events))
     .add(WakeRpc);
 
@@ -217,7 +217,7 @@ export const make = <
  * `ActionRpc.client`'s watch polls, finding no stream rpc.
  */
 export const bindingRpcs = (entity: Any): RpcGroup.RpcGroup<ErasedRpc> =>
-  erasedOf(entity.binding.actions, entity.binding.events, ["poll"]);
+  erasedOf(entity.binding.actions, entity.binding.events, "ActionEntity.layer");
 
 /**
  * `layer`'s options: `Entity.toLayer`'s, which the entity's registration takes, but
@@ -456,9 +456,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
         apps,
         events,
         authentication,
-        middleware: [],
-        server: "ActionEntity.layer",
-        check,
+        server: { _tag: "ActionEntity.layer", check },
       }),
       built
     );
