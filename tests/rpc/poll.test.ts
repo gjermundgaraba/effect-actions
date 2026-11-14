@@ -11,7 +11,7 @@ import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { makeMessages, Posted, settle, texts } from "../support/events.js";
-import { overHttp, rpcRoutes } from "../support/rpc.js";
+import { overHttp, rpcRoutes, unaryOf } from "../support/rpc.js";
 
 const Board = ActionEntity.make("Board", ActionRpc.make([Posted]), {
   key: { "message.posted": () => "board" },
@@ -83,13 +83,10 @@ describe("ActionRpc.client's watch through polls", () => {
         const toTheEntity = Effect.map(
           Board.client,
           (clientFor): Answer =>
-            (tag, payload, headers) => {
-              const answer = clientFor("board")[tag]?.(payload, { headers });
-
-              return Effect.isEffect(answer)
-                ? Effect.orDie(answer)
-                : Effect.die(new Error(`No unary rpc ${tag}`));
-            }
+            (tag, payload, headers) =>
+              Effect.orDie(
+                unaryOf(clientFor("board")[tag]?.(payload, { headers }), tag)
+              )
         );
 
         const received = yield* Effect.gen(function* () {

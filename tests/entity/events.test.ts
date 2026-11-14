@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Logger, Schedule, Schema, Stream } from "effect";
+import { Effect, Fiber, Layer, Logger, Schema, Stream } from "effect";
 import {
   ClusterError,
   MessageStorage,
@@ -27,9 +27,11 @@ import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
+import { eventually } from "../support/live.js";
+import { unaryOf } from "../support/rpc.js";
 import { framesOf } from "../support/sse.js";
 import { Ticked } from "../support/ticked.js";
-import { secretOf } from "../support/webhook.js";
+import { challengeIn, secretOf } from "../support/webhook.js";
 
 class Unavailable extends Schema.TaggedError<
   Unavailable,
@@ -104,9 +106,6 @@ interface TickerOptions {
   readonly entityWebhooks?: boolean;
   readonly notified?: boolean;
 }
-
-const challengeIn = (body: string) =>
-  /"challenge":"(?<challenge>[^"]+)"/u.exec(body)?.groups?.["challenge"];
 
 const makeTicker = ({
   fails = () => false,
@@ -248,18 +247,6 @@ const delivery = {
   secret: secretOf(1),
 };
 
-const until = (done: () => boolean) =>
-  Effect.sync(done).pipe(
-    Effect.repeat({
-      until: (held) => held,
-      schedule: Schedule.spaced("20 millis"),
-      times: 500,
-    }),
-    Effect.flatMap((held) =>
-      held ? Effect.void : Effect.die(new Error(`Never held: ${String(done)}`))
-    )
-  );
-
 const subscribeOverHttp = (
   path: "subscribe" | "unsubscribe",
   room: string,
@@ -318,7 +305,7 @@ describe("ActionEntity.reaching's events by webhook", () => {
 
         yield* tick(1);
 
-        yield* until(
+        yield* eventually(
           () =>
             occurrencesIn(received, delivery.url).length === 1 &&
             occurrencesIn(received, "https://hooks.example.com/bob").length ===
@@ -334,7 +321,7 @@ describe("ActionEntity.reaching's events by webhook", () => {
 
         yield* tick(2);
 
-        yield* until(
+        yield* eventually(
           () =>
             occurrencesIn(received, "https://hooks.example.com/bob").length ===
             2
@@ -346,11 +333,11 @@ describe("ActionEntity.reaching's events by webhook", () => {
           delivery: { mode: "webhook", url: "https://hooks.example.com/bob" },
         });
 
-        yield* until(() => counted.unhooked === 2);
+        yield* eventually(() => counted.unhooked === 2);
 
         yield* tick(3);
 
-        yield* until(() => occurrencesIn(received, carol).length === 3);
+        yield* eventually(() => occurrencesIn(received, carol).length === 3);
 
         expect(unsubscribedOverMcp).toMatchObject({ result: {} });
         expect(
@@ -602,7 +589,7 @@ describe("ActionEntity.reaching's event streams", () => {
           )
         );
 
-        yield* until(() => received.length === 1);
+        yield* eventually(() => received.length === 1);
 
         ticks.push(2);
 
@@ -645,12 +632,12 @@ describe("ActionEntity.reaching's event streams", () => {
           )
         );
 
-        yield* until(() => received.length === 1);
+        yield* eventually(() => received.length === 1);
 
         ticks.push(2);
 
         yield* Fiber.join(watched);
-        yield* until(() => counted.unhooked === 2);
+        yield* eventually(() => counted.unhooked === 2);
 
         expect(received).toStrictEqual([1, 2]);
         expect(counted).toMatchObject({ hooked: 2, unhooked: 2 });
@@ -696,7 +683,7 @@ describe("ActionEntity.reaching's event streams", () => {
           Stream.runCollect
         );
 
-        yield* until(() => counted.unhooked === 2);
+        yield* eventually(() => counted.unhooked === 2);
 
         expect(frames).toMatchObject([
           { _tag: "Checked", cursor: "0" },
@@ -773,22 +760,22 @@ describe("ActionEntity.reaching's event streams", () => {
 
         const first = yield* opened;
 
-        yield* until(() => counted.hooked === 1);
+        yield* eventually(() => counted.hooked === 1);
 
         const second = yield* opened;
 
-        yield* until(() => counted.hooked === 2);
+        yield* eventually(() => counted.hooked === 2);
         yield* Fiber.interrupt(first);
-        yield* until(() => counted.unhooked === 1);
+        yield* eventually(() => counted.unhooked === 1);
 
         const checked = counted.checks;
 
-        yield* until(() => counted.checks > checked);
+        yield* eventually(() => counted.checks > checked);
 
         const whileSecondOpen = { ...counted };
 
         yield* Fiber.interrupt(second);
-        yield* until(() => counted.unhooked === 2);
+        yield* eventually(() => counted.unhooked === 2);
 
         expect(whileSecondOpen).toMatchObject({ hooked: 2, unhooked: 1 });
         expect(counted).toMatchObject({ hooked: 2, unhooked: 2 });
@@ -818,24 +805,24 @@ describe("ActionEntity.client's watches", () => {
 
         const first = yield* Effect.forkScoped(Stream.runDrain(watched()));
 
-        yield* until(() => counted.hooked === 1);
+        yield* eventually(() => counted.hooked === 1);
 
         const second = yield* Effect.forkScoped(
           Stream.runDrain(watched({ mode: "poll" }))
         );
 
-        yield* until(() => counted.hooked === 2);
+        yield* eventually(() => counted.hooked === 2);
         yield* Fiber.interrupt(first);
-        yield* until(() => counted.unhooked === 1);
+        yield* eventually(() => counted.unhooked === 1);
 
         const checked = counted.checks;
 
-        yield* until(() => counted.checks > checked);
+        yield* eventually(() => counted.checks > checked);
 
         const whileSecondOpen = { ...counted };
 
         yield* Fiber.interrupt(second);
-        yield* until(() => counted.unhooked === 2);
+        yield* eventually(() => counted.unhooked === 2);
 
         ticks.push(1);
 
@@ -843,7 +830,7 @@ describe("ActionEntity.client's watches", () => {
           watched({ cursor: "0" }).pipe(Stream.take(1))
         );
 
-        yield* until(() => counted.unhooked === 3);
+        yield* eventually(() => counted.unhooked === 3);
 
         expect(whileSecondOpen).toMatchObject({ hooked: 2, unhooked: 1 });
         expect(taken).toMatchObject([{ _tag: "Occurrence", data: { at: 1 } }]);
@@ -878,12 +865,12 @@ describe("ActionEntity.client's watches", () => {
           )
         );
 
-        yield* until(() => received.length === 1);
+        yield* eventually(() => received.length === 1);
 
         ticks.push(2);
 
         yield* Fiber.join(watched);
-        yield* until(() => counted.unhooked === 1);
+        yield* eventually(() => counted.unhooked === 1);
 
         expect(received).toStrictEqual([1, 2]);
         expect(counted).toMatchObject({ hooked: 1, unhooked: 1 });
@@ -896,17 +883,8 @@ describe("ActionEntity.client's watches", () => {
 const rpcOfRoomA = Effect.map(Ticker.client, (clientFor) => {
   const rpcs = clientFor("a");
 
-  return (
-    tag: string,
-    payload: Schema.Json,
-    headers: Record<string, string>
-  ) => {
-    const answer = rpcs[tag]?.(payload, { headers });
-
-    return answer !== undefined && Effect.isEffect(answer)
-      ? answer
-      : Effect.die(new Error(`no unary rpc ${tag}`));
-  };
+  return (tag: string, payload: Schema.Json, headers: Record<string, string>) =>
+    unaryOf(rpcs[tag]?.(payload, { headers }), tag);
 });
 
 const refusalOf = (refused: unknown) =>
@@ -938,7 +916,7 @@ describe("An entity's release rpc", () => {
         const beforeAlice = { ...counted };
 
         yield* sent("ticked/release", released, asAlice.headers);
-        yield* until(() => counted.unhooked > beforeAlice.unhooked);
+        yield* eventually(() => counted.unhooked > beforeAlice.unhooked);
 
         expect(refusalOf(refused)).toMatchObject({ _tag: "Unauthenticated" });
         expect(beforeAlice).toMatchObject({ hooked: 1, unhooked: 0 });

@@ -1,7 +1,7 @@
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
 import type { Duration } from "effect";
-import { Context, Effect, Layer, Option, Schedule, Schema } from "effect";
+import { Context, Effect, Layer, Option, Schema } from "effect";
 import { SingleRunner } from "effect/cluster";
 import { Digest } from "effect/crypto";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -17,8 +17,10 @@ import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
+import { eventually } from "../support/live.js";
+import { unaryOf } from "../support/rpc.js";
 import { Ticked } from "../support/ticked.js";
-import { Login, secretOf } from "../support/webhook.js";
+import { challengeIn, Login, secretOf } from "../support/webhook.js";
 
 const Ticker = ActionEntity.make(
   "Ticker",
@@ -92,9 +94,7 @@ const makeWorld = ({
   const receiver = async (request: Request) => {
     const body = await request.text();
 
-    const challenge = /"challenge":"(?<challenge>[^"]+)"/u.exec(body)?.groups?.[
-      "challenge"
-    ];
+    const challenge = challengeIn(body);
 
     if (challenge !== undefined) {
       return Response.json({ challenge });
@@ -172,20 +172,6 @@ const storedWakes = Effect.flatMap(SqlClient.SqlClient, (sql) =>
   )
 ).pipe(Effect.orDie);
 
-const until = <A, E, R>(
-  check: Effect.Effect<A, E, R>,
-  done: (value: A) => boolean,
-  within: number
-) =>
-  check.pipe(
-    Effect.repeat({ until: done, schedule: Schedule.spaced("200 millis") }),
-    Effect.timeoutOrElse({
-      duration: within,
-      orElse: () =>
-        Effect.die(new Error(`Never held within ${String(within)} ms`)),
-    })
-  );
-
 const asAlice = HttpClientRequest.setHeaders({ authorization: "Bearer alice" });
 
 const subscribeTo = (room: string) =>
@@ -250,11 +236,7 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
         const answered = yield* subscribed;
 
         yield* tick(1);
-        yield* until(
-          Effect.sync(() => deliveredIn(seen)),
-          Boolean,
-          30_000
-        );
+        yield* eventually(() => deliveredIn(seen), "30 seconds");
 
         const wait = yield* lastWait(seen);
 
@@ -282,11 +264,7 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
         const answered = yield* subscribed;
 
         yield* tick(1);
-        yield* until(
-          Effect.sync(() => deliveredIn(seen)),
-          Boolean,
-          45_000
-        );
+        yield* eventually(() => deliveredIn(seen), "45 seconds");
 
         const wait = yield* lastWait(seen);
         const wakes = yield* storedWakes;
@@ -326,11 +304,7 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
         );
 
         yield* tick(1);
-        yield* until(
-          Effect.sync(() => deliveredIn(seen)),
-          Boolean,
-          15_000
-        );
+        yield* eventually(() => deliveredIn(seen), "15 seconds");
         yield* Effect.sleep("1 second");
 
         expect(answers).toStrictEqual([200, 200, 200, 200, 200]);
@@ -350,11 +324,7 @@ describe("A failing webhook subscription in an entity, refreshed while it waits 
       return Effect.gen(function* () {
         yield* subscribed;
         yield* tick(1);
-        yield* until(
-          Effect.sync(() => seen.attempts.length),
-          (attempts) => attempts >= 1,
-          15_000
-        );
+        yield* eventually(() => seen.attempts.length >= 1, "15 seconds");
 
         const pending = yield* Effect.forEach(Array.from({ length: 20 }), () =>
           Effect.andThen(
@@ -429,16 +399,15 @@ describe("Webhook.layer with persist in an entity's services", () => {
       return Effect.gen(function* () {
         const tickers = yield* UnkeptTicker.client;
 
-        const answered = yield* Effect.suspend(() => {
-          const answer = tickers("a")["ticked/poll"]?.(
-            { input: { room: "a" }, cursor: null },
-            { headers: { authorization: "Bearer alice" } }
-          );
-
-          return answer !== undefined && Effect.isEffect(answer)
-            ? answer
-            : Effect.die(new Error("no unary rpc ticked"));
-        }).pipe(Effect.timeoutOption("5 seconds"));
+        const answered = yield* Effect.suspend(() =>
+          unaryOf(
+            tickers("a")["ticked/poll"]?.(
+              { input: { room: "a" }, cursor: null },
+              { headers: { authorization: "Bearer alice" } }
+            ),
+            "ticked/poll"
+          )
+        ).pipe(Effect.timeoutOption("5 seconds"));
 
         expect(Option.isNone(answered)).toBe(true);
         expect(builds.count).toBeGreaterThan(1);
@@ -455,21 +424,13 @@ describe("Webhook.layer with persist in an entity's services", () => {
       return Effect.gen(function* () {
         yield* subscribeTo("a/x");
         yield* tick(1);
-        yield* until(
-          Effect.sync(() => occurrencesOf(seen).length),
-          (count) => count > 0,
-          15_000
-        );
+        yield* eventually(() => occurrencesOf(seen).length > 0, "15 seconds");
         yield* Effect.sleep("1 second");
 
         const other = yield* pollOf("a");
 
         yield* tick(2);
-        yield* until(
-          Effect.sync(() => occurrencesOf(seen).length),
-          (count) => count > 1,
-          15_000
-        );
+        yield* eventually(() => occurrencesOf(seen).length > 1, "15 seconds");
         yield* Effect.sleep("3 seconds");
 
         expect(other.status).toBe(200);

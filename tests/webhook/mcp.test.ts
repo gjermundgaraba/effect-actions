@@ -11,6 +11,7 @@ import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
+import { challengeIn } from "../support/webhook.js";
 
 const Changed = Event.make("user.changed", {
   description: "A user changed.",
@@ -48,9 +49,7 @@ const makeServer = (
 
     received.push(body);
 
-    const challenge = /"challenge":"(?<challenge>[^"]+)"/u.exec(body)?.groups?.[
-      "challenge"
-    ];
+    const challenge = challengeIn(body);
 
     return echoes && challenge !== undefined
       ? Response.json({ challenge })

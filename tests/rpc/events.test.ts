@@ -37,7 +37,7 @@ import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { makeMessages, Posted, settle } from "../support/events.js";
-import { overHttp, rpcRoutes } from "../support/rpc.js";
+import { overHttp, rpcRoutes, unaryOf } from "../support/rpc.js";
 import { serve } from "../support/serve.js";
 import { inMemoryValuesProtocolTo } from "../support/values.js";
 
@@ -342,16 +342,12 @@ describe("ActionRpc.layer's poll rpc", () => {
             erasedOf([], [Changed], ["poll"])
           );
 
-          const polled = (token: string) => {
-            const answer = client[ActionRpc.pollTag(Changed.name)]?.({
-              input: {},
-              cursor: null,
-            });
+          const pollTag = ActionRpc.pollTag(Changed.name);
 
-            return answer !== undefined && Effect.isEffect(answer)
-              ? signedInAs(token)(answer)
-              : Effect.die(new Error("No unary poll rpc"));
-          };
+          const polled = (token: string) =>
+            signedInAs(token)(
+              unaryOf(client[pollTag]?.({ input: {}, cursor: null }), pollTag)
+            );
 
           return yield* Effect.forEach(["alice", "bob", "alice"], polled);
         }).pipe(

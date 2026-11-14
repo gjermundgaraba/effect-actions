@@ -41,6 +41,7 @@ import {
   signIn,
   Tally,
 } from "../support/rooms.js";
+import { unaryOf } from "../support/rpc.js";
 import { call } from "../support/sse.js";
 
 type Rooms = ReturnType<typeof makeRooms>;
@@ -83,17 +84,11 @@ const signedIn = ActionHttp.client(RoomHttp, {
 const startOf = (room: string) =>
   Effect.gen(function* () {
     const raw = yield* Room.client;
-    const poll = raw(room)["room.posted/poll"];
 
-    if (poll === undefined) {
-      return yield* Effect.die(new Error("no poll rpc"));
-    }
-
-    const answer = poll({ input: { room }, cursor: null });
-
-    if (!Effect.isEffect(answer)) {
-      return yield* Effect.die(new Error("a streamed poll"));
-    }
+    const answer = unaryOf(
+      raw(room)["room.posted/poll"]?.({ input: { room }, cursor: null }),
+      "room.posted/poll"
+    );
 
     const { cursor } = yield* Schema.decodeUnknownEffect(
       Schema.Struct({ cursor: Schema.String })
@@ -308,17 +303,11 @@ const asAlice = RpcClient.withHeaders({ authorization: "Bearer alice" });
 const seenFrom = (room: string) =>
   Effect.gen(function* () {
     const raw = yield* Seer.client;
-    const poll = raw(room)["seen/poll"];
 
-    if (poll === undefined) {
-      return yield* Effect.die(new Error("no poll rpc"));
-    }
-
-    const answer = poll({ input: { room }, cursor: null });
-
-    if (!Effect.isEffect(answer)) {
-      return yield* Effect.die(new Error("a streamed poll"));
-    }
+    const answer = unaryOf(
+      raw(room)["seen/poll"]?.({ input: { room }, cursor: null }),
+      "seen/poll"
+    );
 
     const { cursor } = yield* Schema.decodeUnknownEffect(
       Schema.Struct({ cursor: Schema.String })

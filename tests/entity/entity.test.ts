@@ -21,6 +21,7 @@ import {
   signIn,
   onTestRunner,
 } from "../support/rooms.js";
+import { streamOf, unaryOf } from "../support/rpc.js";
 
 const signedInAs = (token: string) =>
   RpcClient.withHeaders({ authorization: `Bearer ${token}` });
@@ -42,23 +43,16 @@ const decodePage = Schema.decodeUnknownEffect(Page);
 const poll = (entityId: string, cursor: string | null, maxEvents?: number) =>
   Effect.gen(function* () {
     const rpcs = yield* Room.client;
-    const sent = rpcs(entityId)["room.posted/poll"];
 
-    if (sent === undefined) {
-      return yield* Effect.die(new Error("no poll rpc"));
-    }
-
-    const answer = sent({
+    const answer = rpcs(entityId)["room.posted/poll"]?.({
       input: { room: entityId },
       cursor,
       ...(maxEvents === undefined ? {} : { maxEvents }),
     });
 
-    if (!Effect.isEffect(answer)) {
-      return yield* Effect.die(new Error("a streamed poll"));
-    }
-
-    const { events, ...page } = yield* decodePage(yield* answer);
+    const { events, ...page } = yield* decodePage(
+      yield* unaryOf(answer, "room.posted/poll")
+    );
 
     return { ...page, texts: events.map(({ data }) => data.text) };
   });
@@ -80,26 +74,11 @@ describe("ActionEntity on Entity.makeTestClient", () => {
         );
 
         const { read } = yield* clientFor("lobby");
+        const readOf = (room: Schema.Json) => unaryOf(read?.({ room }), "read");
 
-        if (read === undefined) {
-          return yield* Effect.die(new Error("no read rpc"));
-        }
-
-        const answered = read({ room: "lobby" });
-        const refusedCall = read({ room: "kitchen" });
-        const invalidCall = read({ room: 5 });
-
-        if (
-          !Effect.isEffect(answered) ||
-          !Effect.isEffect(refusedCall) ||
-          !Effect.isEffect(invalidCall)
-        ) {
-          return yield* Effect.die(new Error("a streamed read"));
-        }
-
-        const answer = yield* answered;
-        const refused = yield* Effect.flip(refusedCall);
-        const invalid = yield* Effect.flip(invalidCall);
+        const answer = yield* readOf("lobby");
+        const refused = yield* Effect.flip(readOf("kitchen"));
+        const invalid = yield* Effect.flip(readOf(5));
 
         expect(answer).toStrictEqual({ entity: "lobby", texts: [] });
         expect(refused).toBeInstanceOf(DeclaredFailure);
@@ -135,16 +114,7 @@ describe("ActionEntity's streaming action on Entity.makeTestClient", () => {
         );
 
         const { tally } = yield* clientFor("lobby");
-
-        if (tally === undefined) {
-          return yield* Effect.die(new Error("no tally rpc"));
-        }
-
-        const sent = tally({ room: "lobby", upTo: 2 });
-
-        if (Effect.isEffect(sent)) {
-          return yield* Effect.die(new Error("a unary tally"));
-        }
+        const sent = streamOf(tally?.({ room: "lobby", upTo: 2 }), "tally");
 
         expect(yield* Stream.runCollect(sent)).toStrictEqual([
           { _tag: "Progress", value: { at: 1 } },
@@ -287,16 +257,7 @@ describe("ActionEntity's key", () => {
         );
 
         const { probe } = yield* clientFor("lobby");
-
-        if (probe === undefined) {
-          return yield* Effect.die(new Error("no probe rpc"));
-        }
-
-        const keyed = probe({});
-
-        if (!Effect.isEffect(keyed)) {
-          return yield* Effect.die(new Error("a streamed probe"));
-        }
+        const keyed = unaryOf(probe?.({}), "probe");
 
         expect(yield* keyed).toBe("reached");
 
