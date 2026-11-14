@@ -12,7 +12,7 @@ import type { Scope, Context } from "effect";
 
 import { authorizerOf } from "./authorizer.js";
 import type { Authorizer, Deferred, ErasedAuthorizer } from "./authorizer.js";
-import { checked, checkedStream, jsonRoundTrip, watchInput } from "./call.js";
+import { checked, checkedStream, jsonRoundTrip, sentInput } from "./call.js";
 import type { Call, CheckedInput, CheckedMethod } from "./call.js";
 import { Anyone, assertCaller } from "./caller.js";
 import { codecOf } from "./codec.js";
@@ -924,7 +924,7 @@ const watcherOf =
     }
 
     return Elements.unwrap(
-      Effect.map(watchInput(event, input), ({ value }) => {
+      Effect.map(sentInput(event, input), ({ value }) => {
         const subscriber = uniqueKey();
 
         return watching(

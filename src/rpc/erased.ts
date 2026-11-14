@@ -25,7 +25,7 @@ import {
   checkedStream,
   decodeInput,
   sendingJson,
-  watchInput,
+  sentInput,
 } from "../contract/call.js";
 import type { CheckedMethod } from "../contract/call.js";
 import { Anyone, principalOf } from "../contract/caller.js";
@@ -317,7 +317,7 @@ const failedOf = (error: Schema.Union<Action.Errors>) => {
     Effect.flatMap(Effect.orDie(decode(failure.json)), Effect.fail);
 };
 
-export const actionMethodOf = (
+const calledMethodOf = (
   action: Action.Any,
   binding: Declaring
 ): ((call: ErasedCall) => CheckedMethod) => {
@@ -527,27 +527,37 @@ export type Reach = (
   input: ErasedValue
 ) => Effect.Effect<ErasedCall, Action.Forbidden>;
 
+/**
+ * An action's client method over `reach`: its call goes where its input, decoded as the server
+ * will decode it, a decoding default included, says.
+ */
+export const actionMethodOf = (
+  action: Action.Any,
+  binding: Declaring
+): ((reach: Reach) => CheckedMethod<unknown>) => {
+  const method = calledMethodOf(action, binding);
+
+  const answer = (reach: Reach, [input, ...rest]: readonly ErasedValue[]) =>
+    Effect.flatMap(sentInput(action, input), ({ value }) =>
+      Effect.map(reach(action, value), (call) => method(call)(value, ...rest))
+    );
+
+  return elementOf(action.success) === undefined
+    ? (reach) =>
+        (...args) =>
+          Effect.flatMap(answer(reach, args), answered)
+    : (reach) =>
+        (...args) =>
+          elementsOf(answer(reach, args));
+};
+
 export const methodsOf = (
   binding: ClientBinding,
   transport: EventTransport
 ) => {
-  const actions = binding.actions.map((action) => {
-    const method = actionMethodOf(action, binding);
-
-    const answer = (reach: Reach, args: readonly ErasedValue[]) =>
-      Effect.map(reach(action, args[0] ?? {}), (call) => method(call)(...args));
-
-    return [
-      action.name,
-      elementOf(action.success) === undefined
-        ? (reach: Reach) =>
-            (...args: readonly ErasedValue[]) =>
-              Effect.flatMap(answer(reach, args), answered)
-        : (reach: Reach) =>
-            (...args: readonly ErasedValue[]) =>
-              elementsOf(answer(reach, args)),
-    ] as const;
-  });
+  const actions = binding.actions.map(
+    (action) => [action.name, actionMethodOf(action, binding)] as const
+  );
 
   const transports = new Map(
     binding.events.map(
@@ -580,7 +590,7 @@ export const methodsOf = (
       }
 
       return Stream.unwrap(
-        Effect.flatMap(watchInput(event, input), ({ json, value }) =>
+        Effect.flatMap(sentInput(event, input), ({ json, value }) =>
           Effect.map(reach(event, value), (call) =>
             watching(
               feed(call)(json, watchOptions?.mode === "stream"),

@@ -314,6 +314,45 @@ describe("ActionEntity.client's key", () => {
       );
     }
   );
+
+  it.live(
+    "routes a call on its decoded input, a key field's decoding default included",
+    () => {
+      const Where = Action.make("where", {
+        description: "Answer the entity it reached.",
+        input: {
+          room: Schema.String.pipe(
+            Schema.withDecodingDefaultKey(Effect.succeed("lobby"))
+          ),
+        },
+        success: Schema.String,
+        readOnly: true,
+        caller: Action.Anyone,
+      });
+
+      const Finder = ActionEntity.make("Finder", ActionRpc.make([Where]), {
+        key: ({ room }) => room,
+      });
+
+      const finding = Action.implement(Where, () =>
+        Effect.map(Entity.CurrentAddress, ({ entityId }) => entityId)
+      );
+
+      return Effect.gen(function* () {
+        const client = yield* ActionEntity.client(Finder);
+
+        expect(yield* client.where()).toBe("lobby");
+        expect(yield* client.where({ room: "kitchen" })).toBe("kitchen");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ActionEntity.layer(Finder, finding).pipe(
+            Layer.provideMerge(TestRunner.layer)
+          )
+        )
+      );
+    }
+  );
 });
 
 describe("ActionEntity on a TestRunner", () => {

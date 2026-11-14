@@ -14,7 +14,7 @@ import {
   checked,
   checkedStream,
   sendingValue,
-  watchInput,
+  sentInput,
 } from "../contract/call.js";
 import type { Call, CheckedMethod } from "../contract/call.js";
 import type { Codec } from "../contract/codec.js";
@@ -295,7 +295,7 @@ const methodsWith = <E, R>(
 
       const watch: ErasedWatch<R> = (event, input, options) =>
         Stream.unwrap(
-          Effect.map(watchInput(event, input), ({ value }) =>
+          Effect.map(sentInput(event, input), ({ value }) =>
             watching(transport(event, value), options)
           )
         );

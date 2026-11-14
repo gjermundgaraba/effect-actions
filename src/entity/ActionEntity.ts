@@ -25,12 +25,7 @@ import type {
   Run,
   ServingEvents,
 } from "../contract/feed.js";
-import {
-  answered,
-  elementsOf,
-  Implementation,
-  memoized,
-} from "../contract/implementation.js";
+import { Implementation, memoized } from "../contract/implementation.js";
 import type {
   ErasedAuthorize,
   ErasedValue,
@@ -40,9 +35,7 @@ import type {
   Written,
   WrittenHandler,
 } from "../contract/implementation.js";
-import type { Reporting } from "../contract/progress.js";
 import { buildersOf, servingOf } from "../contract/serving.js";
-import { elementOf } from "../contract/stream.js";
 import type { Answer } from "../contract/stream.js";
 import { Wake } from "../contract/wake.js";
 import { polling } from "../contract/watch.js";
@@ -723,27 +716,18 @@ export const reaching = <
     action: Action.Any,
     reach: Reach
   ): WrittenHandler<unknown> => {
-    const method = actionMethodOf(action, binding);
+    const method = actionMethodOf(action, binding)(reach);
 
-    const answer = (input: ErasedValue, reporting: Reporting | undefined) =>
-      Effect.map(reach(action, input), (call) =>
-        method(call)(
-          input,
-          ...(reporting === undefined
-            ? []
-            : [{ onProgress: reporting.progress }])
-        )
+    return (input, reporting) => {
+      const answer = method(
+        input,
+        ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }])
       );
 
-    return elementOf(action.success) === undefined
-      ? (input, reporting) =>
-          Effect.flatMap(answer(input, reporting), answered).pipe(
-            Effect.catchIf(isClusterFailure, Effect.die)
-          )
-      : (input, reporting) =>
-          elementsOf(answer(input, reporting)).pipe(
-            Stream.catchIf(isClusterFailure, Stream.die)
-          );
+      return Effect.isEffect(answer)
+        ? Effect.catchIf(answer, isClusterFailure, Effect.die)
+        : Stream.catchIf(answer, isClusterFailure, Stream.die);
+    };
   };
 
   const runOf = (event: Event.Any, reach: Reach): Run => {

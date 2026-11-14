@@ -12,7 +12,7 @@ import {
   checked,
   checkedStream,
   sendingJson,
-  watchInput,
+  sentInput,
 } from "../contract/call.js";
 import type { Call, CheckedMethod } from "../contract/call.js";
 import { Anyone } from "../contract/caller.js";
@@ -295,7 +295,7 @@ export function client(
       options?: Event.WatchOptions<unknown>
     ) =>
       Stream.unwrap(
-        Effect.map(watchInput(event, input), ({ json }) =>
+        Effect.map(sentInput(event, input), ({ json }) =>
           watching(
             transportOf(
               { http, url, event, refusedWith: refusedWith(event) },
