@@ -140,7 +140,7 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
    * **Gotchas**
    *
    * - A native rpc authenticates nothing, whatever the binding's `authentication`: it is for tells the entity and other entities send with `Entity.client`, never for a surface's callers.
-   * - A native rpc named after an action, an event type, or an event's `<event>/poll` or `<event>/release` throws as the entity is made.
+   * - A native rpc named after an action, an event type, an event's `<event>/poll` or `<event>/release`, a protected event's `<event>/subscribe` or `<event>/unsubscribe`, or the entity's wake, `effect-actions/wake`, throws as the entity is made.
    */
   readonly rpcs?: RpcGroup.RpcGroup<N> | undefined;
 }
