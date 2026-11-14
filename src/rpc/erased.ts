@@ -14,7 +14,7 @@ import type { Context, Duration } from "effect";
 import { HttpClientRequest, HttpServerRequest } from "effect/http";
 import type { Headers } from "effect/http";
 import { HttpApiBuilder } from "effect/http-api";
-import { Rpc, RpcGroup } from "effect/rpc";
+import { Rpc, RpcGroup, RpcSchema } from "effect/rpc";
 import type { RpcMiddleware } from "effect/rpc";
 
 import { providerOf } from "../authentication/provider.js";
@@ -245,16 +245,46 @@ const ReleaseOf = (event: Event.Any) =>
 const watcherOf = (principal: string | undefined, watch: string) =>
   JSON.stringify([principal ?? null, watch]);
 
-export type ErasedCall<T = unknown> = (
-  tag: string,
-  payload: Schema.Json,
-  options?: {
-    readonly headers?: Headers.Input | undefined;
-    readonly context?: Context.Context<never> | undefined;
-  }
-) =>
-  | Effect.Effect<Schema.Json, DeclaredFailure | T>
-  | Stream.Stream<Schema.Json, DeclaredFailure | T>;
+interface ErasedCallOptions {
+  readonly headers?: Headers.Input | undefined;
+  readonly context?: Context.Context<never> | undefined;
+}
+
+export interface ErasedCall {
+  readonly unary: (
+    tag: string,
+    payload: Schema.Json,
+    options?: ErasedCallOptions
+  ) => Effect.Effect<Schema.Json, unknown>;
+  readonly stream: (
+    tag: string,
+    payload: Schema.Json,
+    options?: ErasedCallOptions
+  ) => Stream.Stream<Schema.Json, unknown>;
+}
+
+export const erasedCallOf = (
+  send: (
+    tag: string,
+    payload: Schema.Json,
+    options?: ErasedCallOptions
+  ) => Effect.Effect<Schema.Json, unknown> | Stream.Stream<Schema.Json, unknown>
+): ErasedCall => ({
+  unary: (tag, payload, options) => {
+    const answer = send(tag, payload, options);
+
+    return Effect.isEffect(answer)
+      ? answer
+      : Effect.die(new Error(`The rpc ${tag} streams, called as unary`));
+  },
+  stream: (tag, payload, options) => {
+    const answer = send(tag, payload, options);
+
+    return Stream.isStream(answer)
+      ? answer
+      : Stream.die(new Error(`The rpc ${tag} is unary, called as a stream`));
+  },
+});
 
 export const ProgressedOf = <P extends Codec, S extends Codec>(
   progress: P,
@@ -286,12 +316,6 @@ export const nativeOf = (group: RpcGroup.Any) =>
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   group as RpcGroup.RpcGroup<Rpc.AnyWithProps>;
 
-type JsonMethod = (payload: Schema.Json) => Effect.Effect<Schema.Json, unknown>;
-
-type JsonStreamMethod = (
-  payload: Schema.Json
-) => Stream.Stream<Schema.Json, unknown>;
-
 const isDeclared = (failure: unknown): failure is DeclaredFailure =>
   failure instanceof DeclaredFailure;
 
@@ -302,12 +326,10 @@ const failedOf = (error: Schema.Union<Action.Errors>) => {
     Effect.flatMap(Effect.orDie(decode(failure.json)), Effect.fail);
 };
 
-type ErasedMethod = (payload: Schema.Json) => ReturnType<ErasedCall>;
-
 export const actionMethodOf = (
   action: Action.Any,
   binding: Declaring,
-  method: ErasedMethod
+  call: ErasedCall
 ): CheckedMethod => {
   const failed = failedOf(Schema.Union(bindingErrors(action, binding)));
   const streamed = streamedOf(action);
@@ -317,11 +339,8 @@ export const actionMethodOf = (
       Schema.toCodecJson(action.success)
     );
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const call = method as JsonMethod;
-
     return checked(action, sendingJson, (json) =>
-      call(json).pipe(
+      call.unary(action.name, json).pipe(
         Effect.catchIf(isDeclared, failed),
         Effect.flatMap((sent) => Effect.orDie(decode(sent)))
       )
@@ -330,11 +349,8 @@ export const actionMethodOf = (
 
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(streamed));
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const call = method as JsonStreamMethod;
-
   const progressed = (json: Schema.Json) =>
-    call(json).pipe(
+    call.stream(action.name, json).pipe(
       Stream.catchIf(isDeclared, (failure) =>
         Stream.fromEffect(failed(failure))
       ),
@@ -350,31 +366,26 @@ export const actionMethodOf = (
       );
 };
 
-type Calling = (tag: string) => ErasedMethod;
-
-export type EventTransport = (
+type EventTransport = (
   event: Event.Any,
   binding: Declaring,
-  calling: Calling
+  call: ErasedCall
 ) => (input: Schema.Json) => Transport<unknown, never>;
 
 export const streamedTransport =
   (silenceEnds: boolean): EventTransport =>
-  (event, binding, calling) => {
+  (event, binding, call) => {
     const decode = Schema.decodeUnknownEffect(
       Schema.toCodecJson(PushedOf(event))
     );
 
     const failed = failedOf(Schema.Union(eventErrors(event, binding)));
 
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const call = calling(event.name) as JsonStreamMethod;
-
     return (input) =>
       transportOf(
         event,
         (cursor) =>
-          call({ input, cursor }).pipe(
+          call.stream(event.name, { input, cursor }).pipe(
             Stream.catchIf(isDeclared, (failure) =>
               Stream.fromEffect(failed(failure))
             ),
@@ -387,14 +398,11 @@ export const streamedTransport =
 export const pollOf = (
   event: Event.Any,
   binding: Declaring,
-  method: ErasedMethod
+  call: ErasedCall
 ) => {
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(pageOf(event)));
 
   const failed = failedOf(Schema.Union(eventErrors(event, binding)));
-
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const call = method as JsonMethod;
 
   return (payload: {
     readonly input: Schema.Json;
@@ -402,7 +410,7 @@ export const pollOf = (
     readonly maxEvents?: number;
     readonly watch?: string;
   }) =>
-    call(payload).pipe(
+    call.unary(pollTag(event.name), payload).pipe(
       Effect.catchIf(isDeclared, failed),
       Effect.flatMap((json) => Effect.orDie(decode(json)))
     );
@@ -411,12 +419,9 @@ export const pollOf = (
 export const watchedOf = (
   event: Event.Any,
   binding: Declaring,
-  calling: Calling
+  call: ErasedCall
 ) => {
-  const poll = pollOf(event, binding, calling(pollTag(event.name)));
-
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const release = calling(releaseTag(event.name)) as JsonMethod;
+  const poll = pollOf(event, binding, call);
 
   const releaseUnserved = isUnknownTag(releaseTag(event.name));
 
@@ -426,7 +431,7 @@ export const watchedOf = (
     poll: (cursor, watch) =>
       poll({ input, cursor, ...(watch === undefined ? {} : { watch }) }),
     release: (watch) =>
-      release({ input, watch }).pipe(
+      call.unary(releaseTag(event.name), { input, watch }).pipe(
         Effect.asVoid,
         Effect.catchCauseIf(releaseUnserved, () => Effect.void)
       ),
@@ -436,7 +441,7 @@ export const watchedOf = (
 export const webhookCallsOf = (
   event: Event.Any,
   binding: Declaring,
-  calling: Calling
+  call: ErasedCall
 ): WebhookHolder => {
   const failed = failedOf(webhookErrors(event, binding));
 
@@ -450,11 +455,11 @@ export const webhookCallsOf = (
 
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(Subscribed));
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const subscribe = calling(subscribeTag(event.name)) as JsonMethod;
+  const subscribe = (json: Schema.Json) =>
+    call.unary(subscribeTag(event.name), json);
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const unsubscribe = calling(unsubscribeTag(event.name)) as JsonMethod;
+  const unsubscribe = (json: Schema.Json) =>
+    call.unary(unsubscribeTag(event.name), json);
 
   return {
     subscribe: ({ input, delivery, cursor, ttlMs }) =>
@@ -488,8 +493,8 @@ export const polledTransport =
     transient: (error: unknown) => boolean,
     resendAfter?: Duration.Input
   ): EventTransport =>
-  (event, binding, calling) => {
-    const watched = watchedOf(event, binding, calling);
+  (event, binding, call) => {
+    const watched = watchedOf(event, binding, call);
 
     return (input) => {
       const { poll, release } = watched(input);
@@ -517,25 +522,18 @@ export const methodsOf = (
   call: ErasedCall,
   transport: EventTransport
 ) => {
-  const calling =
-    (tag: string): ErasedMethod =>
-    (payload) =>
-      call(tag, payload);
-
   const methods = Object.fromEntries<unknown>([
     ...binding.actions.map(
-      (action) =>
-        [
-          action.name,
-          actionMethodOf(action, binding, calling(action.name)),
-        ] as const
+      (action) => [action.name, actionMethodOf(action, binding, call)] as const
     ),
-    ...[...nativeOf(binding.rpcs).requests.keys()].map(
-      (tag) =>
+    ...[...nativeOf(binding.rpcs).requests.values()].map(
+      (rpc) =>
         [
-          tag,
-          (payload: Schema.Json, options?: Parameters<ErasedCall>[2]) =>
-            call(tag, payload, options),
+          rpc._tag,
+          (payload: Schema.Json, options?: ErasedCallOptions) =>
+            RpcSchema.isStreamSchema(rpc.successSchema)
+              ? call.stream(rpc._tag, payload, options)
+              : call.unary(rpc._tag, payload, options),
         ] as const
     ),
   ]);
@@ -546,7 +544,7 @@ export const methodsOf = (
 
   const feeds = new Map(
     binding.events.map(
-      (event) => [event.name, transport(event, binding, calling)] as const
+      (event) => [event.name, transport(event, binding, call)] as const
     )
   );
 

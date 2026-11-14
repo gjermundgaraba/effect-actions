@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Effect, Schema, Stream } from "effect";
 
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { methodsOf, streamedTransport } from "../../src/rpc/erased.js";
@@ -27,8 +27,10 @@ class Unreachable extends Schema.TaggedError<
 describe("methodsOf over a given client function", () => {
   it.effect("fails a call with what the function fails with", () =>
     Effect.gen(function* () {
-      const unreachable: ErasedCall<Unreachable> = () =>
-        Effect.fail(new Unreachable());
+      const unreachable: ErasedCall = {
+        unary: () => Effect.fail(new Unreachable()),
+        stream: () => Stream.fail(new Unreachable()),
+      };
 
       const error = yield* Effect.flip(
         clientThrough(Rpc, unreachable).status()

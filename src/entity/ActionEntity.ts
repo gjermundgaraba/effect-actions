@@ -2,7 +2,7 @@ import { Effect, Layer, Predicate, Schema, Stream } from "effect";
 import type { Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
-import type { HttpServerRequest } from "effect/http";
+import type { Headers, HttpServerRequest } from "effect/http";
 import { Rpc, RpcGroup, RpcMessage } from "effect/rpc";
 import type { RpcClient } from "effect/rpc";
 
@@ -52,13 +52,13 @@ import type { WebhookHolder } from "../contract/webhooks.js";
 import type * as ActionRpc from "../rpc/ActionRpc.js";
 import {
   actionMethodOf,
+  erasedCallOf,
   erasedOf,
   handlersOf,
   methodsOf,
   nativeOf,
   polledTransport,
   pollOf,
-  pollTag,
   watchedOf,
   webhookCallsOf,
   webhookRpcsOf,
@@ -615,19 +615,17 @@ export type Client<B extends ActionRpc.Any> = {
   >;
 } & Watching<B>;
 
-const erasedCallOf =
-  (
-    rpcs: ReturnType<
-      Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>
-    >
-  ): ErasedCall =>
-  (tag, payload, options) => {
+const entityCallOf = (
+  rpcs: ReturnType<Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>>,
+  headers?: Headers.Headers
+): ErasedCall =>
+  erasedCallOf((tag, payload, options) => {
     const method = rpcs[tag];
 
     return method === undefined
       ? Effect.die(new Error(`ActionEntity: no rpc ${tag}`))
-      : method(payload, options);
-  };
+      : method(payload, headers === undefined ? options : { headers });
+  });
 
 /**
  * The client of `entity` over Effect's own `Entity.client`, as a function of an entity id: one
@@ -656,7 +654,7 @@ export const client = <
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion
       methodsOf(
         entity.binding,
-        erasedCallOf(clientFor(entityId)),
+        entityCallOf(clientFor(entityId)),
         polledTransport(isTransient)
       ) as Client<B>
   );
@@ -714,10 +712,7 @@ export const reaching = <
   type Reach = (
     contract: Action.Any | Event.Any,
     input: ErasedValue
-  ) => Effect.Effect<
-    (tag: string) => (payload: Schema.Json) => ReturnType<ErasedCall>,
-    Action.Forbidden
-  >;
+  ) => Effect.Effect<ErasedCall, Action.Forbidden>;
 
   const reaches = Effect.map(
     entity.client,
@@ -731,11 +726,9 @@ export const reaching = <
                 message: `The input of ${contract.name} names no entity of ${entity.type}`,
               })
             )
-          : Effect.map(forwarded, (headers) => {
-              const call = erasedCallOf(clientFor(entityId));
-
-              return (tag) => (payload) => call(tag, payload, { headers });
-            });
+          : Effect.map(forwarded, (headers) =>
+              entityCallOf(clientFor(entityId), headers)
+            );
       }
   );
 
@@ -744,11 +737,11 @@ export const reaching = <
     reach: Reach
   ): WrittenHandler<unknown> => {
     const answer = (input: ErasedValue, reporting: Reporting | undefined) =>
-      Effect.map(reach(action, input), (calling) =>
+      Effect.map(reach(action, input), (call) =>
         actionMethodOf(
           action,
           binding,
-          calling(action.name)
+          call
         )(
           input,
           ...(reporting === undefined
@@ -778,8 +771,8 @@ export const reaching = <
       input: ErasedValue,
       sent: (held: WebhookHolder) => Effect.Effect<A, unknown, unknown>
     ) =>
-      Effect.flatMap(reach(event, input), (calling) =>
-        sent(webhookCallsOf(event, binding, calling))
+      Effect.flatMap(reach(event, input), (call) =>
+        sent(webhookCallsOf(event, binding, call))
       ).pipe(Effect.catchIf(isClusterFailure, Effect.die));
 
     return {
@@ -798,11 +791,11 @@ export const reaching = <
                 ),
             },
       poll: (input, cursor, { maxEvents }) =>
-        Effect.flatMap(reached(input), ([calling, json]) =>
+        Effect.flatMap(reached(input), ([call, json]) =>
           pollOf(
             event,
             binding,
-            calling(pollTag(event.name))
+            call
           )({
             input: json,
             cursor,
@@ -811,11 +804,8 @@ export const reaching = <
         ).pipe(Effect.catchIf(isClusterFailure, Effect.die)),
       stream: (input, cursor) =>
         Stream.unwrap(
-          Effect.map(reached(input), ([calling, json]) =>
-            polling(
-              watchedOf(event, binding, calling)(json),
-              isTransient
-            )(cursor)
+          Effect.map(reached(input), ([call, json]) =>
+            polling(watchedOf(event, binding, call)(json), isTransient)(cursor)
           )
         ).pipe(Stream.catchIf(isClusterFailure, Stream.die)),
     };

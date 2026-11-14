@@ -164,7 +164,7 @@ const lint: ReturnType<typeof config> = config({
       files: [
         "src/cli/ActionCli.ts",
         "src/http/streamed.ts",
-        "src/rpc/{ActionRpc,erased}.ts",
+        "src/rpc/erased.ts",
       ],
       rules: { "effecttsgo/unsafe-effect-type-assertion": "off" },
     },

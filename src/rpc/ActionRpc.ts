@@ -53,6 +53,7 @@ import { provideServed, servingOf } from "../contract/serving.js";
 import type { Answer, StreamOf } from "../contract/stream.js";
 import type { WatchArgs } from "../contract/watch.js";
 import {
+  erasedCallOf,
   erasedOf,
   handlersOf,
   methodsOf,
@@ -731,7 +732,7 @@ export function client(
     ([call, silenceEnds]) =>
       methodsOf(
         binding,
-        call,
+        erasedCallOf(call),
         delivery === "stream"
           ? streamedTransport(silenceEnds)
           : polledTransport(isRpcTransient, pollResentAfter)
