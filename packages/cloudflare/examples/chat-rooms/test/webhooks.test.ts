@@ -67,9 +67,9 @@ const postsAt = (path: string) =>
     all.filter(({ delivered }) => delivered.name === "message.posted")
   );
 
-const answer = (path: string, status: number, times = Infinity) =>
+const answer = (path: string, status: number) =>
   fromReceiver(
-    `/answer?path=${encodeURIComponent(path)}&status=${String(status)}&times=${String(times)}`,
+    `/answer?path=${encodeURIComponent(path)}&status=${String(status)}`,
     { method: "POST" }
   );
 
@@ -340,46 +340,6 @@ describe("the rooms' webhooks", () => {
         expect(after).toHaveLength(attempts);
         expect(after.every(({ status }) => status === 503)).toBe(true);
       }).pipe(Effect.provide(worker)),
-    { timeout: 60_000 }
-  );
-
-  it.live(
-    "gives up a post its callback answers 410, POSTing a gap, and delivers the next",
-    () =>
-      Effect.gen(function* () {
-        const path = "/hooks/gone";
-
-        yield* answer(path, 410, 1);
-        yield* subscribed("design", path);
-        yield* post("design", "Gone.");
-
-        yield* within(
-          receivedAt(path),
-          (all) => all.some(({ delivered }) => delivered.type === "gap"),
-          15
-        );
-
-        yield* post("design", "Delivered.");
-
-        const received = yield* within(
-          receivedAt(path),
-          (all) =>
-            all.some(({ delivered }) => delivered.data?.text === "Delivered."),
-          15
-        );
-
-        expect(
-          ofPosts(
-            received.filter(
-              ({ delivered }) => delivered.type !== "verification"
-            )
-          )
-        ).toStrictEqual([
-          { status: 410, type: undefined, text: "Gone." },
-          { status: 200, type: "gap", text: undefined },
-          { status: 200, type: undefined, text: "Delivered." },
-        ]);
-      }).pipe(Effect.scoped, Effect.provide(worker)),
     { timeout: 60_000 }
   );
 

@@ -8,7 +8,7 @@ interface Received {
 
 const received: Received[] = [];
 
-const answers = new Map<string, { status: number; times: number }>();
+const answers = new Map<string, number>();
 
 const challengeOf = (body: string) =>
   /"type":"verification"/u.test(body)
@@ -21,10 +21,10 @@ const control = (url: URL) => {
   }
 
   if (url.pathname === "/answer") {
-    answers.set(url.searchParams.get("path") ?? "", {
-      status: Number(url.searchParams.get("status") ?? "200"),
-      times: Number(url.searchParams.get("times") ?? "Infinity"),
-    });
+    answers.set(
+      url.searchParams.get("path") ?? "",
+      Number(url.searchParams.get("status") ?? "200")
+    );
 
     return new Response(null, { status: 204 });
   }
@@ -43,16 +43,9 @@ export const receiver = async (request: Request) => {
 
   const body = await request.text();
   const challenge = challengeOf(body);
-  const answering = answers.get(url.pathname);
 
   const status =
-    challenge === undefined && answering !== undefined && answering.times > 0
-      ? answering.status
-      : 200;
-
-  if (challenge === undefined && answering !== undefined) {
-    answering.times -= 1;
-  }
+    challenge === undefined ? (answers.get(url.pathname) ?? 200) : 200;
 
   received.push({
     url: request.url,

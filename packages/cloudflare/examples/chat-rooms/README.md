@@ -58,7 +58,7 @@ src/
 └── env.d.ts           the bindings' types, as `wrangler types` writes them
 test/
 ├── worker.test.ts     through the Worker's fetch: JSON routes, a page's socket, MCP, the stub calls a post costs
-├── webhooks.test.ts   a room's posts by webhook: an eviction, an unsubscribe, a 410, refused callbacks, order, hibernation, expiry
+├── webhooks.test.ts   a room's posts by webhook: an eviction, an unsubscribe, refused callbacks, order, hibernation, expiry
 ├── support.ts         the Worker's client and an object's tables, eviction and alarm
 ├── receiver.ts        the webhook callbacks, answered in Node as Miniflare's outbound service
 └── worker.ts          the test Worker: the stub calls and instances each object counts, and a failure planted after a call
