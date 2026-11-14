@@ -576,7 +576,7 @@ export function layer(
         events,
         authentication,
         middleware,
-        deliveries,
+        server: "ActionRpc.layer",
       });
 
       const servedActions = jsonGroup.toLayer(byName);

@@ -465,8 +465,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
         events,
         authentication,
         middleware: [],
-        deliveries: ["poll"],
-        holdsWebhooks: true,
+        server: "ActionEntity.layer",
       }),
       built
     );

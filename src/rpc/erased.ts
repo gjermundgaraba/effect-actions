@@ -63,7 +63,7 @@ import {
 import type { WebhookHolder } from "../contract/webhooks.js";
 import { isUnknownTag, polledTransportOf, transportOf } from "./watch.js";
 
-export const streams = (action: Action.Any) =>
+const streams = (action: Action.Any) =>
   !Answering.$is("Value")(answeringOf(action));
 
 const withSyntheticRequestFromHeaders =
@@ -183,9 +183,9 @@ export const pollTag = (name: string) => `${name}/poll`;
  */
 export const releaseTag = (name: string) => `${name}/release`;
 
-export const subscribeTag = (name: string) => `${name}/subscribe`;
+const subscribeTag = (name: string) => `${name}/subscribe`;
 
-export const unsubscribeTag = (name: string) => `${name}/unsubscribe`;
+const unsubscribeTag = (name: string) => `${name}/unsubscribe`;
 
 export const webhookRpcsOf = (events: readonly Event.Any[]) =>
   RpcGroup.make(
@@ -834,21 +834,15 @@ interface HandlersOptions {
   readonly events: readonly AnyEventImplementation[];
   readonly authentication: Authentication | undefined;
   readonly middleware: readonly RpcMiddleware.AnyService[];
-  readonly deliveries: readonly Delivery[];
-  readonly holdsWebhooks?: true | undefined;
+  readonly server: "ActionRpc.layer" | "ActionEntity.layer";
 }
 
 export const handlersOf = Effect.fnUntraced(function* (
   binding: Declaring,
-  {
-    apps,
-    events,
-    authentication,
-    middleware,
-    deliveries,
-    holdsWebhooks,
-  }: HandlersOptions
+  { apps, events, authentication, middleware, server }: HandlersOptions
 ) {
+  const holdsWebhooks = server === "ActionEntity.layer";
+
   const listedMiddleware: readonly Step[] = yield* Effect.forEach(
     middleware,
     (key) => Effect.service(key)
@@ -861,10 +855,9 @@ export const handlersOf = Effect.fnUntraced(function* (
 
   const bound = yield* acquire(apps, authentication);
 
-  const { feeds, webhooks } =
-    holdsWebhooks === true
-      ? yield* servingFeeds(events, authentication, ({ polls }) => !polls)
-      : { feeds: yield* acquireFeeds(events), webhooks: Option.none() };
+  const { feeds, webhooks } = holdsWebhooks
+    ? yield* servingFeeds(events, authentication, ({ polls }) => !polls)
+    : { feeds: yield* acquireFeeds(events), webhooks: Option.none() };
 
   const heldAnswers = (feed: Feed) => {
     const answers = webhookAnswers(feed, authentication, webhooks);
@@ -920,7 +913,7 @@ export const handlersOf = Effect.fnUntraced(function* (
       )
     ),
     ...Object.fromEntries(
-      deliveries.includes("stream")
+      server === "ActionRpc.layer"
         ? feeds.map(
             (feed) =>
               [
@@ -935,39 +928,24 @@ export const handlersOf = Effect.fnUntraced(function* (
         : []
     ),
     ...Object.fromEntries(
-      deliveries.includes("poll")
-        ? feeds.map(
-            (feed) =>
-              [
-                pollTag(feed.event.name),
-                pollHandlerOf(
-                  feed,
-                  stepsOf(feed.event.caller),
-                  Schema.Union(eventErrors(feed.event, binding)),
-                  authentication
-                ),
-              ] as const
-          )
-        : []
+      feeds.flatMap((feed) => {
+        const steps = stepsOf(feed.event.caller);
+        const error = Schema.Union(eventErrors(feed.event, binding));
+
+        return [
+          [
+            pollTag(feed.event.name),
+            pollHandlerOf(feed, steps, error, authentication),
+          ],
+          [
+            releaseTag(feed.event.name),
+            releaseHandlerOf(feed, steps, error, authentication),
+          ],
+        ] as const;
+      })
     ),
     ...Object.fromEntries(
-      deliveries.includes("poll")
-        ? feeds.map(
-            (feed) =>
-              [
-                releaseTag(feed.event.name),
-                releaseHandlerOf(
-                  feed,
-                  stepsOf(feed.event.caller),
-                  Schema.Union(eventErrors(feed.event, binding)),
-                  authentication
-                ),
-              ] as const
-          )
-        : []
-    ),
-    ...Object.fromEntries(
-      holdsWebhooks === true
+      holdsWebhooks
         ? feeds
             .filter(({ event }) => offersWebhook(event))
             .flatMap((feed) =>
