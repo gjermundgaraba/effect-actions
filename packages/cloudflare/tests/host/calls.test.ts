@@ -8,13 +8,15 @@ import {
   heldIn,
   objectOf,
   opened,
-  receivedTags,
 } from "../support/socket.js";
+import { received } from "../support/worker.js";
 import { Seer } from "../worker.js";
 
 const lingered = (seen: string[]) =>
-  Effect.map(receivedTags, (tags) => {
-    seen.push(...tags.filter((tag) => tag.startsWith("linger-")));
+  Effect.map(received, (all) => {
+    seen.push(
+      ...all.map(({ tag }) => tag).filter((tag) => tag.startsWith("linger-"))
+    );
 
     return seen;
   });

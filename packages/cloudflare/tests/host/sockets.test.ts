@@ -15,7 +15,8 @@ import {
   upgrade,
   watchingIn,
 } from "../support/socket.js";
-import { boards, following, notes, throughWorker } from "../support/watch.js";
+import { boards, following, notes } from "../support/watch.js";
+import { throughWorker } from "../support/worker.js";
 import { Seer } from "../worker.js";
 
 const SeerRpc = Seer.binding;

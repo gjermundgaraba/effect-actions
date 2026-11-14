@@ -236,6 +236,7 @@ describe("ActionEntity's native rpcs and services", () => {
   it.each([
     "peek",
     "peeked",
+    "peeked/poll",
     "peeked/release",
     "peeked/subscribe",
     "peeked/unsubscribe",
@@ -256,7 +257,7 @@ describe("ActionEntity's native rpcs and services", () => {
           }
         )
       ).toThrow(
-        `are named after an action, an event type, an event's release, subscribe or unsubscribe, or the entity's wake`
+        `are named after an action, an event type, an event's poll, release, subscribe or unsubscribe, or the entity's wake`
       );
     }
   );
@@ -282,7 +283,7 @@ describe("ActionEntity's native rpcs and services", () => {
 
     expect(persisted).toStrictEqual({
       peek: false,
-      peeked: false,
+      "peeked/poll": false,
       "peeked/release": false,
       "peeked/subscribe": false,
       "peeked/unsubscribe": false,

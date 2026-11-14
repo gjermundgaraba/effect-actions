@@ -503,7 +503,7 @@ describe("Webhook.layer with persist in an entity's services", () => {
         const tickers = yield* UnkeptTicker.client;
 
         const answered = yield* Effect.suspend(() => {
-          const answer = tickers("a")["ticked"]?.(
+          const answer = tickers("a")["ticked/poll"]?.(
             { input: { room: "a" }, cursor: null },
             { headers: { authorization: "Bearer alice" } }
           );

@@ -18,7 +18,8 @@ import {
   Schema,
 } from "effect";
 import type { Scope } from "effect";
-import { ClusterSchema, Entity } from "effect/cluster";
+import type { Entity } from "effect/cluster";
+import { ClusterSchema } from "effect/cluster";
 import {
   FetchHttpClient,
   HttpEffect,
@@ -134,12 +135,7 @@ export const SeerTasks = RpcGroup.make(
   ),
   Rpc.make("mark", {
     payload: { id: Schema.String, uninterruptible: Schema.Boolean },
-  }),
-  Rpc.make("follow", { payload: { id: Schema.String } }),
-  Rpc.make("followed", { payload: { id: Schema.String } }).annotate(
-    ClusterSchema.Persisted,
-    true
-  )
+  })
 );
 
 const byRoom = ({ room }: { readonly room: string }) => room;
@@ -333,37 +329,28 @@ const crashing = Action.implement(
 );
 
 const seerTasks = Effect.map(
-  Effect.all([
-    Bumps,
-    Effect.flatMap(Entity.CurrentAddress, ({ entityId }) =>
-      Effect.map(Seer.client, (seers) => seers(entityId))
-    ),
-  ]),
-  ([bumps, self]) =>
+  Bumps,
+  (bumps) =>
     ({
       bump: () => Effect.sync(() => (bumps.count += 1)),
-      hold: () => Rpc.fork(Effect.sleep("3 seconds")),
+      hold: () =>
+        Rpc.fork(
+          Effect.andThen(
+            Effect.sync(() => {
+              received.push({ tag: "holding", authorization: null });
+            }),
+            Effect.sleep("3 seconds")
+          )
+        ),
       mark: ({ payload: { id, uninterruptible } }) => {
-        const work = Effect.andThen(
-          Effect.sleep("400 millis"),
-          Effect.sync(() => {
-            received.push({ tag: `mark-${id}`, authorization: null });
-          })
-        );
+        const work = Effect.gen(function* () {
+          received.push({ tag: `marking-${id}`, authorization: null });
+          yield* Effect.sleep("400 millis");
+          received.push({ tag: `mark-${id}`, authorization: null });
+        });
 
         return uninterruptible ? Rpc.uninterruptible(work) : work;
       },
-      follow: ({ payload: { id } }) =>
-        Effect.gen(function* () {
-          yield* Effect.orDie(self.followed({ id }, { discard: true }));
-          yield* Effect.sleep("300 millis");
-
-          received.push({ tag: `follow-${id}`, authorization: null });
-        }),
-      followed: ({ payload: { id } }) =>
-        Effect.sync(() => {
-          received.push({ tag: `followed-${id}`, authorization: null });
-        }),
       note: ({ headers }) =>
         Effect.sync(() => {
           received.push({

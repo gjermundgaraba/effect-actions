@@ -15,7 +15,8 @@ import {
   stubs,
   watchingIn,
 } from "../support/socket.js";
-import { boards, following, notes, throughWorker } from "../support/watch.js";
+import { boards, following, notes } from "../support/watch.js";
+import { throughWorker } from "../support/worker.js";
 
 const wire = (board: string, n: number) =>
   Effect.promise(

@@ -164,6 +164,18 @@ const unaryOf = (name: string) =>
 
 export type Delivery = "stream" | "poll";
 
+/**
+ * The tag of the unary rpc polling the event type `name`, `<name>/poll`, taking `Poll` beside
+ * its `input` and answering a `Page`, which `ActionRpc.layer` and an `ActionEntity` serve and
+ * `ActionRpc.client` with `delivery: "poll"` calls.
+ */
+export const pollTag = (name: string) => `${name}/poll`;
+
+/**
+ * The tag of the unary rpc releasing a watch of the event type `name`, `<name>/release`, taking
+ * `Release` beside its `input`, which `ActionRpc.client` with `delivery: "poll"` calls as its
+ * watch ends.
+ */
 export const releaseTag = (name: string) => `${name}/release`;
 
 export const subscribeTag = (name: string) => `${name}/subscribe`;
@@ -188,42 +200,69 @@ const webhookErrors = (event: Event.Any, binding: Declaring) =>
 export const erasedOf = (
   actions: readonly Action.Any[],
   events: readonly Event.Any[],
-  delivery: Delivery
+  deliveries: readonly Delivery[]
 ) =>
   RpcGroup.make(
     ...actions.map((action) =>
       streams(action) ? streamOf(action.name) : unaryOf(action.name)
     ),
-    ...events.flatMap(
-      (event): ReadonlyArray<ReturnType<typeof streamOf | typeof unaryOf>> =>
-        delivery === "stream"
-          ? [streamOf(event.name)]
-          : [unaryOf(event.name), unaryOf(releaseTag(event.name))]
-    )
+    ...events.flatMap((event) => [
+      ...(deliveries.includes("stream") ? [streamOf(event.name)] : []),
+      ...(deliveries.includes("poll")
+        ? [unaryOf(pollTag(event.name)), unaryOf(releaseTag(event.name))]
+        : []),
+    ])
   );
 
 const Watch = Schema.String.check(Schema.isUUID());
 
+/**
+ * The payload of an event type's poll rpc, `<event>/poll`, past its `input`, as a client sends
+ * it: the `cursor` to read after, `null` reading from now, at most `maxEvents` occurrences, and
+ * the `watch`, a UUID, whose own subscription hook the poll holds.
+ */
+export const Poll = Schema.Struct({
+  cursor: Schema.NullOr(Schema.String),
+  maxEvents: Schema.optionalKey(Schema.Finite),
+  watch: Schema.optionalKey(Watch),
+});
+
 const PollOf = (event: Event.Any) =>
-  Schema.Struct({
-    ...SubscriptionOf(event).fields,
-    maxEvents: Schema.optionalKey(Schema.Finite),
-    watch: Schema.optionalKey(Watch),
-  });
+  Schema.Struct({ ...Poll.fields, ...SubscriptionOf(event).fields });
+
+/**
+ * The payload of an event type's `<event>/release`, past its `input`: the `watch` whose
+ * subscription hook it frees.
+ */
+export const Release = Schema.Struct({ watch: Watch });
 
 const ReleaseOf = (event: Event.Any) =>
-  Schema.Struct({ input: event.input, watch: Watch });
+  Schema.Struct({ input: event.input, ...Release.fields });
 
 const watcherOf = (principal: string | undefined, watch: string) =>
   JSON.stringify([principal ?? null, watch]);
 
+const pageFields = {
+  cursor: Schema.NullOr(Schema.String),
+  truncated: Schema.Boolean,
+  hasMore: Schema.Boolean,
+  nextPoll: Schema.DurationFromMillis,
+};
+
+/**
+ * The answer of an event type's poll rpc, as an HTTP poll answers it,
+ * `{ events, cursor, truncated, hasMore, nextPollMs }`, its occurrences left undecoded: `hasMore`
+ * when more are ready at once, and `nextPollMs` how long its client waits before it polls again.
+ */
+export const Page = Schema.Struct({
+  events: Schema.Array(Schema.Unknown),
+  ...pageFields,
+}).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
+
 const PageOf = (event: Event.Any) =>
   Schema.Struct({
     events: Schema.Array(OccurrenceOf(event)),
-    cursor: Schema.NullOr(Schema.String),
-    truncated: Schema.Boolean,
-    hasMore: Schema.Boolean,
-    nextPoll: Schema.DurationFromMillis,
+    ...pageFields,
   }).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
 
 export type ErasedCall<T = unknown> = (
@@ -394,7 +433,7 @@ export const watchedOf = (
   binding: Declaring,
   calling: Calling
 ) => {
-  const poll = pollOf(event, binding, calling(event.name));
+  const poll = pollOf(event, binding, calling(pollTag(event.name)));
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const release = calling(releaseTag(event.name)) as JsonMethod;
@@ -481,7 +520,8 @@ export const polledTransport =
           poll: resendAfter === undefined ? poll : resending(poll, resendAfter),
           release,
         },
-        transient
+        transient,
+        isUnknownTag(pollTag(event.name))
       );
     };
   };
@@ -811,7 +851,7 @@ interface HandlersOptions {
   readonly events: readonly AnyEventImplementation[];
   readonly authentication: Authentication | undefined;
   readonly middleware: readonly RpcMiddleware.AnyService[];
-  readonly delivery: Delivery;
+  readonly deliveries: readonly Delivery[];
   readonly holdsWebhooks?: true | undefined;
 }
 
@@ -822,7 +862,7 @@ export const handlersOf = Effect.fnUntraced(function* (
     events,
     authentication,
     middleware,
-    delivery,
+    deliveries,
     holdsWebhooks,
   }: HandlersOptions
 ) {
@@ -882,29 +922,39 @@ export const handlersOf = Effect.fnUntraced(function* (
       )
     ),
     ...Object.fromEntries(
-      feeds.map(
-        (feed) =>
-          [
-            feed.event.name,
-            delivery === "stream"
-              ? subscriptionHandlerOf(
+      deliveries.includes("stream")
+        ? feeds.map(
+            (feed) =>
+              [
+                feed.event.name,
+                subscriptionHandlerOf(
                   feed,
                   stepsOf(feed.event.caller),
                   Schema.Union(eventErrors(feed.event, binding))
-                )
-              : pollHandlerOf(
+                ),
+              ] as const
+          )
+        : []
+    ),
+    ...Object.fromEntries(
+      deliveries.includes("poll")
+        ? feeds.map(
+            (feed) =>
+              [
+                pollTag(feed.event.name),
+                pollHandlerOf(
                   feed,
                   stepsOf(feed.event.caller),
                   Schema.Union(eventErrors(feed.event, binding)),
                   authentication
                 ),
-          ] as const
-      )
+              ] as const
+          )
+        : []
     ),
     ...Object.fromEntries(
-      delivery === "stream"
-        ? []
-        : feeds.map(
+      deliveries.includes("poll")
+        ? feeds.map(
             (feed) =>
               [
                 releaseTag(feed.event.name),
@@ -916,6 +966,7 @@ export const handlersOf = Effect.fnUntraced(function* (
                 ),
               ] as const
           )
+        : []
     ),
     ...Object.fromEntries(
       holdsWebhooks === true

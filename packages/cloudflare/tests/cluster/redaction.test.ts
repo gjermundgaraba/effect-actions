@@ -1,30 +1,20 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
 import { describe, expect, it } from "@effect/vitest";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { runInDurableObject } from "cloudflare:test";
-import { env, exports } from "cloudflare:workers";
-import { Effect, Fiber, Layer, Schedule, Schema, Stream } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { env } from "cloudflare:workers";
+import { Effect, Fiber, Stream } from "effect";
 import { RpcClient } from "effect/rpc";
 
-import { initialize, Seer, SeerHttp, Seen } from "../worker.js";
-
-const throughWorker = FetchHttpClient.layer.pipe(
-  Layer.provide(
-    Layer.succeed(FetchHttpClient.Fetch)(
-      async (input, init) =>
-        await exports.default.fetch(new Request(input, init))
-    )
-  )
-);
-
-const asAlice = ActionHttp.client(SeerHttp, {
-  baseUrl: "https://worker.example",
-  transformClient: HttpClient.mapRequest(
-    HttpClientRequest.bearerToken("alice")
-  ),
-});
+import { invokedSince, stubs } from "../support/socket.js";
+import {
+  asAlice,
+  gathered,
+  logged,
+  received,
+  throughWorker,
+} from "../support/worker.js";
+import { initialize, Seer, Seen } from "../worker.js";
 
 const storedRowsOf = (type: string, id: string) =>
   Effect.promise(
@@ -46,41 +36,13 @@ const storedRowsOf = (type: string, id: string) =>
       )
   );
 
-const logged = Effect.promise(
-  async () => await exports.default.fetch("https://worker.example/logged")
-).pipe(
-  Effect.flatMap((response) =>
-    Effect.promise(async () => await response.json())
-  ),
-  Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(Schema.String))),
-  Effect.orDie
-);
-
-const Received = Schema.Array(
-  Schema.Struct({
-    tag: Schema.String,
-    authorization: Schema.NullOr(Schema.String),
-  })
-);
-
-const received = Effect.promise(
-  async () => await exports.default.fetch("https://worker.example/received")
-).pipe(
-  Effect.flatMap((response) =>
-    Effect.promise(async () => await response.json())
-  ),
-  Effect.flatMap(Schema.decodeUnknownEffect(Received)),
-  Effect.orDie
-);
-
 const receivedUntil = (count: number, tag: string) =>
-  received.pipe(
-    Effect.map((calls) => calls.filter((call) => call.tag === tag)),
-    Effect.repeat({
-      until: (calls) => calls.length >= count,
-      schedule: Schedule.spaced("50 millis"),
-    }),
-    Effect.timeout("10 seconds")
+  Effect.map(
+    gathered(
+      received,
+      (calls) => calls.filter((call) => call.tag === tag).length >= count
+    ),
+    (calls) => calls.filter((call) => call.tag === tag)
   );
 
 const atRest = (...ids: readonly string[]) =>
@@ -101,14 +63,12 @@ const redacting = (lines: readonly string[]) => {
   }
 };
 
+const tagged = (tag: string) => (line: string) => line.startsWith(`["${tag}"`);
+
 const loggedUntil = (count: number, tag: string) =>
-  logged.pipe(
-    Effect.map((lines) => lines.filter((line) => line.startsWith(`["${tag}"`))),
-    Effect.repeat({
-      until: (lines) => lines.length >= count,
-      schedule: Schedule.spaced("50 millis"),
-    }),
-    Effect.timeout("10 seconds")
+  Effect.map(
+    gathered(logged, (lines) => lines.filter(tagged(tag)).length >= count),
+    (lines) => lines.filter(tagged(tag))
   );
 
 describe("ActionCluster.layer's entity clients", () => {
@@ -121,11 +81,13 @@ describe("ActionCluster.layer's entity clients", () => {
         const client = yield* asAlice;
         const steps: number[] = [];
 
+        const { finished } = yield* stubs;
+
         const watching = yield* client
           .watch(Seen, { room: "a" })
           .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
-        yield* Effect.sleep("500 millis");
+        yield* invokedSince(finished.invoke);
 
         const seen = yield* client.whoami(
           { room: "a" },

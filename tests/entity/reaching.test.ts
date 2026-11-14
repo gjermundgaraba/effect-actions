@@ -82,7 +82,7 @@ const signedIn = ActionHttp.client(RoomHttp, {
 const startOf = (room: string) =>
   Effect.gen(function* () {
     const raw = yield* Room.client;
-    const poll = raw(room)["room.posted"];
+    const poll = raw(room)["room.posted/poll"];
 
     if (poll === undefined) {
       return yield* Effect.die(new Error("no poll rpc"));
@@ -307,7 +307,7 @@ const asAlice = RpcClient.withHeaders({ authorization: "Bearer alice" });
 const seenFrom = (room: string) =>
   Effect.gen(function* () {
     const raw = yield* Seer.client;
-    const poll = raw(room)["seen"];
+    const poll = raw(room)["seen/poll"];
 
     if (poll === undefined) {
       return yield* Effect.die(new Error("no poll rpc"));

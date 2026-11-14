@@ -12,7 +12,8 @@ import {
   until,
   watchingIn,
 } from "../support/socket.js";
-import { boards, following, notes, throughWorker } from "../support/watch.js";
+import { boards, following, notes } from "../support/watch.js";
+import { throughWorker } from "../support/worker.js";
 
 const instancesOf = (board: string) =>
   Effect.map(stubs, ({ instances }) =>

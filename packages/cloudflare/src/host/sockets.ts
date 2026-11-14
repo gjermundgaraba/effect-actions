@@ -1,4 +1,14 @@
-import { Cause, Effect, Exit, Fiber, Option, Predicate, Schema } from "effect";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import {
+  Cause,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Option,
+  Predicate,
+  Schema,
+} from "effect";
 import { Rpc, RpcMessage, RpcSchema, RpcSerialization } from "effect/rpc";
 
 import { closeQuietly, died, encodeDefect, parser, send } from "./frames.js";
@@ -99,24 +109,11 @@ const FromClient = Schema.Union([
 
 const decodeFrames = Schema.decodeUnknownEffect(Schema.Array(FromClient));
 
-const Poll = Schema.Struct({
-  cursor: Schema.NullOr(Schema.String),
-  watch: Schema.optional(Schema.String),
-});
+const decodePoll = Schema.decodeUnknownOption(ActionRpc.Poll);
 
-const decodePoll = Schema.decodeUnknownOption(Poll);
+const decodePage = Schema.decodeUnknownOption(ActionRpc.Page);
 
-const Page = Schema.Struct({
-  events: Schema.Array(Schema.Unknown),
-  cursor: Schema.NullOr(Schema.String),
-  hasMore: Schema.Boolean,
-});
-
-const decodePage = Schema.decodeUnknownOption(Page);
-
-const decodeRelease = Schema.decodeUnknownOption(
-  Schema.Struct({ watch: Schema.String })
-);
+const decodeRelease = Schema.decodeUnknownOption(ActionRpc.Release);
 
 /** One entity's binding, as a socket reaches it: its rpcs by tag, its polls, and a call into it. */
 export interface Served {
@@ -193,11 +190,11 @@ const lostCalls =
 const lostSocket =
   "This server cannot read what it kept for this socket: connect again";
 
-const pollResentAfter = 240_000;
-
-const defaultLease = 300_000;
-
-const uncalledWithin = (defaultLease - pollResentAfter) / 2;
+/**
+ * How long after a watch's last call to the entity a page's next poll is parked with no call:
+ * with `ActionRpc.pollResentAfter`, it bounds how long the entity goes without a page's poll.
+ */
+export const uncalledWithin = Duration.seconds(30);
 
 /**
  * Answers sockets' frames from the entity each attachment names, parks the polls that find
@@ -396,7 +393,7 @@ export const makeSockets = (options: {
       answer !== undefined &&
       answer.cursor === poll.cursor &&
       answer.gate === gate() &&
-      now() - answer.at < uncalledWithin &&
+      now() - answer.at < Duration.toMillis(uncalledWithin) &&
       park(socket, {
         id: request.id,
         tag: request.tag,

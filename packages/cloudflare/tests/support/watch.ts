@@ -1,20 +1,9 @@
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
-import { exports } from "cloudflare:workers";
-import { Effect, Layer, Queue, Stream } from "effect";
-import { FetchHttpClient } from "effect/http";
+import { Effect, Queue, Stream } from "effect";
 
 import type { Heard, Hooked, Leased, Logged, Note, Pinned } from "../board.js";
 import { BoardHttp } from "../board.js";
-
-export const throughWorker = FetchHttpClient.layer.pipe(
-  Layer.provide(
-    Layer.succeed(FetchHttpClient.Fetch)(
-      async (input, init) =>
-        await exports.default.fetch(new Request(input, init))
-    )
-  )
-);
 
 export const boards = ActionHttp.client(BoardHttp, {
   baseUrl: "https://worker.example",

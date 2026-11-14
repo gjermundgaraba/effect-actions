@@ -490,18 +490,25 @@ describe("ActionRpc native rpcs", () => {
       })
   );
 
-  it("refuses a native rpc named after an action, an event type, then or the client's watch", () => {
+  it("refuses a native rpc named after an action, an event type, its poll or release, then or the client's watch", () => {
     const Ticked = Event.make("clock.ticked", {
       description: "The clock ticked.",
       payload: { at: Schema.Int },
       caller: Action.Anyone,
     });
 
-    for (const tag of ["status", "clock.ticked", "then", "watch"]) {
+    for (const tag of [
+      "status",
+      "clock.ticked",
+      "clock.ticked/poll",
+      "clock.ticked/release",
+      "then",
+      "watch",
+    ]) {
       expect(() =>
         ActionRpc.make([Status, Ticked], { rpcs: RpcGroup.make(Rpc.make(tag)) })
       ).toThrow(
-        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action, an event type or a name the client keeps, "then" or "watch" (rename it)`
+        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action, an event type, an event's poll or release, or a name the client keeps, "then" or "watch" (rename it)`
       );
     }
   });

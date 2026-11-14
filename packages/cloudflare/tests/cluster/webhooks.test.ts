@@ -16,7 +16,7 @@ describe("Webhook.layer with persist in an entity's services on workerd", () => 
         const keepers = yield* Effect.provideContext(Keeper.client, context);
 
         const polled = Effect.suspend(() => {
-          const answer = keepers("unkept")["kept"]?.(
+          const answer = keepers("unkept")["kept/poll"]?.(
             { input: { room: "unkept" }, cursor: null },
             { headers: { authorization: "Bearer alice" } }
           );

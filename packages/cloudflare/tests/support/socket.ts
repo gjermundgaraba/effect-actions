@@ -27,13 +27,21 @@ export const upgrade = (
       )
   );
 
+const closing = (socket: WebSocket) =>
+  Effect.sync(() => {
+    if (socket.readyState === WebSocket.OPEN) {
+      socket.close(1000);
+    }
+  });
+
 export const connected = (response: Response) =>
   Effect.gen(function* () {
-    const socket = response.webSocket;
-
-    if (socket === null) {
-      return yield* Effect.die(new Error(`No WebSocket: ${response.status}`));
-    }
+    const socket = yield* Effect.acquireRelease(
+      response.webSocket === null
+        ? Effect.die(new Error(`No WebSocket: ${response.status}`))
+        : Effect.succeed(response.webSocket),
+      closing
+    );
 
     socket.accept();
 
@@ -87,22 +95,17 @@ export const raw = (type: string, id: string) =>
 
       return Effect.succeed({ socket: webSocket, received, closed });
     }),
-    ({ socket }) =>
-      Effect.sync(() => {
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.close(1000);
-        }
-      })
+    ({ socket }) => closing(socket)
   );
 
 export const pollOf =
-  (socket: WebSocket, tag: string, board: string) =>
+  (socket: WebSocket, event: string, board: string) =>
   (id: string, watch: string, cursor: string | null) => {
     socket.send(
       JSON.stringify({
         _tag: "Request",
         id,
-        tag,
+        tag: ActionRpc.pollTag(event),
         payload: { input: { board }, cursor, watch },
         headers: [],
       })
@@ -167,10 +170,7 @@ export const reconnecting = (type: string, id: string) =>
 
                 return Effect.succeed(socket);
               }),
-              (socket) =>
-                Effect.sync(() => {
-                  socket.close(1000);
-                })
+              closing
             )
           )
         )
@@ -255,6 +255,15 @@ export const stubs = Effect.promise(
       .then(async (response) => await response.json())
 ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Stubs)), Effect.orDie);
 
+export const invokedSince = (finished: number) =>
+  stubs.pipe(
+    Effect.repeat({
+      until: (counts) => counts.finished.invoke > finished,
+      schedule: Schedule.spaced("50 millis"),
+    }),
+    Effect.timeout("10 seconds")
+  );
+
 export const settledStubs = stubs.pipe(
   Effect.repeat({
     until: ({ started, finished }) =>
@@ -263,22 +272,4 @@ export const settledStubs = stubs.pipe(
       started.acknowledge === finished.acknowledge,
     schedule: Schedule.spaced("100 millis"),
   })
-);
-
-const Received = Schema.Array(
-  Schema.Struct({
-    tag: Schema.String,
-    authorization: Schema.NullOr(Schema.String),
-  })
-);
-
-export const receivedTags = Effect.promise(
-  async () =>
-    await exports.default
-      .fetch("https://worker.example/received")
-      .then(async (response) => await response.json())
-).pipe(
-  Effect.flatMap(Schema.decodeUnknownEffect(Received)),
-  Effect.map((received) => received.map(({ tag }) => tag)),
-  Effect.orDie
 );

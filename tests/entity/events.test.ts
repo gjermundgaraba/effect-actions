@@ -70,7 +70,7 @@ const failingPolls = (fails: (call: number) => boolean, lasting: boolean) => {
 
           if (
             message._tag === "OutgoingRequest" &&
-            message.envelope.tag === "ticked"
+            message.envelope.tag === "ticked/poll"
           ) {
             calls += 1;
 
@@ -833,14 +833,14 @@ describe("An entity's release rpc", () => {
         const released = { input, watch };
         const asBob = { authorization: "Bearer bob" };
 
-        yield* sent("ticked", polled, asAlice.headers);
+        yield* sent("ticked/poll", polled, asAlice.headers);
         yield* sent("ticked/release", released, asBob);
 
         const refused = yield* Effect.flip(
           sent("ticked/release", released, {})
         );
 
-        yield* sent("ticked", polled, asAlice.headers);
+        yield* sent("ticked/poll", polled, asAlice.headers);
 
         const beforeAlice = { ...counted };
 
@@ -864,7 +864,7 @@ describe("An entity's release rpc", () => {
 
       const refusals = yield* Effect.forEach(
         [
-          ["ticked", { input, cursor: null, watch }],
+          ["ticked/poll", { input, cursor: null, watch }],
           ["ticked/release", { input, watch }],
         ] as const,
         ([tag, payload]) => Effect.flip(sent(tag, payload, asAlice.headers))

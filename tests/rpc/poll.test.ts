@@ -17,12 +17,9 @@ const Board = ActionEntity.make("Board", ActionRpc.make([Posted]), {
 
 const rpcs = ActionEntity.bindingRpcs(Board);
 
-const PollPayload = Schema.Struct({
-  cursor: Schema.NullOr(Schema.String),
-  watch: Schema.optional(Schema.String),
-});
+const decodePoll = Schema.decodeUnknownSync(ActionRpc.Poll);
 
-const decodePoll = Schema.decodeUnknownSync(PollPayload);
+const postedPoll = ActionRpc.pollTag(Posted.name);
 
 interface Forwarded {
   readonly tag: string;
@@ -56,7 +53,7 @@ const servingWith = <R>(
                   ) =>
                     Effect.suspend(() => {
                       forwarded.push(
-                        tag === Posted.name
+                        tag === postedPoll
                           ? { tag, ...decodePoll(payload) }
                           : { tag }
                       );
@@ -130,21 +127,22 @@ describe("ActionRpc.client with delivery poll", () => {
   );
 
   it.effect(
-    "fails a watch with InvalidInput against ActionRpc.layer, whose event rpc is a stream that refuses a poll's watch",
+    "follows an event through the polls ActionRpc.layer serves beside its stream",
     () =>
       Effect.gen(function* () {
         const log = makeMessages();
 
-        log.post("general", "before");
+        log.post("general", "one");
+        log.post("general", "two");
 
-        const failure = yield* Effect.gen(function* () {
+        const received = yield* Effect.gen(function* () {
           const client = yield* ActionRpc.client(signedOut, {
             delivery: "poll",
           });
 
-          return yield* Effect.flip(
-            Stream.runDrain(client.watch(Posted, {}, { cursor: "0" }))
-          );
+          return yield* client
+            .watch(Posted, {}, { cursor: "0" })
+            .pipe(Stream.take(2), Stream.runCollect);
         }).pipe(
           Effect.scoped,
           Effect.provide(
@@ -156,7 +154,7 @@ describe("ActionRpc.client with delivery poll", () => {
           )
         );
 
-        expect(failure).toMatchObject({ _tag: "InvalidInput" });
+        expect(texts(received)).toStrictEqual(["one", "two"]);
       })
   );
 
@@ -170,7 +168,7 @@ describe("ActionRpc.client with delivery poll", () => {
           forwarded.length === 1
             ? Effect.never
             : Effect.succeed(
-                tag === Posted.name
+                tag === postedPoll
                   ? {
                       events: [],
                       cursor: "0",
@@ -209,8 +207,8 @@ describe("ActionRpc.client with delivery poll", () => {
         expect(polls).toStrictEqual({ before: 1, after: 2 });
         expect(first?.watch).toBeTypeOf("string");
         expect(forwarded.slice(0, 2)).toStrictEqual([
-          { tag: Posted.name, cursor: "0", watch: first?.watch },
-          { tag: Posted.name, cursor: "0", watch: first?.watch },
+          { tag: postedPoll, cursor: "0", watch: first?.watch },
+          { tag: postedPoll, cursor: "0", watch: first?.watch },
         ]);
       })
   );

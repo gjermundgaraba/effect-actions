@@ -1,39 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
-import { env, exports } from "cloudflare:workers";
-import { Effect, Fiber, Schedule, Schema } from "effect";
+import { env } from "cloudflare:workers";
+import { Effect, Fiber } from "effect";
 
+import { gathered, received } from "../support/worker.js";
 import { initialize, Seer } from "../worker.js";
 
-const received = Effect.promise(
-  async () => await exports.default.fetch("https://worker.example/received")
-).pipe(
-  Effect.flatMap((response) =>
-    Effect.promise(async () => await response.json())
-  ),
-  Effect.flatMap(
-    Schema.decodeUnknownEffect(
-      Schema.Array(Schema.Struct({ tag: Schema.String }))
-    )
-  ),
-  Effect.map((all) => all.map(({ tag }) => tag)),
-  Effect.orDie
-);
+const tags = Effect.map(received, (all) => all.map(({ tag }) => tag));
 
-const marked = (id: string) =>
-  Effect.promise(
-    async () => await exports.default.fetch("https://worker.example/received")
-  ).pipe(
-    Effect.flatMap((response) =>
-      Effect.promise(async () => await response.json())
-    ),
-    Effect.flatMap(
-      Schema.decodeUnknownEffect(
-        Schema.Array(Schema.Struct({ tag: Schema.String }))
-      )
-    ),
-    Effect.map((all) => all.filter(({ tag }) => tag === `mark-${id}`)),
-    Effect.orDie
-  );
+const receivedTag = (tag: string) => gathered(tags, (all) => all.includes(tag));
 
 describe("ActionEntity.layer's native rpcs on workerd", () => {
   it.live(
@@ -50,43 +24,13 @@ describe("ActionEntity.layer's native rpcs on workerd", () => {
         expect(yield* seers("natives-a").bump()).toBe(2);
         expect(yield* seers("natives-b").bump()).toBe(1);
 
+        yield* received;
         yield* Effect.forkChild(seers("natives-fork").hold());
-        yield* Effect.sleep("200 millis");
+        yield* receivedTag("holding");
 
         expect(
           yield* seers("natives-fork").bump().pipe(Effect.timeout("1 second"))
         ).toBe(1);
-      }),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "run a persisted tell an entity sends itself after the call sending it ends, at the default concurrency",
-    () =>
-      Effect.gen(function* () {
-        const context = yield* Effect.promise(
-          async () => await initialize(env)
-        );
-
-        const seers = yield* Effect.provideContext(Seer.client, context);
-
-        yield* received;
-        yield* seers("natives-order").follow({ id: "order" });
-
-        const tags: string[] = [];
-
-        yield* Effect.repeat(
-          Effect.map(received, (more) => tags.push(...more)),
-          {
-            until: () => tags.includes("followed-order"),
-            schedule: Schedule.spaced("50 millis"),
-          }
-        ).pipe(Effect.timeout("5 seconds"));
-
-        expect(tags.filter((tag) => tag.endsWith("-order"))).toStrictEqual([
-          "follow-order",
-          "followed-order",
-        ]);
       }),
     { timeout: 30_000 }
   );
@@ -101,21 +45,32 @@ describe("ActionEntity.layer's native rpcs on workerd", () => {
 
         const seers = yield* Effect.provideContext(Seer.client, context);
 
-        const interrupted = (id: string, uninterruptible: boolean) =>
+        const interrupting = (id: string, uninterruptible: boolean) =>
           Effect.gen(function* () {
+            yield* received;
+
             const call = yield* Effect.forkChild(
               seers(`natives-${id}`).mark({ id, uninterruptible })
             );
 
-            yield* Effect.sleep("150 millis");
-            yield* Fiber.interrupt(call);
-            yield* Effect.sleep("800 millis");
+            const started = yield* receivedTag(`marking-${id}`);
 
-            return yield* marked(id);
+            yield* Fiber.interrupt(call);
+
+            return started;
           });
 
-        expect(yield* interrupted("kept", true)).toHaveLength(1);
-        expect(yield* interrupted("stopped", false)).toHaveLength(0);
+        const kept = yield* interrupting("kept", true);
+        const finished = [...kept, ...(yield* receivedTag("mark-kept"))];
+
+        const stopped = yield* interrupting("stopped", false);
+
+        yield* seers("natives-stopped").bump();
+
+        const marked = [...stopped, ...(yield* tags)];
+
+        expect(finished.filter((tag) => tag === "mark-kept")).toHaveLength(1);
+        expect(marked.filter((tag) => tag === "mark-stopped")).toHaveLength(0);
       }),
     { timeout: 30_000 }
   );

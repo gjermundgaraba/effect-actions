@@ -92,22 +92,19 @@ export const transportOf = (
 export const polledTransportOf = (
   event: Event.Any,
   { poll, release }: Pick<Transport<unknown, never>, "poll" | "release">,
-  transient: (error: unknown) => boolean
-): Transport<unknown, never> => {
-  const unknownTag = isUnknownTag(event.name);
-
-  return {
-    name: event.name,
-    release,
-    poll: (cursor, watch) =>
-      poll(cursor, watch).pipe(
-        Effect.catchCauseIf(unknownTag, () =>
-          Effect.fail(
-            Event.SubscriptionError.of(event.name, new Event.NotServed())
-          )
+  transient: (error: unknown) => boolean,
+  unserved: (cause: Cause.Cause<unknown>) => boolean
+): Transport<unknown, never> => ({
+  name: event.name,
+  release,
+  poll: (cursor, watch) =>
+    poll(cursor, watch).pipe(
+      Effect.catchCauseIf(unserved, () =>
+        Effect.fail(
+          Event.SubscriptionError.of(event.name, new Event.NotServed())
         )
-      ),
-    stream: () => Stream.fail(deliveryUnsupported(event.name, "push")),
-    transient,
-  };
-};
+      )
+    ),
+  stream: () => Stream.fail(deliveryUnsupported(event.name, "push")),
+  transient,
+});

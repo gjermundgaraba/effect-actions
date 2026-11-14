@@ -1,28 +1,12 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
 import { describe, expect, it } from "@effect/vitest";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import { evictDurableObject } from "cloudflare:test";
-import { env, exports } from "cloudflare:workers";
-import { Effect, Fiber, Layer, Stream } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { env } from "cloudflare:workers";
+import { Effect, Fiber, Stream } from "effect";
 
-import { SeerHttp, Seen } from "../worker.js";
-
-const throughWorker = FetchHttpClient.layer.pipe(
-  Layer.provide(
-    Layer.succeed(FetchHttpClient.Fetch)(
-      async (input, init) =>
-        await exports.default.fetch(new Request(input, init))
-    )
-  )
-);
-
-const asAlice = ActionHttp.client(SeerHttp, {
-  baseUrl: "https://worker.example",
-  transformClient: HttpClient.mapRequest(
-    HttpClientRequest.bearerToken("alice")
-  ),
-});
+import { invokedSince, stubs } from "../support/socket.js";
+import { asAlice, throughWorker } from "../support/worker.js";
+import { Seen } from "../worker.js";
 
 describe("Stored.layerEvents in an entity on workerd", () => {
   it.live(
@@ -32,11 +16,13 @@ describe("Stored.layerEvents in an entity on workerd", () => {
         const client = yield* asAlice;
         const room = "evicted";
 
+        const { finished } = yield* stubs;
+
         const first = yield* client
           .watch(Seen, { room })
           .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
-        yield* Effect.sleep("500 millis");
+        yield* invokedSince(finished.invoke);
         yield* client.whoami({ room });
 
         const [seen] = yield* Fiber.join(first);

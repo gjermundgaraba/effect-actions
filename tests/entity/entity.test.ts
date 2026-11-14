@@ -73,7 +73,7 @@ const pageOf = Schema.decodeUnknownEffect(Page);
 const poll = (entityId: string, cursor: string | null, maxEvents?: number) =>
   Effect.gen(function* () {
     const rpcs = yield* Room.client;
-    const sent = rpcs(entityId)["room.posted"];
+    const sent = rpcs(entityId)["room.posted/poll"];
 
     if (sent === undefined) {
       return yield* Effect.die(new Error("no poll rpc"));

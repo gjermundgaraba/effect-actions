@@ -431,7 +431,7 @@ describe("the Worker and its rooms", () => {
         for (const { calls, others } of outcomes) {
           expect(calls).toStrictEqual({
             "Room/general postMessage": 1,
-            "Room/general message.posted": 2,
+            "Room/general message.posted/poll": 2,
           });
           expect(others).toStrictEqual({ hold: 0, acknowledge: 0 });
         }

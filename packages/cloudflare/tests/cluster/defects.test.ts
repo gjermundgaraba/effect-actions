@@ -1,24 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
-import { env, exports } from "cloudflare:workers";
-import { Cause, Effect, Exit, Schema } from "effect";
+import { env } from "cloudflare:workers";
+import { Cause, Effect, Exit } from "effect";
 import { RpcClient } from "effect/rpc";
 
+import { received } from "../support/worker.js";
 import { initialize, Seer } from "../worker.js";
 
-const crashes = Effect.promise(
-  async () => await exports.default.fetch("https://worker.example/received")
-).pipe(
-  Effect.flatMap((response) =>
-    Effect.promise(async () => await response.json())
-  ),
-  Effect.flatMap(
-    Schema.decodeUnknownEffect(
-      Schema.Array(Schema.Struct({ tag: Schema.String }))
-    )
-  ),
-  Effect.map((all) => all.filter(({ tag }) => tag === "crash").length),
-  Effect.orDie
+const crashes = Effect.map(
+  received,
+  (all) => all.filter(({ tag }) => tag === "crash").length
 );
 
 describe("ActionEntity.layer's defects on workerd", () => {

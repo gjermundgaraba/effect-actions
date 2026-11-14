@@ -1,16 +1,15 @@
 import { expect, it } from "@effect/vitest";
-import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import { exports } from "cloudflare:workers";
-import { Effect, Exit, Layer, Schedule, Schema, Scope, Stream } from "effect";
-import { FetchHttpClient } from "effect/http";
+import { Effect, Exit, Schedule, Schema, Scope, Stream } from "effect";
 
-import { BoardHttp, BoardRpc, Logged, Pinned } from "../board.js";
+import { BoardRpc, Logged, Pinned } from "../board.js";
 import {
   clientOver,
   evictIfRunning,
   reconnecting,
   watchingIn,
 } from "../support/socket.js";
+import { boards } from "../support/watch.js";
+import { throughWorker } from "../support/worker.js";
 
 const Command = Schema.Union([
   Schema.TaggedStruct("Pin", {}),
@@ -26,15 +25,6 @@ const Command = Schema.Union([
 
 type Command = typeof Command.Type;
 
-const throughWorker = FetchHttpClient.layer.pipe(
-  Layer.provide(
-    Layer.succeed(FetchHttpClient.Fetch)(
-      async (input, init) =>
-        await exports.default.fetch(new Request(input, init))
-    )
-  )
-);
-
 interface Watcher {
   readonly event: typeof Pinned | typeof Logged;
   readonly received: Array<number | "gap">;
@@ -43,17 +33,15 @@ interface Watcher {
   scope: Scope.Closeable;
 }
 
-let boards = 0;
+let scenarios = 0;
 
 const scenario = (commands: readonly Command[]) =>
   Effect.gen(function* () {
-    boards += 1;
+    scenarios += 1;
 
-    const board = `model-${boards}`;
+    const board = `model-${scenarios}`;
 
-    const http = yield* ActionHttp.client(BoardHttp, {
-      baseUrl: "https://worker.example",
-    });
+    const http = yield* boards;
 
     const pinned: number[] = [];
 

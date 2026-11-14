@@ -57,6 +57,7 @@ import {
   nativeOf,
   polledTransport,
   pollOf,
+  pollTag,
   watchedOf,
   webhookCallsOf,
   webhookRpcsOf,
@@ -151,7 +152,7 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
    * **Gotchas**
    *
    * - A native rpc authenticates nothing, whatever the binding's `authentication`: it is for tells the entity and other entities send with `Entity.client`, never for a surface's callers.
-   * - A native rpc named after an action, an event type or an event's `<event>/release` throws as the entity is made.
+   * - A native rpc named after an action, an event type, or an event's `<event>/poll` or `<event>/release` throws as the entity is made.
    */
   readonly rpcs?: RpcGroup.RpcGroup<N> | undefined;
 }
@@ -159,10 +160,10 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
 /**
  * The cluster entity of type `type` serving the actions and event types of `binding`, an
  * `ActionRpc` binding, each call and subscription in the entity its contract's `key` names for
- * its input. Each event type is a unary rpc named after it, taking
+ * its input. Each event type is a unary rpc named `<event>/poll`, `ActionRpc.pollTag`, taking
  * `{ input, cursor, maxEvents, watch }` and answering a page,
  * `{ events, cursor, truncated, hasMore, nextPollMs }`, as an HTTP poll does, and one named
- * `<event>/release`, taking `{ input, watch }`: polls naming a `watch`, a UUID, hold a
+ * `<event>/release`, taking `{ input, watch }`, as `ActionRpc.layer` serves them too: polls naming a `watch`, a UUID, hold a
  * subscription hook of their own, keyed by it and their caller's principal, which its release by
  * that principal frees. A protected event type has two more, `<event>/subscribe` and
  * `<event>/unsubscribe`, taking a webhook subscription and its cancellation, and the entity has
@@ -215,19 +216,21 @@ export const make = <
     );
   }
 
-  const erased = erasedOf(binding.actions, binding.events, "poll")
+  const erased = erasedOf(binding.actions, binding.events, ["poll"])
     .merge(webhookRpcsOf(binding.events))
     .add(WakeRpc);
 
   const rpcs = options.rpcs ?? RpcGroup.make();
 
-  const taken = [...rpcs.requests.keys()].filter((tag) =>
-    erased.requests.has(tag)
+  const taken = [...rpcs.requests.keys()].filter(
+    (tag) =>
+      erased.requests.has(tag) ||
+      binding.events.some(({ name }) => name === tag)
   );
 
   if (taken.length > 0) {
     throw new Error(
-      `ActionEntity.make: the native rpcs of ${type}, ${taken.join(", ")}, are named after an action, an event type, an event's release, subscribe or unsubscribe, or the entity's wake, ${wakeTag} (rename them)`
+      `ActionEntity.make: the native rpcs of ${type}, ${taken.join(", ")}, are named after an action, an event type, an event's poll, release, subscribe or unsubscribe, or the entity's wake, ${wakeTag} (rename them)`
     );
   }
 
@@ -247,7 +250,7 @@ export const make = <
  * `ActionRpc.client` with `delivery: "poll"` calls.
  */
 export const bindingRpcs = (entity: Any): RpcGroup.RpcGroup<ErasedRpc> =>
-  erasedOf(entity.binding.actions, entity.binding.events, "poll");
+  erasedOf(entity.binding.actions, entity.binding.events, ["poll"]);
 
 /**
  * `layer`'s options: `Entity.toLayer`'s, which the entity's registration takes, but
@@ -469,7 +472,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
         events,
         authentication,
         middleware: [],
-        delivery: "poll",
+        deliveries: ["poll"],
         holdsWebhooks: true,
       }),
       built
@@ -559,7 +562,14 @@ const ClusterFailures = Schema.Union([
 
 type ClusterFailure = typeof ClusterFailures.Type;
 
-const isClusterFailure = Schema.is(ClusterFailures);
+/**
+ * Whether a failure is one of those Effect's entity client fails with when the entity could not
+ * be reached, `MailboxFull`, `PersistenceError`, `AlreadyProcessingMessage` and
+ * `EntityNotAssignedToRunner`, which `client`'s `MethodError` holds and `reaching` makes a
+ * defect: a server forwarding calls into an entity, as the Cloudflare package's socket host
+ * does, makes them one too.
+ */
+export const isClusterFailure = Schema.is(ClusterFailures);
 
 const isTransient = Schema.is(Transients);
 
@@ -798,7 +808,7 @@ export const reaching = <
           pollOf(
             event,
             binding,
-            calling(event.name)
+            calling(pollTag(event.name))
           )({
             input: json,
             cursor,
