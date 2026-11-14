@@ -19,6 +19,7 @@ import {
   Tracer,
 } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest } from "effect/http";
+import { HttpApiSecurity } from "effect/http-api";
 import {
   Rpc as NativeRpc,
   RpcClient,
@@ -299,6 +300,24 @@ const serving = (
     ActionRpc.layer(Rpc, [status, userActions, double]),
     serialization
   ).pipe(Layer.provide(authenticate));
+
+const keyedIn = (place: "query" | "header") =>
+  Authentication.make("rpc.Keyed", CurrentActor, {
+    principal: (actor) => actor.id,
+    security: HttpApiSecurity.apiKey({ in: place, key: "api_key" }),
+  });
+
+const boundKeyedIn = (place: "query" | "header") => () =>
+  ActionRpc.make([WhoAmI], { authentication: keyedIn(place) });
+
+describe("ActionRpc.make's authentication", () => {
+  it("refuses an API key read from the query, naming the key and the fix, and takes one read from a header", () => {
+    expect(boundKeyedIn("query")).toThrow(
+      'ActionRpc binding: its authentication reads its API key api_key from the query, which no rpc carries (read it from a header: HttpApiSecurity.apiKey({ in: "header", key }))'
+    );
+    expect(boundKeyedIn("header")).not.toThrow();
+  });
+});
 
 describe("ActionRpc serializations", () => {
   it.effect.each([

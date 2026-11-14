@@ -173,7 +173,6 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
  *
  * - The rpcs of its actions, event types and webhook subscriptions are volatile, as `ClusterSchema.Persisted` defaults, and its wake alone is persisted: annotated persisted, each envelope, its caller's headers and credential included, would be stored and replayed with them, on Effect's SQL runners until a `MessageRetention` layer deletes it, and on the Cloudflare runtime, which never prunes `cluster_messages`, for good, its credential headers redacted. `rpcs`' natives are persisted as their own annotations say.
  * - A binding with native rpcs throws: give the entity's own rpcs to `make`'s `rpcs`.
- * - A binding whose authentication reads an API key `in: "query"` throws: an entity authenticates from its envelope's headers alone.
  * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers, and returning a `Stream` of the elements of an `Action.Stream` answer; it holds a slot of the entity's `concurrency`, by default its only one, until its stream ends, but on the Cloudflare runtime, which frees the slot while a frame waits for its client's acknowledgement.
  * - `annotate` and its kin return a plain `Entity`, without `binding` and `key`, which `layer` and `client` do not take.
  */
@@ -192,14 +191,6 @@ export const make = <
   if (natives.length > 0) {
     throw new Error(
       `ActionEntity.make: the binding of ${type} holds native rpcs, ${natives.join(", ")} (give them to ActionEntity.make's rpcs, unauthenticated)`
-    );
-  }
-
-  const security = binding.authentication?.security;
-
-  if (Predicate.isTagged(security, "ApiKey") && security.in === "query") {
-    throw new Error(
-      `ActionEntity.make: the binding of ${type} reads its API key ${security.key} from the query, which no call of an entity carries (read it from a header: HttpApiSecurity.apiKey({ in: "header", key }))`
     );
   }
 
@@ -684,7 +675,7 @@ type Nothing<C extends Action.Any | Event.Any> = {
  * - The caller's credential is verified by the surface serving these and again by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity.
  * - A refusal by the entity, a credential expired since the surface verified it included, ends a stream after it answered 200, where the surface's own refusal would have answered its 401 or 403.
  * - Every header of the caller's request is sent on but its connection's, its body's, what it accepts and an MCP request's routing headers (`mcp-*`).
- * - A credential in the query, an API key the serving surface's binding reads `in: "query"`, never reaches the entity, which refuses the call with `Unauthenticated`: read the key from a header on both bindings.
+ * - A credential in the query, an API key the serving surface's HTTP binding reads `in: "query"`, never reaches the entity, whose binding reads headers alone, so it refuses the call with `Unauthenticated`: read the key from a header on the HTTP binding too.
  * - A call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends only the headers `RpcClient.withHeaders` sets around it: without them the entity refuses a protected one with `Unauthenticated`.
  * - A call to an entity no runner is assigned waits without an answer, an HTTP request without a response, as Effect's entity client retries `EntityNotAssignedToRunner` every `sendRetryInterval`, 100 milliseconds by default, without limit: bound it with a timeout, such as the host's request timeout.
  * - A stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface, at once while a page has more and otherwise at its `nextPollMs`, a second at least: it holds the caller's request open but no entity, an occurrence arrives up to that interval late, and the entity's object takes a call each `nextPollMs` while the stream is open, so on Cloudflare a stream polling every few seconds keeps it from ever hibernating.

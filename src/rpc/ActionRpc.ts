@@ -271,6 +271,7 @@ const authenticatedIn = (rpc: Rpc.AnyWithProps) =>
  * **Gotchas**
  *
  * - An action, an event type and a native rpc of one name throw when `make` is called: they would share a client's method.
+ * - An authentication reading an API key `in: "query"` throws when `make` is called: an rpc carries headers alone, on every protocol and in an entity's envelope.
  * - An action declaring `progress` is a stream rpc taking its input, streaming `{ _tag: "Progress", value }` for each value its handler reports, then one `{ _tag: "Final", value }` holding its answer: the native client's method of it returns a `Stream`.
  * - An action answering a stream, `Action.Stream`, is a stream rpc taking its input, streaming `{ _tag: "Element", value }` for each element, beside `{ _tag: "Progress", value }` for each value where it declares `progress`; `client`'s method returns a `Stream` of the elements.
  */
@@ -318,6 +319,13 @@ export function make(
 ): Any {
   const { actions, events } = listed(contracts);
   const bound = bindingOf("ActionRpc binding", actions, events, options);
+  const security = bound.authentication?.security;
+
+  if (Predicate.isTagged(security, "ApiKey") && security.in === "query") {
+    throw new Error(
+      `ActionRpc binding: its authentication reads its API key ${security.key} from the query, which no rpc carries (read it from a header: HttpApiSecurity.apiKey({ in: "header", key }))`
+    );
+  }
 
   const rpcOf = (action: Action.Any) => {
     const streamed = streamedOf(action);
@@ -495,7 +503,6 @@ export interface LayerOptions<
  * - A declared error, or `InvalidInput` for input that does not decode, is the call's typed failure; a refusal is answered as `Action.Unauthenticated` and `Action.Forbidden` say; the socket stays open, so a token may expire under it and a client handles `Unauthenticated` itself.
  * - A defect, an undeclared failure, a middleware that throws, or a success or an error that does not encode ends that call with an `Error` whose message is `Internal server error`, its cause logged and reported to the call's `ErrorReporter`s; the connection's other calls go on.
  * - An `ErrorReporter` is given only what ends a call with `Internal server error`, never a declared failure, a refusal or `InvalidInput`, unlike `ActionHttp.layer`'s `Info`: an alert counting declared failures counts none from rpcs.
- * - An rpc's credential is read from its headers alone: an API key `in: "query"` never reaches authentication.
  * - Over a protocol with no router, such as `RpcServer.layerProtocolSocketServer` or `layerProtocolStdio`, there is no route: a provider publishing a `protectedResource` leaves `HttpRouter` owed; the request a handler or a verifier reads is, on every protocol, one holding the message's headers, at `/`, with no query or body.
  * - An event's stream rpc takes `{ input, cursor }`, a `cursor` omitted or `null` reading from now, and streams `Checked`, `Occurrence`, `Gap` and `Failed`, a `Checked` every 30 seconds; over `RpcServer.layerProtocolHttp` serialize with `RpcSerialization.layerNdjson`: under `layerJson` a response is sent once its streams end, so a watch never answers.
  * - Beside it, an event's `<event>/poll` answers a `Page` and its `<event>/release` frees a watch's subscription hook, as an `ActionEntity`'s do, so a `client` under either `delivery` watches the layer.
