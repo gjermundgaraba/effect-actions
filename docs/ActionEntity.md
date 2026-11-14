@@ -100,7 +100,7 @@ import { SqliteClient } from "@effect/sql-sqlite-node";
 import { expect, it } from "@effect/vitest";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as Testing from "@gjermundgaraba/effect-actions/Testing";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Result } from "effect";
 import { TestRunner } from "effect/cluster";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
@@ -144,21 +144,24 @@ it.live("keeps each cart in the entity its id names, its own shopper's", () =>
   }).pipe(Effect.provide(server))
 );
 
-it.live("refuses an item past the cart's limit with CartFull", () =>
-  Effect.gen(function* () {
-    const ada = yield* shopperAs("ada");
-    const items = Array.from({ length: cartLimit }, (_, n) => `item ${n}`);
+it.live(
+  "adds one item past the cart's limit nowhere, however many arrive at once",
+  () =>
+    Effect.gen(function* () {
+      const ada = yield* shopperAs("ada");
 
-    yield* Effect.forEach(items, (item) => ada.addItem({ cart: "ada", item }), {
-      concurrency: "unbounded",
-    });
+      const added = yield* Effect.forEach(
+        Array.from({ length: cartLimit + 1 }, (_, n) => `item ${n}`),
+        (item) => Effect.result(ada.addItem({ cart: "ada", item })),
+        { concurrency: "unbounded" }
+      );
 
-    const full = yield* Effect.flip(ada.addItem({ cart: "ada", item: "more" }));
-
-    expect(full).toMatchObject({ _tag: "CartFull", limit: cartLimit });
-    expect((yield* ada.viewCart({ cart: "ada" })).items).toHaveLength(
-      cartLimit
-    );
-  }).pipe(Effect.provide(server))
+      expect(added.filter(Result.isFailure)).toMatchObject([
+        { failure: { _tag: "CartFull", limit: cartLimit } },
+      ]);
+      expect((yield* ada.viewCart({ cart: "ada" })).items).toHaveLength(
+        cartLimit
+      );
+    }).pipe(Effect.provide(server))
 );
 ```
