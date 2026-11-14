@@ -373,21 +373,48 @@ const edgeLog = HttpRouter.middleware(
   { global: true }
 );
 
-const stall = { requested: false, released: false, builds: 0 };
+const stall = {
+  requested: false,
+  above: false,
+  released: false,
+  builds: 0,
+  finished: 0,
+  disposed: 0,
+};
+
+const untilReleased = Effect.sleep("50 millis").pipe(
+  Effect.repeat({
+    until: () => stall.released,
+    schedule: Schedule.spaced("50 millis"),
+  })
+);
 
 const stallingTheFirstBuild = Effect.suspend(() => {
   stall.builds += 1;
 
-  return stall.requested && stall.builds === 1
-    ? Effect.sleep("50 millis").pipe(
-        Effect.repeat({
-          until: () => stall.released,
-          schedule: Schedule.spaced("50 millis"),
-        }),
+  return stall.requested && !stall.above && stall.builds === 1
+    ? untilReleased.pipe(
         Effect.andThen(Effect.die(new Error("planted: the stalled build")))
       )
     : Effect.void;
 });
+
+const stallingAboveTheCluster = (build: number) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          stall.disposed += 1;
+        })
+      );
+
+      if (stall.above && build === 1) {
+        yield* untilReleased;
+      }
+
+      stall.finished += 1;
+    })
+  );
 
 const served = (env: Cloudflare.Env) =>
   Layer.mergeAll(
@@ -428,7 +455,13 @@ const served = (env: Cloudflare.Env) =>
   );
 
 const application = (env: Cloudflare.Env) =>
-  Layer.unwrap(Effect.as(stallingTheFirstBuild, served(env)));
+  Layer.unwrap(
+    Effect.map(stallingTheFirstBuild, () =>
+      stallingAboveTheCluster(stall.builds).pipe(
+        Layer.provideMerge(served(env))
+      )
+    )
+  );
 
 export const initialize = CloudflareDurableObjects.setInitializer(
   ActionCluster.initializer(application)
@@ -518,11 +551,21 @@ export default {
       return Response.json(received.splice(0));
     }
 
+    if (pathname === "/stall-above") {
+      stall.above = true;
+    }
+
     if (pathname === "/stall" || pathname === "/release") {
       stall.requested = true;
       stall.released = pathname === "/release";
+    }
 
-      return Response.json({ builds: stall.builds });
+    if (["/stall", "/stall-above", "/release"].includes(pathname)) {
+      return Response.json({
+        builds: stall.builds,
+        finished: stall.finished,
+        disposed: stall.disposed,
+      });
     }
 
     return await handled.fetch(request, env);

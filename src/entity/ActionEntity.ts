@@ -150,7 +150,8 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
  * `ActionRpc` binding, each call and subscription in the entity its contract's `key` names for
  * its input. Each event type is a unary rpc named `<event>/poll`, `ActionRpc.pollTag`, taking
  * `{ input, cursor, maxEvents, watch }` and answering a page,
- * `{ events, cursor, truncated, hasMore, nextPollMs }`, as an HTTP poll does, and one named
+ * `{ events, cursor, truncated, hasMore, nextPollMs, notified }`, an HTTP poll's page and
+ * `notified`, `ActionRpc.Page`, and one named
  * `<event>/release`, taking `{ input, watch }`, as `ActionRpc.layer` serves them too: polls naming a `watch`, a UUID, hold a
  * subscription hook of their own, keyed by it and their caller's principal, which its release by
  * that principal frees. A protected event type has two more, `<event>/subscribe` and

@@ -86,13 +86,14 @@ export const layer = (
 /**
  * The function `CloudflareDurableObjects.setInitializer` takes: it builds `application(env)`, with
  * `HttpRouter.layer` beneath it, in a `ManagedRuntime` of its own on each call, and keeps the first
- * runtime to finish for the isolate, disposing a failed or later one. Register it once, from the
+ * runtime to finish for the isolate, disposing a failed one and leaving a later one alive for the
+ * isolate's life, since it may hold the isolate's entity registrations. Register it once, from the
  * Worker's module, and give the function `setInitializer` returns to `handler` and to
  * `ActionClusterEntity.make`. Guide: `docs/ActionCluster.md` in this package.
  *
  * **Gotchas**
  *
- * - A build still pending after 15 seconds is abandoned and the initializer called again, and a stalled build that registered its entities refuses the replacement's, leaving the kept runtime serving no entity type: build nothing slow, such as a migration or a remote fetch, above `ActionCluster.layer`.
+ * - A build still pending after 15 seconds is abandoned and the initializer called again, and a stalled build that registered its entities refuses the replacement's, so the entities run in the stalled build's services, the Worker's routes in the kept one's, and a stall that then fails leaves the isolate serving no entity type: build nothing slow, such as a migration or a remote fetch, above `ActionCluster.layer`.
  * - A call whose build fails answers the runtime another call kept, and rejects with its failure when none was kept, so the next call builds again.
  */
 export const initializer = <Env, A, E>(
@@ -120,10 +121,6 @@ export const initializer = <Env, A, E>(
     }
 
     kept ??= runtime;
-
-    if (kept !== runtime) {
-      await runtime.dispose();
-    }
 
     return kept;
   };
