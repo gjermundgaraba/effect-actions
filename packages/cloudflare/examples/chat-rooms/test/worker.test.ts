@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { Effect, Layer, Schedule, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -115,6 +115,7 @@ const StubCalls = Schema.Struct({
     })
   ),
   others: Schema.Struct({ hold: Schema.Int, acknowledge: Schema.Int }),
+  messages: Schema.Struct({ received: Schema.Int, settled: Schema.Int }),
 });
 
 const settledStubCalls = Effect.promise(
@@ -131,30 +132,12 @@ const settledStubCalls = Effect.promise(
   })
 );
 
-const Held = Schema.Array(
-  Schema.Struct({
-    calls: Schema.Array(Schema.Unknown),
-    parked: Schema.Array(Schema.Unknown),
-  })
-);
-
-const parkedIn = (room: DemoRoomName, sockets: number) =>
-  Effect.promise(
-    async () =>
-      await runInDurableObject(objectOf("Room", room), (_, state) =>
-        state
-          .getWebSockets()
-          .map((socket): unknown => socket.deserializeAttachment())
-      )
-  ).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(Held)),
-    Effect.orDie,
+const pollsParkedSince = (received: number, polls: number) =>
+  settledStubCalls.pipe(
     Effect.repeat({
-      until: (held) =>
-        held.length === sockets &&
-        held.every(
-          ({ calls, parked }) => calls.length === 0 && parked.length === 1
-        ),
+      until: ({ messages }) =>
+        messages.received >= received + polls &&
+        messages.settled === messages.received,
       schedule: Schedule.spaced("100 millis"),
     }),
     Effect.timeout("20 seconds")
@@ -440,9 +423,11 @@ describe("the Worker and its rooms", () => {
             )
           );
 
+        const { messages } = yield* settledStubCalls;
+
         yield* watching(socketTo("general"));
         yield* watching(socketTo("general"));
-        yield* parkedIn("general", 2);
+        yield* pollsParkedSince(messages.received, 4);
 
         const posts = [
           { text: "Counted, the first.", evicted: false },
@@ -460,7 +445,7 @@ describe("the Worker and its rooms", () => {
 
             yield* page.post(text);
             yield* arrivedIn(received)(arrived + 2);
-            yield* parkedIn("general", 2);
+            yield* pollsParkedSince(before.messages.received, 2);
 
             const after = yield* settledStubCalls;
 

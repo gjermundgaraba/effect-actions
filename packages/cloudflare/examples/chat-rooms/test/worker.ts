@@ -22,6 +22,8 @@ const invokes: Array<{
 
 const others = { hold: 0, acknowledge: 0 };
 
+const messages = { received: 0, settled: 0 };
+
 const instances: string[] = [];
 
 let failingAfter: string | undefined;
@@ -61,6 +63,18 @@ export class ClusterEntity extends Counted {
     await super.hold();
   }
 
+  override async webSocketMessage(
+    ...args: Parameters<Counted["webSocketMessage"]>
+  ) {
+    messages.received += 1;
+
+    try {
+      await super.webSocketMessage(...args);
+    } finally {
+      messages.settled += 1;
+    }
+  }
+
   override async acknowledge(requestId: string, replyId: string) {
     others.acknowledge += 1;
 
@@ -73,7 +87,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/stub-calls") {
-      return Response.json({ invokes, others, instances });
+      return Response.json({ invokes, others, messages, instances });
     }
 
     if (url.pathname === "/fail-after") {
