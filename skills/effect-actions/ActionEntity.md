@@ -30,7 +30,7 @@ Each entity id builds the implementations itself, when the cluster first sends i
 
 What each entity id must build for itself, such as a store over its own database or `Event.Events` kept there by `Stored.layerEvents`, goes in the layer's `services` option: each entity id builds it as it activates, before its implementations' builders, which read it. The handlers of `make`'s native rpcs go in the layer's `rpcs` option, as Effect's `Entity.toLayer` takes them: each receives Effect's own `Entity.Request`, and an Effect building them runs after `services`, whose output it reads.
 
-An entity provides nothing per call but the caller and what `services` built, so a handler, an authorizer or an event source reading any other service per call is a type error naming it: yield the service in the builder, where it is a startup service, or build it in `services`. The rules, and what a defect does, are on `ActionEntity.layer`.
+A handler, an authorizer or an event source reads per call only its caller and what `services` built; the rules, and what a defect does, are on `ActionEntity.layer`.
 
 The example's carts build `CurrentCart` from the entity's address in `services`, and read their items from a store, which the entrypoint provides to the layer, so no state lives in the entity between calls, and the cluster may stop it while idle:
 
@@ -80,13 +80,13 @@ A server outside the cluster that forwards a socket's calls into the entity, as 
 
 ## Watch an event
 
-The client's `watch(event, input, options)` follows an event by polling its rpc, from a cursor or from now, as `Action.client`'s does. An entity holds no stream open for a watcher, so a runtime that puts an idle entity to sleep can still do so. What else ends a watch is on `ActionEntity.WatchError`.
+The client's `watch(event, input, options)` follows an event by polling its rpc, as `Action.client`'s does, so an entity holds no stream open for a watcher and a runtime may put an idle entity to sleep. The rules are on `ActionEntity.client`, and what ends a watch on `ActionEntity.WatchError`.
 
 ## Deliver its events by webhook
 
 A protected event served through `ActionEntity.reaching` is offered webhook delivery ([Webhook.md](Webhook.md)), held by the entity its input's key names: the surface sends each subscribe and unsubscribe there with the caller's headers, and the entity delivers from the `Webhook.layer` in its layer's `services`. An entity without one refuses the subscribe as `Unsupported`.
 
-Give that layer `persist`, so a later activation of the entity restores its subscriptions, each entity id its own, which needs the binding's authentication to name a `schema`. Each retry wait of a delivery is a persisted tell the entity sends itself, so the runtime may stop the entity while it waits and builds it again to retry. Mark a check source over the entity's own store `notified`: its deliveries then wait for its `notify` alone, on no timer that would keep a Durable Object awake, as a current source's always do, and the entity refuses a webhook subscription to a check source not marked so. What the rpcs carrying a subscription are, and why they are not persisted, is on `ActionEntity.make`; the rules for the layer are on `ActionEntity.LayerOptions`' `services`.
+Give that layer `persist`, so a later activation restores each entity id's subscriptions, and mark a check source over the entity's own store `notified`. The rules, retry waits and refusals included, are on `ActionEntity.LayerOptions`' `services`, and the rpcs carrying a subscription on `ActionEntity.make`.
 
 ## Test it
 
