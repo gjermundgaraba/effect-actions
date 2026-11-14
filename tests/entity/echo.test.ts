@@ -39,7 +39,7 @@ layer(Layer.mergeAll(onTestRunner(rooms), overRpc), {
     [Arbitrary.schema(Payload)],
     ([payload]) =>
       Effect.gen(function* () {
-        const lobby = (yield* ActionEntity.client(Room))("lobby");
+        const lobby = yield* ActionEntity.client(Room);
         const rpc = yield* ActionRpc.client(RoomRpc);
 
         const input = { room: "lobby", payload };

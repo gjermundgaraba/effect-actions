@@ -35,7 +35,7 @@ import type { Declaring } from "../contract/declared.js";
 import * as Event from "../contract/Event.js";
 import { acquireFeeds } from "../contract/feed.js";
 import type { AnyEventImplementation, Feed } from "../contract/feed.js";
-import { acquire, elementsOf } from "../contract/implementation.js";
+import { acquire, answered, elementsOf } from "../contract/implementation.js";
 import type {
   AnyImplementation,
   ErasedHandler,
@@ -525,37 +525,59 @@ interface ClientBinding extends Declaring {
   readonly events: readonly Event.Any[];
 }
 
+/**
+ * Where a call or a watch goes, read from its input: an entity's client sends each to the entity
+ * the input's key names, refusing an input naming none, and `ActionRpc.client` everything to its
+ * one server.
+ */
+export type Reach = (
+  contract: Action.Any | Event.Any,
+  input: ErasedValue
+) => Effect.Effect<ErasedCall, Action.Forbidden>;
+
 export const methodsOf = (
   binding: ClientBinding,
   transport: EventTransport
 ) => {
-  const actions = binding.actions.map(
-    (action) => [action.name, actionMethodOf(action, binding)] as const
+  const actions = binding.actions.map((action) => {
+    const method = actionMethodOf(action, binding);
+
+    const answer = (reach: Reach, args: readonly ErasedValue[]) =>
+      Effect.map(reach(action, args[0] ?? {}), (call) => method(call)(...args));
+
+    return [
+      action.name,
+      elementOf(action.success) === undefined
+        ? (reach: Reach) =>
+            (...args: readonly ErasedValue[]) =>
+              Effect.flatMap(answer(reach, args), answered)
+        : (reach: Reach) =>
+            (...args: readonly ErasedValue[]) =>
+              elementsOf(answer(reach, args)),
+    ] as const;
+  });
+
+  const transports = new Map(
+    binding.events.map(
+      (event) => [event.name, transport(event, binding)] as const
+    )
   );
 
-  const transports = binding.events.map(
-    (event) => [event.name, transport(event, binding)] as const
-  );
-
-  return (call: ErasedCall) => {
+  return (reach: Reach) => {
     const methods = Object.fromEntries<unknown>(
-      actions.map(([name, method]) => [name, method(call)] as const)
+      actions.map(([name, method]) => [name, method(reach)] as const)
     );
 
-    if (transports.length === 0) {
+    if (transports.size === 0) {
       return methods;
     }
-
-    const feeds = new Map(
-      transports.map(([name, feed]) => [name, feed(call)] as const)
-    );
 
     const watch = (
       event: Event.Any,
       input?: ErasedValue,
       watchOptions?: Event.WatchOptions<unknown>
     ): Stream.Stream<Event.Received<Event.Any>, unknown> => {
-      const feed = feeds.get(event.name);
+      const feed = transports.get(event.name);
 
       if (feed === undefined) {
         return Stream.die(
@@ -566,8 +588,13 @@ export const methodsOf = (
       }
 
       return Stream.unwrap(
-        Effect.map(watchInput(event, input), ({ json }) =>
-          watching(feed(json, watchOptions?.mode === "stream"), watchOptions)
+        Effect.flatMap(watchInput(event, input), ({ json, value }) =>
+          Effect.map(reach(event, value), (call) =>
+            watching(
+              feed(call)(json, watchOptions?.mode === "stream"),
+              watchOptions
+            )
+          )
         )
       );
     };

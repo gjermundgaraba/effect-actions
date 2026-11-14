@@ -215,6 +215,8 @@ expectTypeOf<
 
 type RoomClient = ActionEntity.Client<typeof Rpc>;
 
+expectTypeOf<Effect.Success<typeof clientOf>>().toEqualTypeOf<RoomClient>();
+
 type Reached =
   | ClusterError.MailboxFull
   | ClusterError.AlreadyProcessingMessage

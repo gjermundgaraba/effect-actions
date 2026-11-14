@@ -21,10 +21,10 @@ describe("ActionEntity.layer's headers on workerd", () => {
           async () => await initialize(env)
         );
 
-        const seer = (yield* Effect.provideContext(
+        const seer = yield* Effect.provideContext(
           ActionEntity.client(Seer),
           context
-        ))("headers");
+        );
 
         const steps: number[] = [];
 

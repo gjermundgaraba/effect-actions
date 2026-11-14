@@ -63,7 +63,7 @@ import {
   webhookCallsOf,
   webhookRpcsOf,
 } from "../rpc/erased.js";
-import type { ErasedCall } from "../rpc/erased.js";
+import type { ErasedCall, Reach } from "../rpc/erased.js";
 import { forwarded } from "./forwarded.js";
 import { makeWake, wakeTag, WakeRpc } from "./wakes.js";
 
@@ -645,15 +645,41 @@ const entityCallOf = (
       : method(payload, headers === undefined ? options : { headers });
   });
 
+const reachOf =
+  <Type extends string, B extends ActionRpc.Any, N extends Rpc.Any>(
+    entity: Entity<Type, B, N>,
+    headers: Effect.Effect<Headers.Headers | undefined>
+  ) =>
+  (
+    clientFor: Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>
+  ): Reach => {
+    const named = namedBy(entity.key);
+
+    return (contract, input) => {
+      const entityId = named(contract, input);
+
+      return entityId === undefined
+        ? Effect.fail(
+            new Action.Forbidden({
+              message: `The input of ${contract.name} names no entity of ${entity.type}`,
+            })
+          )
+        : Effect.map(headers, (sent) =>
+            entityCallOf(clientFor(entityId), sent)
+          );
+    };
+  };
+
 /**
- * The client of `entity` over Effect's own `Entity.client`, as a function of an entity id: one
- * method per action taking its input, `rooms("lobby").postMessage({ room: "lobby", text })`, and
- * `watch(event, input, options)`, which polls the event's rpc. Requires `Sharding`, as
- * `Entity.client` does: `TestRunner.layer` in a test.
+ * The client of `entity` over Effect's own `Entity.client`: one method per action taking its
+ * input, `rooms.postMessage({ room: "lobby", text })`, and `watch(event, input, options)`, which
+ * polls the event's rpc, each call and watch sent to the entity its input's key names. Requires
+ * `Sharding`, as `Entity.client` does: `TestRunner.layer` in a test. The entity's native rpcs are
+ * Effect's own client's methods: `(yield* Room.client)("lobby").expire()`.
  *
  * **Gotchas**
  *
- * - The id must be the one the input's key names: another fails the call with `Forbidden`, before the handler runs.
+ * - An input whose key names no entity, such as one missing the key's field, fails with `Forbidden`, sending nothing.
  * - Headers set with `RpcClient.withHeaders` around a call go with its envelope, which is how a protected call sends its credential; a call without them fails `Unauthenticated`.
  * - A watch polls, by default as with `mode: "poll"`, at the page's `nextPollMs`, its polls holding a subscription hook of their own in the entity, which its end releases; `mode: "stream"` fails with `Event.SubscriptionError`, reason `Unsupported`, and a webhook `mode` with it too.
  * - Ending a watch waits up to 5 seconds for the entity to answer its release, so interrupting one whose entity is slow to answer, such as one with a full mailbox, takes up to 5 seconds; a release that never arrives leaves the hook held until the entity stops or its source's `lease` lapses.
@@ -665,14 +691,15 @@ export const client = <
   N extends Rpc.Any = never,
 >(
   entity: Entity<Type, B, N>
-): Effect.Effect<(entityId: string) => Client<B>, never, Sharding.Sharding> => {
+): Effect.Effect<Client<B>, never, Sharding.Sharding> => {
   const methods = methodsOf(entity.binding, polledTransport(isTransient));
+  const reach = reachOf(entity, Effect.undefined);
 
   return Effect.map(
     entity.client,
-    (clientFor) => (entityId: string) =>
+    (clientFor) =>
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      methods(entityCallOf(clientFor(entityId))) as Client<B>
+      methods(reach(clientFor)) as Client<B>
   );
 };
 
@@ -724,30 +751,7 @@ export const reaching = <
     >
 > => {
   const { binding } = entity;
-  const named = namedBy(entity.key);
-
-  type Reach = (
-    contract: Action.Any | Event.Any,
-    input: ErasedValue
-  ) => Effect.Effect<ErasedCall, Action.Forbidden>;
-
-  const reaches = Effect.map(
-    entity.client,
-    (clientFor): Reach =>
-      (contract, input) => {
-        const entityId = named(contract, input);
-
-        return entityId === undefined
-          ? Effect.fail(
-              new Action.Forbidden({
-                message: `The input of ${contract.name} names no entity of ${entity.type}`,
-              })
-            )
-          : Effect.map(forwarded, (headers) =>
-              entityCallOf(clientFor(entityId), headers)
-            );
-      }
-  );
+  const reaches = Effect.map(entity.client, reachOf(entity, forwarded));
 
   const handlerOf = (
     action: Action.Any,

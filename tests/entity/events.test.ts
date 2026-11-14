@@ -811,7 +811,7 @@ describe("ActionEntity.client's watches", () => {
       const { counted, ticks, server } = makeTicker();
 
       return Effect.gen(function* () {
-        const a = (yield* ActionEntity.client(Ticker))("a");
+        const a = yield* ActionEntity.client(Ticker);
 
         const watched = (options?: Event.WatchOptions) =>
           a.watch(Ticked, { room: "a" }, options).pipe(signedIn("alice"));
@@ -861,7 +861,7 @@ describe("ActionEntity.client's watches", () => {
       });
 
       return Effect.gen(function* () {
-        const a = (yield* ActionEntity.client(Ticker))("a");
+        const a = yield* ActionEntity.client(Ticker);
         const received: number[] = [];
 
         ticks.push(1);

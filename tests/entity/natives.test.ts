@@ -151,25 +151,19 @@ describe("ActionEntity's native rpcs and services", () => {
         expect(yield* natives("a").bump()).toBe(2);
         expect(yield* natives("b").bump()).toBe(1);
 
-        expect(
-          yield* signedIn(actions("a").peek({ counter: "a" }))
-        ).toStrictEqual({
+        expect(yield* signedIn(actions.peek({ counter: "a" }))).toStrictEqual({
           count: 2,
           by: "alice",
         });
 
-        expect(
-          yield* signedIn(actions("b").peek({ counter: "b" }))
-        ).toStrictEqual({
+        expect(yield* signedIn(actions.peek({ counter: "b" }))).toStrictEqual({
           count: 1,
           by: "alice",
         });
 
         expect(builds.services).toBe(2);
 
-        const unsigned = yield* Effect.exit(
-          actions("a").peek({ counter: "a" })
-        );
+        const unsigned = yield* Effect.exit(actions.peek({ counter: "a" }));
 
         expect(Exit.findErrorOption(unsigned)).toMatchObject({
           _tag: "Some",

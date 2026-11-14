@@ -240,14 +240,12 @@ const seeing = [
           Effect.gen(function* () {
             const request = yield* HttpServerRequest.HttpServerRequest;
 
-            const read = seers(to)
-              .readHeaders({ room: to })
-              .pipe(
-                RpcClient.withHeaders({
-                  authorization: request.headers["authorization"] ?? "",
-                }),
-                Effect.orDie
-              );
+            const read = seers.readHeaders({ room: to }).pipe(
+              RpcClient.withHeaders({
+                authorization: request.headers["authorization"] ?? "",
+              }),
+              Effect.orDie
+            );
 
             const reached =
               to === room

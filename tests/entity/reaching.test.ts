@@ -114,7 +114,7 @@ describe("ActionEntity.reaching on a TestRunner", () => {
 
       return Effect.gen(function* () {
         const http = yield* signedIn;
-        const direct = (yield* ActionEntity.client(Room))(room);
+        const direct = yield* ActionEntity.client(Room);
 
         const posted = yield* http.post({ room, text });
         const fromEdge = yield* http.read({ room });
@@ -365,7 +365,7 @@ describe("ActionEntity.reaching's protected calls and watches", () => {
         const rpc = yield* ActionRpc.client(SeerRpc);
         const from = yield* seenFrom("a");
 
-        const direct = (yield* ActionEntity.client(Seer))("a");
+        const direct = yield* ActionEntity.client(Seer);
 
         for (let at = 0; at < 2; at += 1) {
           yield* asAlice(direct.whoami({ room: "a" }));

@@ -185,7 +185,7 @@ const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
 
 describe("ActionEntity's stream answer", () => {
   it.live(
-    "streams each element of an Action.Stream answer through the typed client, and refuses another entity's key with Forbidden",
+    "streams each element of an Action.Stream answer through the typed client",
     () => {
       let ran = 0;
 
@@ -198,18 +198,13 @@ describe("ActionEntity's stream answer", () => {
       );
 
       return Effect.gen(function* () {
-        const lobby = (yield* ActionEntity.client(Liner))("lobby");
+        const lobby = yield* ActionEntity.client(Liner);
 
         const elements = yield* Stream.runCollect(
           lobby.lines({ room: "lobby", upTo: 3 })
         );
 
-        const refused = yield* Effect.flip(
-          Stream.runCollect(lobby.lines({ room: "kitchen", upTo: 3 }))
-        );
-
         expect(elements).toStrictEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
-        expect(refused).toBeInstanceOf(Action.Forbidden);
         expect(ran).toBe(1);
       }).pipe(
         Effect.scoped,
@@ -242,9 +237,9 @@ describe("ActionEntity under Action.layer", () => {
         const clientOf = yield* ActionEntity.client(Counter);
         const before = builds;
 
-        yield* clientOf("a").count({ room: "a" });
-        yield* clientOf("b").count({ room: "b" });
-        yield* clientOf("a").count({ room: "a" });
+        yield* clientOf.count({ room: "a" });
+        yield* clientOf.count({ room: "b" });
+        yield* clientOf.count({ room: "a" });
 
         expect(before).toBe(1);
         expect(builds).toBe(3);
@@ -316,6 +311,50 @@ describe("ActionEntity's key", () => {
   );
 });
 
+describe("ActionEntity.client's key", () => {
+  it.live(
+    "fails a call whose key answers no string with Forbidden, sending nothing",
+    () => {
+      let ran = 0;
+      const owner = { id: "lobby" };
+      const unset: Owner = owner;
+
+      const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
+        key: () => owner.id,
+      });
+
+      const probing = Action.implement(Probe, () =>
+        Effect.sync(() => {
+          ran += 1;
+
+          return "reached";
+        })
+      );
+
+      return Effect.gen(function* () {
+        const client = yield* ActionEntity.client(Prober);
+
+        expect(yield* client.probe()).toBe("reached");
+
+        unset.id = undefined;
+
+        const refused = yield* Effect.flip(client.probe());
+
+        expect(refused).toBeInstanceOf(Action.Forbidden);
+        expect(refused.message).toContain("names no entity of Prober");
+        expect(ran).toBe(1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ActionEntity.layer(Prober, probing).pipe(
+            Layer.provideMerge(TestRunner.layer)
+          )
+        )
+      );
+    }
+  );
+});
+
 describe("ActionEntity on a TestRunner", () => {
   it.live.prop(
     "refuses any key other than the entity's with Forbidden, its handler never running",
@@ -324,36 +363,41 @@ describe("ActionEntity on a TestRunner", () => {
       const rooms = makeRooms();
 
       return Effect.gen(function* () {
-        const lobby = (yield* roomClient)("lobby");
+        const lobby = (yield* Room.client)("lobby");
         const named = { room: other };
 
+        const refusedOf = (tag: string, payload: Schema.Json) => {
+          const answer = lobby[tag]?.(payload, {
+            headers: { authorization: "Bearer alice" },
+          });
+
+          if (Effect.isEffect(answer)) {
+            return Effect.flip(answer);
+          }
+
+          return answer !== undefined && Stream.isStream(answer)
+            ? Effect.flip(Stream.runDrain(answer))
+            : Effect.die(new Error(`no rpc ${tag}`));
+        };
+
         const refusals = [
-          yield* Effect.flip(lobby.read(named)),
-          yield* Effect.flip(lobby.shut(named)),
-          yield* Effect.flip(lobby.boom(named)),
-          yield* Effect.flip(
-            lobby.echo({
-              ...named,
-              payload: {
-                text: "",
-                amount: 0,
-                count: 0,
-                level: "low",
-                tags: [],
-              },
-            })
-          ),
-          yield* Effect.flip(
-            lobby.post({ ...named, text: "hi" }).pipe(signedInAs("alice"))
-          ),
-          yield* Effect.flip(lobby.tally({ ...named, upTo: 2 })),
-          yield* Effect.flip(
-            Stream.runHead(lobby.watch(Posted, named, { mode: "poll" }))
-          ),
+          yield* refusedOf("read", named),
+          yield* refusedOf("shut", named),
+          yield* refusedOf("boom", named),
+          yield* refusedOf("echo", {
+            ...named,
+            payload: { text: "", amount: 0, count: 0, level: "low", tags: [] },
+          }),
+          yield* refusedOf("post", { ...named, text: "hi" }),
+          yield* refusedOf("tally", { ...named, upTo: 2 }),
+          yield* refusedOf(ActionRpc.pollTag(Posted.name), {
+            input: named,
+            cursor: null,
+          }),
         ];
 
         for (const refused of refusals) {
-          expect(refused).toBeInstanceOf(Action.Forbidden);
+          expect(refused).toMatchObject({ json: { _tag: "Forbidden" } });
         }
 
         expect(rooms.ran).toStrictEqual({
@@ -368,11 +412,45 @@ describe("ActionEntity on a TestRunner", () => {
     { timeout: 30_000, arbitrary: { runs: 50 } }
   );
 
+  it.live.prop(
+    "sends each call and watch of the typed client to the entity its input's key names",
+    [otherThanLobby],
+    ([other]) => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const client = yield* roomClient;
+
+        yield* client
+          .post({ room: other, text: "hi" })
+          .pipe(signedInAs("alice"));
+
+        const there = yield* client.read({ room: other });
+        const lobby = yield* client.read({ room: "lobby" });
+
+        const watched = yield* Stream.runHead(
+          client
+            .watch(Posted, { room: other }, { cursor: "0" })
+            .pipe(Stream.filter(({ _tag }) => _tag === "Occurrence"))
+        );
+
+        expect(there).toStrictEqual({ entity: other, texts: ["hi"] });
+        expect(lobby).toStrictEqual({ entity: "lobby", texts: [] });
+        expect(watched).toMatchObject({
+          _tag: "Some",
+          value: { _tag: "Occurrence", data: { text: "hi" } },
+        });
+        expect(rooms.ran.builds).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+    },
+    { timeout: 30_000, arbitrary: { runs: 20 } }
+  );
+
   it.live("authenticates each call from the headers its client sends", () => {
     const rooms = makeRooms();
 
     return Effect.gen(function* () {
-      const lobby = (yield* roomClient)("lobby");
+      const lobby = yield* roomClient;
       const post = { room: "lobby", text: "hi" };
 
       const answered = yield* lobby.post(post).pipe(signedInAs("alice"));
@@ -396,7 +474,7 @@ describe("ActionEntity on a TestRunner", () => {
 
   it.live("fails with a declared error and its fields", () =>
     Effect.gen(function* () {
-      const lobby = (yield* roomClient)("lobby");
+      const lobby = yield* roomClient;
 
       const closed = yield* Effect.flip(lobby.shut({ room: "lobby" }));
 
@@ -412,7 +490,7 @@ describe("ActionEntity on a TestRunner", () => {
       const rooms = makeRooms();
 
       return Effect.gen(function* () {
-        const lobby = (yield* roomClient)("lobby");
+        const lobby = yield* roomClient;
 
         const died = yield* Effect.exit(lobby.boom({ room: "lobby" }));
         const read = yield* lobby.read({ room: "lobby" });
@@ -442,14 +520,14 @@ describe("ActionEntity on a TestRunner", () => {
         yield* Effect.forEach(
           ["a", "b", "a"],
           (room, at) =>
-            clientOf(room)
+            clientOf
               .post({ room, text: `${room}${at}` })
               .pipe(signedInAs("alice")),
           { concurrency: "unbounded" }
         );
 
-        const a = yield* clientOf("a").read({ room: "a" });
-        const b = yield* clientOf("b").read({ room: "b" });
+        const a = yield* clientOf.read({ room: "a" });
+        const b = yield* clientOf.read({ room: "b" });
 
         expect({ ...a, texts: a.texts.toSorted() }).toStrictEqual({
           entity: "a",
@@ -465,7 +543,7 @@ describe("ActionEntity on a TestRunner", () => {
     "answers an event's poll rpc past a cursor, and a watch follows it",
     () =>
       Effect.gen(function* () {
-        const a = (yield* roomClient)("a");
+        const a = yield* roomClient;
 
         const start = yield* poll("a", null);
 
@@ -491,41 +569,30 @@ describe("ActionEntity on a TestRunner", () => {
       }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
   );
 
-  it.live(
-    "hands a streaming action's progress on before its answer, and refuses another entity's key with Forbidden",
-    () => {
-      const rooms = makeRooms();
+  it.live("hands a streaming action's progress on before its answer", () => {
+    const rooms = makeRooms();
 
-      return Effect.gen(function* () {
-        const lobby = (yield* roomClient)("lobby");
-        const seen: string[] = [];
+    return Effect.gen(function* () {
+      const lobby = yield* roomClient;
+      const seen: string[] = [];
 
-        const answer = yield* lobby.tally(
-          { room: "lobby", upTo: 3 },
-          { onProgress: ({ at }) => Effect.sync(() => seen.push(`at ${at}`)) }
-        );
+      const answer = yield* lobby.tally(
+        { room: "lobby", upTo: 3 },
+        { onProgress: ({ at }) => Effect.sync(() => seen.push(`at ${at}`)) }
+      );
 
-        seen.push(`counted ${answer.counted}`);
+      seen.push(`counted ${answer.counted}`);
 
-        const refused = yield* Effect.flip(
-          lobby.tally(
-            { room: "kitchen", upTo: 3 },
-            { onProgress: () => Effect.sync(() => seen.push("refused")) }
-          )
-        );
-
-        expect(seen).toStrictEqual(["at 1", "at 2", "at 3", "counted 3"]);
-        expect(refused).toBeInstanceOf(Action.Forbidden);
-        expect(rooms.ran.tally).toBe(1);
-      }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
-    }
-  );
+      expect(seen).toStrictEqual(["at 1", "at 2", "at 3", "counted 3"]);
+      expect(rooms.ran.tally).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+  });
 
   it.live(
     "answers a poll page with hasMore past maxEvents, truncated for a cursor its log never minted, and a 5-second nextPollMs",
     () =>
       Effect.gen(function* () {
-        const a = (yield* roomClient)("a");
+        const a = yield* roomClient;
 
         const start = yield* poll("a", null);
 
@@ -563,7 +630,7 @@ describe("ActionEntity on a TestRunner", () => {
     "refuses to watch an event as a stream, since an entity serves polls",
     () =>
       Effect.gen(function* () {
-        const a = (yield* roomClient)("a");
+        const a = yield* roomClient;
 
         const refused = yield* Effect.flip(
           Stream.runHead(a.watch(Posted, { room: "a" }, { mode: "stream" }))
@@ -578,7 +645,7 @@ describe("ActionEntity on a TestRunner", () => {
 
   it.live("stores no message of its calls", () =>
     Effect.gen(function* () {
-      const lobby = (yield* roomClient)("lobby");
+      const lobby = yield* roomClient;
 
       for (let at = 0; at < 10; at += 1) {
         yield* lobby

@@ -26,7 +26,7 @@ function clientThrough(binding: ActionRpc.Any, call: ErasedCall): object {
       false,
       polledTransport(() => false)
     )
-  )(call);
+  )(() => Effect.succeed(call));
 }
 
 class Unreachable extends Schema.TaggedError<

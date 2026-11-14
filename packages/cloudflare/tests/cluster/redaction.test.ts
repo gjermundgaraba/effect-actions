@@ -187,10 +187,10 @@ describe("ActionCluster.layer's entity clients", () => {
           async () => await initialize(env)
         );
 
-        const seer = (yield* Effect.provideContext(
+        const seer = yield* Effect.provideContext(
           ActionEntity.client(Seer),
           context
-        ))("outside");
+        );
 
         const { headers } = yield* seer
           .readHeaders({ room: "outside" })

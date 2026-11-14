@@ -33,7 +33,7 @@ describe("ActionEntity.layer's defects on workerd", () => {
         expect(yield* seers("defects").bump()).toBe(1);
 
         const exit = yield* Effect.exit(
-          actions("defects")
+          actions
             .crash({ room: "defects" })
             .pipe(RpcClient.withHeaders({ authorization: "Bearer alice" }))
         );

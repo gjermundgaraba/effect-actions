@@ -66,7 +66,7 @@ A protected action authenticates each call from the headers its envelope carries
 
 ## Call it
 
-`ActionEntity.client(entity)` is Effect's `Entity.client` with one typed method per action: `(yield* ActionEntity.client(Room))("lobby").postMessage(input)`. Send credentials by setting headers with `RpcClient.withHeaders` around a call. The id must be the one the input's key names. What a call fails with is `ActionEntity.MethodError`, and the transport rules are on `ActionEntity.client`.
+`ActionEntity.client(entity)` is Effect's `Entity.client` with one typed method per action, each call sent to the entity its input's key names: `(yield* ActionEntity.client(Room)).postMessage({ room: "lobby", text })`. Send credentials by setting headers with `RpcClient.withHeaders` around a call. The entity's native rpcs stay on Effect's own client, `(yield* Room.client)("lobby")`. What a call fails with is `ActionEntity.MethodError`, and the transport rules are on `ActionEntity.client`.
 
 ## Reach it from any surface
 

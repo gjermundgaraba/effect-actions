@@ -1,4 +1,12 @@
-import { Duration, Effect, Layer, Predicate, Schedule, Schema } from "effect";
+import {
+  Duration,
+  Effect,
+  Function,
+  Layer,
+  Predicate,
+  Schedule,
+  Schema,
+} from "effect";
 import type { Context, Scope, Stream, Types } from "effect";
 import type { HttpRouter, HttpServerRequest } from "effect/http";
 import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcServer } from "effect/rpc";
@@ -726,7 +734,7 @@ export function client(
           silenceEnds,
           polledTransport(isRpcTransient, pollResentAfter)
         )
-      )(erasedCallOf(call)),
+      )(Function.constant(Effect.succeed(erasedCallOf(call)))),
       ...Object.fromEntries(
         [...nativeOf(binding.rpcs).requests.keys()].map(
           (tag) =>

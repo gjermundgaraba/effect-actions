@@ -94,7 +94,7 @@ describe("ActionEntity.layer's headers on a TestRunner", () => {
     ([extra]) =>
       Effect.gen(function* () {
         const sent = { ...extra, authorization: "Bearer alice" };
-        const reader = (yield* ActionEntity.client(Reader))("a");
+        const reader = yield* ActionEntity.client(Reader);
 
         const unary = yield* reader
           .readHeaders({ room: "a" })
