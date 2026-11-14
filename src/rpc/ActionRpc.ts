@@ -185,12 +185,13 @@ export interface Binding<
    */
   readonly rpcs: RpcGroup.RpcGroup<NativeOf<N, D>>;
   /**
-   * The native group of one rpc per action, named after it, one stream rpc per event type,
-   * taking `{ input, cursor }`, `cursor: null` reading from now, and `rpcs`, as clients see it:
-   * `RpcClient.make(Rpc.group)` is the native client.
+   * The typed native group of one rpc per action, named after it, one stream rpc per event
+   * type, taking `{ input, cursor }`, `cursor: null` reading from now, and `rpcs`:
+   * `RpcClient.make(Rpc.group)` is a native client of them.
    *
    * **Gotchas**
    *
+   * - It holds no event's `<event>/poll` or `<event>/release`, which `layer` serves beside its stream rpc: a native client of it watches by stream alone; poll through `client` with `delivery: "poll"`.
    * - `layer` hands the protocol an action's and an event type's values as their JSON, the native `rpcs`' as they are: under a codec other than a JSON serialization's, such as schema-binary's or a protocol passing values, `RpcClient.make(Rpc.group)` decodes an action's answer or an event's occurrence by its own schema and fails; call actions and watch events through `client`, which hands them over as JSON too.
    */
   readonly group: RpcGroup.RpcGroup<
