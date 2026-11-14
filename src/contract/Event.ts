@@ -227,7 +227,9 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
  * An event type whose occurrence is the whole value, such as a status or a list small enough to
  * send whole: a subscriber receives the value as it is first, then again after each
  * `Events.notify` that reaches it, never a change it missed one by one. The library keeps a
- * revision per key, which each such notify moves, as the cursor and each occurrence's id.
+ * revision per key, which each such notify moves, as the cursor and each occurrence's id. Its
+ * streams and webhook deliveries read it again only when notified, on no timer, so an idle
+ * Cloudflare Durable Object holding them hibernates; a polling client polls every 5 seconds.
  *
  * **Gotchas**
  *

@@ -247,6 +247,7 @@ const currentRun = (
     event,
     {
       key: source.key,
+      notified: true,
       check: (input, cursor) =>
         Effect.gen(function* () {
           const at = yield* checking.revision(yield* keyOf(source, input));
