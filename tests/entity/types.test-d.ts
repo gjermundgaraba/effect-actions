@@ -231,6 +231,16 @@ expectTypeOf(room.watch(Changed, { room: "a" })).toEqualTypeOf<
   >
 >();
 
+room.watch(Changed, { room: "a" }, { mode: "poll" });
+
+// @ts-expect-error -- an entity serves its events by poll alone.
+room.watch(Changed, { room: "a" }, { mode: "stream" });
+
+declare const webhook: Event.WebhookDelivery;
+
+// @ts-expect-error -- an entity's client receives no webhook delivery.
+room.watch(Changed, { room: "a" }, { mode: webhook });
+
 const Http = ActionHttp.make([Get, Open, Changed], {
   authentication: SignedIn,
 });

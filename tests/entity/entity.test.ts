@@ -626,23 +626,6 @@ describe("ActionEntity on a TestRunner", () => {
       }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
   );
 
-  it.live(
-    "refuses to watch an event as a stream, since an entity serves polls",
-    () =>
-      Effect.gen(function* () {
-        const a = yield* roomClient;
-
-        const refused = yield* Effect.flip(
-          Stream.runHead(a.watch(Posted, { room: "a" }, { mode: "stream" }))
-        );
-
-        expect(refused).toBeInstanceOf(Event.SubscriptionError);
-        expect(
-          refused instanceof Event.SubscriptionError && refused.reason._tag
-        ).toBe("Unsupported");
-      }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
-  );
-
   it.live("stores no message of its calls", () =>
     Effect.gen(function* () {
       const lobby = yield* roomClient;

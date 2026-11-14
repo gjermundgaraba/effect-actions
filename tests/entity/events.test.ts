@@ -800,8 +800,9 @@ describe("ActionEntity.client's watches", () => {
       return Effect.gen(function* () {
         const a = yield* ActionEntity.client(Ticker);
 
-        const watched = (options?: Event.WatchOptions) =>
-          a.watch(Ticked, { room: "a" }, options).pipe(signedIn("alice"));
+        const watched = (
+          options?: Event.WatchOptions & { readonly mode?: "poll" }
+        ) => a.watch(Ticked, { room: "a" }, options).pipe(signedIn("alice"));
 
         const first = yield* Effect.forkScoped(Stream.runDrain(watched()));
 

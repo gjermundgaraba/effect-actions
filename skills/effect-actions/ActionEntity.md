@@ -80,7 +80,7 @@ A server outside the cluster that forwards a socket's calls into the entity, as 
 
 ## Watch an event
 
-The client's `watch(event, input, options)` follows an event by polling its rpc, from a cursor or from now, as `Action.client`'s does. An entity holds no stream open for a watcher, so a runtime that puts an idle entity to sleep can still do so. A watch asking for `mode: "stream"` fails with `Event.SubscriptionError`. What else ends a watch is on `ActionEntity.WatchError`.
+The client's `watch(event, input, options)` follows an event by polling its rpc, from a cursor or from now, as `Action.client`'s does. An entity holds no stream open for a watcher, so a runtime that puts an idle entity to sleep can still do so. What else ends a watch is on `ActionEntity.WatchError`.
 
 ## Deliver its events by webhook
 

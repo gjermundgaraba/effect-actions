@@ -575,9 +575,8 @@ type Method<A extends Action.Any, E extends Action.Errors[number]> = Call<
 
 /**
  * What a watch of `W` over the binding `B` may fail with: a refusal, `InvalidInput`, the
- * binding's errors, an `Event.SubscriptionError` (`Unsupported` for `mode: "stream"`, since an
- * entity serves polls, `NotServed` for an event the entity does not serve), or what Effect's
- * entity client fails with that no retry outlasts.
+ * binding's errors, an `Event.SubscriptionError` (`NotServed` for an event the entity does not
+ * serve), or what Effect's entity client fails with that no retry outlasts.
  */
 export type WatchError<W extends Event.Any, B extends ActionRpc.Any> =
   | Event.SubscriptionError
@@ -591,7 +590,7 @@ type Watching<B extends ActionRpc.Any> = [B["events"][number]] extends [never]
   : {
       readonly watch: <W extends B["events"][number], SE = never>(
         event: W,
-        ...args: WatchArgs<W, SE>
+        ...args: WatchArgs<W, SE, { readonly mode?: "poll" | undefined }>
       ) => Stream.Stream<Event.Received<W>, WatchError<W, B> | SE>;
     };
 
@@ -655,7 +654,7 @@ const reachOf =
  *
  * - An input whose key names no entity, such as one missing the key's field, fails with `Forbidden`, sending nothing.
  * - Headers set with `RpcClient.withHeaders` around a call go with its envelope, which is how a protected call sends its credential; a call without them fails `Unauthenticated`.
- * - A watch polls, by default as with `mode: "poll"`, at the page's `nextPollMs`, its polls holding a subscription hook of their own in the entity, which its end releases; `mode: "stream"` fails with `Event.SubscriptionError`, reason `Unsupported`, and a webhook `mode` with it too.
+ * - A watch polls, its only `mode` `"poll"`, at the page's `nextPollMs`, its polls holding a subscription hook of their own in the entity, which its end releases.
  * - Ending a watch waits up to 5 seconds for the entity to answer its release, so interrupting one whose entity is slow to answer, such as one with a full mailbox, takes up to 5 seconds; a release that never arrives leaves the hook held until the entity stops or its source's `lease` lapses.
  * - A watch asks the entity again after `MailboxFull` or `PersistenceError`, from where it reached, a second later and doubling to 30 seconds; a declared error, a refusal included, ends it.
  */
