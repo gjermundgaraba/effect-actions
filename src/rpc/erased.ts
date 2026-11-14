@@ -328,28 +328,30 @@ const failedOf = (error: Schema.Union<Action.Errors>) => {
 
 export const actionMethodOf = (
   action: Action.Any,
-  binding: Declaring,
-  call: ErasedCall
-): CheckedMethod => {
+  binding: Declaring
+): ((call: ErasedCall) => CheckedMethod) => {
   const failed = failedOf(Schema.Union(bindingErrors(action, binding)));
   const streamed = streamedOf(action);
+  const encode = sendingJson(action);
+  const sending = () => encode;
 
   if (streamed === undefined) {
     const decode = Schema.decodeUnknownEffect(
       Schema.toCodecJson(action.success)
     );
 
-    return checked(action, sendingJson, (json) =>
-      call.unary(action.name, json).pipe(
-        Effect.catchIf(isDeclared, failed),
-        Effect.flatMap((sent) => Effect.orDie(decode(sent)))
-      )
-    );
+    return (call) =>
+      checked(action, sending, (json) =>
+        call.unary(action.name, json).pipe(
+          Effect.catchIf(isDeclared, failed),
+          Effect.flatMap((sent) => Effect.orDie(decode(sent)))
+        )
+      );
   }
 
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(streamed));
 
-  const progressed = (json: Schema.Json) =>
+  const progressed = (call: ErasedCall, json: Schema.Json) =>
     call.stream(action.name, json).pipe(
       Stream.catchIf(isDeclared, (failure) =>
         Stream.fromEffect(failed(failure))
@@ -358,30 +360,31 @@ export const actionMethodOf = (
     );
 
   return elementOf(action.success) === undefined
-    ? checked(action, sendingJson, (json, onProgress) =>
-        answerFrom(progressed(json), onProgress)
-      )
-    : checkedStream(action, sendingJson, (json, onProgress) =>
-        elementsFrom(progressed(json), onProgress)
-      );
+    ? (call) =>
+        checked(action, sending, (json, onProgress) =>
+          answerFrom(progressed(call, json), onProgress)
+        )
+    : (call) =>
+        checkedStream(action, sending, (json, onProgress) =>
+          elementsFrom(progressed(call, json), onProgress)
+        );
 };
 
 type EventTransport = (
   event: Event.Any,
-  binding: Declaring,
-  call: ErasedCall
-) => (input: Schema.Json) => Transport<unknown, never>;
+  binding: Declaring
+) => (call: ErasedCall) => (input: Schema.Json) => Transport<unknown, never>;
 
 export const streamedTransport =
   (silenceEnds: boolean): EventTransport =>
-  (event, binding, call) => {
+  (event, binding) => {
     const decode = Schema.decodeUnknownEffect(
       Schema.toCodecJson(PushedOf(event))
     );
 
     const failed = failedOf(Schema.Union(eventErrors(event, binding)));
 
-    return (input) =>
+    return (call) => (input) =>
       transportOf(
         event,
         (cursor) =>
@@ -395,54 +398,50 @@ export const streamedTransport =
       );
   };
 
-export const pollOf = (
-  event: Event.Any,
-  binding: Declaring,
-  call: ErasedCall
-) => {
+export const pollOf = (event: Event.Any, binding: Declaring) => {
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(pageOf(event)));
 
   const failed = failedOf(Schema.Union(eventErrors(event, binding)));
 
-  return (payload: {
-    readonly input: Schema.Json;
-    readonly cursor: string | null;
-    readonly maxEvents?: number;
-    readonly watch?: string;
-  }) =>
-    call.unary(pollTag(event.name), payload).pipe(
-      Effect.catchIf(isDeclared, failed),
-      Effect.flatMap((json) => Effect.orDie(decode(json)))
-    );
+  return (call: ErasedCall) =>
+    (payload: {
+      readonly input: Schema.Json;
+      readonly cursor: string | null;
+      readonly maxEvents?: number;
+      readonly watch?: string;
+    }) =>
+      call.unary(pollTag(event.name), payload).pipe(
+        Effect.catchIf(isDeclared, failed),
+        Effect.flatMap((json) => Effect.orDie(decode(json)))
+      );
 };
 
-export const watchedOf = (
-  event: Event.Any,
-  binding: Declaring,
-  call: ErasedCall
-) => {
-  const poll = pollOf(event, binding, call);
+export const watchedOf = (event: Event.Any, binding: Declaring) => {
+  const pollThrough = pollOf(event, binding);
 
   const releaseUnserved = isUnknownTag(releaseTag(event.name));
 
-  return (
-    input: Schema.Json
-  ): Pick<Transport<unknown, never>, "poll" | "release"> => ({
-    poll: (cursor, watch) =>
-      poll({ input, cursor, ...(watch === undefined ? {} : { watch }) }),
-    release: (watch) =>
-      call.unary(releaseTag(event.name), { input, watch }).pipe(
-        Effect.asVoid,
-        Effect.catchCauseIf(releaseUnserved, () => Effect.void)
-      ),
-  });
+  return (call: ErasedCall) => {
+    const poll = pollThrough(call);
+
+    return (
+      input: Schema.Json
+    ): Pick<Transport<unknown, never>, "poll" | "release"> => ({
+      poll: (cursor, watch) =>
+        poll({ input, cursor, ...(watch === undefined ? {} : { watch }) }),
+      release: (watch) =>
+        call.unary(releaseTag(event.name), { input, watch }).pipe(
+          Effect.asVoid,
+          Effect.catchCauseIf(releaseUnserved, () => Effect.void)
+        ),
+    });
+  };
 };
 
 export const webhookCallsOf = (
   event: Event.Any,
-  binding: Declaring,
-  call: ErasedCall
-): WebhookHolder => {
+  binding: Declaring
+): ((call: ErasedCall) => WebhookHolder) => {
   const failed = failedOf(webhookErrors(event, binding));
 
   const encodeSubscription = Schema.encodeUnknownEffect(
@@ -455,26 +454,20 @@ export const webhookCallsOf = (
 
   const decode = Schema.decodeUnknownEffect(Schema.toCodecJson(Subscribed));
 
-  const subscribe = (json: Schema.Json) =>
-    call.unary(subscribeTag(event.name), json);
-
-  const unsubscribe = (json: Schema.Json) =>
-    call.unary(unsubscribeTag(event.name), json);
-
-  return {
+  return (call) => ({
     subscribe: ({ input, delivery, cursor, ttlMs }) =>
       Effect.orDie(encodeSubscription({ input, delivery, cursor, ttlMs })).pipe(
-        Effect.flatMap(subscribe),
+        Effect.flatMap((json) => call.unary(subscribeTag(event.name), json)),
         Effect.catchIf(isDeclared, failed),
         Effect.flatMap((json) => Effect.orDie(decode(json)))
       ),
     unsubscribe: ({ input, delivery: { url } }) =>
       Effect.orDie(encodeCancellation({ input, delivery: { url } })).pipe(
-        Effect.flatMap(unsubscribe),
+        Effect.flatMap((json) => call.unary(unsubscribeTag(event.name), json)),
         Effect.catchIf(isDeclared, failed),
         Effect.asVoid
       ),
-  };
+  });
 };
 
 const resending =
@@ -493,21 +486,27 @@ export const polledTransport =
     transient: (error: unknown) => boolean,
     resendAfter?: Duration.Input
   ): EventTransport =>
-  (event, binding, call) => {
-    const watched = watchedOf(event, binding, call);
+  (event, binding) => {
+    const watchedThrough = watchedOf(event, binding);
+    const pollUnserved = isUnknownTag(pollTag(event.name));
 
-    return (input) => {
-      const { poll, release } = watched(input);
+    return (call) => {
+      const watched = watchedThrough(call);
 
-      return polledTransportOf(
-        event,
-        {
-          poll: resendAfter === undefined ? poll : resending(poll, resendAfter),
-          release,
-        },
-        transient,
-        isUnknownTag(pollTag(event.name))
-      );
+      return (input) => {
+        const { poll, release } = watched(input);
+
+        return polledTransportOf(
+          event,
+          {
+            poll:
+              resendAfter === undefined ? poll : resending(poll, resendAfter),
+            release,
+          },
+          transient,
+          pollUnserved
+        );
+      };
     };
   };
 
@@ -519,58 +518,67 @@ interface ClientBinding extends Declaring {
 
 export const methodsOf = (
   binding: ClientBinding,
-  call: ErasedCall,
   transport: EventTransport
 ) => {
-  const methods = Object.fromEntries<unknown>([
-    ...binding.actions.map(
-      (action) => [action.name, actionMethodOf(action, binding, call)] as const
-    ),
-    ...[...nativeOf(binding.rpcs).requests.values()].map(
-      (rpc) =>
-        [
-          rpc._tag,
-          (payload: Schema.Json, options?: ErasedCallOptions) =>
-            RpcSchema.isStreamSchema(rpc.successSchema)
-              ? call.stream(rpc._tag, payload, options)
-              : call.unary(rpc._tag, payload, options),
-        ] as const
-    ),
-  ]);
-
-  if (binding.events.length === 0) {
-    return methods;
-  }
-
-  const feeds = new Map(
-    binding.events.map(
-      (event) => [event.name, transport(event, binding, call)] as const
-    )
+  const actions = binding.actions.map(
+    (action) => [action.name, actionMethodOf(action, binding)] as const
   );
 
-  const watch = (
-    event: Event.Any,
-    input?: ErasedValue,
-    watchOptions?: Event.WatchOptions<unknown>
-  ): Stream.Stream<Event.Received<Event.Any>, unknown> => {
-    const feed = feeds.get(event.name);
+  const natives = [...nativeOf(binding.rpcs).requests.values()].map(
+    (rpc) => [rpc._tag, RpcSchema.isStreamSchema(rpc.successSchema)] as const
+  );
 
-    if (feed === undefined) {
-      return Stream.die(
-        new Error(
-          `ActionRpc.client: the binding holds no event type ${event.name} (watch one the binding ActionRpc.make returned lists)`
-        )
-      );
+  const transports = binding.events.map(
+    (event) => [event.name, transport(event, binding)] as const
+  );
+
+  return (call: ErasedCall) => {
+    const methods = Object.fromEntries<unknown>([
+      ...actions.map(([name, method]) => [name, method(call)] as const),
+      ...natives.map(
+        ([tag, streamed]) =>
+          [
+            tag,
+            (payload: Schema.Json, options?: ErasedCallOptions) =>
+              streamed
+                ? call.stream(tag, payload, options)
+                : call.unary(tag, payload, options),
+          ] as const
+      ),
+    ]);
+
+    if (transports.length === 0) {
+      return methods;
     }
 
-    return Stream.unwrap(
-      Effect.map(watchInput(event, input), ({ json }) =>
-        watching(feed(json), watchOptions)
-      )
+    const feeds = new Map(
+      transports.map(([name, feed]) => [name, feed(call)] as const)
     );
-  };
 
-  return { ...methods, watch };
+    const watch = (
+      event: Event.Any,
+      input?: ErasedValue,
+      watchOptions?: Event.WatchOptions<unknown>
+    ): Stream.Stream<Event.Received<Event.Any>, unknown> => {
+      const feed = feeds.get(event.name);
+
+      if (feed === undefined) {
+        return Stream.die(
+          new Error(
+            `ActionRpc.client: the binding holds no event type ${event.name} (watch one the binding ActionRpc.make returned lists)`
+          )
+        );
+      }
+
+      return Stream.unwrap(
+        Effect.map(watchInput(event, input), ({ json }) =>
+          watching(feed(json), watchOptions)
+        )
+      );
+    };
+
+    return { ...methods, watch };
+  };
 };
 
 const callBoundaryOf = (error: Schema.Union<Action.Errors>) => {

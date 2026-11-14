@@ -16,7 +16,7 @@ function clientThrough<const B extends ActionRpc.Any>(
   call: ErasedCall
 ): ActionRpc.Client<B>;
 function clientThrough(binding: ActionRpc.Any, call: ErasedCall): object {
-  return methodsOf(binding, call, streamedTransport(false));
+  return methodsOf(binding, streamedTransport(false))(call);
 }
 
 class Unreachable extends Schema.TaggedError<

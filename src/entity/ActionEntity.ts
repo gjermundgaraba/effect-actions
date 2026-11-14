@@ -646,17 +646,16 @@ export const client = <
   N extends Rpc.Any = never,
 >(
   entity: Entity<Type, B, N>
-): Effect.Effect<(entityId: string) => Client<B>, never, Sharding.Sharding> =>
-  Effect.map(
+): Effect.Effect<(entityId: string) => Client<B>, never, Sharding.Sharding> => {
+  const methods = methodsOf(entity.binding, polledTransport(isTransient));
+
+  return Effect.map(
     entity.client,
     (clientFor) => (entityId: string) =>
       // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      methodsOf(
-        entity.binding,
-        entityCallOf(clientFor(entityId)),
-        polledTransport(isTransient)
-      ) as Client<B>
+      methods(entityCallOf(clientFor(entityId))) as Client<B>
   );
+};
 
 type Nothing<C extends Action.Any | Event.Any> = {
   readonly [K in C["name"]]: never;
@@ -735,13 +734,11 @@ export const reaching = <
     action: Action.Any,
     reach: Reach
   ): WrittenHandler<unknown> => {
+    const method = actionMethodOf(action, binding);
+
     const answer = (input: ErasedValue, reporting: Reporting | undefined) =>
       Effect.map(reach(action, input), (call) =>
-        actionMethodOf(
-          action,
-          binding,
-          call
-        )(
+        method(call)(
           input,
           ...(reporting === undefined
             ? []
@@ -762,6 +759,9 @@ export const reaching = <
 
   const runOf = (event: Event.Any, reach: Reach): Run => {
     const encode = Schema.encodeUnknownEffect(Schema.toCodecJson(event.input));
+    const poll = pollOf(event, binding);
+    const watched = watchedOf(event, binding);
+    const webhookCalls = webhookCallsOf(event, binding);
 
     const reached = (input: ErasedValue) =>
       Effect.all([reach(event, input), Effect.orDie(encode(input))]);
@@ -771,7 +771,7 @@ export const reaching = <
       sent: (held: WebhookHolder) => Effect.Effect<A, unknown, unknown>
     ) =>
       Effect.flatMap(reach(event, input), (call) =>
-        sent(webhookCallsOf(event, binding, call))
+        sent(webhookCalls(call))
       ).pipe(Effect.catchIf(isClusterFailure, Effect.die));
 
     return {
@@ -791,11 +791,7 @@ export const reaching = <
             },
       poll: (input, cursor, { maxEvents }) =>
         Effect.flatMap(reached(input), ([call, json]) =>
-          pollOf(
-            event,
-            binding,
-            call
-          )({
+          poll(call)({
             input: json,
             cursor,
             ...(maxEvents === undefined ? {} : { maxEvents }),
@@ -804,7 +800,7 @@ export const reaching = <
       stream: (input, cursor) =>
         Stream.unwrap(
           Effect.map(reached(input), ([call, json]) =>
-            polling(watchedOf(event, binding, call)(json), isTransient)(cursor)
+            polling(watched(call)(json), isTransient)(cursor)
           )
         ).pipe(Stream.catchIf(isClusterFailure, Stream.die)),
     };

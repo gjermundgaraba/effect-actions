@@ -732,11 +732,10 @@ export function client(
     ([call, silenceEnds]) =>
       methodsOf(
         binding,
-        erasedCallOf(call),
         delivery === "stream"
           ? streamedTransport(silenceEnds)
           : polledTransport(isRpcTransient, pollResentAfter)
-      )
+      )(erasedCallOf(call))
   );
 }
 
