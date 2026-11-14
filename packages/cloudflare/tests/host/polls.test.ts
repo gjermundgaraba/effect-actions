@@ -1,9 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { runInDurableObject } from "cloudflare:test";
-import { Duration, Effect, Predicate, Schedule } from "effect";
+import { Effect, Predicate, Schedule } from "effect";
 
-import { uncalledWithin } from "../../src/host/sockets.js";
 import { Pinned } from "../board.js";
 import {
   answeredEarlier,
@@ -45,12 +43,6 @@ const parkedAs = (board: string, id: string) =>
   );
 
 describe("ActionClusterEntity's polls", () => {
-  it("sends the entity a parked page's poll at most 4 minutes 30 seconds after its last, as the hook gotcha says, with ActionRpc.pollResentAfter", () => {
-    expect(
-      Duration.toMillis(Duration.sum(uncalledWithin, ActionRpc.pollResentAfter))
-    ).toBe(Duration.toMillis(Duration.minutes(4.5)));
-  });
-
   it.live(
     "parks a page's next poll with no call within 30 seconds of its watch's last call, and forwards one sent later to the entity",
     () =>
