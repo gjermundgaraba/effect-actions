@@ -14,7 +14,6 @@ import type {
 } from "../authentication/provider.js";
 import * as Action from "../contract/Action.js";
 import type { Call } from "../contract/call.js";
-import { Anyone } from "../contract/caller.js";
 import type { BuiltIns } from "../contract/errors.js";
 import * as Event from "../contract/Event.js";
 import { EventImplementation } from "../contract/feed.js";
@@ -40,6 +39,7 @@ import type { Answer } from "../contract/stream.js";
 import { Wake } from "../contract/wake.js";
 import { polling } from "../contract/watch.js";
 import type { WatchArgs } from "../contract/watch.js";
+import { offersWebhook } from "../contract/webhooks.js";
 import type { WebhookHolder } from "../contract/webhooks.js";
 import type * as ActionRpc from "../rpc/ActionRpc.js";
 import {
@@ -543,6 +543,23 @@ export const isClusterFailure = Schema.is(ClusterFailures);
 
 const isTransient = Schema.is(Transients);
 
+function clusterFailuresAsDefects<A, E, R>(
+  answer: Effect.Effect<A, E, R>
+): Effect.Effect<A, E, R>;
+function clusterFailuresAsDefects<A, E, R>(
+  answer: Stream.Stream<A, E, R>
+): Stream.Stream<A, E, R>;
+function clusterFailuresAsDefects<A, E, R>(
+  answer: Effect.Effect<A, E, R> | Stream.Stream<A, E, R>
+): Effect.Effect<A, E, R> | Stream.Stream<A, E, R>;
+function clusterFailuresAsDefects<A, E, R>(
+  answer: Effect.Effect<A, E, R> | Stream.Stream<A, E, R>
+): Effect.Effect<A, E, R> | Stream.Stream<A, E, R> {
+  return Effect.isEffect(answer)
+    ? Effect.catchIf(answer, isClusterFailure, Effect.die)
+    : Stream.catchIf(answer, isClusterFailure, Stream.die);
+}
+
 /**
  * What one call of an action `A` fails with, beside the binding's errors `E`: its declared and
  * built-in errors, and what Effect's entity client fails with when the entity could not be
@@ -718,16 +735,15 @@ export const reaching = <
   ): WrittenHandler<unknown> => {
     const method = actionMethodOf(action, binding)(reach);
 
-    return (input, reporting) => {
-      const answer = method(
-        input,
-        ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }])
+    return (input, reporting) =>
+      clusterFailuresAsDefects(
+        method(
+          input,
+          ...(reporting === undefined
+            ? []
+            : [{ onProgress: reporting.progress }])
+        )
       );
-
-      return Effect.isEffect(answer)
-        ? Effect.catchIf(answer, isClusterFailure, Effect.die)
-        : Stream.catchIf(answer, isClusterFailure, Stream.die);
-    };
   };
 
   const runOf = (event: Event.Any, reach: Reach): Run => {
@@ -743,39 +759,42 @@ export const reaching = <
       input: ErasedValue,
       sent: (held: WebhookHolder) => Effect.Effect<A, unknown, unknown>
     ) =>
-      Effect.flatMap(reach(event, input), (call) =>
-        sent(webhookCalls(call))
-      ).pipe(Effect.catchIf(isClusterFailure, Effect.die));
+      clusterFailuresAsDefects(
+        Effect.flatMap(reach(event, input), (call) => sent(webhookCalls(call)))
+      );
 
     return {
       polls: true,
-      webhook:
-        event.caller === Anyone
-          ? undefined
-          : {
-              subscribe: (subscribing) =>
-                inEntity(subscribing.input, (held) =>
-                  held.subscribe(subscribing)
-                ),
-              unsubscribe: (subscription) =>
-                inEntity(subscription.input, (held) =>
-                  held.unsubscribe(subscription)
-                ),
-            },
+      webhook: offersWebhook(event)
+        ? {
+            subscribe: (subscribing) =>
+              inEntity(subscribing.input, (held) =>
+                held.subscribe(subscribing)
+              ),
+            unsubscribe: (subscription) =>
+              inEntity(subscription.input, (held) =>
+                held.unsubscribe(subscription)
+              ),
+          }
+        : undefined,
       poll: (input, cursor, { maxEvents }) =>
-        Effect.flatMap(reached(input), ([call, json]) =>
-          poll(call)({
-            input: json,
-            cursor,
-            ...(maxEvents === undefined ? {} : { maxEvents }),
-          })
-        ).pipe(Effect.catchIf(isClusterFailure, Effect.die)),
-      stream: (input, cursor) =>
-        Stream.unwrap(
-          Effect.map(reached(input), ([call, json]) =>
-            polling(watched(call)(json), isTransient)(cursor)
+        clusterFailuresAsDefects(
+          Effect.flatMap(reached(input), ([call, json]) =>
+            poll(call)({
+              input: json,
+              cursor,
+              ...(maxEvents === undefined ? {} : { maxEvents }),
+            })
           )
-        ).pipe(Stream.catchIf(isClusterFailure, Stream.die)),
+        ),
+      stream: (input, cursor) =>
+        clusterFailuresAsDefects(
+          Stream.unwrap(
+            Effect.map(reached(input), ([call, json]) =>
+              polling(watched(call)(json), isTransient)(cursor)
+            )
+          )
+        ),
     };
   };
 
