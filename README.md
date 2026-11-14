@@ -90,6 +90,7 @@ It needs TypeScript 7 or newer and is ESM only ([docs/setup.md](docs/setup.md#in
 - [mcp-tools](examples/mcp-tools/): an MCP server whose tools wrap an upstream HTTP API.
 - [assistant](examples/assistant/): no server, the same implementations as a model's tools and as local commands.
 - [live-rpc](examples/live-rpc/): Effect RPC over a WebSocket.
+- [shopping-carts](examples/shopping-carts/): carts as Effect Cluster entities, reached from JSON routes.
 - [build-events](examples/build-events/): events watched over MCP, HTTP, RPC, a command line and webhooks, and actions reporting progress and answering a stream.
 - [kitchen-sink](examples/kitchen-sink/): every module and nearly every option in one application, with an index from each to the file that shows it.
 

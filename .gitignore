@@ -15,4 +15,5 @@ coverage/
 .vitest/
 
 .build-events/
+shopping-carts.db*
 .wrangler/
