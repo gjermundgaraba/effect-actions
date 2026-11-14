@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Schedule, Schema, Stream } from "effect";
+import { Effect, Fiber, Layer, Logger, Schedule, Schema, Stream } from "effect";
 import {
   ClusterError,
   MessageStorage,
@@ -28,14 +28,8 @@ import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { framesOf } from "../support/sse.js";
+import { Ticked } from "../support/ticked.js";
 import { secretOf } from "../support/webhook.js";
-
-const Ticked = Event.make("ticked", {
-  description: "A room ticked.",
-  input: { room: Schema.String },
-  payload: { at: Schema.Int },
-  caller: CurrentActor,
-});
 
 class Unavailable extends Schema.TaggedError<
   Unavailable,
@@ -108,6 +102,7 @@ interface TickerOptions {
   readonly entityUnavailable?: (call: number) => boolean;
   readonly requestScoped?: boolean;
   readonly entityWebhooks?: boolean;
+  readonly notified?: boolean;
 }
 
 const challengeIn = (body: string) =>
@@ -119,6 +114,7 @@ const makeTicker = ({
   entityUnavailable = () => false,
   requestScoped = true,
   entityWebhooks = false,
+  notified = true,
 }: TickerOptions = {}) => {
   const counted = {
     checks: 0,
@@ -134,6 +130,7 @@ const makeTicker = ({
   const ticking = Event.implement(
     Ticked,
     {
+      notified,
       check: (_input, cursor) =>
         Effect.sync(() => {
           counted.checks += 1;
@@ -217,12 +214,20 @@ const makeTicker = ({
       : Layer.empty,
   }).pipe(
     Layer.provideMerge(failingPolls(fails, lasting)),
-    Layer.provide([entitySignIn, Event.layerMemory])
+    Layer.provide(entitySignIn),
+    Layer.provideMerge(Event.layerMemory)
   );
+
+  const tick = (at: number) =>
+    Effect.andThen(
+      Effect.sync(() => ticks.push(at)),
+      Effect.flatMap(Event.Events, (events) => events.notify(Ticked))
+    );
 
   return {
     counted,
     ticks,
+    tick,
     received,
     server: Testing.layer(edge).pipe(Layer.provideMerge(entities)),
   };
@@ -286,7 +291,7 @@ describe("ActionEntity.reaching's events by webhook", () => {
   it.live(
     "holds a subscription made over HTTP or MCP in the entity its input's key names, which delivers each occurrence and stops at the unsubscribe, the surface's own Webhook.layer holding none",
     () => {
-      const { counted, ticks, received, server } = makeTicker({
+      const { counted, tick, received, server } = makeTicker({
         entityWebhooks: true,
       });
 
@@ -311,7 +316,7 @@ describe("ActionEntity.reaching's events by webhook", () => {
 
         yield* subscribeOverHttp("subscribe", "b", carol);
 
-        ticks.push(1);
+        yield* tick(1);
 
         yield* until(
           () =>
@@ -327,7 +332,7 @@ describe("ActionEntity.reaching's events by webhook", () => {
           delivery.url
         );
 
-        ticks.push(2);
+        yield* tick(2);
 
         yield* until(
           () =>
@@ -343,7 +348,7 @@ describe("ActionEntity.reaching's events by webhook", () => {
 
         yield* until(() => counted.unhooked === 2);
 
-        ticks.push(3);
+        yield* tick(3);
 
         yield* until(() => occurrencesIn(received, carol).length === 3);
 
@@ -437,6 +442,78 @@ describe("ActionEntity.reaching's events by webhook", () => {
         expect(counted).toMatchObject({ checks: 0, callbacks: 0, hooked: 0 });
         expect(counted.verified).toBeGreaterThan(0);
       }).pipe(Effect.scoped, Effect.provide(server));
+    }
+  );
+
+  it.live(
+    "refuses, in an entity holding a Webhook.layer, a webhook subscription to a check source not notified, with Unsupported before any callback, logging why, and serves its polls",
+    () => {
+      const { counted, ticks, received, server } = makeTicker({
+        entityWebhooks: true,
+        notified: false,
+      });
+
+      const warnings: string[] = [];
+
+      const logger = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Warn") {
+          warnings.push(String(message));
+        }
+      });
+
+      return Effect.gen(function* () {
+        const overHttp = yield* subscribeOverHttp(
+          "subscribe",
+          "a",
+          delivery.url
+        );
+
+        const overMcp = yield* mcpSent("events/subscribe", {
+          name: "ticked",
+          arguments: { room: "a" },
+          delivery: { mode: "webhook", ...delivery },
+        });
+
+        const hookedBeforePoll = counted.hooked;
+
+        ticks.push(1);
+
+        const polled = yield* HttpClient.execute(
+          HttpClientRequest.post("/api/events/ticked").pipe(
+            HttpClientRequest.setHeaders(asAlice.headers),
+            HttpClientRequest.bodyJsonUnsafe({
+              input: { room: "a" },
+              cursor: "0",
+            })
+          )
+        );
+
+        expect(overHttp.status).toBe(409);
+        expect(yield* overHttp.json).toMatchObject({
+          _tag: "SubscriptionError",
+          reason: {
+            _tag: "Unsupported",
+            feature: "deliveryMode",
+            value: "webhook",
+          },
+        });
+        expect(overMcp).toMatchObject({
+          error: { data: { feature: "deliveryMode", value: "webhook" } },
+        });
+        expect(received).toStrictEqual([]);
+        expect(hookedBeforePoll).toBe(0);
+        expect(polled.status).toBe(200);
+        expect(yield* polled.json).toMatchObject({
+          events: [{ data: { at: 1 } }],
+        });
+        expect(warnings).toStrictEqual([
+          expect.stringContaining("mark the source notified"),
+          expect.stringContaining("mark the source notified"),
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.provideMerge(server, Logger.layer([logger])))
+      );
     }
   );
 

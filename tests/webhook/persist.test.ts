@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Clock,
+  Duration,
   Effect,
   ErrorReporter,
   Exit,
@@ -39,6 +41,11 @@ import {
 } from "../support/webhook.js";
 
 const records = "effect-actions/webhook/";
+
+const slept = (at: number) =>
+  Effect.flatMap(Clock.currentTimeMillis, (now) =>
+    Effect.sleep(Duration.millis(at - now))
+  );
 
 const keptIds = (store: KeyValueStore.KeyValueStore) =>
   KeyValueStore.prefix(store, records).keys;
@@ -205,6 +212,42 @@ describe("webhook subscriptions kept by persist", () => {
         }).pipe(Effect.provide(server));
 
         expect(keptLive).toHaveLength(1);
+        expect(yield* keptIds(store)).toStrictEqual([]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
+  );
+
+  it.effect(
+    "in an entity's services, keeps a subscription past its expiry on no timer, and ends it at its next delivery, posting nothing and removing what was kept",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+
+        const { world, server } = makeWorld({
+          kept: store,
+          wake: { until: (at) => slept(at) },
+        });
+
+        const [kept, keptPastExpiry] = yield* Effect.gen(function* () {
+          yield* subscribed(secretOf(1), 60_000);
+          yield* passed(1);
+
+          const whileGranted = yield* keptIds(store);
+
+          yield* TestClock.adjust("2 minutes");
+          yield* passed(1);
+
+          const pastExpiry = yield* keptIds(store);
+
+          world.changes.push({ id: "c1", by: "bob" });
+
+          yield* passed();
+
+          return [whileGranted, pastExpiry] as const;
+        }).pipe(Effect.provide(server));
+
+        expect(kept).toHaveLength(1);
+        expect(keptPastExpiry).toStrictEqual(kept);
+        expect(events(world.received)).toStrictEqual([]);
         expect(yield* keptIds(store)).toStrictEqual([]);
       }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );

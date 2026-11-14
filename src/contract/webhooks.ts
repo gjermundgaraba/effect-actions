@@ -144,16 +144,17 @@ export const webhookAnswers = (
 
 /**
  * The feeds of `events` a surface's layer serves, and the `Webhooks` it offers them by: run as
- * the layer builds, which serves the webhooks it delivers itself and restores their kept
- * subscriptions.
+ * the layer builds, which serves the webhooks it delivers itself, those of the feeds `holds`
+ * admits, and restores their kept subscriptions.
  */
 export const servingFeeds = Effect.fnUntraced(function* (
   events: readonly AnyEventImplementation[],
-  keyed: Keyed | undefined
+  keyed: Keyed | undefined,
+  holds: (feed: Feed) => boolean = () => true
 ) {
   const feeds = yield* acquireFeeds(events);
   const webhooks = yield* Effect.serviceOption(Webhooks);
-  const delivered = feeds.filter(deliversByWebhook);
+  const delivered = feeds.filter(deliversByWebhook).filter(holds);
 
   if (Option.isSome(webhooks) && keyed !== undefined) {
     yield* webhooks.value.serve(delivered, keyed);

@@ -32,6 +32,7 @@ import { pushed, refusalIn } from "../contract/push.js";
 import type { Pushed } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
 import type { Subscribed } from "../contract/subscribe.js";
+import type { Wake } from "../contract/wake.js";
 import type {
   Subscribing,
   Subscription,
@@ -58,6 +59,7 @@ export interface Policy {
   readonly retryFor: Duration.Duration;
   readonly storage: Storage | undefined;
   readonly dns: Dns.Dns["Service"] | undefined;
+  readonly wake: Option.Option<Wake["Service"]>;
 }
 
 const minTtl = Duration.minutes(1);
@@ -116,12 +118,16 @@ const trusted = (url: URL, prefixes: readonly URL[]) =>
   );
 
 const snapshotOf = Context.omit(
-  Clock.Clock,
   Scope.Scope,
   HttpServerRequest.HttpServerRequest,
   HttpServerRequest.ParsedSearchParams,
   HttpRouter.RouteContext
 );
+
+const slept = (at: number) =>
+  Effect.flatMap(Clock.currentTimeMillis, (now) =>
+    Effect.sleep(Duration.millis(Math.max(at - now, 0)))
+  );
 
 const unencoded = Effect.die(
   new Error(
@@ -211,23 +217,20 @@ export const makeWebhooks = (
         return kept(subscription);
       });
 
-    const waitingAsLongAsFailing = (subscription: Held) =>
-      Schedule.modifyDelay(Schedule.forever, () =>
-        Effect.map(Clock.currentTimeMillis, (now) =>
-          Duration.clamp(
-            Duration.millis(failingForMs(subscription.health, now)),
-            {
-              minimum: Duration.seconds(1),
-              maximum: Duration.minutes(5),
-            }
-          )
+    const waitedUntil = (at: number) =>
+      Option.match(policy.wake, {
+        onNone: () => slept(at),
+        onSome: ({ until }) => until(at),
+      });
+
+    const retryAt = (subscription: Held, failedAt: number) =>
+      failedAt +
+      Duration.toMillis(
+        Duration.clamp(
+          Duration.millis(failingForMs(subscription.health, failedAt)),
+          { minimum: Duration.seconds(1), maximum: Duration.minutes(5) }
         )
       );
-
-    const retrying = (subscription: Held) => ({
-      schedule: waitingAsLongAsFailing(subscription),
-      while: () => subscription.health._tag === "Failing",
-    });
 
     const locked =
       (id: string) =>
@@ -270,33 +273,58 @@ export const makeWebhooks = (
         )
       );
 
-    const delivered = (subscription: Held, webhookId: string, body: string) =>
-      post(subscription, webhookId, body).pipe(
-        Effect.tapError(({ category, final }) =>
-          Effect.flatMap(Clock.currentTimeMillis, (at) =>
-            transitioned(subscription, {
+    const unexpired = (subscription: Held) =>
+      Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        now < subscription.expiresAt ? Effect.void : Effect.interrupt
+      );
+
+    const attempted = (
+      subscription: Held,
+      webhookId: string,
+      body: string
+    ): Effect.Effect<boolean> =>
+      Effect.andThen(
+        unexpired(subscription),
+        post(subscription, webhookId, body)
+      ).pipe(
+        Effect.as(true),
+        Effect.catch(({ category, final }) =>
+          Effect.gen(function* () {
+            const at = yield* Clock.currentTimeMillis;
+
+            yield* transitioned(subscription, {
               _tag: "AttemptFailed",
               category,
               final,
               at,
-            })
-          )
-        ),
-        Effect.retry(retrying(subscription)),
-        Effect.matchEffect({
-          onSuccess: () =>
-            Effect.as(
-              Effect.flatMap(Clock.currentTimeMillis, (at) =>
-                transitioned(subscription, { _tag: "Delivered", at })
-              ),
-              true
-            ),
-          onFailure: () =>
-            subscription.health._tag === "Suspended"
-              ? Effect.never
-              : Effect.succeed(false),
-        })
+            });
+
+            if (subscription.health._tag !== "Failing") {
+              return false;
+            }
+
+            yield* waitedUntil(retryAt(subscription, at));
+
+            return yield* attempted(subscription, webhookId, body);
+          })
+        )
       );
+
+    const delivered = (subscription: Held, webhookId: string, body: string) =>
+      Effect.flatMap(attempted(subscription, webhookId, body), (accepted) => {
+        if (accepted) {
+          return Effect.as(
+            Effect.flatMap(Clock.currentTimeMillis, (at) =>
+              transitioned(subscription, { _tag: "Delivered", at })
+            ),
+            true
+          );
+        }
+
+        return subscription.health._tag === "Suspended"
+          ? Effect.never
+          : Effect.succeed(false);
+      });
 
     const gapped = (subscription: Held, cursor: string | null) =>
       Effect.flatMap(randomToken, (token) =>
@@ -370,10 +398,8 @@ export const makeWebhooks = (
         });
     };
 
-    const expired = ({ expiresAt }: Held): Effect.Effect<void> =>
-      Effect.flatMap(Clock.currentTimeMillis, (now) =>
-        Effect.sleep(Duration.millis(Math.max(expiresAt - now, 0)))
-      );
+    const expiryTimer = ({ expiresAt }: Held): Effect.Effect<void> =>
+      Option.isSome(policy.wake) ? Effect.never : slept(expiresAt);
 
     const terminated = (subscription: Held, cause: Cause.Cause<unknown>) => {
       const refusal = refusalIn(cause);
@@ -437,7 +463,7 @@ export const makeWebhooks = (
             resumesUnconfirmed: Deferred.isDoneUnsafe(confirmation),
           }
         ),
-        expired(subscription)
+        expiryTimer(subscription)
       ).pipe(
         Effect.exit,
         Effect.tap(() => finished(subscription)),
@@ -685,7 +711,7 @@ export const makeWebhooks = (
           current,
           subscription,
           restoredHealth._tag === "Suspended"
-            ? Effect.andThen(expired(subscription), finished(subscription))
+            ? Effect.andThen(expiryTimer(subscription), finished(subscription))
             : workerOf(subscription, input, record.watermark, confirmation)
         );
 

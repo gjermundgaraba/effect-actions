@@ -52,6 +52,7 @@ import {
   WebhookCancellationOf,
   WebhookSubscriptionOf,
 } from "../contract/subscribe.js";
+import type { AnyWebhookSubscription } from "../contract/subscribe.js";
 import { watching } from "../contract/watch.js";
 import type { Transport } from "../contract/watch.js";
 import {
@@ -804,6 +805,11 @@ const releaseHandlerOf = (
   );
 };
 
+const pollingRefused = ({ event }: Feed) =>
+  Effect.logWarning(
+    `An entity refused a webhook subscription to "${event.name}", whose check source is not notified: its timer would be cut by Effect's entity reaper and keep a Durable Object awake (mark the source notified, notifying after each write, or serve the event's webhooks from a surface outside the entity)`
+  );
+
 const webhookHandlersOf = (
   feed: Feed,
   steps: readonly Step[],
@@ -882,8 +888,22 @@ export const handlersOf = Effect.fnUntraced(function* (
 
   const { feeds, webhooks } =
     holdsWebhooks === true
-      ? yield* servingFeeds(events, authentication)
+      ? yield* servingFeeds(events, authentication, ({ polls }) => !polls)
       : { feeds: yield* acquireFeeds(events), webhooks: Option.none() };
+
+  const heldAnswers = (feed: Feed) => {
+    if (!feed.polls || Option.isNone(webhooks)) {
+      return webhookAnswers(feed, authentication, webhooks);
+    }
+
+    const refused = webhookAnswers(feed, authentication, Option.none());
+
+    return {
+      ...refused,
+      subscribe: (payload: AnyWebhookSubscription) =>
+        Effect.andThen(pollingRefused(feed), refused.subscribe(payload)),
+    };
+  };
 
   const stepsOf = (caller: Action.Any["caller"]): readonly Step[] =>
     caller === Anyone || authenticating === undefined
@@ -977,7 +997,7 @@ export const handlersOf = Effect.fnUntraced(function* (
                 feed,
                 stepsOf(feed.event.caller),
                 webhookErrors(feed.event, binding),
-                webhookAnswers(feed, authentication, webhooks)
+                heldAnswers(feed)
               )
             )
         : []

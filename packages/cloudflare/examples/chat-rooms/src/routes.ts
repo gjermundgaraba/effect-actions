@@ -27,10 +27,7 @@ const roomOfAddress = Layer.effect(CurrentRoom)(
 const roomWebhooks = Webhook.layer({
   persist: true,
   resolveCallbacks: false,
-}).pipe(
-  Layer.provide(ActionEntity.layerClock),
-  Layer.provide(layerWebhookDelivery)
-);
+}).pipe(Layer.provide(layerWebhookDelivery));
 
 const roomServices = Layer.merge(Stored.layerEvents, roomWebhooks).pipe(
   Layer.provideMerge(Layer.mergeAll(layerSqlMessages, roomOfAddress)),

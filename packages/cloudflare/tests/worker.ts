@@ -294,7 +294,10 @@ const keeping = ActionEntity.layer(
   Keeper,
   Event.implement(
     Kept,
-    { check: () => Effect.succeed({ cursor: "0", events: [] }) },
+    {
+      notified: true,
+      check: () => Effect.succeed({ cursor: "0", events: [] }),
+    },
     { authorize: Event.allowAll }
   ),
   {

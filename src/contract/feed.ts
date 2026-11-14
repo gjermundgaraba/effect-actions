@@ -47,6 +47,12 @@ type ErasedOccurrence = Event.Occurrence<Event.Any>;
 export interface Feed {
   readonly event: Event.Any;
   /**
+   * Whether its stream reads the source again at each page's `nextPoll`, on a timer, as a check
+   * source not `notified` and a reached entity's polls do, rather than only when notified or
+   * appended to.
+   */
+  readonly polls: boolean;
+  /**
    * Releases the `subscription` hook `subscriber`'s polls of `input` hold: present exactly where
    * its source has a hook, held per subscriber.
    */
@@ -199,6 +205,7 @@ const checkRun = (
   { wakes }: Checking
 ): Run => {
   const occurrenceOf = occurrencesOf(event);
+  const polls = source.notified !== true;
 
   const read = (input: ErasedValue, cursor: string | null) =>
     Effect.flatMap(source.check(input, cursor), (answered) =>
@@ -214,6 +221,7 @@ const checkRun = (
     );
 
   return {
+    polls,
     poll: (input, cursor) => Effect.map(read(input, cursor), answeredPage),
     stream: (input, cursor) =>
       Stream.unwrap(
@@ -231,7 +239,7 @@ const checkRun = (
               })),
             cursor,
             woken,
-            source.notified !== true
+            polls
           )
         )
       ),
@@ -333,6 +341,7 @@ const logRun = (
     );
 
   return {
+    polls: false,
     poll: (input, cursor, { maxEvents = logPageSize }) =>
       Effect.flatMap(
         Effect.all([
@@ -543,6 +552,7 @@ const guarded = (
 
   return {
     event,
+    polls: run.polls,
     release: run.release,
     webhook: run.webhook,
     admit,

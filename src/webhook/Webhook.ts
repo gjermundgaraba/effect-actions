@@ -7,6 +7,7 @@ import { KeyValueStore } from "effect/persistence";
 
 import * as Event from "../contract/Event.js";
 import { Receiving } from "../contract/receiving.js";
+import { Wake } from "../contract/wake.js";
 import { Webhooks } from "../contract/webhooks.js";
 import { makeReceiver } from "./receiver.js";
 import { makeWriteBehindStorage, storePrefix } from "./stored.js";
@@ -36,6 +37,7 @@ export interface Options {
    * **Gotchas**
    *
    * - The failures are timed from the subscription's `failedSince`, which `persist` keeps: a restart goes on with the waits and the budget it reached, and a refresh of a subscription still delivering does not extend it.
+   * - In an entity's `services`, each wait is a wake the entity sends itself, which `ActionEntity.LayerOptions`' `services` describes.
    */
   readonly retryFor?: Duration.Input | undefined;
   /**
@@ -187,6 +189,7 @@ export function layer(
         retryFor: Duration.fromInputUnsafe(options.retryFor ?? "1 hour"),
         storage,
         dns,
+        wake: yield* Effect.serviceOption(Wake),
       });
     })
   );

@@ -264,7 +264,7 @@ const ofPosts = (
 
 describe("the rooms' webhooks", () => {
   it.live(
-    "delivers a post, signed, from a new instance of the room after its eviction while the delivery waits 10 seconds or more to retry",
+    "delivers a post, signed, from a new instance of the room after its eviction while the delivery waits to retry, its wake building the room again",
     () =>
       Effect.gen(function* () {
         const path = "/hooks/evicted";

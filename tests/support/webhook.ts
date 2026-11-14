@@ -17,6 +17,7 @@ import { TestClock } from "effect/testing";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
+import { Wake } from "../../src/contract/wake.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
@@ -118,6 +119,7 @@ export interface WorldOptions extends Webhook.Options {
     | Layer.Layer<never, never, HttpRouter.HttpRouter>
     | undefined;
   readonly delivering?: boolean | undefined;
+  readonly wake?: Wake["Service"] | undefined;
 }
 
 let inFlight = 0;
@@ -149,6 +151,7 @@ export const makeWorld = ({
   over = "HTTP",
   callbacks,
   delivering = true,
+  wake,
   ...options
 }: WorldOptions = {}) => {
   const changes: Change[] = [];
@@ -258,12 +261,15 @@ export const makeWorld = ({
     return world.answer(Schema.decodeSync(Body)(body));
   };
 
-  const webhooks =
+  const webhooks = (
     kept === undefined
       ? Webhook.layer(options)
       : Webhook.layer({ ...options, persist: true }).pipe(
           Layer.provide(Layer.succeed(KeyValueStore.KeyValueStore, kept))
-        );
+        )
+  ).pipe(
+    Layer.provide(wake === undefined ? Layer.empty : Layer.succeed(Wake, wake))
+  );
 
   const overHttp = ActionHttp.layer(Http, changed);
 

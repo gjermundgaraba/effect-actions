@@ -27,7 +27,7 @@ Each trap below is shown in the code of the files it names.
 - **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; a page built against other rpcs is refused, and stops: `src/browser.ts`, `src/worker.ts`, `src/Rpc.ts`.
 - **A page watches over its socket, which lets the room hibernate**; a stream through the Worker, its JSON `watch` or MCP's `events/stream`, calls the room each `nextPoll`, 2 seconds, while it is open, so the room never hibernates: `followRoom` in `src/browser.ts`, `nextPoll` in `src/chat/events.ts`.
 - **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
-- **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for a wait of 10 seconds or more, and a subscribed room hibernates while idle, as `MessagePosted` is `notified`, asked again only when a post notifies it: `roomWebhooks` in `src/routes.ts`, `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
+- **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for each retry wait, and a subscribed room hibernates while idle, as `MessagePosted` is `notified`, asked again only when a post notifies it: `roomWebhooks` in `src/routes.ts`, `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
 
 ## Layout
 

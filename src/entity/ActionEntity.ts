@@ -45,6 +45,7 @@ import type { Reporting } from "../contract/progress.js";
 import { buildersOf, servingOf } from "../contract/serving.js";
 import { elementOf } from "../contract/stream.js";
 import type { Answer } from "../contract/stream.js";
+import { Wake } from "../contract/wake.js";
 import { polling } from "../contract/watch.js";
 import type { WatchArgs } from "../contract/watch.js";
 import type { WebhookHolder } from "../contract/webhooks.js";
@@ -64,9 +65,7 @@ import {
 } from "../rpc/erased.js";
 import type { ErasedCall } from "../rpc/erased.js";
 import { forwarded } from "./forwarded.js";
-import { makeWakes, wakeTag, WakeRpc, Wakes } from "./wakes.js";
-
-export { layerClock, Wakes } from "./wakes.js";
+import { makeWake, wakeTag, WakeRpc } from "./wakes.js";
 
 type Contract<B extends ActionRpc.Any> =
   | B["actions"][number]
@@ -167,8 +166,8 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
  * subscription hook of their own, keyed by it and their caller's principal, which its release by
  * that principal frees. A protected event type has two more, `<event>/subscribe` and
  * `<event>/unsubscribe`, taking a webhook subscription and its cancellation, and the entity has
- * its wake, `effect-actions/wake`, which `layerClock` sends. Guide: `docs/ActionEntity.md` in
- * this package.
+ * its wake, `effect-actions/wake`, a persisted tell it sends itself to end a webhook delivery's
+ * retry wait. Guide: `docs/ActionEntity.md` in this package.
  *
  * **Gotchas**
  *
@@ -276,7 +275,9 @@ export interface LayerOptions<
    *
    * - Each entity id builds it again at each activation: what it holds in memory is that activation's alone, as an implementation builder's is, where a service provided to `layer` is the runner's, shared by every entity id.
    * - It fails or dies as a builder does: a defect of the activation, which the runtime handles as the builder's.
-   * - A `Webhook.layer` here holds the entity's webhook subscriptions and delivers them from its activation: give it `persist`, so a later activation restores them, and `layerClock`, so a wait of 10 seconds or more builds the entity again when it ends.
+   * - A `Webhook.layer` here holds the entity's webhook subscriptions and delivers them from its activation: give it `persist`, so a later activation restores them; each retry wait is a wake the entity sends itself, so a stopped entity is built again to retry, on Effect's SQL runners up to `entityMessagePollInterval` after it is due, each wake a row of the runtime's messages, kept once processed.
+   * - A webhook subscription to a check source not `notified` is refused with `Event.SubscriptionError`, reason `Unsupported`, and a warning saying why, its polls still served: its reads on a timer would be cut by Effect's reaper and keep a Durable Object awake.
+   * - A webhook subscription past its expiry ends at its next delivery, and its kept record at the next activation, on no timer: until then it holds its subscription hook.
    * - A `Webhook.layer` here with `persist` needs the binding's authentication to name a `schema` where it serves a protected event: without one each activation dies with the library's message naming `schema`, so on Effect's runners each call to the entity waits while the runner builds it again, and on the Cloudflare runtime each fails at once.
    */
   readonly services?: Layer.Layer<ROut, unknown, RIn> | undefined;
@@ -311,8 +312,7 @@ type NativeLayerOptions<N extends Rpc.Any, ROut, RIn, Handlers, RX> = [
 type Activation =
   | Cluster.CurrentAddress
   | Cluster.CurrentRunnerAddress
-  | Scope.Scope
-  | Wakes;
+  | Scope.Scope;
 
 type PerCall<
   B extends ActionRpc.Any,
@@ -447,14 +447,14 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
 
     const sharding = yield* Effect.context<Sharding.Sharding>();
 
-    const { wakes, woke } = yield* makeWakes((wake) =>
+    const { wake, woke } = yield* makeWake((payload) =>
       Effect.flatMap(entity.client, (clientFor) => {
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion
         const self = clientFor(address.entityId) as RpcClient.RpcClient<
           typeof WakeRpc
         >;
 
-        return self[wakeTag](wake, { discard: true });
+        return self[wakeTag](payload, { discard: true });
       }).pipe(Effect.provideContext(sharding))
     );
 
@@ -464,7 +464,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
         : Layer.provideMerge(Layer.mergeAll(first, ...rest), services),
       Layer.makeMemoMapUnsafe(),
       yield* Effect.scope
-    ).pipe(Effect.provideService(Wakes, wakes));
+    ).pipe(Effect.provideService(Wake, wake));
 
     const { handlers } = yield* Effect.provideContext(
       handlersOf(binding, {
@@ -790,6 +790,7 @@ export const reaching = <
       ).pipe(Effect.catchIf(isClusterFailure, Effect.die));
 
     return {
+      polls: true,
       webhook:
         event.caller === Anyone
           ? undefined
