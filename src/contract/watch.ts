@@ -40,7 +40,10 @@ export interface WebhookTransport<E, R> {
 
 export interface Transport<E, R> {
   readonly name: string;
-  readonly poll: (cursor: string | null) => Effect.Effect<Page, E, R>;
+  readonly poll: (
+    cursor: string | null,
+    watch?: string
+  ) => Effect.Effect<Page, E, R>;
   readonly stream: (cursor: string | null) => Stream.Stream<Fed, E, R>;
   readonly webhook?: WebhookTransport<E, R> | undefined;
   readonly transient?: ((error: E) => boolean) | undefined;
@@ -78,9 +81,59 @@ const pushRefused = Predicate.compose(
     reason.value === "push"
 );
 
-const capacity = 16;
+const reconnecting = <E, R>(
+  transient: ((error: E) => boolean) | undefined,
+  open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
+  cursor: string | null,
+  polled?: (cursor: string | null) => Stream.Stream<Fed, E, R>
+): Stream.Stream<Fed, E, R> => {
+  let at = cursor;
 
-const unsubscribeTimeout = Duration.seconds(5);
+  const once = Stream.suspend(() => open(at)).pipe(
+    Stream.tap((fed) =>
+      Effect.sync(() => {
+        at = fed.cursor ?? at;
+      })
+    )
+  );
+
+  const reopened =
+    transient === undefined
+      ? once
+      : once.pipe(
+          Stream.repeat(Schedule.spaced(reconnectDelay)),
+          Stream.retry(afterFailures(transient))
+        );
+
+  return polled === undefined
+    ? reopened
+    : reopened.pipe(
+        Stream.catchIf(pushRefused, () => Stream.suspend(() => polled(at)))
+      );
+};
+
+const closeTimeout = Duration.seconds(5);
+
+const closing = <E, R>(closed: Effect.Effect<void, E, R>) =>
+  closed.pipe(Effect.timeout(closeTimeout), Effect.ignore({ log: "Debug" }));
+
+export const polling =
+  <E, R>(
+    { poll }: Pick<Transport<E, R>, "poll">,
+    transient: ((error: E) => boolean) | undefined
+  ) =>
+  (cursor: string | null): Stream.Stream<Fed, E, R> =>
+    Stream.suspend(() => {
+      const watch = globalThis.crypto.randomUUID();
+
+      return reconnecting(
+        transient,
+        (at) => paged((from) => poll(from, watch), at),
+        cursor
+      );
+    });
+
+const capacity = 16;
 
 const delivered = <E, R>(
   webhook: WebhookTransport<E, R>,
@@ -155,39 +208,8 @@ export const watching = <E, R, SE = never>(
   E | SE | Event.SubscriptionError | Schema.SchemaError,
   R
 > => {
-  const reconnecting = (
-    open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
-    cursor: string | null,
-    polled?: (cursor: string | null) => Stream.Stream<Fed, E, R>
-  ): Stream.Stream<Fed, E, R> => {
-    const { transient } = transport;
-    let at = cursor;
-
-    const once = Stream.suspend(() => open(at)).pipe(
-      Stream.tap((fed) =>
-        Effect.sync(() => {
-          at = fed.cursor ?? at;
-        })
-      )
-    );
-
-    const reopened =
-      transient === undefined
-        ? once
-        : once.pipe(
-            Stream.repeat(Schedule.spaced(reconnectDelay)),
-            Stream.retry(afterFailures(transient))
-          );
-
-    return polled === undefined
-      ? reopened
-      : reopened.pipe(
-          Stream.catchIf(pushRefused, () => Stream.suspend(() => polled(at)))
-        );
-  };
-
-  const polled = (cursor: string | null) =>
-    reconnecting((at) => paged(transport.poll, at), cursor);
+  const { transient } = transport;
+  const polled = polling(transport, transient);
 
   const webhooked = (
     { baseUrl, ttl }: Event.WebhookDelivery,
@@ -229,12 +251,11 @@ export const watching = <E, R, SE = never>(
         };
 
         yield* Effect.addFinalizer(() =>
-          webhook
-            .unsubscribe({ delivery: { url } })
-            .pipe(Effect.timeout(unsubscribeTimeout), Effect.ignore)
+          closing(webhook.unsubscribe({ delivery: { url } }))
         );
 
         return reconnecting(
+          transient,
           (at) => delivered(webhook, request, received, at),
           cursor
         );
@@ -297,6 +318,7 @@ export const watching = <E, R, SE = never>(
         }
 
         return reconnecting(
+          transient,
           transport.stream,
           cursor,
           mode === "stream" ? undefined : polled

@@ -36,7 +36,9 @@ const Touch = Action.make("touch", {
   caller: CurrentActor,
 });
 
-const Login = Authentication.make("rpc-progress.Login", CurrentActor);
+const Login = Authentication.make("rpc-progress.Login", CurrentActor, {
+  principal: (actor) => actor.id,
+});
 
 const imports = Action.implement(Import, ({ count, halt }, { progress }) =>
   Effect.gen(function* () {

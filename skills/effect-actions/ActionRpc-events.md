@@ -1,6 +1,6 @@
 # Events over rpcs
 
-An [event type](Event.md) in an RPC binding is a stream rpc named after it, taking `{ input, cursor }`, which pushes each occurrence as the server reads it. A client's `watch(event, input, options)` holds it open over the client's protocol, a socket or HTTP, as `Action.client`'s does, and connects again after a drop, resuming from the last occurrence it delivered. Experimental, as [events](Event.md) are.
+An [event type](Event.md) in an RPC binding is a stream rpc named after it, taking `{ input, cursor }`, which pushes each occurrence as the server reads it, beside a unary `<event>/poll` answering a page. A client's `watch(event, input, options)` holds it open over the client's protocol, a socket or HTTP, as `Action.client`'s does, and connects again after a drop, resuming from the last occurrence it delivered. Experimental, as [events](Event.md) are.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionRpc-failures.md](ActionRpc-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`.
 
@@ -106,5 +106,5 @@ export const messageEvents = Event.implement(
 
 The page sends the room and its token with the watch: `RpcClient.withHeaders` wraps an Effect, so `browser.ts`'s `messages` sets them around the stream, and so on every request it sends again after a drop ([live-rpc/src/browser.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/browser.ts)).
 
-- **No poll.** An rpc client holds the stream open; a client that cannot, such as a serverless function, watches over [HTTP](ActionHttp.md#serve-and-watch-events) or MCP.
+- **Stream or poll.** A watch holds the stream open by default, and polls where the server serves no stream rpc, as an [entity](ActionEntity.md) does; one that should not hold it, such as a page whose socket an object holds while it hibernates, watches with `mode: "poll"`, a unary call for each page, which `ActionRpc.layer` and an entity both serve.
 - **Which deployment.** A notify wakes the watches its process holds, so the process serving the sockets is the one whose `Event.Events` the handlers notify; another process's watches read the post at their next read, 5 seconds on. A log source fed by `emit` and a `subscription` hook need a server that outlives a request, as over MCP.

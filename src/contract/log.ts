@@ -66,13 +66,13 @@ export interface Listed<A> {
 }
 
 /**
- * Where a log keeps its position and its entries, by sequence number, as `Event.makeEvents` is
+ * Where a log keeps its position and its entries, by sequence number, as `makeEvents` is
  * given it: storage alone, the log's cursors, bounds, truncation and expiry being the core's.
  */
 export interface LogStorage<A> {
   /** The position `put` last kept, or `undefined` for a storage never written or emptied. */
   readonly position: Effect.Effect<Position | undefined>;
-  /** Keeps `position`, and `entry` with it where given, at once. */
+  /** Keeps `position`, and `entry` with it where given, at once, inside `transaction` where given. */
   readonly put: (
     position: Position,
     entry?: { readonly seq: number; readonly stored: Stored<A> }
@@ -82,7 +82,17 @@ export interface LogStorage<A> {
     from: number,
     limit: number
   ) => Effect.Effect<ReadonlyArray<readonly [seq: number, listed: Listed<A>]>>;
-  readonly delete: (seqs: readonly number[]) => Effect.Effect<void>;
+  /** Deletes every entry kept up to and including sequence number `seq`. */
+  readonly deleteThrough: (seq: number) => Effect.Effect<void>;
+  /**
+   * Runs one whole append or read of the log, every call above inside it, holding what those
+   * calls wait on, such as a SQL transaction holding the connection: the log takes its own lock
+   * inside it, so a fiber holding that lock never waits for the storage. Without it, an append or
+   * read runs as it is.
+   */
+  readonly transaction?:
+    | (<X>(operation: Effect.Effect<X>) => Effect.Effect<X>)
+    | undefined;
 }
 
 export const memoryStorage = <A>(): LogStorage<A> => {
@@ -126,9 +136,13 @@ export const memoryStorage = <A>(): LogStorage<A> => {
 
         return listed;
       }),
-    delete: (seqs) =>
+    deleteThrough: (through) =>
       Effect.sync(() => {
-        for (const seq of seqs) {
+        for (const seq of entries.keys()) {
+          if (seq > through) {
+            return;
+          }
+
           entries.delete(seq);
         }
       }),
@@ -176,6 +190,14 @@ export const makeLogStore = <A>(
 
   const turn = Semaphore.makeUnsafe(1);
 
+  const inTurn = <X>(operation: Effect.Effect<X>) => {
+    const locked = turn.withPermit(operation);
+
+    return storage.transaction === undefined
+      ? locked
+      : storage.transaction(locked);
+  };
+
   const positioned = Effect.flatMap(storage.position, (found) => {
     if (found !== undefined) {
       return Effect.succeed(found);
@@ -191,13 +213,14 @@ export const makeLogStore = <A>(
       for (let batch = 1; ; batch = 64) {
         const listed = yield* storage.list(0, batch);
         const young = listed.findIndex(([, { at }]) => at >= now - age);
-        const dropped = young === -1 ? listed : listed.slice(0, young);
+        const dropped = young === -1 ? listed.length : young;
+        const newestDropped = listed[dropped - 1];
 
-        if (dropped.length > 0) {
-          yield* storage.delete(dropped.map(([seq]) => seq));
+        if (newestDropped !== undefined) {
+          yield* storage.deleteThrough(newestDropped[0]);
         }
 
-        const first = listed[dropped.length];
+        const first = listed[dropped];
 
         if (first !== undefined) {
           return Math.max(first[0], last - maxEvents + 1);
@@ -211,7 +234,7 @@ export const makeLogStore = <A>(
 
   return {
     append: (logged) =>
-      turn.withPermit(
+      inTurn(
         Effect.gen(function* () {
           const { epoch, last } = yield* positioned;
           const seq = last + 1;
@@ -223,12 +246,12 @@ export const makeLogStore = <A>(
           );
 
           if (seq > maxEvents) {
-            yield* storage.delete([seq - maxEvents]);
+            yield* storage.deleteThrough(seq - maxEvents);
           }
         })
       ),
     read: (cursor, limit) =>
-      turn.withPermit(
+      inTurn(
         Effect.gen(function* () {
           const { epoch, last } = yield* positioned;
 

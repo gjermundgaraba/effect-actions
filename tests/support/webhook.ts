@@ -3,6 +3,8 @@ import { setImmediate as nextTurn } from "node:timers/promises";
 import { afterAll, vi } from "@effect/vitest";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import type { Queue } from "effect";
+import { Entity } from "effect/cluster";
+import type { EntityAddress } from "effect/cluster";
 import {
   FetchHttpClient,
   HttpClient,
@@ -17,6 +19,7 @@ import { TestClock } from "effect/testing";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
+import { Wake } from "../../src/contract/wake.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import * as Testing from "../../src/testing/Testing.js";
@@ -96,6 +99,10 @@ export const signedBy = async (secret: string, delivery: Delivery) =>
       await signatureOf(secret, delivery.id, delivery.timestamp, delivery.body)
     );
 
+/** The `challenge` of a raw verification request's body, or `undefined` for any other body. */
+export const challengeIn = (body: string) =>
+  /"challenge":"(?<challenge>[^"]+)"/u.exec(body)?.groups?.["challenge"];
+
 type Answer = (body: Record<string, Schema.Json>) => Response;
 
 export const acknowledging: Answer = ({ type, challenge }) =>
@@ -118,6 +125,8 @@ export interface WorldOptions extends Webhook.Options {
     | Layer.Layer<never, never, HttpRouter.HttpRouter>
     | undefined;
   readonly delivering?: boolean | undefined;
+  readonly wake?: Wake["Service"] | undefined;
+  readonly entity?: EntityAddress.EntityAddress | undefined;
 }
 
 let inFlight = 0;
@@ -149,6 +158,8 @@ export const makeWorld = ({
   over = "HTTP",
   callbacks,
   delivering = true,
+  wake,
+  entity,
   ...options
 }: WorldOptions = {}) => {
   const changes: Change[] = [];
@@ -258,12 +269,20 @@ export const makeWorld = ({
     return world.answer(Schema.decodeSync(Body)(body));
   };
 
-  const webhooks =
+  const webhooks = (
     kept === undefined
       ? Webhook.layer(options)
       : Webhook.layer({ ...options, persist: true }).pipe(
-          Layer.provide(Layer.succeed(KeyValueStore.KeyValueStore, kept))
-        );
+          Layer.provide(Layer.succeed(KeyValueStore.KeyValueStore, kept)),
+          Layer.provide(
+            entity === undefined
+              ? Layer.empty
+              : Layer.succeed(Entity.CurrentAddress, entity)
+          )
+        )
+  ).pipe(
+    Layer.provide(wake === undefined ? Layer.empty : Layer.succeed(Wake, wake))
+  );
 
   const overHttp = ActionHttp.layer(Http, changed);
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Clock,
+  Duration,
   Effect,
   ErrorReporter,
   Exit,
@@ -9,6 +11,7 @@ import {
   Schema,
   Scope,
 } from "effect";
+import { EntityAddress, EntityId, EntityType, ShardId } from "effect/cluster";
 import { HttpClient } from "effect/http";
 import { Dns } from "effect/net";
 import { KeyValueStore } from "effect/persistence";
@@ -40,15 +43,89 @@ import {
 
 const records = "effect-actions/webhook/";
 
-const keptIds = (store: KeyValueStore.KeyValueStore) =>
-  KeyValueStore.prefix(store, records).keys;
+const slept = (at: number) =>
+  Effect.flatMap(Clock.currentTimeMillis, (now) =>
+    Effect.sleep(Duration.millis(at - now))
+  );
+
+const keptIds = (
+  store: KeyValueStore.KeyValueStore,
+  prefix: string = records
+) => KeyValueStore.prefix(store, prefix).keys;
 
 const failing: typeof acknowledging = (body) =>
   body["type"] === undefined
     ? new Response(null, { status: 500 })
     : acknowledging(body);
 
+const lobby = EntityAddress.make({
+  shardId: ShardId.make("default", 1),
+  entityType: EntityType.make("Room"),
+  entityId: EntityId.make("lobby"),
+});
+
 describe("webhook subscriptions kept by persist", () => {
+  it.effect(
+    "keeps a root layer's and an entity's subscriptions on one store apart, each restoring its own",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+        const root = makeWorld({ kept: store });
+        const entity = makeWorld({ kept: store, entity: lobby });
+
+        const rootGrant = yield* subscribed(secretOf(1)).pipe(
+          Effect.provide(root.server)
+        );
+
+        const entityGrant = yield* subscribed(secretOf(2)).pipe(
+          Effect.provide(entity.server)
+        );
+
+        const rootAgain = makeWorld({ kept: store });
+        const entityAgain = makeWorld({ kept: store, entity: lobby });
+
+        rootAgain.world.changes.push({ id: "c1", by: "bob" });
+        entityAgain.world.changes.push({ id: "c1", by: "bob" });
+
+        yield* until(
+          () => events(rootAgain.world.received).length === 1,
+          60
+        ).pipe(Effect.provide(rootAgain.server));
+
+        yield* until(
+          () => events(entityAgain.world.received).length === 1,
+          60
+        ).pipe(Effect.provide(entityAgain.server));
+
+        const signed = (
+          secret: string,
+          delivery: (typeof rootAgain.world.received)[number] | undefined
+        ) =>
+          Effect.promise(
+            async () =>
+              delivery !== undefined && (await signedBy(secret, delivery))
+          );
+
+        expect({
+          root: yield* keptIds(store),
+          entity: yield* keptIds(
+            store,
+            "effect-actions/entity-webhook/Room/lobby/"
+          ),
+          rootSigned: yield* signed(secretOf(1), rootAgain.world.received[0]),
+          entitySigned: yield* signed(
+            secretOf(2),
+            entityAgain.world.received[0]
+          ),
+        }).toStrictEqual({
+          root: [rootGrant.id],
+          entity: [entityGrant.id],
+          rootSigned: true,
+          entitySigned: true,
+        });
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
+  );
+
   it.effect(
     "restores a kept subscription as its surface builds again, delivering on from its watermark",
     () =>
@@ -205,6 +282,42 @@ describe("webhook subscriptions kept by persist", () => {
         }).pipe(Effect.provide(server));
 
         expect(keptLive).toHaveLength(1);
+        expect(yield* keptIds(store)).toStrictEqual([]);
+      }).pipe(Effect.provide(KeyValueStore.layerMemory))
+  );
+
+  it.effect(
+    "in an entity's services, keeps a subscription past its expiry on no timer, and ends it at its next delivery, posting nothing and removing what was kept",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* KeyValueStore.KeyValueStore;
+
+        const { world, server } = makeWorld({
+          kept: store,
+          wake: { until: (at) => slept(at) },
+        });
+
+        const [kept, keptPastExpiry] = yield* Effect.gen(function* () {
+          yield* subscribed(secretOf(1), 60_000);
+          yield* passed(1);
+
+          const whileGranted = yield* keptIds(store);
+
+          yield* TestClock.adjust("2 minutes");
+          yield* passed(1);
+
+          const pastExpiry = yield* keptIds(store);
+
+          world.changes.push({ id: "c1", by: "bob" });
+
+          yield* passed();
+
+          return [whileGranted, pastExpiry] as const;
+        }).pipe(Effect.provide(server));
+
+        expect(kept).toHaveLength(1);
+        expect(keptPastExpiry).toStrictEqual(kept);
+        expect(events(world.received)).toStrictEqual([]);
         expect(yield* keptIds(store)).toStrictEqual([]);
       }).pipe(Effect.provide(KeyValueStore.layerMemory))
   );
@@ -429,7 +542,7 @@ describe("webhook subscriptions kept by persist", () => {
   );
 
   it.effect(
-    "restores a failing subscription with the retry budget its failures began, waiting as long as it has failed",
+    "restores a failing subscription with the retry budget its failures began and the retry wait it was in, waiting as long as it has failed",
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
@@ -449,13 +562,18 @@ describe("webhook subscriptions kept by persist", () => {
         after.world.changes.push({ id: "c1", by: "bob" });
 
         const refreshed = yield* Effect.gen(function* () {
-          yield* passed();
+          yield* passed(3);
 
-          return yield* subscribed(secretOf(1));
+          const beforeItsRetry = events(after.world.received).length;
+
+          yield* passed(71);
+
+          return [beforeItsRetry, yield* subscribed(secretOf(1))] as const;
         }).pipe(Effect.provide(after.server));
 
+        expect(refreshed[0]).toBe(0);
         expect(events(after.world.received).length).toBeLessThanOrEqual(3);
-        expect(refreshed.deliveryStatus).toMatchObject({
+        expect(refreshed[1].deliveryStatus).toMatchObject({
           active: false,
           lastError: "http_5xx",
         });

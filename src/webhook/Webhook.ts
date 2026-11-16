@@ -1,4 +1,5 @@
-import { Duration, Effect, Layer } from "effect";
+import { Duration, Effect, Layer, Option } from "effect";
+import { Entity } from "effect/cluster";
 import { HttpRouter } from "effect/http";
 import type { HttpClient } from "effect/http";
 import { Dns } from "effect/net";
@@ -6,9 +7,14 @@ import { KeyValueStore } from "effect/persistence";
 
 import * as Event from "../contract/Event.js";
 import { Receiving } from "../contract/receiving.js";
+import { Wake } from "../contract/wake.js";
 import { Webhooks } from "../contract/webhooks.js";
 import { makeReceiver } from "./receiver.js";
-import { makeWriteBehindStorage } from "./stored.js";
+import {
+  entityStorePrefix,
+  makeWriteBehindStorage,
+  storePrefix,
+} from "./stored.js";
 import { makeWebhooks } from "./subscriptions.js";
 
 /** How `layer` grants, verifies and retries webhook subscriptions. */
@@ -35,6 +41,7 @@ export interface Options {
    * **Gotchas**
    *
    * - The failures are timed from the subscription's `failedSince`, which `persist` keeps: a restart goes on with the waits and the budget it reached, and a refresh of a subscription still delivering does not extend it.
+   * - In an entity's `services`, each wait is a wake the entity sends itself, which `ActionEntity.LayerOptions`' `services` describes.
    */
   readonly retryFor?: Duration.Input | undefined;
   /**
@@ -44,13 +51,13 @@ export interface Options {
    *
    * **Gotchas**
    *
-   * - Each subscriber's identity is kept by its authentication's `schema`, encoded at each grant: a surface offering a protected event by webhook refuses to start without it, or where two authentications with different schemas serve one event.
+   * - Each subscriber's identity is kept by its authentication's `schema`, encoded at each grant: a surface offering a protected event by webhook refuses to start without it, or where two authentications with different schemas serve one event; in an entity's `services` it is each activation that dies, as `ActionEntity.LayerOptions`' `services` says.
    * - A restored delivery runs in the layer's context and that identity alone, until the subscriber's next refresh: an authorizer or a source reading a service middleware or the surface's layer provides fails, each read reported and retried every 5 seconds.
    * - A subscriber refused as its subscription is restored is POSTed `terminated`; an authorizer or a source failing its first read with no refusal is retried, as later.
    * - A subscription suspended stays suspended when restored, until its subscriber's refresh delivers again.
    * - Secrets and identities are kept as JSON, as given, so give the layer a store only the server reads.
    * - A kept subscription whose input or identity no longer decodes, as after a schema change, is reported at each build and never restored, until its subscriber unsubscribes it.
-   * - The build lists every key of the store, a `SELECT id` over a SQL store's whole table or a read of the file store's directory, and restores those under `effect-actions/webhook/`: where the application keeps many keys in that store, give the layer one of its own.
+   * - The build lists every key of the store, a `SELECT id` over a SQL store's whole table or a read of the file store's directory, and restores those under `effect-actions/webhook/`, or in an entity's `services` under `effect-actions/entity-webhook/<type>/<id>/`, the entity's address percent-encoded, so the root layer and each entity id restore their own from one store; each entity id's activation lists the whole store again: where the application keeps many keys, or many entities keep subscriptions, in that store, give the layer one of its own.
    * - A store whose keys cannot be listed as the layer builds fails the build, as the file store's does on a file name that is not percent-encoding, such as `100%.txt`; a write that fails later is reported and tried again with the next.
    * - Writes still pending 5 seconds into the layer's close are reported as `UnfinishedWrites` and dropped: the next build restores each subscription as last written, missing one subscribed since and keeping one removed since.
    * - A callback's verification is not kept: a restored subscription delivers on, and a new one to the same callback after a restart is verified again.
@@ -108,7 +115,7 @@ const maxTtlOf = (input: Duration.Input): Duration.Duration => {
  *
  * **Gotchas**
  *
- * - Only a protected event whose descriptor has `principal` is offered webhook delivery: elsewhere `events/list` lists no `webhook`, and a subscribe is `Unsupported`.
+ * - Only a protected event is offered webhook delivery, each subscription its subscriber's principal's: a public event's `events/list` entry lists no `webhook`, and its subscribe is `Unsupported`.
  * - A `requestScoped` MCP endpoint offers it too, its subscriptions built once with the endpoint: on a host with no lasting process, leave this layer out, as `ActionHttp.layer` says, since each instance keeps its own subscriptions, lost as it ends.
  * - A callback resolving to an address that is not globally reachable, a loopback or a private one included, is never POSTed to unless `allowedCallbacks` trusts it: a local receiver needs a public name, a trusted URL, or a test's `Dns.layerStatic`; an IPv6-only server behind NAT64 cannot deliver to an IPv4-only callback.
  * - Each POST is checked against the address it resolves to, but fetch connects to the name again, so a name rebinding between the check and the connection is not caught: front the server with an egress proxy that refuses private addresses where that matters.
@@ -118,7 +125,7 @@ const maxTtlOf = (input: Duration.Input): Duration.Duration => {
  * - A callback verified for a subscriber is not challenged again for that subscriber's other subscriptions to it while one is granted, as SEP-3415's soft state allows.
  * - Deliveries are one at a time, in order: one failing holds back those after it, for `retryFor`, then the subscription suspends until a refresh, which delivers it again.
  * - An occurrence given up, its body over 256 KiB or its POST answered `410` or `413`, is POSTed as a `gap` at its cursor; one whose admission fails with no refusal is reported and read again, from before it, every 5 seconds.
- * - A refresh restarts its subscription's reading under the refreshed subscriber, from where delivery reached: the subscription hook set up again once the old one is released, and a delivery in flight sent again, which the subscriber drops by its `eventId`.
+ * - A refresh restarts its subscription's reading under the refreshed subscriber, from where delivery reached: the subscription hook set up again once the old one is released, and a delivery in flight sent again, which the subscriber drops by its `eventId`, though one waiting to retry is sent at its retry's time, signed with the refreshed secret.
  * - A refresh its authorizer refuses ends the subscription it names, POSTing `terminated`, though each delivery, admitted as the subscriber of the last grant, would still pass.
  * - A `terminated` POST is tried four times, and one never accepted is logged as a warning naming the subscription; one answered `410` or `413` is given up at once, unlogged.
  * - A refresh with a new secret signs each POST with both secrets for 5 minutes, `webhook-signature` holding two, so a receiver may switch over; after that, with the new one alone.
@@ -164,11 +171,19 @@ export function layer(
       const dns =
         options.resolveCallbacks === false ? undefined : yield* Dns.Dns;
 
+      const prefix = Option.match(
+        yield* Effect.serviceOption(Entity.CurrentAddress),
+        {
+          onNone: () => storePrefix,
+          onSome: ({ entityType, entityId }) =>
+            entityStorePrefix(entityType, entityId),
+        }
+      );
+
       const storage =
         options.persist === true
-          ? yield* Effect.flatMap(
-              KeyValueStore.KeyValueStore,
-              makeWriteBehindStorage
+          ? yield* Effect.flatMap(KeyValueStore.KeyValueStore, (store) =>
+              makeWriteBehindStorage(store, prefix)
             )
           : undefined;
 
@@ -178,6 +193,7 @@ export function layer(
         retryFor: Duration.fromInputUnsafe(options.retryFor ?? "1 hour"),
         storage,
         dns,
+        wake: yield* Effect.serviceOption(Wake),
       });
     })
   );

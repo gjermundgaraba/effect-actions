@@ -14,7 +14,9 @@ import {
 } from "effect";
 import { TestClock } from "effect/testing";
 
+import { makeEvents } from "../../src/contract/hub.js";
 import { memoryStorage } from "../../src/contract/log.js";
+import type { LogStorage } from "../../src/contract/log.js";
 import { makeMessages, Posted, settle, texts } from "../support/events.js";
 import type { Message } from "../support/events.js";
 
@@ -300,7 +302,7 @@ describe("Event.Events", () => {
         const built = yield* Effect.exit(Effect.scoped(Action.client(logged)));
 
         expect(String(Exit.isFailure(built) ? built.cause : "")).toContain(
-          "This Event.Events serves no event implementation: provide Event.layerMemory, or one Event.makeEvents builds"
+          "This Event.Events serves no event implementation: provide Event.layerMemory or Stored.layerEvents"
         );
       }).pipe(
         Effect.provide(
@@ -486,7 +488,7 @@ describe("Event.Events", () => {
   );
 });
 
-type Storage = Event.LogStorage<Event.Emitted<Event.Any>>;
+type Storage = LogStorage<Event.Emitted<Event.Any>>;
 
 type Kept = NonNullable<Parameters<Storage["put"]>[1]>;
 
@@ -511,25 +513,21 @@ const recordingStorage = () => {
           .slice(0, limit)
           .map(({ seq, stored }) => [seq, stored] as const)
       ),
-    delete: (seqs) =>
+    deleteThrough: (through) =>
       Effect.sync(() => {
-        kept.splice(
-          0,
-          kept.length,
-          ...kept.filter(({ seq }) => !seqs.includes(seq))
-        );
+        kept.splice(0, kept.length, ...kept.filter(({ seq }) => seq > through));
       }),
   };
 
   return { kept, storage };
 };
 
-describe("Event.makeEvents", () => {
+describe("makeEvents", () => {
   it.effect(
-    "moves the revision at a notify of a current source, and none of a check source",
+    "moves the revision at a notify of a check source as of a current one, so a reader of the revisions alone sees both change",
     () =>
       Effect.gen(function* () {
-        let bumps = 0;
+        const bumped: string[][] = [];
 
         const Status = Event.make("status.changed", {
           description: "A status changed.",
@@ -538,14 +536,14 @@ describe("Event.makeEvents", () => {
         });
 
         const layer = Layer.effect(Event.Events)(
-          Event.makeEvents({
+          makeEvents({
             log: () => memoryStorage(),
             revisions: {
               epoch: Effect.succeed("epoch"),
               get: () => Effect.succeed(0),
-              bump: () =>
+              bump: (names) =>
                 Effect.sync(() => {
-                  bumps += 1;
+                  bumped.push([...names]);
                 }),
             },
           })
@@ -560,10 +558,12 @@ describe("Event.makeEvents", () => {
               current: () => Effect.succeed({ value: 0 }),
             })
           );
-          yield* events.notify(Posted);
-          expect(bumps).toBe(0);
+          yield* events.notify(Posted, { key: "general" });
           yield* events.notify(Status);
-          expect(bumps).toBe(1);
+          expect(bumped.map(([every]) => every)).toStrictEqual([
+            Posted.name,
+            Status.name,
+          ]);
         }).pipe(Effect.provide(layer));
       })
   );
@@ -576,7 +576,7 @@ describe("Event.makeEvents", () => {
         const made: string[] = [];
 
         const layer = Layer.effect(Event.Events)(
-          Event.makeEvents({
+          makeEvents({
             log: (event) => {
               made.push(event.name);
 
@@ -614,45 +614,6 @@ describe("Event.makeEvents", () => {
           [1, "a"],
           [2, undefined],
         ]);
-      })
-  );
-
-  it.effect(
-    "reads a check source only as it subscribes and when notified, where polls is false",
-    () =>
-      Effect.gen(function* () {
-        const store = makeMessages();
-
-        const layer = Layer.effect(Event.Events)(
-          Event.makeEvents({ log: () => memoryStorage(), polls: false })
-        );
-
-        const [quiet, received, reads] = yield* Effect.gen(function* () {
-          const client = yield* Action.client(store.implementation);
-          const events = yield* Event.Events;
-
-          const watching = yield* client
-            .watch(Posted, { channel: "general" })
-            .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
-
-          yield* settle;
-          store.post("general", "one");
-          yield* TestClock.adjust("10 minutes");
-
-          const unnotified = store.readsOf("general");
-
-          yield* events.notify(Posted, { key: "general" });
-
-          return [
-            unnotified,
-            yield* Fiber.join(watching),
-            store.readsOf("general"),
-          ] as const;
-        }).pipe(Effect.provide(layer));
-
-        expect(quiet).toBe(1);
-        expect(texts(received)).toStrictEqual(["one"]);
-        expect(reads).toBe(2);
       })
   );
 });

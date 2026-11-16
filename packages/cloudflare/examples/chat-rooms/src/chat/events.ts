@@ -9,7 +9,7 @@ const idOf = Schema.decodeUnknownOption(
   Schema.NumberFromString.pipe(Schema.check(Schema.isInt()))
 );
 
-const nextPoll = "30 seconds";
+const nextPoll = "2 seconds";
 
 export const messageEvents = Event.implement(
   MessagePosted,
@@ -17,6 +17,7 @@ export const messageEvents = Event.implement(
     const store = yield* MessageStore;
 
     return {
+      notified: true,
       check: (_input, cursor) =>
         Effect.gen(function* () {
           const last = yield* store.last;

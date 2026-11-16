@@ -16,11 +16,11 @@ import type { Gap, OccurrenceSchema } from "./occurrence.js";
 
 export type { EventImplementation as Implementation } from "./feed.js";
 
-export { Events, layerMemory, makeEvents } from "./hub.js";
+export { Events, layerMemory } from "./hub.js";
 
-export type { KeyOptions, MakeEventsOptions, RevisionStorage } from "./hub.js";
+export type { KeyOptions } from "./hub.js";
 
-export type { Listed, LogStorage } from "./log.js";
+export type { Listed } from "./log.js";
 
 export type { AnyEventImplementation as AnyImplementation } from "./feed.js";
 
@@ -167,7 +167,10 @@ export interface Page<E extends Any> {
   readonly truncated?: boolean | undefined;
   /** More occurrences are ready: the subscriber asks again without waiting. */
   readonly hasMore?: boolean | undefined;
-  /** How long a subscriber waits before it asks again; defaults to 5 seconds. */
+  /**
+   * How long a subscriber waits before it asks again, a `notified` source's streams and webhooks
+   * excepted; defaults to 5 seconds.
+   */
   readonly nextPoll?: Duration.Input | undefined;
 }
 
@@ -203,6 +206,20 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
     input: E["input"]["Type"],
     cursor: string | null
   ) => Effect.Effect<Page<E>, Refusal, R>;
+  /**
+   * Every change `check` reads is announced by an `Events.notify` the server serving it receives,
+   * as a store only that server's handlers write is: its streams and webhook deliveries then ask
+   * `check` again only when notified, on no timer, so an idle Cloudflare Durable Object holding
+   * them hibernates. Defaults to `false`, asking again at each page's `nextPoll` too. A polling
+   * client polls at `nextPoll` either way, and an rpc's poll page says `notified`, so a host that
+   * holds polls, as the Cloudflare package's socket host does, holds one of this source alone.
+   *
+   * **Gotchas**
+   *
+   * - A change no `notify` on that server announces, as another server's write to a shared database or an upstream's own, reaches its streams, its webhooks and a poll a host holds only with the next `notify`.
+   * - A `notify` that `check` runs before it can read the write waits for the next `notify` too: notify after the write commits, or inside its transaction only where `check` reads through the same connection, as one SQLite client's reads wait for its transaction.
+   */
+  readonly notified?: boolean | undefined;
   readonly log?: never;
   readonly current?: never;
 }
@@ -211,7 +228,9 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
  * An event type whose occurrence is the whole value, such as a status or a list small enough to
  * send whole: a subscriber receives the value as it is first, then again after each
  * `Events.notify` that reaches it, never a change it missed one by one. The library keeps a
- * revision per key, which each such notify moves, as the cursor and each occurrence's id.
+ * revision per key, which each such notify moves, as the cursor and each occurrence's id. Its
+ * streams and webhook deliveries read it again only when notified, on no timer, so an idle
+ * Cloudflare Durable Object holding them hibernates; a polling client polls every 5 seconds.
  *
  * **Gotchas**
  *
@@ -234,9 +253,10 @@ export interface Current<E extends Any, R = never> extends Hooked<E, R> {
  *
  * **Gotchas**
  *
- * - A cursor is only good where the log that minted it lives, for as long as it keeps its occurrences: after a restart, or once they are dropped, a subscriber resuming from it receives `truncated` and a fresh cursor.
+ * - A cursor is only good where the log that minted it lives, for as long as it keeps its occurrences: once they are dropped, or after a restart under `Event.layerMemory`, a subscriber resuming from it receives `truncated` and a fresh cursor; `Stored.layerEvents` keeps a log across a restart on the same database.
  * - A subscriber reading slower than occurrences arrive falls behind the log like a resumed one: it receives `truncated`, never a backlog held for it alone.
  * - An `emit` stream is consumed from startup, in the server's scope, by one build at a time, until it ends, even past its build's release: a failure ends it and is reported, an end is logged, and the next held build's stream, if any, takes over; the log then holds what was published.
+ * - A cluster entity refuses an `emit` stream, its activation dying as it builds: Effect's entity reaper stops an entity while its stream runs, and what the stream sends meanwhile is lost; append with `Events.publish` from a handler.
  */
 export interface Log<E extends Any, R = never> extends Hooked<E, R> {
   /** What the log keeps, and the stream feeding it besides `Events.publish`; `{}` for none. */

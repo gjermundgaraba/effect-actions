@@ -26,12 +26,16 @@ export class IssuerUnavailable extends Schema.TaggedError<
   { httpApiStatus: 503 }
 ) {}
 
+const principal = (member: Member) =>
+  JSON.stringify([member.workspace, member.id]);
+
 export const Login = Authentication.make("tracker.Login", CurrentMember, {
   error: IssuerUnavailable,
-  principal: (member) => JSON.stringify([member.workspace, member.id]),
+  principal,
 });
 
 export const Session = Authentication.make("tracker.Session", CurrentMember, {
+  principal,
   security: HttpApiSecurity.apiKey({ in: "cookie", key: "tracker_session" }),
 });
 

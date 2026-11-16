@@ -51,7 +51,7 @@ export const isRpcTransient = Predicate.or(
     )
 );
 
-const isUnknownTag = (tag: string) => {
+export const isUnknownTag = (tag: string) => {
   const message = `Unknown request tag: ${tag}`;
 
   return (cause: Cause.Cause<unknown>): boolean =>
@@ -64,27 +64,42 @@ const isUnknownTag = (tag: string) => {
     );
 };
 
-export const transportOf = (
+export const streamingOf = (
   event: Event.Any,
   stream: StreamMethod,
-  silenceEnds: boolean
-): Transport<unknown, never> => {
-  const notServed = Stream.fail(
-    Event.SubscriptionError.of(event.name, new Event.NotServed())
+  silenceEnds: boolean,
+  streamOnly: boolean
+): Transport<unknown, never>["stream"] => {
+  const unserved = Stream.fail(
+    streamOnly
+      ? Event.SubscriptionError.of(event.name, new Event.NotServed())
+      : deliveryUnsupported(event.name, "push")
   );
 
   const unknownTag = isUnknownTag(event.name);
 
-  return {
-    name: event.name,
-    poll: () => Effect.fail(deliveryUnsupported(event.name, "poll")),
-    stream: (cursor) =>
-      stream(cursor).pipe(
-        Stream.catchCauseIf(unknownTag, () => notServed),
-        silenceEnds
-          ? receivedFrom("RPC", event.name)
-          : readOn("RPC", event.name)
-      ),
-    transient: isRpcTransient,
-  };
+  return (cursor) =>
+    stream(cursor).pipe(
+      Stream.catchCauseIf(unknownTag, () => unserved),
+      silenceEnds ? receivedFrom("RPC", event.name) : readOn("RPC", event.name)
+    );
 };
+
+export const polledTransportOf = (
+  event: Event.Any,
+  { poll }: Pick<Transport<unknown, never>, "poll">,
+  transient: (error: unknown) => boolean,
+  unserved: (cause: Cause.Cause<unknown>) => boolean
+): Transport<unknown, never> => ({
+  name: event.name,
+  poll: (cursor, watch) =>
+    poll(cursor, watch).pipe(
+      Effect.catchCauseIf(unserved, () =>
+        Effect.fail(
+          Event.SubscriptionError.of(event.name, new Event.NotServed())
+        )
+      )
+    ),
+  stream: () => Stream.fail(deliveryUnsupported(event.name, "push")),
+  transient,
+});

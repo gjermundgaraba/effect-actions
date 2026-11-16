@@ -261,7 +261,8 @@ export const implementTypes = () => {
 
   const PrincipalLogin = Authentication.make(
     "types-spec.PrincipalLogin",
-    Principal
+    Principal,
+    { principal: (principal) => principal }
   );
 
   const plain = Action.implement(Lookup, ({ id }) =>
@@ -1164,7 +1165,9 @@ export const builtAuthorizerTypes = () => {
     { readonly brand: unique symbol }
   >()("Unavailable", {}) {}
 
-  const ActorLogin = Authentication.make("types-spec.ActorLogin", Actor);
+  const ActorLogin = Authentication.make("types-spec.ActorLogin", Actor, {
+    principal: (actor) => actor,
+  });
 
   const verified = Authentication.layer(
     ActorLogin,
@@ -1583,6 +1586,7 @@ export const bindingSelectionTypes = () => {
   >();
 
   Authentication.make("types-spec.Bearer", CurrentActor, {
+    principal: (actor) => actor.id,
     // @ts-expect-error -- A security scheme is Effect's own.
     security: "Bearer",
   });
@@ -1652,7 +1656,9 @@ export const authenticationLayerTypes = () => {
     }
   >()("types/Verifier") {}
 
-  const IdentityLogin = Authentication.make("types.IdentityLogin", Identity);
+  const IdentityLogin = Authentication.make("types.IdentityLogin", Identity, {
+    principal: (identity) => identity.id,
+  });
 
   const Who = Action.make("who", {
     description: "Who",
@@ -2002,6 +2008,7 @@ export const actionMcpClientTypes = Effect.gen(function* () {
   >()("IssuerDown", {}) {}
 
   const Guarded = Authentication.make("types-spec.Guarded", CurrentActor, {
+    principal: (actor) => actor.id,
     error: IssuerDown,
   });
 

@@ -1,14 +1,13 @@
 {
   "name": "@gjermundgaraba/effect-actions-cloudflare",
   "version": "0.31.0",
-  "description": "Serve effect-actions from Cloudflare Durable Objects, with Effect RPC over hibernating WebSockets.",
+  "description": "Run effect-actions entities on Cloudflare Durable Objects through Effect Cluster.",
   "keywords": [
     "cloudflare",
     "durable-objects",
     "effect",
+    "effect-cluster",
     "effect-ts",
-    "rpc",
-    "websocket",
     "workers"
   ],
   "homepage": "https://github.com/gjermundgaraba/effect-actions/tree/main/packages/cloudflare#readme",
@@ -29,14 +28,14 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    "./ActionDurableObject": "./src/durable/ActionDurableObject.ts",
-    "./DurableObjectClient": "./src/durable/DurableObjectClient.ts",
+    "./ActionCluster": "./src/cluster/ActionCluster.ts",
+    "./ActionClusterEntity": "./src/host/ActionClusterEntity.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "exports": {
-      "./ActionDurableObject": "./dist/ActionDurableObject.mjs",
-      "./DurableObjectClient": "./dist/DurableObjectClient.mjs",
+      "./ActionCluster": "./dist/ActionCluster.mjs",
+      "./ActionClusterEntity": "./dist/ActionClusterEntity.mjs",
       "./package.json": "./package.json"
     },
     "access": "public"
@@ -48,13 +47,15 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "catalog:",
     "@cloudflare/workers-types": "catalog:",
+    "@effect/platform-cloudflare": "catalog:",
     "@effect/vitest": "catalog:",
     "@gjermundgaraba/effect-actions": "workspace:*",
     "effect": "catalog:",
     "vitest": "catalog:"
   },
   "peerDependencies": {
+    "@effect/platform-cloudflare": "~4.1.4",
     "@gjermundgaraba/effect-actions": "workspace:^",
-    "effect": "~4.1.3"
+    "effect": "~4.1.4"
   }
 }

@@ -39,13 +39,14 @@ Where things are, in a project that installs the package: these pages in `node_m
 | [ActionMcp.md](ActionMcp.md) | serve MCP tools over HTTP or stdio, describe them to a model, return images, protect them, serve events, allow browser clients, add prompts and resources, send notifications |
 | [ActionRpc.md](ActionRpc.md) | bind actions to Effect rpcs, serve them on a protocol, call them, add native rpcs, send request context with a call |
 | [ActionRpc-events.md](ActionRpc-events.md) | serve and watch events over rpcs, follow what a request names, such as a room |
+| [ActionEntity.md](ActionEntity.md) | serve an RPC binding as an Effect Cluster entity, each call in the entity its input names; call it, serve it from any surface by key, watch its events by polling, test it on a `TestRunner` |
 | [ActionToolkit.md](ActionToolkit.md) | give a model actions as a native Effect AI `Toolkit`, show it images, name the caller, ask for approval |
 | [ActionCli.md](ActionCli.md) | run actions as local commands, or call a server from commands; watch events; shape flags, input and output; name the caller; add a command of your own |
 | [Webhook.md](Webhook.md) | deliver events to a subscriber's callback by webhook, signed, and watch by webhook |
 | [Authentication.md](Authentication.md) | declare how callers sign in, verify credentials, publish OAuth discovery, step up for a scope |
 | [Authentication-advanced.md](Authentication-advanced.md) | use an API key or a cookie, read the request in a verifier, protect a route of your own, run a request policy before authentication |
 | [Testing.md](Testing.md) | test an implementation in process, and routes, tools and rpcs in memory, as a signed-in caller; test events and webhooks; assert on errors |
-| `@gjermundgaraba/effect-actions-cloudflare`'s `docs/README.md` | serve actions, events and Effect rpcs from Cloudflare Durable Objects: install that package; its pages and example are in its own `node_modules` folder |
+| `@gjermundgaraba/effect-actions-cloudflare`'s `docs/README.md` | run actions and events in Cloudflare Durable Objects as cluster entities, served by a Worker over JSON and MCP: install that package; its pages and example are in its own `node_modules` folder |
 
 ## Examples
 
@@ -56,6 +57,7 @@ Where things are, in a project that installs the package: these pages in `node_m
 | [mcp-tools](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/) | An MCP server whose tools wrap an upstream HTTP API, over stdio and over HTTP, with an image result. | You are putting an existing API in front of a model. |
 | [assistant](node_modules/@gjermundgaraba/effect-actions/examples/assistant/) | No server: the same implementations as a model's tools, with approval of writes, and as local commands. | A model calls your code in process, or you are building a local CLI. |
 | [live-rpc](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/) | Effect RPC over a WebSocket with a browser-shaped client, each message carrying its own token. | A client keeps a connection open, or the application speaks Effect RPC. |
+| [shopping-carts](node_modules/@gjermundgaraba/effect-actions/examples/shopping-carts/) | Carts as Effect Cluster entities, one place and one call at a time each, reached from JSON routes, on one process over SQLite. | Each of many stateful objects, such as a cart or a room, must handle its calls in order. |
 | [build-events](node_modules/@gjermundgaraba/effect-actions/examples/build-events/) | A CI service whose members watch events over MCP, HTTP, RPC and a CLI: one read by cursor, one pushed upstream. | Something happens that subscribers should hear about. |
 | [kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/) | The reference: a multi-tenant issue tracker using every module and nearly every option, with an index. | You need a working use of one specific feature. |
 
@@ -67,12 +69,13 @@ The index in [kitchen-sink](node_modules/@gjermundgaraba/effect-actions/examples
 | --- | --- |
 | Speak JSON over HTTP | `ActionHttp`; clients use `ActionHttp.client`, or `ActionHttp.fetchClient` outside an Effect |
 | Are Effect programs, such as a page over one WebSocket | `ActionRpc`; clients use `ActionRpc.client` |
+| Reach a stateful object, such as a room, that an Effect Cluster places | `ActionEntity`; clients use `ActionEntity.client`, and any surface serves it with `ActionEntity.reaching` |
 | Are MCP clients | `ActionMcp.layerHttp` for a hosted endpoint, `ActionMcp.runStdio` for a subprocess, which runs the handlers itself |
 | Are a model in the same process | `ActionToolkit` |
 | Are people or scripts in a terminal | `ActionCli`: `make` runs handlers locally, `remote` calls a server through its HTTP binding |
 | Are your own code in the same process, such as a job or a test | `Action.client` |
 
-Surfaces combine: every one that runs handlers takes the same implementations, one or a list, and enforces each contract's `caller` and its implementation's `authorize` ([Action.md](Action.md#authorize-calls)). What a call answers on each surface, a success, bad input, a declared error, a refusal or a defect, is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `runStdio`, `ActionRpc.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client, and each built-in error: grep the symbol.
+Surfaces combine: every one that runs handlers takes the same implementations, one or a list, and enforces each contract's `caller` and its implementation's `authorize` ([Action.md](Action.md#authorize-calls)). What a call answers on each surface, a success, bad input, a declared error, a refusal or a defect, is on `ActionHttp.layer`, `ActionMcp.layerHttp` and `runStdio`, `ActionRpc.layer`, `ActionEntity.layer`, `ActionToolkit.make`, `ActionCli.command`, each typed client, and each built-in error: grep the symbol.
 
 ## What the library leaves to you
 

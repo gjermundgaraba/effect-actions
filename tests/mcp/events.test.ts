@@ -3,7 +3,6 @@ import {
   Deferred,
   Effect,
   ErrorReporter,
-  Exit,
   Fiber,
   Layer,
   Logger,
@@ -1802,41 +1801,6 @@ describe("a protected MCP event", () => {
             )
           ),
           Effect.scoped
-        );
-      }).pipe(Effect.provide(Event.layerMemory))
-  );
-
-  it.effect(
-    "refuses to start where a protected event's subscription hook has no principal to key it by",
-    () =>
-      Effect.gen(function* () {
-        const Bare = Authentication.make("events.Bare", CurrentActor);
-
-        const hooked = Event.implement(
-          Changed,
-          {
-            check: () => Effect.succeed({ cursor: "0", events: [] }),
-            subscription: () => Effect.void,
-          },
-          { authorize: Event.allowAll }
-        );
-
-        const exit = yield* Effect.exit(
-          send("events/list", {}, "alice").pipe(
-            Effect.provide(
-              Testing.layer(
-                ActionMcp.layerHttp(hooked, {
-                  name: "events",
-                  version: "0",
-                  authentication: Bare,
-                }).pipe(Layer.provide(Authentication.layer(Bare, verify)))
-              )
-            )
-          )
-        );
-
-        expect(String(Exit.isFailure(exit) ? exit.cause : "")).toContain(
-          'MCP event "user.changed" is protected and has a subscription hook, so its authentication needs principal to tell poll subscribers apart (give Authentication.make a principal, such as (user) => user.id)'
         );
       }).pipe(Effect.provide(Event.layerMemory))
   );

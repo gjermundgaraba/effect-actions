@@ -129,6 +129,24 @@ describe("ActionRpc native rpcs", () => {
       })
   );
 
+  it.effect(
+    "hands a native stream rpc's chunks over a queue under asQueue, as Effect's own client does",
+    () =>
+      Effect.gen(function* () {
+        const chunks = yield* withProtected((client) =>
+          Effect.flatMap(
+            client.countdown(
+              { from: 2 },
+              { asQueue: true, headers: { authorization: "Bearer alice" } }
+            ),
+            (queue) => Stream.runCollect(Stream.fromQueue(queue))
+          )
+        );
+
+        expect(chunks).toStrictEqual(["alice:2", "alice:1"]);
+      })
+  );
+
   it.effect("authenticates each message of a native rpc by its own token", () =>
     Effect.gen(function* () {
       const callers = yield* withProtected((client) =>
@@ -360,6 +378,7 @@ describe("ActionRpc native rpcs", () => {
         >()("Unavailable", {}) {}
 
         const Down = Authentication.make("native-test.Down", CurrentActor, {
+          principal: (actor) => actor.id,
           error: Unavailable,
         });
 
@@ -490,18 +509,24 @@ describe("ActionRpc native rpcs", () => {
       })
   );
 
-  it("refuses a native rpc named after an action, an event type, then or the client's watch", () => {
+  it("refuses a native rpc named after an action, an event type, its poll or release, then or the client's watch", () => {
     const Ticked = Event.make("clock.ticked", {
       description: "The clock ticked.",
       payload: { at: Schema.Int },
       caller: Action.Anyone,
     });
 
-    for (const tag of ["status", "clock.ticked", "then", "watch"]) {
+    for (const tag of [
+      "status",
+      "clock.ticked",
+      "clock.ticked/poll",
+      "then",
+      "watch",
+    ]) {
       expect(() =>
         ActionRpc.make([Status, Ticked], { rpcs: RpcGroup.make(Rpc.make(tag)) })
       ).toThrow(
-        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action, an event type or a name the client keeps, "then" or "watch" (rename it)`
+        `ActionRpc binding: the rpc "${tag}" of rpcs is named after an action, an event type, an event's poll, or a name the client keeps, "then" or "watch" (rename it)`
       );
     }
   });

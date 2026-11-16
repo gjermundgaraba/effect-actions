@@ -69,9 +69,12 @@ const app = Action.implement(
   { authorize: Action.allowAll }
 );
 
-const Login = Authentication.make("rpc-types.Login", Actor);
+const Login = Authentication.make("rpc-types.Login", Actor, {
+  principal: (actor) => actor,
+});
 
 const Checked = Authentication.make("rpc-types.Checked", Actor, {
+  principal: (actor) => actor,
   error: Unavailable,
 });
 
@@ -87,7 +90,9 @@ ActionRpc.make([Open]);
 
 ActionRpc.make([Get], {
   // @ts-expect-error -- The descriptor authenticates another identity.
-  authentication: Authentication.make("rpc-types.Other", Tenant),
+  authentication: Authentication.make("rpc-types.Other", Tenant, {
+    principal: (tenant) => tenant,
+  }),
 });
 
 // @ts-expect-error -- No option `prefix`: an RPC binding mounts nowhere.

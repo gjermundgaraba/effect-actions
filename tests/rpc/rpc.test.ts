@@ -19,6 +19,7 @@ import {
   Tracer,
 } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest } from "effect/http";
+import { HttpApiSecurity } from "effect/http-api";
 import {
   Rpc as NativeRpc,
   RpcClient,
@@ -48,6 +49,7 @@ import { double, status, userActions } from "../support/app/handlers.js";
 import { Users } from "../support/app/users.js";
 import { recorder } from "../support/reporter.js";
 import { sendRawNdjson, valueOrSquashedCause } from "../support/requests.js";
+import { recordSpans } from "../support/tracing.js";
 import { inMemoryValuesProtocolTo } from "../support/values.js";
 
 const Rpc = ActionRpc.make([Status, GetUser, RenameUser, Double, WhoAmI], {
@@ -298,6 +300,24 @@ const serving = (
     ActionRpc.layer(Rpc, [status, userActions, double]),
     serialization
   ).pipe(Layer.provide(authenticate));
+
+const keyedIn = (place: "query" | "header") =>
+  Authentication.make("rpc.Keyed", CurrentActor, {
+    principal: (actor) => actor.id,
+    security: HttpApiSecurity.apiKey({ in: place, key: "api_key" }),
+  });
+
+const boundKeyedIn = (place: "query" | "header") => () =>
+  ActionRpc.make([WhoAmI], { authentication: keyedIn(place) });
+
+describe("ActionRpc.make's authentication", () => {
+  it("refuses an API key read from the query, naming the key and the fix, and takes one read from a header", () => {
+    expect(boundKeyedIn("query")).toThrow(
+      'ActionRpc binding: its authentication reads its API key api_key from the query, which no rpc carries (read it from a header: HttpApiSecurity.apiKey({ in: "header", key }))'
+    );
+    expect(boundKeyedIn("header")).not.toThrow();
+  });
+});
 
 describe("ActionRpc serializations", () => {
   it.effect.each([
@@ -574,17 +594,7 @@ it.effect(
     ];
 
     const reported: string[] = [];
-    const spans: Tracer.Span[] = [];
-
-    const tracer = Tracer.make({
-      span(options) {
-        const span = Tracer.nativeTracer.span(options);
-
-        spans.push(span);
-
-        return span;
-      },
-    });
+    const { spans, tracer } = recordSpans();
 
     const tracedFailures = () =>
       spans.flatMap(({ kind, status: spanStatus }) =>
@@ -640,6 +650,7 @@ it.effect(
     }) {}
 
     const Checked = Authentication.make("rpc-test.Checked", Caller, {
+      principal: (caller) => caller.id,
       error: Unavailable,
     });
 
@@ -739,7 +750,9 @@ describe("ActionRpc selection", () => {
     "dies when the provider is another descriptor's of the binding's name",
     () =>
       Effect.gen(function* () {
-        const Impostor = Authentication.make("example.Login", CurrentActor);
+        const Impostor = Authentication.make("example.Login", CurrentActor, {
+          principal: (actor) => actor.id,
+        });
 
         const server = servedAtRpcOverHttp(
           ActionRpc.layer(Rpc, userActions)

@@ -88,7 +88,9 @@ const Guard = Action.make("guarded", {
   caller: CurrentActor,
 });
 
-const Login = Authentication.make("http-progress.Login", CurrentActor);
+const Login = Authentication.make("http-progress.Login", CurrentActor, {
+  principal: (actor) => actor.id,
+});
 
 const authenticate = Authentication.layer(Login, verify);
 

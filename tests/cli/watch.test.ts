@@ -38,7 +38,9 @@ const Ping = Action.make("ping", {
   success: Schema.String,
 });
 
-const Login = Authentication.make("cli-watch.Login", CurrentActor);
+const Login = Authentication.make("cli-watch.Login", CurrentActor, {
+  principal: (actor) => actor.id,
+});
 
 const messages = [
   { id: "m1", channel: "general", at: 1000 },

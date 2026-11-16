@@ -15,6 +15,7 @@ const anyRelativeImport = ["./**", "../**"];
 const sharedPrivateFiles = [
   "authentication/provider.js",
   "authentication/refusal.js",
+  "rpc/erased.js",
   "stdio/console.js",
 ];
 
@@ -22,7 +23,13 @@ const lintingProbes = process.env["LINT_PROBE"] !== undefined;
 
 const lint: ReturnType<typeof config> = config({
   env: { browser: false },
-  testBlocks: ["it.effect", "it.effect.prop", "it.live", "it.prop"],
+  testBlocks: [
+    "it.effect",
+    "it.effect.prop",
+    "it.live",
+    "it.live.prop",
+    "it.prop",
+  ],
   expectBlocks: ["it.effect.each"],
   assertFunctions: [
     "runScenario",
@@ -30,10 +37,7 @@ const lint: ReturnType<typeof config> = config({
     "untilKept",
     "untilPosted",
   ],
-  ignorePatterns: [
-    "packages/cloudflare/examples/chat-rooms/src/env.d.ts",
-    ...(lintingProbes ? [] : ["tools/oxlint/tests/probe-*/**"]),
-  ],
+  ignorePatterns: lintingProbes ? [] : ["tools/oxlint/tests/probe-*/**"],
   overrides: [
     { env: { browser: true }, files: ["**/src/browser.ts"] },
     {
@@ -53,7 +57,6 @@ const lint: ReturnType<typeof config> = config({
     },
     {
       files: [
-        "packages/cloudflare/src/durable/ActionDurableObject.ts",
         "src/authentication/provider.ts",
         "src/cli/commands.ts",
         "src/contract/implementation.ts",
@@ -93,6 +96,11 @@ const lint: ReturnType<typeof config> = config({
     },
     {
       files: [
+        "packages/cloudflare/examples/chat-rooms/src/{application,platform/object-sql}.ts",
+        "packages/cloudflare/examples/chat-rooms/test/{support,worker,worker.test}.ts",
+        "packages/cloudflare/src/cluster/ActionCluster.ts",
+        "packages/cloudflare/src/host/ActionClusterEntity.ts",
+        "packages/cloudflare/tests/{worker,cluster/{eviction,handler,redaction}.test,support/socket}.ts",
         "src/webhook/{address,subscriptions,Webhook}.ts",
         "examples/{build-events,kitchen-sink}/src/server.ts",
         "examples/build-events/test/support/memory.ts",
@@ -105,13 +113,15 @@ const lint: ReturnType<typeof config> = config({
     },
     {
       files: [
-        "packages/cloudflare/src/durable/{ActionDurableObject,stub}.ts",
+        "packages/cloudflare/src/cluster/ActionCluster.ts",
+        "packages/cloudflare/src/host/{ActionClusterEntity,sockets}.ts",
         "src/authentication/Authentication.ts",
         "src/cli/{ActionCli,commands}.ts",
         "src/contract/{Action,authorizer,call,caller,feed,idempotency,implementation,lease,push,serving,webhooks}.ts",
-        "src/http/{ActionHttp,client,events,placed,streamed,watch}.ts",
+        "src/entity/ActionEntity.ts",
+        "src/http/{ActionHttp,client,events,streamed,watch}.ts",
         "src/mcp/{ActionMcp,bridge,client,reply,watch}.ts",
-        "src/rpc/ActionRpc.ts",
+        "src/rpc/{ActionRpc,erased,watch}.ts",
         "src/testing/Testing.ts",
         "src/toolkit/ActionToolkit.ts",
         "src/webhook/subscriptions.ts",
@@ -144,14 +154,6 @@ const lint: ReturnType<typeof config> = config({
       rules: { "promise/valid-params": "off" },
     },
     {
-      files: ["packages/cloudflare/tests/durable/web-socket.model.test.ts"],
-      rules: { "array-callback-return": "off" },
-    },
-    {
-      files: ["tests/http/placed.test.ts"],
-      rules: { "unicorn/no-array-fill-with-reference-type": "off" },
-    },
-    {
       files: [
         "tests/mcp/{events,stdio}.test.ts",
         "tests/support/stdio-host.ts",
@@ -162,7 +164,7 @@ const lint: ReturnType<typeof config> = config({
       files: [
         "src/cli/ActionCli.ts",
         "src/http/streamed.ts",
-        "src/rpc/ActionRpc.ts",
+        "src/rpc/erased.ts",
       ],
       rules: { "effecttsgo/unsafe-effect-type-assertion": "off" },
     },
@@ -171,19 +173,9 @@ const lint: ReturnType<typeof config> = config({
       rules: { "effecttsgo/leaking-requirements": "off" },
     },
     {
-      files: ["packages/cloudflare/src/durable/ActionDurableObject.ts"],
-      rules: { "effecttsgo/run-effect-inside-effect": "off" },
-    },
-    {
-      files: [
-        "packages/cloudflare/examples/chat-rooms/src/rooms-entrypoint.ts",
-      ],
-      rules: { "class-methods-use-this": "off" },
-    },
-    {
       files: [
         "examples/live-rpc/{src/browser,test/chat/chat.test,test/routes.test}.ts",
-        "packages/cloudflare/examples/chat-rooms/{src/browser,test/worker.test}.ts",
+        "packages/cloudflare/examples/chat-rooms/{src/browser,test/worker.test,test/webhooks.test}.ts",
       ],
       rules: { "unicorn/require-post-message-target-origin": "off" },
     },
@@ -191,7 +183,7 @@ const lint: ReturnType<typeof config> = config({
       files: [
         "packages/cloudflare/scripts/package-consumer/worker.ts",
         "scripts/package-consumer/index.ts",
-        "tests/contract/{client,event,input-check,tracing}.test.ts",
+        "tests/contract/{client,event,tracing}.test.ts",
         "tests/guarantees/{builds.model,registration}.test.ts",
         "tests/toolkit/toolkit.test.ts",
       ],

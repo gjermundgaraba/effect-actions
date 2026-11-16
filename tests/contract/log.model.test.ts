@@ -1,8 +1,16 @@
-import { expect, it } from "@effect/vitest";
-import { Effect, Match, Schema } from "effect";
+import { SqliteClient } from "@effect/sql-sqlite-node";
+import { describe, expect, it } from "@effect/vitest";
+import type { Scope } from "effect";
+import { Context, Effect, Layer, Match, Schema } from "effect";
+import { SqlClient } from "effect/sql";
 import { TestClock } from "effect/testing";
 
+import {
+  createLogTables,
+  sqlStorage,
+} from "../../src/contract/event-tables.js";
 import { makeLogStore, memoryStorage } from "../../src/contract/log.js";
+import type { LogStorage } from "../../src/contract/log.js";
 
 const maxAge = 1000;
 
@@ -168,3 +176,91 @@ it.effect(
       ]).toStrictEqual([false, true, false, false, true]);
     })
 );
+
+const Kept = Schema.Union([
+  Schema.TaggedStruct("Push", { after: Step }),
+  Schema.TaggedStruct("Read", { after: Step }),
+  Schema.TaggedStruct("Reopen", {
+    after: Step,
+    maxEvents: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 6 })),
+  }),
+]);
+
+const KeptSteps = Schema.Array(Kept).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(40)
+);
+
+const sqlLog = Effect.gen(function* () {
+  const sql = Context.get(
+    yield* Layer.build(
+      Layer.orDie(SqliteClient.layer({ filename: ":memory:" }))
+    ),
+    SqlClient.SqlClient
+  );
+
+  yield* Effect.orDie(createLogTables(sql));
+
+  return sqlStorage(sql, "kept", Schema.fromJsonString(Schema.Int));
+});
+
+const storages: ReadonlyArray<
+  readonly [string, Effect.Effect<LogStorage<number>, never, Scope.Scope>]
+> = [
+  ["memory", Effect.sync(() => memoryStorage<number>())],
+  ["SQL", sqlLog],
+];
+
+describe.each(storages)("A log over %s storage", (_name, storageOf) => {
+  it.effect.prop(
+    "keeps exactly the newest maxEvents entries after an append, and none older than maxAge after a read, a lower maxEvents on reopening dropping every older entry at the next append",
+    { steps: KeptSteps },
+    ({ steps }) =>
+      Effect.gen(function* () {
+        const storage = yield* storageOf;
+        const pushedAt: number[] = [];
+
+        let log = makeLogStore(storage, { maxAge, maxEvents });
+        let bound = maxEvents;
+        let floor = 0;
+        let now = 0;
+
+        for (const step of steps) {
+          now += step.after;
+          yield* TestClock.adjust(step.after);
+
+          if (step._tag === "Push") {
+            yield* log.append({ value: pushedAt.length + 1, key: undefined });
+            pushedAt.push(now);
+            floor = Math.max(floor, pushedAt.length - bound);
+          } else if (step._tag === "Read") {
+            const expiredBefore = now - maxAge;
+
+            yield* log.read(null, 1);
+            floor = Math.max(
+              floor,
+              pushedAt.findLastIndex((at) => at < expiredBefore) + 1
+            );
+          } else {
+            log = makeLogStore(storage, {
+              maxAge,
+              maxEvents: step.maxEvents,
+            });
+            bound = step.maxEvents;
+          }
+
+          const through = floor;
+
+          expect(
+            (yield* storage.list(0, 100)).map(([seq]) => seq)
+          ).toStrictEqual(
+            Array.from(
+              { length: pushedAt.length - through },
+              (_, index) => through + index + 1
+            )
+          );
+        }
+      }),
+    { arbitrary: { runs: 200 } }
+  );
+});

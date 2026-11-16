@@ -2,14 +2,11 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
   Effect,
-  ErrorReporter,
-  Exit,
   Fiber,
   Layer,
   Predicate,
   Queue,
   Schema,
-  SchemaGetter,
   Stream,
 } from "effect";
 import {
@@ -24,6 +21,7 @@ import {
   RpcClientError,
   RpcGroup,
   RpcSerialization,
+  RpcServer,
 } from "effect/rpc";
 import type { RpcMessage } from "effect/rpc";
 import { Socket } from "effect/socket";
@@ -33,13 +31,13 @@ import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
+import { erasedOf } from "../../src/rpc/erased.js";
 import { isRpcTransient } from "../../src/rpc/watch.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { makeMessages, Posted, settle } from "../support/events.js";
-import { recorder } from "../support/reporter.js";
-import { overHttp, rpcRoutes } from "../support/rpc.js";
+import { overHttp, rpcRoutes, unaryOf } from "../support/rpc.js";
 import { serve } from "../support/serve.js";
 import { inMemoryValuesProtocolTo } from "../support/values.js";
 
@@ -55,7 +53,9 @@ const Counted = Event.make("counter.counted", {
   caller: Action.Anyone,
 });
 
-const Login = Authentication.make("rpc-events.Login", CurrentActor);
+const Login = Authentication.make("rpc-events.Login", CurrentActor, {
+  principal: (actor) => actor.id,
+});
 
 const changes = Event.implement(
   Changed,
@@ -85,8 +85,10 @@ const changes = Event.implement(
   }
 );
 
+const unchanged = () => Effect.succeed({ cursor: "0", events: [] });
+
 const counts = Event.implement(Counted, {
-  check: () => Effect.succeed({ cursor: "0", events: [] }),
+  check: unchanged,
 });
 
 const Rpc = ActionRpc.make([Posted, Changed, Counted], {
@@ -220,7 +222,7 @@ describe("RPC events", () => {
   );
 
   it.effect(
-    "fails a poll with Unsupported, and an input that does not encode with InvalidInput, sending nothing",
+    "fails an input that does not encode with InvalidInput, sending nothing",
     () =>
       Effect.gen(function* () {
         const log = makeMessages();
@@ -234,13 +236,9 @@ describe("RPC events", () => {
 
         log.post("general", "sent");
 
-        const [polled, invalid, refusedRequests, watched] = yield* Effect.gen(
+        const [invalid, refusedRequests, watched] = yield* Effect.gen(
           function* () {
             const rpc = yield* ActionRpc.client(ActionRpc.make([Posted]));
-
-            const poll = yield* Effect.flip(
-              Stream.runDrain(rpc.watch(Posted, {}, { mode: "poll" }))
-            );
 
             const input = yield* Effect.flip(
               // @ts-expect-error -- A channel is a string.
@@ -250,7 +248,6 @@ describe("RPC events", () => {
             const before = requests;
 
             return [
-              poll,
               input,
               before,
               yield* rpc
@@ -269,14 +266,6 @@ describe("RPC events", () => {
           )
         );
 
-        expect(polled).toMatchObject({
-          _tag: "SubscriptionError",
-          reason: {
-            _tag: "Unsupported",
-            feature: "deliveryMode",
-            value: "poll",
-          },
-        });
         expect(invalid).toMatchObject({ _tag: "InvalidInput" });
         expect(refusedRequests).toBe(0);
         expect([watched, requests]).toMatchObject([[{ eventId: "m1" }], 1]);
@@ -284,14 +273,14 @@ describe("RPC events", () => {
   );
 
   it.effect(
-    "serves the event types its actions list alone, a watch of another failing with NotServed",
+    "serves the event types its actions list alone, a watch of another failing with NotServed, with no mode or with mode stream",
     () =>
       Effect.gen(function* () {
         const log = makeMessages();
 
         log.post("general", "before");
 
-        const [posted, counted] = yield* Effect.gen(function* () {
+        const [posted, counted, streamed] = yield* Effect.gen(function* () {
           const client = yield* ActionRpc.client(Rpc);
 
           return [
@@ -299,6 +288,9 @@ describe("RPC events", () => {
               .watch(Posted, {}, { cursor: "0" })
               .pipe(Stream.take(1), Stream.runCollect),
             yield* Effect.flip(Stream.runDrain(client.watch(Counted))),
+            yield* Effect.flip(
+              Stream.runDrain(client.watch(Counted, {}, { mode: "stream" }))
+            ),
           ] as const;
         }).pipe(
           Effect.scoped,
@@ -319,6 +311,115 @@ describe("RPC events", () => {
           event: "counter.counted",
           reason: { _tag: "NotServed" },
         });
+        expect(streamed).toMatchObject({
+          _tag: "SubscriptionError",
+          event: "counter.counted",
+          reason: { _tag: "NotServed" },
+        });
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+});
+
+describe("ActionRpc.layer's poll rpc", () => {
+  it.effect(
+    "answers a page notified where the server learns of each change, a log or a notified check, and not for a check source that is not notified",
+    () =>
+      Effect.gen(function* () {
+        const counted = ActionRpc.make([Counted]);
+
+        const notifiedOf = <E, R>(rpcs: Layer.Layer<never, E, R>) =>
+          Effect.gen(function* () {
+            const client = yield* RpcClient.make(
+              erasedOf([], [Counted], "ActionRpc.layer")
+            );
+
+            const answer = client[ActionRpc.pollTag(Counted.name)]?.({
+              input: {},
+              cursor: null,
+            });
+
+            return answer !== undefined && Effect.isEffect(answer)
+              ? yield* answer
+              : yield* Effect.die(new Error("No unary poll rpc"));
+          }).pipe(
+            Effect.scoped,
+            Effect.provide(overHttp(rpcs)),
+            Effect.map((page) =>
+              Predicate.isObject(page) ? page["notified"] : page
+            )
+          );
+
+        const notified = [
+          yield* notifiedOf(
+            ActionRpc.layer(counted, Event.implement(Counted, { log: {} }))
+          ),
+          yield* notifiedOf(
+            ActionRpc.layer(
+              counted,
+              Event.implement(Counted, { notified: true, check: unchanged })
+            )
+          ),
+          yield* notifiedOf(
+            ActionRpc.layer(
+              counted,
+              Event.implement(Counted, { check: unchanged })
+            )
+          ),
+        ];
+
+        expect(notified).toStrictEqual([true, true, false]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "sets a protected event's subscription hook up for each principal polling without a watch, as that caller",
+    () =>
+      Effect.gen(function* () {
+        const held: string[] = [];
+
+        const hooked = Event.implement(
+          Changed,
+          {
+            check: () => Effect.succeed({ cursor: "0", events: [] }),
+            subscription: () =>
+              Effect.flatMap(CurrentActor, (actor) =>
+                Effect.sync(() => held.push(actor.id))
+              ),
+          },
+          { authorize: Event.allowAll }
+        );
+
+        const pages = yield* Effect.gen(function* () {
+          const client = yield* RpcClient.make(
+            erasedOf([], [Changed], "ActionRpc.layer")
+          );
+
+          const pollTag = ActionRpc.pollTag(Changed.name);
+
+          const polled = (token: string) =>
+            signedInAs(token)(
+              unaryOf(client[pollTag]?.({ input: {}, cursor: null }), pollTag)
+            );
+
+          return yield* Effect.forEach(["alice", "bob", "alice"], polled);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            overHttp(
+              ActionRpc.layer(
+                ActionRpc.make([Changed], { authentication: Login }),
+                hooked
+              ).pipe(Layer.provide(Authentication.layer(Login, verify)))
+            )
+          )
+        );
+
+        expect(pages).toMatchObject([
+          { cursor: "0" },
+          { cursor: "0" },
+          { cursor: "0" },
+        ]);
+        expect(held).toStrictEqual(["alice", "bob"]);
       }).pipe(Effect.provide(Event.layerMemory))
   );
 });
@@ -397,229 +498,66 @@ describe("an RPC watch over Effect's HTTP protocol", () => {
   );
 });
 
-const keptOver = (acknowledges: boolean) =>
+const SilentPosted = RpcGroup.make(
+  NativeRpc.make(Posted.name, {
+    payload: Schema.Json,
+    success: Schema.Json,
+    stream: true,
+  })
+);
+
+const silentWatch = (acknowledges: boolean) =>
   Effect.gen(function* () {
-    const log = makeMessages();
-    const kept: ActionRpc.KeptSubscription[] = [];
-    const sent: RpcMessage.FromServerEncoded[] = [];
-    const chunks = () => sent.filter(({ _tag }) => _tag === "Chunk").length;
+    let subscribed = 0;
 
-    const keeper: ActionRpc.SubscriptionKeeper = {
-      keep: (subscription) => Effect.sync(() => kept.push(subscription)),
-    };
+    const silent = RpcServer.layer(SilentPosted).pipe(
+      Layer.provide(
+        SilentPosted.toLayer({
+          [Posted.name]: () => {
+            subscribed += 1;
 
-    const watched = yield* Effect.gen(function* () {
-      const client = yield* ActionRpc.client(ActionRpc.make([Posted]));
-
-      const fiber = yield* client
-        .watch(Posted, {}, { cursor: "0" })
-        .pipe(
-          Stream.updateService(
-            RpcClient.CurrentHeaders,
-            Headers.merge(Headers.fromInput({ "x-probe": "kept" }))
-          ),
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.forkChild
-        );
-
-      yield* settle;
-
-      const started = chunks();
-
-      yield* TestClock.adjust("90 seconds");
-
-      const quiet = chunks();
-
-      log.post("general", "after the quiet");
-      yield* TestClock.adjust("5 seconds");
-
-      return { received: yield* Fiber.join(fiber), started, quiet };
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        inMemoryValuesProtocolTo(
-          ActionRpc.layer(ActionRpc.make([Posted]), log.implementation),
-          {
-            acknowledges,
-            keeper,
-            sent,
-          }
-        )
+            return Stream.never;
+          },
+        })
       )
     );
 
-    return { ...watched, kept };
-  }).pipe(Effect.provide(Event.layerMemory));
+    return yield* Effect.gen(function* () {
+      const client = yield* ActionRpc.client(ActionRpc.make([Posted]));
 
-describe("an RPC watch over a protocol keeping subscriptions", () => {
-  it.effect(
-    "keeps each subscription as admitted, sends no heartbeat, and stays open while silent where the client's protocol acknowledges",
-    () =>
-      Effect.gen(function* () {
-        const { received, started, quiet, kept } = yield* keptOver(true);
+      yield* client
+        .watch(Posted, {}, { cursor: "0" })
+        .pipe(Stream.runDrain, Effect.forkChild);
 
-        expect(received).toMatchObject([
-          {
-            _tag: "Occurrence",
-            eventId: "m1",
-            data: { text: "after the quiet" },
-          },
-        ]);
-        expect(started).toBe(1);
-        expect(quiet).toBe(started);
-        expect(kept).toHaveLength(1);
-        expect(kept[0]).toMatchObject({
-          tag: Posted.name,
-          payload: { input: {}, cursor: "0" },
-        });
-        expect(kept[0]?.headers).toContainEqual(["x-probe", "kept"]);
-        expect(
-          kept[0]?.resumeFrom([
-            { _tag: "Checked", cursor: "1" },
-            { _tag: "Checked", cursor: "2" },
-            { _tag: "Failed" },
-          ])
-        ).toStrictEqual({ input: {}, cursor: "2" });
-        expect(kept[0]?.resumeFrom([{ _tag: "Failed" }])).toBeUndefined();
-      })
-  );
+      yield* settle;
+      yield* TestClock.adjust("60999 millis");
 
+      const beforeSilence = subscribed;
+
+      yield* TestClock.adjust("1 millis");
+
+      return [beforeSilence, subscribed];
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(inMemoryValuesProtocolTo(silent, { acknowledges }))
+    );
+  });
+
+describe("an RPC watch of a silent server", () => {
   it.effect(
     "connects again after 60 silent seconds where the client's protocol does not acknowledge, as Effect's HTTP one",
     () =>
       Effect.gen(function* () {
-        const { received, kept } = yield* keptOver(false);
-
-        expect(received).toMatchObject([{ _tag: "Occurrence", eventId: "m1" }]);
-        expect(kept).toHaveLength(2);
+        expect(yield* silentWatch(false)).toStrictEqual([1, 2]);
       })
   );
-});
-
-const quietCheck = () => Effect.succeed({ cursor: "0", events: [] });
-
-describe("a kept RPC subscription", () => {
-  const Tallied = Event.make("tally.counted", {
-    description: "A tally counted.",
-    input: { from: Schema.FiniteFromString },
-    payload: { n: Schema.Int },
-    caller: Action.Anyone,
-  });
-
-  const Sealed = Event.make("seal.noted", {
-    description: "A note under a seal that does not encode.",
-    input: {
-      seal: Schema.String.pipe(
-        Schema.decodeTo(Schema.String, {
-          decode: SchemaGetter.passthrough(),
-          encode: SchemaGetter.forbiddenEncoding,
-        })
-      ),
-    },
-    payload: { n: Schema.Int },
-    caller: Action.Anyone,
-  });
-
-  const raw = {
-    payload: Schema.Json,
-    success: Schema.Json,
-    error: Schema.Json,
-    stream: true,
-  } as const;
-
-  const Raw = RpcGroup.make(
-    NativeRpc.make(Posted.name, raw),
-    NativeRpc.make(Tallied.name, raw),
-    NativeRpc.make(Sealed.name, raw)
-  );
-
-  const keptBy = (
-    log: ReturnType<typeof makeMessages>,
-    kept: ActionRpc.KeptSubscription[],
-    reported: string[]
-  ) =>
-    inMemoryValuesProtocolTo(
-      ActionRpc.layer(ActionRpc.make([Posted, Tallied, Sealed]), [
-        log.implementation,
-        Event.implement(Tallied, { check: quietCheck }),
-        Event.implement(Sealed, { check: quietCheck }),
-      ]).pipe(Layer.provide(ErrorReporter.layer([recorder(reported)]))),
-      {
-        acknowledges: true,
-        keeper: {
-          keep: (subscription) => Effect.sync(() => kept.push(subscription)),
-        },
-      }
-    ).pipe(Layer.provide(Event.layerMemory));
 
   it.effect(
-    "resumes from its input in its encoded form, not as it decoded",
-    () => {
-      const kept: ActionRpc.KeptSubscription[] = [];
-
-      return Effect.gen(function* () {
-        const client = yield* RpcClient.make(Raw);
-
-        yield* client[Tallied.name]({ input: { from: "5" }, cursor: "0" }).pipe(
-          Stream.runDrain,
-          Effect.forkChild
-        );
-
-        yield* settle;
-
-        expect(
-          kept.map(({ resumeFrom }) =>
-            resumeFrom([{ _tag: "Checked", cursor: "2" }])
-          )
-        ).toStrictEqual([{ input: { from: "5" }, cursor: "2" }]);
-      }).pipe(Effect.scoped, Effect.provide(keptBy(makeMessages(), kept, [])));
-    }
-  );
-
-  it.effect(
-    "fails alone and reported where its input does not encode, as the others on its protocol go on",
-    () => {
-      const log = makeMessages();
-      const kept: ActionRpc.KeptSubscription[] = [];
-      const reported: string[] = [];
-
-      return Effect.gen(function* () {
-        const client = yield* RpcClient.make(Raw);
-
-        const posted = yield* client[Posted.name]({
-          input: {},
-          cursor: "0",
-        }).pipe(
-          Stream.filter(Predicate.isTagged("Occurrence")),
-          Stream.take(1),
-          Stream.runCollect,
-          Effect.forkChild
-        );
-
-        yield* settle;
-
-        const sealed = yield* Effect.exit(
-          Stream.runDrain(
-            client[Sealed.name]({ input: { seal: "x" }, cursor: null })
-          )
-        );
-
-        log.post("general", "after the seal");
-        yield* TestClock.adjust("5 seconds");
-
-        expect(Exit.isFailure(sealed) && Cause.hasDies(sealed.cause)).toBe(
-          true
-        );
-        expect(yield* Fiber.join(posted)).toMatchObject([
-          { _tag: "Occurrence", data: { text: "after the seal" } },
-        ]);
-        expect(reported).toStrictEqual([
-          expect.stringContaining("Encoding is not supported"),
-        ]);
-        expect(kept.map(({ tag }) => tag)).toStrictEqual([Posted.name]);
-      }).pipe(Effect.scoped, Effect.provide(keptBy(log, kept, reported)));
-    }
+    "stays connected through the silence where the client's protocol acknowledges, as a socket's",
+    () =>
+      Effect.gen(function* () {
+        expect(yield* silentWatch(true)).toStrictEqual([1, 1]);
+      })
   );
 });
 
@@ -680,66 +618,61 @@ describe("an RPC watch's reconnect rule", () => {
 });
 
 describe("an RPC watch of a log source", () => {
-  it.effect(
-    "sends no position of its own for each entry its match skips, where the protocol keeps subscriptions",
-    () =>
-      Effect.gen(function* () {
-        const queue = yield* Queue.unbounded<typeof Posted.payload.Type>();
-        const sent: RpcMessage.FromServerEncoded[] = [];
+  it.effect("sends no position of its own for each entry its match skips", () =>
+    Effect.gen(function* () {
+      const queue = yield* Queue.unbounded<typeof Posted.payload.Type>();
+      const sent: RpcMessage.FromServerEncoded[] = [];
 
-        const posted = Event.implement(Posted, {
-          log: {
-            emit: Stream.fromQueue(queue).pipe(
-              Stream.map((data) => ({ eventId: data.id, data }))
-            ),
-          },
-          match: ({ channel }, data) =>
-            channel === undefined || data.channel === channel,
-        });
+      const posted = Event.implement(Posted, {
+        log: {
+          emit: Stream.fromQueue(queue).pipe(
+            Stream.map((data) => ({ eventId: data.id, data }))
+          ),
+        },
+        match: ({ channel }, data) =>
+          channel === undefined || data.channel === channel,
+      });
 
-        const skipped = Array.from({ length: 20 }, (_, n) => ({
-          id: `r${n}`,
-          channel: "random",
-          text: `noise ${n}`,
-        }));
+      const skipped = Array.from({ length: 20 }, (_, n) => ({
+        id: `r${n}`,
+        channel: "random",
+        text: `noise ${n}`,
+      }));
 
-        const received = yield* Effect.gen(function* () {
-          const client = yield* ActionRpc.client(ActionRpc.make([Posted]));
+      const received = yield* Effect.gen(function* () {
+        const client = yield* ActionRpc.client(ActionRpc.make([Posted]));
 
-          const fiber = yield* client
-            .watch(Posted, { channel: "general" })
-            .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+        const fiber = yield* client
+          .watch(Posted, { channel: "general" })
+          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
-          yield* settle;
-          yield* Queue.offerAll(queue, [
-            ...skipped,
-            { id: "g1", channel: "general", text: "hi" },
-          ]);
+        yield* settle;
+        yield* Queue.offerAll(queue, [
+          ...skipped,
+          { id: "g1", channel: "general", text: "hi" },
+        ]);
 
-          return yield* Fiber.join(fiber);
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            inMemoryValuesProtocolTo(
-              ActionRpc.layer(ActionRpc.make([Posted]), posted),
-              {
-                keeper: { keep: () => Effect.void },
-                sent,
-              }
-            )
+        return yield* Fiber.join(fiber);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          inMemoryValuesProtocolTo(
+            ActionRpc.layer(ActionRpc.make([Posted]), posted),
+            { sent }
           )
-        );
+        )
+      );
 
-        const values = sent.flatMap((each) =>
-          each._tag === "Chunk" ? each.values : []
-        );
+      const values = sent.flatMap((each) =>
+        each._tag === "Chunk" ? each.values : []
+      );
 
-        expect(received).toMatchObject([{ _tag: "Occurrence", eventId: "g1" }]);
-        expect(
-          values.map((value) =>
-            Predicate.isTagged(value, "Checked") ? "Checked" : "other"
-          )
-        ).toStrictEqual(["Checked", "other"]);
-      }).pipe(Effect.provide(Event.layerMemory))
+      expect(received).toMatchObject([{ _tag: "Occurrence", eventId: "g1" }]);
+      expect(
+        values.map((value) =>
+          Predicate.isTagged(value, "Checked") ? "Checked" : "other"
+        )
+      ).toStrictEqual(["Checked", "other"]);
+    }).pipe(Effect.provide(Event.layerMemory))
   );
 });

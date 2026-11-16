@@ -2,7 +2,7 @@
 
 Complete applications built with `@gjermundgaraba/effect-actions`. Each is a directory you can run, with its own tests and a README that says what it shows and where. They are type-checked, linted and tested with the library, and they ship in the package, at `node_modules/@gjermundgaraba/effect-actions/examples`.
 
-[quickstart](quickstart/), [notes-service](notes-service/), [mcp-tools](mcp-tools/), [assistant](assistant/), [live-rpc](live-rpc/), [build-events](build-events/) and [kitchen-sink](kitchen-sink/): which to start from, by what you are building, is the table in [docs/README.md](../docs/README.md#examples).
+[quickstart](quickstart/), [notes-service](notes-service/), [mcp-tools](mcp-tools/), [assistant](assistant/), [live-rpc](live-rpc/), [shopping-carts](shopping-carts/), [build-events](build-events/) and [kitchen-sink](kitchen-sink/): which to start from, by what you are building, is the table in [docs/README.md](../docs/README.md#examples).
 
 ## Run one
 

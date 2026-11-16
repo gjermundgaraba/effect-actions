@@ -219,10 +219,6 @@ export const Http = ActionHttp.make(
 
 - **Which deployment.** As over MCP, a log source and a `subscription` hook need one server that outlives a request.
 
-## Serve what another server serves
-
-`ActionHttp.placed(binding, client)` stands, in a surface's list of implementations, for the binding's actions and event types where another server serves them, such as a Worker in front of the Durable Object that holds the data: each call and subscription is sent on, with the caller's headers, to the server `client` reaches for its input and its contract, which serves them in its own `ActionHttp.layer` of the binding, and its answer is passed back. `ActionHttp.layer`, `ActionMcp.layerHttp` and `ActionRpc.layer` take it beside their own implementations. Both servers verify the credential, so both are given the verifier; the server reached authorizes. Its rules are on `ActionHttp.placed`. An application doing it, a Worker sending each room's calls to its Durable Object, is `@gjermundgaraba/effect-actions-cloudflare`'s chat-rooms, through `ActionDurableObject.placed`: that package's `docs/ActionDurableObject-placement.md`.
-
 ## Call the API from a browser
 
 Code outside an Effect builds the client once with `ActionHttp.fetchClient` and runs each call with `Effect.runPromise`. Files: [notes-service/src/browser.ts](../examples/notes-service/src/browser.ts), [kitchen-sink/src/sdk.ts](../examples/kitchen-sink/src/sdk.ts) (a `baseUrl`, two headers).

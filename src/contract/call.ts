@@ -76,7 +76,11 @@ export const jsonRoundTrip = <S extends Codec>(schema: S) => {
     );
 };
 
-export const watchInput = (
+/**
+ * A call's or a watch's input as it is sent, `{}` decoded where it is left out: its JSON, and the
+ * value the server decodes from it.
+ */
+export const sentInput = (
   event: Pick<Action.Any, "input">,
   input: ErasedValue
 ): Effect.Effect<

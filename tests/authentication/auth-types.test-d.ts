@@ -85,14 +85,20 @@ export const declarationTypes = () => {
     readonly [typeof Status]
   >();
 
-  const wrong = Authentication.make("auth-types.Wrong", Stranger);
+  const wrong = Authentication.make("auth-types.Wrong", Stranger, {
+    principal: (stranger) => stranger,
+  });
 
   Authentication.make("auth-types.Two", Stranger, {
+    principal: (stranger) => stranger,
     // @ts-expect-error -- A record of schemes.
     security: { first: HttpApiSecurity.bearer, second: HttpApiSecurity.bearer },
   });
-  // @ts-expect-error -- No scheme.
-  Authentication.make("auth-types.None", Stranger, { security: {} });
+  Authentication.make("auth-types.None", Stranger, {
+    principal: (stranger) => stranger,
+    // @ts-expect-error -- No scheme.
+    security: {},
+  });
 
   Authentication.make("auth-types.Principal", Stranger, {
     principal: (stranger) => {
@@ -101,12 +107,19 @@ export const declarationTypes = () => {
       return stranger;
     },
   });
+  // @ts-expect-error -- A descriptor names its identity's principal.
+  Authentication.make("auth-types.Unnamed", Stranger);
+  // @ts-expect-error -- Options without a principal.
+  Authentication.make("auth-types.Unkeyed", Stranger, {
+    security: HttpApiSecurity.basic,
+  });
   Authentication.make("auth-types.NumberPrincipal", Stranger, {
     // @ts-expect-error -- A principal is a string.
     principal: () => 1,
   });
 
   const Session = Authentication.make("auth-types.Session", Stranger, {
+    principal: (stranger) => stranger,
     security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
   });
 
@@ -117,6 +130,7 @@ export const declarationTypes = () => {
   });
 
   const Basic = Authentication.make("auth-types.Basic", Stranger, {
+    principal: (stranger) => stranger,
     security: HttpApiSecurity.basic,
   });
 
@@ -126,9 +140,9 @@ export const declarationTypes = () => {
     return Effect.succeed(credentials.username);
   });
 
-  const maybeBasic: Authentication.Options & {
+  const maybeBasic: Authentication.Options<string> & {
     readonly security?: typeof HttpApiSecurity.basic;
-  } = {};
+  } = { principal: (stranger) => stranger };
 
   const MaybeBearer = Authentication.make(
     "auth-types.Maybe",
@@ -144,18 +158,13 @@ export const declarationTypes = () => {
     return Effect.succeed("s");
   });
 
-  // @ts-expect-error -- Explicit options naming a scheme require the options, which alone hold it.
-  Authentication.make<
-    "auth-types.Gone",
-    Stranger,
-    string,
-    { readonly security: typeof HttpApiSecurity.basic }
-  >("auth-types.Gone", Stranger);
-
-  Authentication.make("auth-types.Typo", Stranger, {
-    // @ts-expect-error -- No option `securty`.
+  const typo = {
+    principal: (stranger: string) => stranger,
     securty: HttpApiSecurity.basic,
-  });
+  };
+
+  // @ts-expect-error -- No option `securty`.
+  Authentication.make("auth-types.Typo", Stranger, typo);
 
   Authentication.layer(Session, () => Effect.succeed("s"), {
     // @ts-expect-error -- Only a Bearer scheme publishes an OAuth protected resource: a cookie names none.
@@ -218,7 +227,11 @@ export const providerTypes = () => {
     )
   );
 
-  const OtherLogin = Authentication.make("auth-types.OtherLogin", CurrentActor);
+  const OtherLogin = Authentication.make(
+    "auth-types.OtherLogin",
+    CurrentActor,
+    { principal: (actor) => actor.id }
+  );
 
   const other = Authentication.layer(OtherLogin, () =>
     Effect.succeed(actors.alice)
@@ -386,16 +399,19 @@ Authentication.make("auth-types.Kept", CurrentActor, {
 });
 
 Authentication.make("auth-types.Other", CurrentActor, {
+  principal: (actor) => actor.id,
   // @ts-expect-error -- A schema of another type than the identity.
   schema: Schema.Struct({ id: Schema.Finite }),
 });
 
 Authentication.make("auth-types.Wider", CurrentActor, {
+  principal: (actor) => actor.id,
   // @ts-expect-error -- A schema whose type has a field the identity lacks.
   schema: Schema.Struct({ ...Member.fields, team: Schema.String }),
 });
 
 Authentication.make("auth-types.Narrower", CurrentActor, {
+  principal: (actor) => actor.id,
   // @ts-expect-error -- A schema whose type lacks one of the identity's fields.
   schema: Schema.Struct({
     id: Member.fields.id,

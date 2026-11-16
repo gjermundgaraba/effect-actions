@@ -1,75 +1,74 @@
+import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { Effect, Layer, Predicate, Stream } from "effect";
-import { Headers } from "effect/http";
+import { Headers, HttpClient, HttpClientRequest } from "effect/http";
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 
+import { RoomHttp } from "./Api.js";
 import { MessagePosted } from "./chat/Chat.js";
 import type { DemoRoomName } from "./chat/Chat.js";
-import { PreviewsChanged } from "./lobby/Lobby.js";
-import {
-  LobbyRpc,
-  protocolVersion,
-  RoomRpc,
-  unsupportedProtocol,
-} from "./Rpc.js";
+import { protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
 
-export const connection = (url: string) =>
-  RpcClient.layerProtocolSocket({
-    retryPolicy: ActionRpc.reconnectUntil(unsupportedProtocol),
-  }).pipe(
-    Layer.provide(Socket.layerWebSocket(`${url}?protocol=${protocolVersion}`)),
-    Layer.provide(RpcSerialization.layerJson)
+export const overSocket = RpcClient.layerProtocolSocket({
+  retryPolicy: ActionRpc.reconnectUntil(unsupportedProtocol),
+}).pipe(Layer.provide(RpcSerialization.layerJson));
+
+export const roomConnection = (baseUrl: string, room: DemoRoomName) => {
+  const url = new URL(`/rooms/${room}/rpc`, baseUrl);
+
+  url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
+  url.searchParams.set("protocol", protocolVersion);
+
+  return overSocket.pipe(
+    Layer.provide(Socket.layerWebSocket(url.href)),
+    Layer.provide(Socket.layerWebSocketConstructorGlobal)
   );
+};
 
-export const openRoom = (room: DemoRoomName, token: string) =>
+export const openRoom = (baseUrl: string, room: DemoRoomName, token: string) =>
   Effect.gen(function* () {
-    const client = yield* ActionRpc.client(RoomRpc);
-    const headers = { authorization: `Bearer ${token}` };
-    const signedIn = RpcClient.withHeaders(headers);
+    const client = yield* ActionHttp.client(RoomHttp, {
+      baseUrl,
+      transformClient: HttpClient.mapRequest(
+        HttpClientRequest.bearerToken(token)
+      ),
+    });
 
     return {
       read: (after: number) =>
-        client.readMessages({ room, after }).pipe(
-          signedIn,
-          Effect.map(({ messages }) => messages)
+        Effect.map(
+          client.readMessages({ room, after }),
+          ({ messages }) => messages
         ),
       post: (text: string) =>
         Effect.flatMap(
           Effect.sync(() => crypto.randomUUID()),
           (request) =>
             client.postMessage({ room, text, request }).pipe(
-              signedIn,
               Effect.retry({
-                while: (error) => Predicate.isTagged(error, "RpcClientError"),
+                while: (error) =>
+                  Predicate.isTagged(error, "HttpClientError") &&
+                  error.reason._tag === "TransportError",
                 times: 2,
               })
             )
         ),
-      messages: (after: number) =>
-        client
-          .watch(MessagePosted, { room }, { cursor: String(after) })
-          .pipe(
-            Stream.updateService(
-              RpcClient.CurrentHeaders,
-              Headers.merge(Headers.fromInput(headers))
-            )
-          ),
-      remove: (id: number) =>
-        client.deleteMessage({ room, id }).pipe(
-          signedIn,
-          Effect.as("removed" as const),
-          Effect.catchTags({
-            MessageNotFound: () => Effect.succeed("removed" as const),
-            NotAuthor: () => Effect.succeed("not-yours" as const),
-          })
-        ),
     };
   });
 
-export const followLobby = Effect.map(ActionRpc.client(LobbyRpc), (client) =>
-  client.watch(PreviewsChanged, {}).pipe(
-    Stream.filter((received) => Predicate.isTagged(received, "Occurrence")),
-    Stream.map(({ data }) => data.previews)
-  )
-);
+export const followRoom = (room: DemoRoomName, token: string) =>
+  Effect.map(
+    ActionRpc.client(RoomRpc),
+    (client) => (after: number) =>
+      client
+        .watch(MessagePosted, { room }, { cursor: String(after), mode: "poll" })
+        .pipe(
+          Stream.updateService(
+            RpcClient.CurrentHeaders,
+            Headers.merge(
+              Headers.fromInput({ authorization: `Bearer ${token}` })
+            )
+          )
+        )
+  );

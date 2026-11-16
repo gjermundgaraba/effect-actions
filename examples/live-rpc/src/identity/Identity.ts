@@ -10,4 +10,6 @@ export class CurrentMember extends Context.Service<CurrentMember, Member>()(
   "live-rpc/CurrentMember"
 ) {}
 
-export const Login = Authentication.make("live-rpc.Login", CurrentMember);
+export const Login = Authentication.make("live-rpc.Login", CurrentMember, {
+  principal: (member) => member.id,
+});

@@ -3,7 +3,6 @@ import {
   Duration,
   Effect,
   ErrorReporter,
-  Exit,
   Fiber,
   Layer,
   Schema,
@@ -16,7 +15,6 @@ import { TestClock } from "effect/testing";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
-import { memoryStorage } from "../../src/contract/log.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { verify } from "../support/app/authentication.js";
@@ -171,16 +169,13 @@ describe("HTTP events", () => {
           })
         );
 
-        const refusingEmit = Layer.effect(Event.Events)(
-          Event.makeEvents({ log: () => memoryStorage(), emits: false })
-        );
-
         const answers = yield* Effect.forEach([0, 1], () =>
           Effect.flatMap(
             subscribe("counter.counted", { input: {}, cursor: null }),
             answerOf
           )
         ).pipe(
+          Effect.tap(settle),
           Effect.provide(
             Layer.provideMerge(
               Testing.layer(
@@ -188,7 +183,7 @@ describe("HTTP events", () => {
                   actions: [Counted],
                 })
               ),
-              refusingEmit
+              Event.layerMemory
             )
           )
         );
@@ -736,38 +731,6 @@ describe("HTTP events", () => {
     expect(() => ActionHttp.make([Pinged, Ping])).toThrow(/pinged/u);
     expect(() => ActionHttp.make([Posted, Posted])).toThrow(/message\.posted/u);
   });
-
-  it.effect(
-    "fails to build where a protected event's subscription hook has no principal to key it",
-    () =>
-      Effect.gen(function* () {
-        const Anonymous = Authentication.make("events.Anonymous", CurrentActor);
-
-        const hooked = Event.implement(
-          Changed,
-          {
-            check: () => Effect.succeed({ cursor: "0", events: [] }),
-            subscription: () => Effect.void,
-          },
-          { authorize: Event.allowAll }
-        );
-
-        const exit = yield* Effect.exit(
-          Layer.build(
-            Testing.layer(
-              ActionHttp.layer(
-                ActionHttp.make([Changed], { authentication: Anonymous }),
-                hooked
-              ).pipe(Layer.provide(Authentication.layer(Anonymous, verify)))
-            )
-          ).pipe(Effect.scoped)
-        );
-
-        expect(Exit.isFailure(exit) ? String(exit.cause) : "built").toContain(
-          "needs principal to tell poll subscribers apart"
-        );
-      }).pipe(Effect.provide(Event.layerMemory))
-  );
 });
 
 const watchedBy = <A, E>(

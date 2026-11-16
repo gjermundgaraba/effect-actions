@@ -1,0 +1,682 @@
+import { describe, expect, it } from "@effect/vitest";
+import { Arbitrary, Cause, Effect, Exit, Layer, Schema, Stream } from "effect";
+import {
+  Entity,
+  MessageStorage,
+  ShardingConfig,
+  TestRunner,
+} from "effect/cluster";
+import { RpcClient } from "effect/rpc";
+
+import * as Action from "../../src/contract/Action.js";
+import * as Event from "../../src/contract/Event.js";
+import * as ActionEntity from "../../src/entity/ActionEntity.js";
+import * as ActionRpc from "../../src/rpc/ActionRpc.js";
+import { DeclaredFailure } from "../../src/rpc/erased.js";
+import {
+  makeRooms,
+  Posted,
+  Room,
+  RoomClosed,
+  signIn,
+  onTestRunner,
+} from "../support/rooms.js";
+import { streamOf, unaryOf } from "../support/rpc.js";
+
+const signedInAs = (token: string) =>
+  RpcClient.withHeaders({ authorization: `Bearer ${token}` });
+
+const roomClient = ActionEntity.client(Room);
+
+const Page = Schema.Struct({
+  events: Schema.Array(
+    Schema.Struct({ data: Schema.Struct({ text: Schema.String }) })
+  ),
+  cursor: Schema.NullOr(Schema.String),
+  truncated: Schema.Boolean,
+  hasMore: Schema.Boolean,
+  nextPollMs: Schema.Finite,
+});
+
+const decodePage = Schema.decodeUnknownEffect(Page);
+
+const poll = (entityId: string, cursor: string | null, maxEvents?: number) =>
+  Effect.gen(function* () {
+    const rpcs = yield* Room.client;
+
+    const answer = rpcs(entityId)["room.posted/poll"]?.({
+      input: { room: entityId },
+      cursor,
+      ...(maxEvents === undefined ? {} : { maxEvents }),
+    });
+
+    const { events, ...page } = yield* decodePage(
+      yield* unaryOf(answer, "room.posted/poll")
+    );
+
+    return { ...page, texts: events.map(({ data }) => data.text) };
+  });
+
+const otherThanLobby = Arbitrary.schema(Schema.String).pipe(
+  Arbitrary.filter((named) => named !== "lobby")
+);
+
+describe("ActionEntity on Entity.makeTestClient", () => {
+  it.effect(
+    "answers an action, refuses an input naming another entity with Forbidden, and one that does not decode with InvalidInput",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const clientFor = yield* Entity.makeTestClient(
+          Room,
+          ActionEntity.layer(Room, rooms.implementations)
+        );
+
+        const { read } = yield* clientFor("lobby");
+        const readOf = (room: Schema.Json) => unaryOf(read?.({ room }), "read");
+
+        const answer = yield* readOf("lobby");
+        const refused = yield* Effect.flip(readOf("kitchen"));
+        const invalid = yield* Effect.flip(readOf(5));
+
+        expect(answer).toStrictEqual({ entity: "lobby", texts: [] });
+        expect(refused).toBeInstanceOf(DeclaredFailure);
+        expect(refused).toMatchObject({ json: { _tag: "Forbidden" } });
+        expect(invalid).toMatchObject({ json: { _tag: "InvalidInput" } });
+        expect(rooms.ran.read).toBe(1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide([ShardingConfig.layer(), signIn, Event.layerMemory])
+      );
+    }
+  );
+});
+
+const Probe = Action.make("probe", {
+  description: "Answer the entity it reached.",
+  input: {},
+  success: Schema.String,
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+describe("ActionEntity's log sources on Entity.makeTestClient", () => {
+  it.effect(
+    "dies as it builds an entity whose log source has an emit stream, naming Events.publish",
+    () => {
+      const rooms = makeRooms();
+
+      const emitting = Event.implement(Posted, {
+        log: { emit: Stream.never },
+        key: ({ room: named }) => named,
+      });
+
+      const [echoing, actions, tallying] = rooms.implementations;
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Effect.gen(function* () {
+            const clientFor = yield* Entity.makeTestClient(
+              Room,
+              ActionEntity.layer(Room, [echoing, actions, tallying, emitting])
+            );
+
+            const { read } = yield* clientFor("lobby");
+
+            return yield* unaryOf(read?.({ room: "lobby" }), "read");
+          }).pipe(Effect.scoped)
+        );
+
+        expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toContain(
+          "a cluster entity runs no log source's emit stream"
+        );
+      }).pipe(
+        Effect.provide([ShardingConfig.layer(), signIn, Event.layerMemory])
+      );
+    }
+  );
+});
+
+describe("ActionEntity's streaming action on Entity.makeTestClient", () => {
+  it.effect(
+    "streams each progress as a Progress before the answer as its Final",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const clientFor = yield* Entity.makeTestClient(
+          Room,
+          ActionEntity.layer(Room, rooms.implementations)
+        );
+
+        const { tally } = yield* clientFor("lobby");
+        const sent = streamOf(tally?.({ room: "lobby", upTo: 2 }), "tally");
+
+        expect(yield* Stream.runCollect(sent)).toStrictEqual([
+          { _tag: "Progress", value: { at: 1 } },
+          { _tag: "Progress", value: { at: 2 } },
+          { _tag: "Final", value: { counted: 2 } },
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide([ShardingConfig.layer(), signIn, Event.layerMemory])
+      );
+    }
+  );
+});
+
+const Count = Action.make("count", {
+  description: "Answer how many builds its implementation ran.",
+  input: { room: Schema.String },
+  success: Schema.Int,
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+const Counter = ActionEntity.make("Counter", ActionRpc.make([Count]), {
+  key: ({ room }) => room,
+});
+
+const Lines = Action.make("lines", {
+  description: "Stream a room's numbered lines.",
+  input: { room: Schema.String, upTo: Schema.Int },
+  success: Action.Stream({ n: Schema.Int }),
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
+  key: ({ room }) => room,
+});
+
+describe("ActionEntity's stream answer", () => {
+  it.live(
+    "streams each element of an Action.Stream answer through the typed client",
+    () => {
+      let ran = 0;
+
+      const lining = Action.implement(Lines, ({ upTo }) =>
+        Stream.fromEffect(Effect.sync(() => (ran += 1))).pipe(
+          Stream.flatMap(() =>
+            Stream.range(1, upTo).pipe(Stream.map((n) => ({ n })))
+          )
+        )
+      );
+
+      return Effect.gen(function* () {
+        const lobby = yield* ActionEntity.client(Liner);
+
+        const elements = yield* Stream.runCollect(
+          lobby.lines({ room: "lobby", upTo: 3 })
+        );
+
+        expect(elements).toStrictEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+        expect(ran).toBe(1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ActionEntity.layer(Liner, lining).pipe(
+            Layer.provideMerge(TestRunner.layer)
+          )
+        )
+      );
+    }
+  );
+});
+
+describe("ActionEntity under Action.layer", () => {
+  it.live(
+    "builds each entity id's implementations itself, sharing no build with Action.layer above it",
+    () => {
+      let builds = 0;
+
+      const counting = Action.implement(
+        Count,
+        Effect.sync(() => {
+          builds += 1;
+
+          return () => Effect.succeed(builds);
+        })
+      );
+
+      return Effect.gen(function* () {
+        const clientOf = yield* ActionEntity.client(Counter);
+        const before = builds;
+
+        yield* clientOf.count({ room: "a" });
+        yield* clientOf.count({ room: "b" });
+        yield* clientOf.count({ room: "a" });
+
+        expect(before).toBe(1);
+        expect(builds).toBe(3);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ActionEntity.layer(Counter, counting).pipe(
+            Layer.provideMerge(TestRunner.layer),
+            Layer.provideMerge(Action.layer(counting))
+          )
+        )
+      );
+    }
+  );
+});
+
+interface Owner {
+  id: string | undefined;
+}
+
+describe("ActionEntity's key", () => {
+  it.effect(
+    "refuses with Forbidden a key that answers no string, its handler never running",
+    () => {
+      let ran = 0;
+      const owner = { id: "lobby" };
+      const unset: Owner = owner;
+
+      const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
+        key: () => owner.id,
+      });
+
+      const probing = Action.implement(Probe, () =>
+        Effect.sync(() => {
+          ran += 1;
+
+          return "reached";
+        })
+      );
+
+      return Effect.gen(function* () {
+        const clientFor = yield* Entity.makeTestClient(
+          Prober,
+          ActionEntity.layer(Prober, probing)
+        );
+
+        const { probe } = yield* clientFor("lobby");
+        const keyed = unaryOf(probe?.({}), "probe");
+
+        expect(yield* keyed).toBe("reached");
+
+        unset.id = undefined;
+
+        const refused = yield* Effect.flip(keyed);
+
+        expect(refused).toMatchObject({ json: { _tag: "Forbidden" } });
+        expect(ran).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(ShardingConfig.layer()));
+    }
+  );
+});
+
+describe("ActionEntity.client's key", () => {
+  it.live(
+    "fails a call whose key answers no string with Forbidden, sending nothing",
+    () => {
+      let ran = 0;
+      const owner = { id: "lobby" };
+      const unset: Owner = owner;
+
+      const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
+        key: () => owner.id,
+      });
+
+      const probing = Action.implement(Probe, () =>
+        Effect.sync(() => {
+          ran += 1;
+
+          return "reached";
+        })
+      );
+
+      return Effect.gen(function* () {
+        const client = yield* ActionEntity.client(Prober);
+
+        expect(yield* client.probe()).toBe("reached");
+
+        unset.id = undefined;
+
+        const refused = yield* Effect.flip(client.probe());
+
+        expect(refused).toBeInstanceOf(Action.Forbidden);
+        expect(refused.message).toContain("names no entity of Prober");
+        expect(ran).toBe(1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ActionEntity.layer(Prober, probing).pipe(
+            Layer.provideMerge(TestRunner.layer)
+          )
+        )
+      );
+    }
+  );
+
+  it.live(
+    "routes a call on its decoded input, a key field's decoding default included",
+    () => {
+      const Where = Action.make("where", {
+        description: "Answer the entity it reached.",
+        input: {
+          room: Schema.String.pipe(
+            Schema.withDecodingDefaultKey(Effect.succeed("lobby"))
+          ),
+        },
+        success: Schema.String,
+        readOnly: true,
+        caller: Action.Anyone,
+      });
+
+      const Finder = ActionEntity.make("Finder", ActionRpc.make([Where]), {
+        key: ({ room }) => room,
+      });
+
+      const finding = Action.implement(Where, () =>
+        Effect.map(Entity.CurrentAddress, ({ entityId }) => entityId)
+      );
+
+      return Effect.gen(function* () {
+        const client = yield* ActionEntity.client(Finder);
+
+        expect(yield* client.where()).toBe("lobby");
+        expect(yield* client.where({ room: "kitchen" })).toBe("kitchen");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          ActionEntity.layer(Finder, finding).pipe(
+            Layer.provideMerge(TestRunner.layer)
+          )
+        )
+      );
+    }
+  );
+});
+
+describe("ActionEntity on a TestRunner", () => {
+  it.live.prop(
+    "refuses any key other than the entity's with Forbidden, its handler never running",
+    [otherThanLobby],
+    ([other]) => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const lobby = (yield* Room.client)("lobby");
+        const named = { room: other };
+
+        const refusedOf = (tag: string, payload: Schema.Json) => {
+          const answer = lobby[tag]?.(payload, {
+            headers: { authorization: "Bearer alice" },
+          });
+
+          if (Effect.isEffect(answer)) {
+            return Effect.flip(answer);
+          }
+
+          return answer !== undefined && Stream.isStream(answer)
+            ? Effect.flip(Stream.runDrain(answer))
+            : Effect.die(new Error(`no rpc ${tag}`));
+        };
+
+        const refusals = [
+          yield* refusedOf("read", named),
+          yield* refusedOf("shut", named),
+          yield* refusedOf("boom", named),
+          yield* refusedOf("echo", {
+            ...named,
+            payload: { text: "", amount: 0, count: 0, level: "low", tags: [] },
+          }),
+          yield* refusedOf("post", { ...named, text: "hi" }),
+          yield* refusedOf("tally", { ...named, upTo: 2 }),
+          yield* refusedOf(ActionRpc.pollTag(Posted.name), {
+            input: named,
+            cursor: null,
+          }),
+        ];
+
+        for (const refused of refusals) {
+          expect(refused).toMatchObject({ json: { _tag: "Forbidden" } });
+        }
+
+        expect(rooms.ran).toStrictEqual({
+          echo: 0,
+          post: 0,
+          read: 0,
+          tally: 0,
+          builds: 1,
+        });
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+    },
+    { timeout: 30_000, arbitrary: { runs: 50 } }
+  );
+
+  it.live.prop(
+    "sends each call and watch of the typed client to the entity its input's key names",
+    [otherThanLobby],
+    ([other]) => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const client = yield* roomClient;
+
+        yield* client
+          .post({ room: other, text: "hi" })
+          .pipe(signedInAs("alice"));
+
+        const there = yield* client.read({ room: other });
+        const lobby = yield* client.read({ room: "lobby" });
+
+        const watched = yield* Stream.runHead(
+          client
+            .watch(Posted, { room: other }, { cursor: "0" })
+            .pipe(Stream.filter(({ _tag }) => _tag === "Occurrence"))
+        );
+
+        expect(there).toStrictEqual({ entity: other, texts: ["hi"] });
+        expect(lobby).toStrictEqual({ entity: "lobby", texts: [] });
+        expect(watched).toMatchObject({
+          _tag: "Some",
+          value: { _tag: "Occurrence", data: { text: "hi" } },
+        });
+        expect(rooms.ran.builds).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+    },
+    { timeout: 30_000, arbitrary: { runs: 20 } }
+  );
+
+  it.live("authenticates each call from the headers its client sends", () => {
+    const rooms = makeRooms();
+
+    return Effect.gen(function* () {
+      const lobby = yield* roomClient;
+      const post = { room: "lobby", text: "hi" };
+
+      const answered = yield* lobby.post(post).pipe(signedInAs("alice"));
+      const anonymous = yield* Effect.flip(lobby.post(post));
+
+      const unknown = yield* Effect.flip(
+        lobby.post(post).pipe(signedInAs("mallory"))
+      );
+
+      const elsewhere = yield* Effect.flip(
+        lobby.post({ room: "kitchen", text: "hi" })
+      );
+
+      expect(answered).toStrictEqual({ count: 1, by: "alice" });
+      expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
+      expect(unknown).toBeInstanceOf(Action.Unauthenticated);
+      expect(elsewhere).toBeInstanceOf(Action.Unauthenticated);
+      expect(rooms.ran.post).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+  });
+
+  it.live("fails with a declared error and its fields", () =>
+    Effect.gen(function* () {
+      const lobby = yield* roomClient;
+
+      const closed = yield* Effect.flip(lobby.shut({ room: "lobby" }));
+
+      expect(closed).toStrictEqual(
+        new RoomClosed({ room: "lobby", reason: "shut" })
+      );
+    }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
+  );
+
+  it.live(
+    "answers a defect with Internal server error, and its next call on the same handlers",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const lobby = yield* roomClient;
+
+        const died = yield* Effect.exit(lobby.boom({ room: "lobby" }));
+        const read = yield* lobby.read({ room: "lobby" });
+
+        expect(Exit.isFailure(died) && Cause.hasDies(died.cause)).toBe(true);
+        expect(
+          String(Exit.isFailure(died) && Cause.squash(died.cause))
+        ).toContain("Internal server error");
+        expect(read).toStrictEqual({ entity: "lobby", texts: [] });
+        expect(rooms.ran.builds).toBe(1);
+      }).pipe(
+        Effect.timeout("5 seconds"),
+        Effect.scoped,
+        Effect.provide(onTestRunner(rooms))
+      );
+    }
+  );
+
+  it.live(
+    "keeps each entity's state its own, each building its handlers",
+    () => {
+      const rooms = makeRooms();
+
+      return Effect.gen(function* () {
+        const clientOf = yield* roomClient;
+
+        yield* Effect.forEach(
+          ["a", "b", "a"],
+          (room, at) =>
+            clientOf
+              .post({ room, text: `${room}${at}` })
+              .pipe(signedInAs("alice")),
+          { concurrency: "unbounded" }
+        );
+
+        const a = yield* clientOf.read({ room: "a" });
+        const b = yield* clientOf.read({ room: "b" });
+
+        expect({ ...a, texts: a.texts.toSorted() }).toStrictEqual({
+          entity: "a",
+          texts: ["a0", "a2"],
+        });
+        expect(b).toStrictEqual({ entity: "b", texts: ["b1"] });
+        expect(rooms.ran.builds).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+    }
+  );
+
+  it.live(
+    "answers an event's poll rpc past a cursor, and a watch follows it",
+    () =>
+      Effect.gen(function* () {
+        const a = yield* roomClient;
+
+        const start = yield* poll("a", null);
+
+        for (const text of ["one", "two", "three"]) {
+          yield* a.post({ room: "a", text }).pipe(signedInAs("alice"));
+        }
+
+        const first = yield* poll("a", start.cursor);
+        const second = yield* poll("a", first.cursor);
+
+        const watched = yield* a
+          .watch(Posted, { room: "a" }, { cursor: start.cursor })
+          .pipe(Stream.take(3), Stream.runCollect);
+
+        expect(start.texts).toStrictEqual([]);
+        expect(first.texts).toStrictEqual(["one", "two", "three"]);
+        expect(second.texts).toStrictEqual([]);
+        expect(
+          watched.map((received) =>
+            received._tag === "Occurrence" ? received.data.text : "gap"
+          )
+        ).toStrictEqual(["one", "two", "three"]);
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
+  );
+
+  it.live("hands a streaming action's progress on before its answer", () => {
+    const rooms = makeRooms();
+
+    return Effect.gen(function* () {
+      const lobby = yield* roomClient;
+      const seen: string[] = [];
+
+      const answer = yield* lobby.tally(
+        { room: "lobby", upTo: 3 },
+        { onProgress: ({ at }) => Effect.sync(() => seen.push(`at ${at}`)) }
+      );
+
+      seen.push(`counted ${answer.counted}`);
+
+      expect(seen).toStrictEqual(["at 1", "at 2", "at 3", "counted 3"]);
+      expect(rooms.ran.tally).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(onTestRunner(rooms)));
+  });
+
+  it.live(
+    "answers a poll page with hasMore past maxEvents, truncated for a cursor its log never minted, and a 5-second nextPollMs",
+    () =>
+      Effect.gen(function* () {
+        const a = yield* roomClient;
+
+        const start = yield* poll("a", null);
+
+        for (const text of ["one", "two", "three"]) {
+          yield* a.post({ room: "a", text }).pipe(signedInAs("alice"));
+        }
+
+        const first = yield* poll("a", start.cursor, 2);
+        const rest = yield* poll("a", first.cursor, 2);
+        const foreign = yield* poll("a", "minted-elsewhere");
+
+        expect(start).toMatchObject({
+          texts: [],
+          truncated: false,
+          hasMore: false,
+          nextPollMs: 5000,
+        });
+        expect(first).toMatchObject({
+          texts: ["one", "two"],
+          truncated: false,
+          hasMore: true,
+          nextPollMs: 5000,
+        });
+        expect(rest).toMatchObject({
+          texts: ["three"],
+          truncated: false,
+          hasMore: false,
+        });
+        expect(foreign).toMatchObject({ truncated: true, hasMore: false });
+        expect(foreign.cursor).toBe(rest.cursor);
+      }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
+  );
+
+  it.live("stores no message of its calls", () =>
+    Effect.gen(function* () {
+      const lobby = yield* roomClient;
+
+      for (let at = 0; at < 10; at += 1) {
+        yield* lobby
+          .post({ room: "lobby", text: `${at}` })
+          .pipe(signedInAs("alice"));
+      }
+
+      const driver = yield* MessageStorage.MemoryDriver;
+
+      expect(driver.journal).toStrictEqual([]);
+      expect(driver.requests.size).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(onTestRunner(makeRooms())))
+  );
+});

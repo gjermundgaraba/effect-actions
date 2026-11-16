@@ -28,7 +28,9 @@ import { serve } from "../support/serve.js";
 
 class Caller extends Context.Service<Caller, string>()("refusal/Caller") {}
 
-const CallerLogin = Authentication.make("refusal.CallerLogin", Caller);
+const CallerLogin = Authentication.make("refusal.CallerLogin", Caller, {
+  principal: (caller) => caller,
+});
 
 const Private = Action.make("private", {
   description: "Signed in only",
@@ -281,6 +283,7 @@ describe("refusal", () => {
 
   it("refuses a protected resource under another scheme, as Authentication.layer does", () => {
     const Session = Authentication.make("refusal.Session", Caller, {
+      principal: (caller) => caller,
       security: HttpApiSecurity.apiKey({ in: "cookie", key: "session" }),
     });
 

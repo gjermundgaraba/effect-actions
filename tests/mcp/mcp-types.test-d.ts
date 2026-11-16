@@ -217,7 +217,9 @@ class Store extends Context.Service<Store, string>()("mcp-types/Store") {}
 
 class Region extends Context.Service<Region, string>()("mcp-types/Region") {}
 
-const Login = Authentication.make("mcp-types.Login", Caller);
+const Login = Authentication.make("mcp-types.Login", Caller, {
+  principal: (caller) => caller,
+});
 
 const Open = Action.make("open", read);
 

@@ -16,7 +16,9 @@ class Caller extends Context.Service<Caller, string>()(
   "protected-resource/Caller"
 ) {}
 
-const Login = Authentication.make("protected-resource.Login", Caller);
+const Login = Authentication.make("protected-resource.Login", Caller, {
+  principal: (caller) => caller,
+});
 
 const Identify = Action.make("identify", {
   description: "Name the caller.",

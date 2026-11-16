@@ -1,0 +1,730 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { SqliteClient } from "@effect/sql-sqlite-node";
+import { describe, expect, it } from "@effect/vitest";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
+import * as Event from "@gjermundgaraba/effect-actions/Event";
+import * as Stored from "@gjermundgaraba/effect-actions/Stored";
+import {
+  Context,
+  DateTime,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Match,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
+import { SqlClient } from "effect/sql";
+import { TestClock } from "effect/testing";
+
+import {
+  attachmentsOf,
+  Events,
+  makeEvents,
+  memoryRevisions,
+} from "../../src/contract/hub.js";
+import { memoryStorage } from "../../src/contract/log.js";
+import type { LogStorage, Read } from "../../src/contract/log.js";
+import { Posted, settle, texts } from "../support/events.js";
+
+const Built = Event.make("build.finished", {
+  description: "A build finished.",
+  payload: { n: Schema.Int },
+  caller: Action.Anyone,
+});
+
+const Pushed = Event.make("build.pushed", {
+  description: "A build was pushed.",
+  payload: { n: Schema.Int },
+  caller: Action.Anyone,
+});
+
+const Status = Event.make("build.status", {
+  description: "The build's status changed.",
+  payload: { state: Schema.String },
+  caller: Action.Anyone,
+});
+
+const logs = [Built, Pushed] as const;
+
+const bounds = { maxAge: 1000, maxEvents: 4 };
+
+const Key = Schema.UndefinedOr(Schema.Literals(["", "a", "b"]));
+
+const Command = Schema.Union([
+  Schema.TaggedStruct("Publish", {
+    log: Schema.Literals([0, 1]),
+    key: Key,
+    eventId: Schema.UndefinedOr(Schema.String),
+    timestamp: Schema.UndefinedOr(
+      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 4e12 }))
+    ),
+  }),
+  Schema.TaggedStruct("Notify", { key: Key }),
+  Schema.TaggedStruct("Revision", { key: Key }),
+  Schema.TaggedStruct("Restart", {}),
+  Schema.TaggedStruct("Read", {
+    log: Schema.Literals([0, 1]),
+    from: Schema.Union([
+      Schema.Literals(["start", "foreign"]),
+      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 30 })),
+    ]),
+    limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 5 })),
+  }),
+]);
+
+const Step = Schema.Struct({
+  after: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 600 })),
+  command: Command,
+});
+
+const Steps = Schema.Array(Step).check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(40)
+);
+
+type Emitted = Event.Emitted<Event.Any>;
+
+const afterEpoch = (cursor: string) => cursor.slice(cursor.indexOf(":"));
+
+const projected = (
+  read: Read<{ value: Emitted; key: string | undefined } | undefined>
+) => ({
+  truncated: read.truncated,
+  hasMore: read.hasMore,
+  from: afterEpoch(read.from),
+  cursor: afterEpoch(read.cursor),
+  entries: read.entries.map(({ seq, at, cursor, value }) => ({
+    seq,
+    at,
+    cursor: afterEpoch(cursor),
+    key: value?.key,
+    data: value?.value.data,
+    eventId: value?.value.eventId,
+    timestamp:
+      value?.value.timestamp === undefined
+        ? undefined
+        : DateTime.toEpochMillis(value.value.timestamp),
+  })),
+});
+
+const opened = (events: Event.Events["Service"]) =>
+  Effect.gen(function* () {
+    const attachments = yield* attachmentsOf(events);
+
+    return {
+      events,
+      logs: [
+        yield* attachments.log(Built, bounds, undefined),
+        yield* attachments.log(Pushed, bounds, undefined),
+      ] as const,
+      status: yield* attachments.check(Status),
+    };
+  });
+
+type Opened = Effect.Success<ReturnType<typeof opened>>;
+
+type Command = typeof Command.Type;
+
+const databaseFile = Effect.map(
+  Effect.acquireRelease(
+    Effect.sync(() => mkdtempSync(path.join(tmpdir(), "effect-actions-sql-"))),
+    (directory) =>
+      Effect.sync(() => {
+        rmSync(directory, { recursive: true, force: true });
+      })
+  ),
+  (directory) => path.join(directory, "store.db")
+);
+
+const sqliteAt = (filename: string) =>
+  Layer.orDie(SqliteClient.layer({ filename }));
+
+const cursorFor = (
+  from: "start" | "foreign" | number,
+  minted: readonly string[]
+): string | null | undefined =>
+  Match.value(from).pipe(
+    Match.when("start", () => null),
+    Match.when("foreign", () => "elsewhere:1"),
+    Match.orElse((index) => minted[index % Math.max(minted.length, 1)])
+  );
+
+const restartable = (build: Effect.Effect<Opened, never, Scope.Scope>) =>
+  Effect.gen(function* () {
+    let scope = yield* Scope.make();
+    let current = yield* Scope.provide(build, scope);
+    let firstEpoch: string | undefined;
+    const minted: string[] = [];
+
+    yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+
+    return (command: Command, n: number) =>
+      Effect.gen(function* () {
+        const { events, logs: attached, status } = current;
+
+        switch (command._tag) {
+          case "Publish": {
+            yield* events.publish(
+              logs[command.log],
+              {
+                data: { n },
+                eventId: command.eventId,
+                timestamp:
+                  command.timestamp === undefined
+                    ? undefined
+                    : DateTime.makeUnsafe(command.timestamp),
+              },
+              { key: command.key }
+            );
+
+            return undefined;
+          }
+
+          case "Notify": {
+            yield* events.notify(Status, { key: command.key });
+
+            return undefined;
+          }
+
+          case "Revision": {
+            const revision = yield* status.revision(command.key);
+            const epoch = revision.slice(0, revision.indexOf(":"));
+
+            firstEpoch ??= epoch;
+
+            return {
+              epochKept: epoch === firstEpoch,
+              revision: afterEpoch(revision),
+            };
+          }
+
+          case "Restart": {
+            yield* Scope.close(scope, Exit.void);
+            scope = yield* Scope.make();
+            current = yield* Scope.provide(build, scope);
+
+            return undefined;
+          }
+
+          case "Read": {
+            const cursor = cursorFor(command.from, minted);
+
+            if (cursor === undefined) {
+              return undefined;
+            }
+
+            const read = yield* attached[command.log].read(
+              cursor,
+              command.limit
+            );
+
+            minted.push(read.cursor);
+
+            return projected(read);
+          }
+        }
+      });
+  });
+
+const memorySystem = () => {
+  const storages = new Map<string, LogStorage<Emitted>>();
+  const revisions = memoryRevisions();
+
+  return restartable(
+    Effect.flatMap(
+      makeEvents({
+        log: (event) => {
+          const kept = storages.get(event.name) ?? memoryStorage();
+
+          storages.set(event.name, kept);
+
+          return kept;
+        },
+        revisions,
+      }),
+      opened
+    )
+  );
+};
+
+const sqlSystemOn = (client: Context.Context<SqlClient.SqlClient>) =>
+  restartable(
+    Effect.flatMap(
+      Layer.build(
+        Stored.layerEvents.pipe(Layer.provide(Layer.succeedContext(client)))
+      ),
+      (built) => opened(Context.get(built, Events))
+    )
+  );
+
+const sqlSystem = Effect.flatMap(
+  Layer.build(sqliteAt(":memory:")),
+  sqlSystemOn
+);
+
+interface Published {
+  readonly seq: number;
+  readonly at: number;
+  readonly cursor: string;
+  readonly key: string | undefined;
+  readonly data: { readonly n: number };
+  readonly eventId: string | undefined;
+  readonly timestamp: number | undefined;
+}
+
+type Observation = Effect.Success<
+  ReturnType<Effect.Success<ReturnType<typeof memorySystem>>>
+>;
+
+const everyStep: readonly Command[] = [
+  { _tag: "Read", log: 0, from: "foreign", limit: 5 },
+  { _tag: "Read", log: 1, from: "foreign", limit: 5 },
+  { _tag: "Revision", key: undefined },
+  { _tag: "Revision", key: "a" },
+];
+
+describe("Stored.layerEvents", () => {
+  it.effect.prop(
+    "answers every read and revision as a memory store kept across the same restarts does, each log holding what was published to it within its bounds",
+    { steps: Steps },
+    ({ steps }) =>
+      Effect.gen(function* () {
+        const memory = yield* memorySystem();
+        const sql = yield* sqlSystem;
+        const published: [Published[], Published[]] = [[], []];
+        let now = 0;
+
+        for (const [index, { after, command }] of steps.entries()) {
+          yield* TestClock.adjust(after);
+          now += after;
+
+          if (command._tag === "Publish") {
+            const log = published[command.log];
+
+            log.push({
+              seq: log.length + 1,
+              at: now,
+              cursor: `:${log.length + 1}`,
+              key: command.key,
+              data: { n: index },
+              eventId: command.eventId,
+              timestamp: command.timestamp,
+            });
+          }
+
+          const observations: Observation[] = [];
+
+          for (const each of [command, ...everyStep]) {
+            const [expected, observed] = yield* Effect.all([
+              memory(each, index),
+              sql(each, index),
+            ]);
+
+            expect(observed).toStrictEqual(expected);
+            observations.push(observed);
+          }
+
+          const youngest = now - bounds.maxAge;
+
+          const kept = published.map((log) =>
+            log
+              .filter(
+                (entry) =>
+                  entry.seq > log.length - bounds.maxEvents &&
+                  entry.at >= youngest
+              )
+              .slice(0, 5)
+          );
+
+          expect(
+            observations
+              .slice(1, 3)
+              .map((read) =>
+                read !== undefined && "entries" in read ? read.entries : read
+              )
+          ).toStrictEqual(kept);
+        }
+      }),
+    { arbitrary: { runs: 500 } }
+  );
+});
+
+const Signal = Schema.Array(Schema.Struct({ signal: Schema.Finite }));
+
+const gateOf = (sql: SqlClient.SqlClient) =>
+  sql.unsafe(Stored.changeSignal).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(Signal)),
+    Effect.map((rows) => rows[0]?.signal)
+  );
+
+describe("Stored.layerEvents' change signal", () => {
+  it.effect.prop(
+    "moves the sum of the revision counts and the log positions' last sequence numbers at each notify and publish, and at no read, revision or restart",
+    { steps: Steps },
+    ({ steps }) =>
+      Effect.gen(function* () {
+        const client = yield* Layer.build(sqliteAt(":memory:"));
+        const sql = Context.get(client, SqlClient.SqlClient);
+        const system = yield* sqlSystemOn(client);
+        let before = yield* gateOf(sql);
+
+        for (const [index, { command }] of steps.entries()) {
+          yield* system(command, index);
+
+          const after = yield* gateOf(sql);
+
+          expect({
+            command: command._tag,
+            moved: after !== before,
+          }).toStrictEqual({
+            command: command._tag,
+            moved: command._tag === "Publish" || command._tag === "Notify",
+          });
+
+          before = after;
+        }
+      }),
+    { arbitrary: { runs: 200 } }
+  );
+});
+
+describe("Stored.layerEvents on a database file", () => {
+  const logged = Event.implement(Posted, { log: {} });
+
+  it.effect(
+    "resumes a watch from a cursor after a restart on the same file, receiving every occurrence past it the log still keeps",
+    () =>
+      Effect.gen(function* () {
+        const onFile = Stored.layerEvents.pipe(
+          Layer.provide(sqliteAt(yield* databaseFile))
+        );
+
+        const cursor = yield* Effect.gen(function* () {
+          const events = yield* Event.Events;
+          const client = yield* Action.client(logged);
+
+          const watching = yield* client
+            .watch(Posted, {})
+            .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+
+          yield* settle;
+
+          for (const [id, text] of [
+            ["m1", "one"],
+            ["m2", "two"],
+            ["m3", "three"],
+          ] as const) {
+            yield* events.publish(Posted, {
+              data: { id, channel: "general", text },
+            });
+          }
+
+          const [one] = yield* Fiber.join(watching);
+
+          if (one?._tag !== "Occurrence" || one.cursor === null) {
+            throw new Error("Expected an occurrence with a cursor");
+          }
+
+          return one.cursor;
+        }).pipe(Effect.scoped, Effect.provide(onFile));
+
+        const resumed = yield* Effect.gen(function* () {
+          const client = yield* Action.client(logged);
+
+          return yield* client
+            .watch(Posted, {}, { cursor })
+            .pipe(Stream.take(2), Stream.runCollect);
+        }).pipe(Effect.scoped, Effect.provide(onFile));
+
+        expect(texts(resumed)).toStrictEqual(["two", "three"]);
+      })
+  );
+
+  it.live(
+    "publishes in a handler's transaction while a watcher reads the log, the watcher receiving what the transaction committed",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const events = yield* Event.Events;
+        const client = yield* Action.client(logged);
+
+        const watching = yield* client
+          .watch(Posted, {})
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+
+        yield* Effect.sleep("20 millis");
+
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TABLE notes (text TEXT)`;
+              yield* sql`INSERT INTO notes (text) VALUES ('one')`;
+              yield* events.publish(Posted, {
+                data: { id: "m1", channel: "general", text: "one" },
+              });
+              yield* Effect.sleep("20 millis");
+              yield* events.publish(Posted, {
+                data: { id: "m2", channel: "general", text: "two" },
+              });
+            })
+          )
+          .pipe(
+            Effect.timeoutOrElse({
+              duration: "2 seconds",
+              orElse: () =>
+                Effect.die(
+                  new Error(
+                    "A publish in a transaction waited 2 seconds on a watcher's read"
+                  )
+                ),
+            })
+          );
+
+        const received = yield* Fiber.join(watching).pipe(
+          Effect.timeoutOrElse({
+            duration: "2 seconds",
+            orElse: () =>
+              Effect.die(
+                new Error(
+                  "The watcher received no 2 occurrences in 2 seconds after the transaction committed"
+                )
+              ),
+          })
+        );
+
+        expect(texts(received)).toStrictEqual(["one", "two"]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.provideMerge(Stored.layerEvents, sqliteAt(":memory:"))
+        )
+      )
+  );
+
+  it.live(
+    "publishes in a handler's transaction while another fiber publishes outside it, keeping both",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const events = yield* Event.Events;
+        const attachments = yield* attachmentsOf(events);
+        const log = yield* attachments.log(Posted, undefined, undefined);
+        const begun = yield* Deferred.make<undefined>();
+
+        const publishing = (id: string) =>
+          events.publish(Posted, {
+            data: { id, channel: "general", text: id },
+            eventId: id,
+          });
+
+        const transaction = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`SELECT 1`;
+              yield* Deferred.succeed(begun, undefined);
+              yield* Effect.sleep("20 millis");
+              yield* publishing("inside");
+            })
+          )
+          .pipe(Effect.forkChild);
+
+        yield* Deferred.await(begun);
+
+        yield* Effect.all([publishing("outside"), Fiber.join(transaction)], {
+          concurrency: "unbounded",
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: "2 seconds",
+            orElse: () =>
+              Effect.die(
+                new Error(
+                  "A publish in a transaction waited 2 seconds on a publish outside it"
+                )
+              ),
+          })
+        );
+
+        const { entries } = yield* log.read("elsewhere:0", 10);
+
+        expect(
+          entries
+            .map(({ value }) => value?.value.eventId ?? "")
+            .toSorted((left, right) => left.localeCompare(right))
+        ).toStrictEqual(["inside", "outside"]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.provideMerge(Stored.layerEvents, sqliteAt(":memory:"))
+        )
+      )
+  );
+
+  it.effect(
+    "keeps no occurrence published in a transaction that rolls back",
+    () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const events = yield* Event.Events;
+        const attachments = yield* attachmentsOf(events);
+        const log = yield* attachments.log(Posted, undefined, undefined);
+
+        const publishing = (id: string) =>
+          events.publish(Posted, {
+            data: { id, channel: "general", text: id },
+            eventId: id,
+          });
+
+        yield* Effect.exit(
+          sql.withTransaction(
+            Effect.andThen(publishing("rolled back"), Effect.fail("abandoned"))
+          )
+        );
+        yield* publishing("committed");
+
+        const { entries } = yield* log.read("elsewhere:0", 10);
+
+        expect(
+          entries.map(({ seq, value }) => [seq, value?.value.eventId])
+        ).toStrictEqual([[1, "committed"]]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.provideMerge(Stored.layerEvents, sqliteAt(":memory:"))
+        )
+      )
+  );
+
+  it.effect(
+    "materializes every source kind for a reader of the database alone: a log's entries, and a revision for each check and current source notified",
+    () =>
+      Effect.gen(function* () {
+        const sources = Event.implement([Built, Pushed, Status], {
+          "build.finished": { log: {} },
+          "build.pushed": {
+            check: () => Effect.succeed({ events: [], cursor: "0" }),
+          },
+          "build.status": { current: () => Effect.succeed({ state: "green" }) },
+        });
+
+        const filename = yield* databaseFile;
+
+        yield* Effect.gen(function* () {
+          const events = yield* Event.Events;
+
+          yield* Action.client(sources);
+          yield* events.publish(Built, { data: { n: 1 } }, { key: "main" });
+          yield* events.notify(Pushed);
+          yield* events.notify(Status, { key: "main" });
+          yield* events.notify(Status, { key: "main" });
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Stored.layerEvents.pipe(Layer.provide(sqliteAt(filename)))
+          )
+        );
+
+        const reader = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+
+          return yield* Effect.all([
+            sql`SELECT event, seq, key, value FROM effect_actions_event_log`,
+            sql`SELECT name, count FROM effect_actions_event_revision WHERE name IN ('build.pushed', 'build.status') ORDER BY name`,
+          ]);
+        }).pipe(Effect.provide(sqliteAt(filename)), Effect.orDie);
+
+        expect(
+          reader.map((rows) => rows.map((row) => ({ ...row })))
+        ).toStrictEqual([
+          [
+            {
+              event: "build.finished",
+              seq: 1,
+              key: "main",
+              value: '{"data":{"n":1}}',
+            },
+          ],
+          [
+            { name: "build.pushed", count: 1 },
+            { name: "build.status", count: 2 },
+          ],
+        ]);
+      })
+  );
+});
+
+const Post = Action.make("post", {
+  description: "Post a message, once for each request.",
+  input: { text: Schema.String, request: Schema.String },
+  success: { id: Schema.Int },
+  readOnly: false,
+  caller: Action.Anyone,
+  idempotencyKey: "request",
+});
+
+describe("Stored.layerIdempotency", () => {
+  it.effect(
+    "answers a repeat after a restart on the same database as the first call was, runs it again once 24 hours have passed, and deletes the expired answers as it builds",
+    () =>
+      Effect.gen(function* () {
+        let posted = 0;
+
+        const posting = Action.implement(Post, () =>
+          Effect.sync(() => {
+            posted += 1;
+
+            return { id: posted };
+          })
+        );
+
+        const onFile = Layer.provideMerge(
+          Stored.layerIdempotency,
+          sqliteAt(yield* databaseFile)
+        );
+
+        const post = (request: string) =>
+          Effect.gen(function* () {
+            const client = yield* Action.client(posting);
+
+            return yield* client.post({ text: "hi", request });
+          }).pipe(Effect.scoped, Effect.provide(onFile));
+
+        const rows = Effect.flatMap(SqlClient.SqlClient, (sql) =>
+          Effect.orDie(
+            sql`SELECT count(*) AS count FROM effect_persistence_effect_actions_idempotency`
+          )
+        ).pipe(
+          Effect.map((counted) => counted[0]?.["count"]),
+          Effect.provide(onFile)
+        );
+
+        const first = yield* post("r1");
+
+        yield* post("r2");
+        yield* TestClock.adjust(
+          Duration.subtract(Duration.hours(24), Duration.millis(1))
+        );
+
+        const repeated = yield* post("r1");
+
+        yield* TestClock.adjust("1 millis");
+
+        const expired = yield* post("r1");
+
+        expect([first, repeated, expired, posted, yield* rows]).toStrictEqual([
+          { id: 1 },
+          { id: 1 },
+          { id: 3 },
+          3,
+          1,
+        ]);
+      })
+  );
+});

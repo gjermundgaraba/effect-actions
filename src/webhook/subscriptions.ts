@@ -22,7 +22,7 @@ import type { HttpClient } from "effect/http";
 import type { Dns } from "effect/net";
 
 import type { SigningSecret } from "../contract/callback.js";
-import type { Keyed, Named } from "../contract/caller.js";
+import type { Keyed } from "../contract/caller.js";
 import { canonicalInput } from "../contract/canonical.js";
 import type { Codec } from "../contract/codec.js";
 import { sentError } from "../contract/codes.js";
@@ -32,6 +32,7 @@ import { pushed, refusalIn } from "../contract/push.js";
 import type { Pushed } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
 import type { Subscribed } from "../contract/subscribe.js";
+import type { Wake } from "../contract/wake.js";
 import type {
   Subscribing,
   Subscription,
@@ -58,6 +59,7 @@ export interface Policy {
   readonly retryFor: Duration.Duration;
   readonly storage: Storage | undefined;
   readonly dns: Dns.Dns["Service"] | undefined;
+  readonly wake: Option.Option<Wake["Service"]>;
 }
 
 const minTtl = Duration.minutes(1);
@@ -85,6 +87,7 @@ interface Held {
   expiresAt: number;
   health: Health;
   watermark: string | null;
+  retryingAt: number | undefined;
 }
 
 type Granted = Pick<Held, "secret" | "context" | "kept" | "expiresAt">;
@@ -121,6 +124,11 @@ const snapshotOf = Context.omit(
   HttpServerRequest.ParsedSearchParams,
   HttpRouter.RouteContext
 );
+
+const slept = (at: number) =>
+  Effect.flatMap(Clock.currentTimeMillis, (now) =>
+    Effect.sleep(Duration.millis(Math.max(at - now, 0)))
+  );
 
 const unencoded = Effect.die(
   new Error(
@@ -182,6 +190,7 @@ export const makeWebhooks = (
             expiresAt: subscription.expiresAt,
             watermark: subscription.watermark,
             status: statusOf(subscription.health),
+            retryingAt: subscription.retryingAt,
           });
         }
       });
@@ -210,23 +219,20 @@ export const makeWebhooks = (
         return kept(subscription);
       });
 
-    const waitingAsLongAsFailing = (subscription: Held) =>
-      Schedule.modifyDelay(Schedule.forever, () =>
-        Effect.map(Clock.currentTimeMillis, (now) =>
-          Duration.clamp(
-            Duration.millis(failingForMs(subscription.health, now)),
-            {
-              minimum: Duration.seconds(1),
-              maximum: Duration.minutes(5),
-            }
-          )
+    const waitedUntil = (at: number) =>
+      Option.match(policy.wake, {
+        onNone: () => slept(at),
+        onSome: ({ until }) => until(at),
+      });
+
+    const retryAt = (subscription: Held, failedAt: number) =>
+      failedAt +
+      Duration.toMillis(
+        Duration.clamp(
+          Duration.millis(failingForMs(subscription.health, failedAt)),
+          { minimum: Duration.seconds(1), maximum: Duration.minutes(5) }
         )
       );
-
-    const retrying = (subscription: Held) => ({
-      schedule: waitingAsLongAsFailing(subscription),
-      while: () => subscription.health._tag === "Failing",
-    });
 
     const locked =
       (id: string) =>
@@ -269,33 +275,71 @@ export const makeWebhooks = (
         )
       );
 
-    const delivered = (subscription: Held, webhookId: string, body: string) =>
-      post(subscription, webhookId, body).pipe(
-        Effect.tapError(({ category, final }) =>
-          Effect.flatMap(Clock.currentTimeMillis, (at) =>
-            transitioned(subscription, {
+    const unexpired = (subscription: Held) =>
+      Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        now < subscription.expiresAt ? Effect.void : Effect.interrupt
+      );
+
+    const retried = (subscription: Held) =>
+      Effect.flatMap(Clock.currentTimeMillis, (now) =>
+        Effect.andThen(
+          subscription.retryingAt === undefined ||
+            subscription.retryingAt <= now
+            ? Effect.void
+            : waitedUntil(subscription.retryingAt),
+          Effect.sync(() => {
+            subscription.retryingAt = undefined;
+          })
+        )
+      );
+
+    const attempted = (
+      subscription: Held,
+      webhookId: string,
+      body: string
+    ): Effect.Effect<boolean> =>
+      retried(subscription).pipe(
+        Effect.andThen(unexpired(subscription)),
+        Effect.andThen(post(subscription, webhookId, body)),
+        Effect.as(true),
+        Effect.catch(({ category, final }) =>
+          Effect.gen(function* () {
+            const at = yield* Clock.currentTimeMillis;
+
+            yield* transitioned(subscription, {
               _tag: "AttemptFailed",
               category,
               final,
               at,
-            })
-          )
-        ),
-        Effect.retry(retrying(subscription)),
-        Effect.matchEffect({
-          onSuccess: () =>
-            Effect.as(
-              Effect.flatMap(Clock.currentTimeMillis, (at) =>
-                transitioned(subscription, { _tag: "Delivered", at })
-              ),
-              true
-            ),
-          onFailure: () =>
-            subscription.health._tag === "Suspended"
-              ? Effect.never
-              : Effect.succeed(false),
-        })
+            });
+
+            if (subscription.health._tag !== "Failing") {
+              return false;
+            }
+
+            subscription.retryingAt = retryAt(subscription, at);
+            yield* kept(subscription);
+
+            return yield* attempted(subscription, webhookId, body);
+          })
+        )
       );
+
+    const delivered = (subscription: Held, webhookId: string, body: string) =>
+      Effect.flatMap(attempted(subscription, webhookId, body), (accepted) => {
+        if (accepted) {
+          return Effect.as(
+            Effect.flatMap(Clock.currentTimeMillis, (at) =>
+              transitioned(subscription, { _tag: "Delivered", at })
+            ),
+            true
+          );
+        }
+
+        return subscription.health._tag === "Suspended"
+          ? Effect.never
+          : Effect.succeed(false);
+      });
 
     const gapped = (subscription: Held, cursor: string | null) =>
       Effect.flatMap(randomToken, (token) =>
@@ -308,7 +352,6 @@ export const makeWebhooks = (
 
     const deliverTo = (
       subscription: Held,
-      input: Event.Any["input"]["Type"],
       confirmation: Deferred.Deferred<Confirmed, unknown>
     ) => {
       const encode = encodeUntaggedOf(subscription.feed.event);
@@ -346,7 +389,7 @@ export const makeWebhooks = (
             Effect.gen(function* () {
               const body = yield* asSubscriber(
                 subscription,
-                subscription.feed.admit(input)
+                subscription.feed.admit
               ).pipe(
                 Effect.andThen(Effect.map(encode(occurrence), JSON.stringify))
               );
@@ -369,10 +412,8 @@ export const makeWebhooks = (
         });
     };
 
-    const expired = ({ expiresAt }: Held): Effect.Effect<void> =>
-      Effect.flatMap(Clock.currentTimeMillis, (now) =>
-        Effect.sleep(Duration.millis(Math.max(expiresAt - now, 0)))
-      );
+    const expiryTimer = ({ expiresAt }: Held): Effect.Effect<void> =>
+      Option.isSome(policy.wake) ? Effect.never : slept(expiresAt);
 
     const terminated = (subscription: Held, cause: Cause.Cause<unknown>) => {
       const refusal = refusalIn(cause);
@@ -430,13 +471,13 @@ export const makeWebhooks = (
               Effect.map(subscription.feed.stream(input), (read) => read(from))
             ),
           cursor,
-          deliverTo(subscription, input, confirmation),
+          deliverTo(subscription, confirmation),
           {
             positions: "watermark",
             resumesUnconfirmed: Deferred.isDoneUnsafe(confirmation),
           }
         ),
-        expired(subscription)
+        expiryTimer(subscription)
       ).pipe(
         Effect.exit,
         Effect.tap(() => finished(subscription)),
@@ -575,10 +616,13 @@ export const makeWebhooks = (
         };
       });
 
-    const heldOf = (fields: Omit<Held, "verifiedAs" | "previous">): Held => ({
+    const heldOf = (
+      fields: Omit<Held, "verifiedAs" | "previous" | "retryingAt">
+    ): Held => ({
       ...fields,
       verifiedAs: `${fields.principal}\u0000${fields.url.href}`,
       previous: undefined,
+      retryingAt: undefined,
     });
 
     const keptOf = ({ feed, keyed, input }: Subscribing) =>
@@ -607,7 +651,7 @@ export const makeWebhooks = (
     const restoredFrom = (
       store: Storage,
       feeds: readonly WebhookFeed[],
-      keyed: Named,
+      keyed: Keyed,
       schema: Codec,
       id: string
     ) =>
@@ -665,18 +709,28 @@ export const makeWebhooks = (
           return;
         }
 
-        const subscription = heldOf({
-          id: current,
-          url,
-          feed,
-          principal,
-          kept: { input: record.input, identity: record.identity },
-          secret,
-          context: Context.add(built, feed.event.caller, identity),
-          expiresAt,
-          health: restoredHealth,
-          watermark: record.watermark,
-        });
+        const subscription: Held = {
+          ...heldOf({
+            id: current,
+            url,
+            feed,
+            principal,
+            kept: { input: record.input, identity: record.identity },
+            secret,
+            context: Context.add(
+              Context.merge(
+                built,
+                snapshotOf(yield* Effect.context<unknown>())
+              ),
+              feed.event.caller,
+              identity
+            ),
+            expiresAt,
+            health: restoredHealth,
+            watermark: record.watermark,
+          }),
+          retryingAt: record.retryingAt,
+        };
 
         const confirmation = yield* confirmedAt(record.watermark);
 
@@ -684,7 +738,7 @@ export const makeWebhooks = (
           current,
           subscription,
           restoredHealth._tag === "Suspended"
-            ? Effect.andThen(expired(subscription), finished(subscription))
+            ? Effect.andThen(expiryTimer(subscription), finished(subscription))
             : workerOf(subscription, input, record.watermark, confirmation)
         );
 
@@ -693,7 +747,7 @@ export const makeWebhooks = (
         }
       }).pipe(Effect.catchCause(reported));
 
-    const serve = (feeds: readonly WebhookFeed[], keyed: Named) =>
+    const serve = (feeds: readonly WebhookFeed[], keyed: Keyed) =>
       Effect.gen(function* () {
         const { schema } = keyed;
 
@@ -783,7 +837,7 @@ export const makeWebhooks = (
 
         return yield* locked(id)(
           Effect.gen(function* () {
-            yield* Effect.catchCause(feed.admit(input), (cause) =>
+            yield* Effect.catchCause(feed.admit, (cause) =>
               terminatedOnRefusal(id, cause)
             );
 

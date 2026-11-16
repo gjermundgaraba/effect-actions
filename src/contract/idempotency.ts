@@ -21,28 +21,28 @@ import { answered } from "./implementation.js";
 import type { ErasedValue, WrittenHandler } from "./implementation.js";
 import { declaredStatus, isTransientStatus } from "./status.js";
 
-const Kept = Schema.Struct({
+export const Kept = Schema.Struct({
   input: Schema.String,
   outcome: Schema.String,
   at: Schema.Finite,
 });
 
-type Kept = typeof Kept.Type;
+export type Kept = typeof Kept.Type;
 
-const keptFor = 24 * 60 * 60 * 1000;
+export const keptFor = 24 * 60 * 60 * 1000;
 
 /**
  * Where the answers of calls given an idempotency key are kept, by the action's name and a
  * SHA-256 digest in hex of the key and its caller's principal, `<action>/<digest>`, for 24 hours
  * at least: what an implementation of an action naming `idempotencyKey` requires at startup.
- * `layerIdempotency` keeps them in memory; a Durable Object's `make` and `handlers` provide one
- * over its storage; another store, shared by several servers, implements `get` and `set`, keeping
- * `Idempotency.Kept` at least `Idempotency.keptFor` milliseconds.
+ * `layerIdempotency` keeps them in memory, and `Stored.layerIdempotency` in a table of the
+ * `SqlClient` it is built with, such as a cluster entity's own SQLite.
  *
  * **Gotchas**
  *
  * - Provide one per server, around the surfaces: an implementation built in another layer graph keeps its own.
  * - A server waits for a repeat's first call itself, in memory: two servers sharing a store run a call each, the later answer kept.
+ * - An answer is kept only after its handler returns: a crash between the handler's write and the kept answer lets a repeat run the handler again, so make the write itself idempotent where that matters, such as by a unique key on the idempotency key.
  */
 export class Idempotency extends Context.Service<
   Idempotency,
@@ -52,16 +52,7 @@ export class Idempotency extends Context.Service<
     /** Keeps `kept` under `id`, replacing what was. */
     readonly set: (id: string, kept: Kept) => Effect.Effect<void>;
   }
->()("effect-actions/Action/Idempotency") {
-  /**
-   * What is kept of a call answered under its key: the digest of its input, its outcome as JSON,
-   * and when it was kept, in milliseconds since the epoch.
-   */
-  static readonly Kept = Kept;
-
-  /** How long, in milliseconds, a kept answer is kept at least: 24 hours. */
-  static readonly keptFor = keptFor;
-}
+>()("effect-actions/Action/Idempotency") {}
 
 /**
  * `Idempotency` in the server's memory, each answer kept 24 hours after it was kept: lost when

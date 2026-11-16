@@ -402,9 +402,7 @@ describe("client", () => {
         const Guarded = Authentication.make(
           "mcp-client.Guarded",
           CurrentActor,
-          {
-            error: Unavailable,
-          }
+          { principal: (actor) => actor.id, error: Unavailable }
         );
 
         const unavailable = new Unavailable({ retryAfter: 5 });

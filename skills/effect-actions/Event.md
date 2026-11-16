@@ -1,6 +1,6 @@
 # Event
 
-`Event.make` defines an event type: something that happens, which subscribers receive as it happens, each subscription selecting with its own arguments. `Event.implement` binds it to the source its occurrences come from, behind an authorizer. Event implementations go in the same list as action implementations: `Action.client` watches them in process; an MCP endpoint ([ActionMcp.md](ActionMcp.md#serve-events)), HTTP routes ([ActionHttp.md](ActionHttp.md#serve-and-watch-events)) and rpcs ([ActionRpc-events.md](ActionRpc-events.md)) serve them; a server POSTs them to a subscriber's callback by webhook ([Webhook.md](Webhook.md)); and a CLI watches them ([ActionCli.md](ActionCli.md#watch-events)). Events are experimental: their surfaces follow MCP's events extension, SEP-3415, a draft, and may change with it.
+`Event.make` defines an event type: something that happens, which subscribers receive as it happens, each subscription selecting with its own arguments. `Event.implement` binds it to the source its occurrences come from, behind an authorizer. Event implementations go in the same list as action implementations: `Action.client` watches them in process; an MCP endpoint ([ActionMcp.md](ActionMcp.md#serve-events)), HTTP routes ([ActionHttp.md](ActionHttp.md#serve-and-watch-events)) and rpcs ([ActionRpc-events.md](ActionRpc-events.md)) serve them, and a cluster entity serves them as polls alone ([ActionEntity.md](ActionEntity.md#watch-an-event)); a server POSTs them to a subscriber's callback by webhook ([Webhook.md](Webhook.md)); and a CLI watches them ([ActionCli.md](ActionCli.md#watch-events)). Events are experimental: their surfaces follow MCP's events extension, SEP-3415, a draft, and may change with it.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [Event-failures.md](Event-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`: each declaration's JSDoc carries its rules and gotchas, and this page only what an example cannot show.
 
@@ -159,7 +159,7 @@ export const buildEvents = Event.implement(
 
 [build-events/src/builds/store.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/builds/store.ts) is the store. What a check answers for a first subscription and a stale cursor is on `Event.Page`; the rest of a check's rules are on `Event.Check`.
 
-A subscriber holding a stream open is read again every 5 seconds. Where the application writes the store itself, it wakes them at once: after the write, `Event.Events`' `notify`, as [build-events/src/builds/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/builds/handlers.ts) does after each build finishes. A store another process writes is read at the next poll; when a Durable Object reads it is on the Cloudflare package's `ActionDurableObject.handlers`.
+A subscriber holding a stream open is read again every 5 seconds. Where the application writes the store itself, it wakes them at once: after the write, `Event.Events`' `notify`, as [build-events/src/builds/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/builds/handlers.ts) does after each build finishes. A store another process writes is read at the next poll.
 
 - **Check what a subscriber may see where the data is read**, as an action's handler does: `authorize` decides whether it may subscribe at all, and receives the event type, not the subscription's input.
 
@@ -227,9 +227,9 @@ export const deployEvents = Event.implement(
 );
 ```
 
-The action publishes each request with `Event.Events`' `publish`, in [build-events/src/deploys/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/deploys/handlers.ts). An upstream that is a stream, such as a message bus, gives it as `log.emit`, each occurrence with the `key` `publish` would take, which the library consumes from the start of a surface serving its event type: kitchen-sink's [issues/events.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/events.ts). How much the log keeps, and what a cursor from another process or a restart reads as, are on `Event.Log`.
+The action publishes each request with `Event.Events`' `publish`, in [build-events/src/deploys/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/deploys/handlers.ts). An upstream that is a stream, such as a message bus, gives it as `log.emit`, each occurrence with the `key` `publish` would take, which the library consumes from the start of a surface serving its event type: kitchen-sink's [issues/events.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/events.ts). How much the log keeps, and what a cursor from another process or a restart reads as under each `Event.Events`, are on `Event.Log`.
 
-- **Prefer `check` wherever the upstream keeps a cursor of its own**: a subscriber then resumes after a restart without a gap.
+- **Prefer `check` wherever the upstream keeps a cursor of its own**: a subscriber then resumes after a restart without a gap, whichever `Event.Events` the host provides.
 
 ## Set up a subscription upstream
 
@@ -237,7 +237,7 @@ When each subscription needs something set up upstream while it lasts, such as j
 
 ## Announce to the subscribers
 
-`Event.Events` is where occurrences are announced as they happen: `notify` for a check source, `publish` for a log source. Domain code yields it as it yields a store, and the entrypoint provides one, `Event.layerMemory`, around both the handlers that announce and the surfaces that serve, as [build-events/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/server.ts) does; a host keeping logs elsewhere builds its own with `Event.makeEvents`, as the Cloudflare package's `ActionDurableObject.make` does. A source's `key`, such as the room a subscriber follows, lets an announcement given that key reach that room's subscribers alone, as [live-rpc/src/chat/events.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/chat/events.ts) keys its messages by room. The rules are on `Event.Events`.
+`Event.Events` is where occurrences are announced as they happen: `notify` for a check source, `publish` for a log source. Domain code yields it as it yields a store, and the entrypoint provides one, `Event.layerMemory`, around both the handlers that announce and the surfaces that serve, as [build-events/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/server.ts) does. A host whose subscribers must outlive a restart, such as a cluster entity on its own SQLite, provides `Stored.layerEvents` over its `SqlClient` instead: logs, their cursors and check and current sources' revisions are kept in tables there, and a watch resumed from a cursor after a restart receives every occurrence past it within the log's bounds, `maxAge` (10 minutes by default) and `maxEvents`. A source's `key`, such as the room a subscriber follows, lets an announcement given that key reach that room's subscribers alone, as [live-rpc/src/chat/events.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/chat/events.ts) keys its messages by room. The rules are on `Event.Events`.
 
 ## Watch in process
 

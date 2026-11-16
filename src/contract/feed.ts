@@ -26,7 +26,6 @@ import type {
   Protected,
   Served,
 } from "./implementation.js";
-import { checkInput } from "./input-check.js";
 import { makeLeases } from "./lease.js";
 import type { Leases } from "./lease.js";
 import type { Entry, Log, Logged, Read } from "./log.js";
@@ -35,6 +34,8 @@ import { AnyOccurrence, Gap } from "./occurrence.js";
 import { fedOf, pagedFrom } from "./pages.js";
 import type { Fed, Page } from "./pages.js";
 import { reported } from "./reported.js";
+import { Wake } from "./wake.js";
+import type { WebhookHolder } from "./webhooks.js";
 
 type ErasedOccurrence = Event.Occurrence<Event.Any>;
 
@@ -46,6 +47,12 @@ type ErasedOccurrence = Event.Occurrence<Event.Any>;
 export interface Feed {
   readonly event: Event.Any;
   /**
+   * Whether its stream reads the source again at each page's `nextPoll`, on a timer, as a check
+   * source not `notified` and a reached entity's polls do, rather than only when notified or
+   * appended to.
+   */
+  readonly polls: boolean;
+  /**
    * Releases the `subscription` hook `subscriber`'s polls of `input` hold: present exactly where
    * its source has a hook, held per subscriber.
    */
@@ -53,10 +60,15 @@ export interface Feed {
     | ((input: ErasedValue, subscriber: string) => Effect.Effect<void>)
     | undefined;
   /**
-   * Authenticates the subscriber, checks `input` by `Action.InputCheck` and authorizes it, as
-   * `poll` and `stream` do first.
+   * Where its webhook subscriptions are held, in place of the surface's `Webhooks`: present where
+   * `ActionEntity.reaching` reaches a protected event, whose entity holds them, so a subscribe
+   * goes to that entity with the subscriber's request.
    */
-  readonly admit: (input: ErasedValue) => Effect.Effect<void, unknown, unknown>;
+  readonly webhook?: WebhookHolder | undefined;
+  /**
+   * Authenticates the subscriber and authorizes it, as `poll` and `stream` do first.
+   */
+  readonly admit: Effect.Effect<void, unknown, unknown>;
   readonly poll: (
     input: ErasedValue,
     cursor: string | null,
@@ -138,7 +150,7 @@ const occurrencesOf = (event: Event.Any) => {
 const isOccurrence = (fed: Fed): fed is ErasedOccurrence =>
   Predicate.isTagged(fed, "Occurrence");
 
-const pageOf = (
+const pageFrom = (
   items: ReadonlyArray<ErasedOccurrence | Gap>,
   { truncated, ...page }: Omit<Page, "events">
 ): Page => {
@@ -176,7 +188,7 @@ const answeredPage = ({
   readonly answered: Event.Page<Event.Any>;
   readonly items: ReadonlyArray<ErasedOccurrence | Gap>;
 }): Page =>
-  pageOf(items, {
+  pageFrom(items, {
     cursor: answered.cursor,
     truncated: answered.truncated === true,
     hasMore: answered.hasMore === true,
@@ -189,9 +201,10 @@ const answeredPage = ({
 const checkRun = (
   event: Event.Any,
   source: Event.Check<Event.Any, unknown>,
-  { wakes, polls }: Checking
+  { wakes }: Checking
 ): Run => {
   const occurrenceOf = occurrencesOf(event);
+  const polls = source.notified !== true;
 
   const read = (input: ErasedValue, cursor: string | null) =>
     Effect.flatMap(source.check(input, cursor), (answered) =>
@@ -207,6 +220,7 @@ const checkRun = (
     );
 
   return {
+    polls,
     poll: (input, cursor) => Effect.map(read(input, cursor), answeredPage),
     stream: (input, cursor) =>
       Stream.unwrap(
@@ -240,6 +254,7 @@ const currentRun = (
     event,
     {
       key: source.key,
+      notified: true,
       check: (input, cursor) =>
         Effect.gen(function* () {
           const at = yield* checking.revision(yield* keyOf(source, input));
@@ -325,6 +340,7 @@ const logRun = (
     );
 
   return {
+    polls: false,
     poll: (input, cursor, { maxEvents = logPageSize }) =>
       Effect.flatMap(
         Effect.all([
@@ -333,7 +349,7 @@ const logRun = (
         ]),
         ([key, read]) =>
           Effect.map(received(input, key, read), (items) =>
-            pageOf(items, {
+            pageFrom(items, {
               cursor: read.cursor,
               truncated: read.truncated,
               hasMore: read.hasMore,
@@ -403,10 +419,21 @@ const runOf = (
     let run: Run;
 
     if (isCheck(source)) {
-      run = checkRun(event, source, yield* attach.check(event, false));
+      run = checkRun(event, source, yield* attach.check(event));
     } else if (isCurrent(source)) {
-      run = currentRun(event, source, yield* attach.check(event, true));
+      run = currentRun(event, source, yield* attach.check(event));
     } else {
+      if (
+        source.log.emit !== undefined &&
+        Option.isSome(yield* Effect.serviceOption(Wake))
+      ) {
+        return yield* Effect.die(
+          new Error(
+            `Event "${event.name}": a cluster entity runs no log source's emit stream, as Effect's entity reaper stops the entity while it runs and what it sends meanwhile is lost (append with Events.publish from a handler, or serve the event from a surface outside the entity)`
+          )
+        );
+      }
+
       run = logRun(
         event,
         source,
@@ -521,24 +548,23 @@ const guarded = (
 ): Feed => {
   const attributes = { "event.name": event.name };
 
-  const admit = (input: ErasedValue) =>
+  const admit =
     event.caller === Anyone
-      ? checkInput(event, input)
+      ? Effect.void
       : Effect.flatMap(Effect.serviceOption(event.caller), (subscriber) =>
           Option.isSome(subscriber)
-            ? Effect.andThen(
-                checkInput(event, input),
-                Effect.suspend(() => before(event))
-              )
+            ? Effect.suspend(() => before(event))
             : Effect.fail(new Unauthenticated())
         );
 
   return {
     event,
+    polls: run.polls,
     release: run.release,
+    webhook: run.webhook,
     admit,
     poll: (input, cursor, options) =>
-      Effect.andThen(admit(input), () => run.poll(input, cursor, options)).pipe(
+      Effect.andThen(admit, () => run.poll(input, cursor, options)).pipe(
         Effect.annotateLogs(attributes),
         Effect.withSpan(
           event.name,
@@ -547,7 +573,7 @@ const guarded = (
         )
       ),
     stream: (input) =>
-      Effect.as(admit(input), (cursor: string | null) =>
+      Effect.as(admit, (cursor: string | null) =>
         run
           .stream(input, cursor)
           .pipe(Stream.withSpan(event.name, { attributes }))

@@ -229,6 +229,60 @@ describe("Event current source", () => {
   );
 
   it.effect(
+    "reads a streamed value again only when notified, on no timer, while a poll still asks every 5 seconds",
+    () =>
+      Effect.gen(function* () {
+        const values = new Map<Key | undefined, number>();
+        const asked = { stream: 0, poll: 0 };
+        let mode: "stream" | "poll" = "stream";
+
+        const counted = Event.implement(Status, {
+          current: ({ key }) =>
+            Effect.sync(() => ({ value: values.get(key) ?? 0 })),
+          key: ({ key }) => {
+            asked[mode] += 1;
+
+            return key;
+          },
+        });
+
+        const client = yield* Action.client(counted);
+        const events = yield* Event.Events;
+
+        const streamed = yield* client
+          .watch(Status, { key: "a" }, { mode: "stream" })
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+
+        yield* settle;
+        const started = asked.stream;
+        values.set("a", 1);
+        yield* TestClock.adjust("1 hour");
+        const idle = asked.stream;
+        yield* events.notify(Status, { key: "a" });
+        const received = yield* Fiber.join(streamed);
+
+        mode = "poll";
+
+        const polled = yield* client
+          .watch(Status, { key: "a" }, { mode: "poll" })
+          .pipe(Stream.runDrain, Effect.forkChild);
+
+        yield* settle;
+        yield* TestClock.adjust("5 seconds");
+        yield* Fiber.interrupt(polled);
+
+        expect(idle).toBe(started);
+        expect(
+          received.map((item) =>
+            item._tag === "Gap" ? "gap" : item.data.value
+          )
+        ).toStrictEqual([0, 1]);
+        expect(asked.stream).toBeGreaterThan(idle);
+        expect(asked.poll).toBe(2);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
     "sends a value written while the value was read, at the read its notify wakes",
     () =>
       Effect.gen(function* () {

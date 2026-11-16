@@ -211,7 +211,9 @@ export const oneImplementation = () => {
 };
 
 export const publicBesideProtected = () => {
-  const Login = Authentication.make("event-selection.Login", Actor);
+  const Login = Authentication.make("event-selection.Login", Actor, {
+    principal: (actor) => actor.id,
+  });
 
   const Open = Event.make("review.open", {
     description: "",

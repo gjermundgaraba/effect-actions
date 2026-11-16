@@ -1,61 +1,48 @@
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
+import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { env } from "cloudflare:workers";
-import { Layer } from "effect";
-import { RpcServer } from "effect/rpc";
+import * as Stored from "@gjermundgaraba/effect-actions/Stored";
+import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
+import { Effect, Layer, Schema } from "effect";
+import { Entity } from "effect/cluster";
 
-import { LobbyHttp, RoomHttp } from "./Api.js";
+import { RoomHttp } from "./Api.js";
+import { DemoRoomName } from "./chat/Chat.js";
 import { messageEvents } from "./chat/events.js";
 import { messages } from "./chat/handlers.js";
+import { Room as CurrentRoom } from "./chat/room.js";
+import { Room } from "./entities.js";
 import { Login } from "./identity/Identity.js";
 import { authenticate } from "./identity/verifier.js";
-import { LobbyCalls } from "./lobby/Calls.js";
-import { previewEvents } from "./lobby/events.js";
-import { calls as lobbyHandlers, lobby } from "./lobby/handlers.js";
-import {
-  LobbyRpc,
-  protocolVersion,
-  RoomRpc,
-  unsupportedProtocol,
-} from "./Rpc.js";
+import { layerObjectSql } from "./platform/object-sql.js";
+import { layerSqlMessages } from "./platform/sql-messages.js";
+import { layerWebhookDelivery } from "./platform/webhook-delivery.js";
 
-const room = [messages, messageEvents];
-
-const byRoom = (input: { readonly room: string }) => input.room;
-
-export const rooms = ActionDurableObject.placed(RoomHttp, {
-  readMessages: byRoom,
-  postMessage: byRoom,
-  deleteMessage: byRoom,
-  "message.posted": byRoom,
-});
-
-const pageSocket = ActionDurableObject.layerWebSocket({
-  path: "/rpc",
-  protocol: { version: protocolVersion, code: unsupportedProtocol },
-});
-
-export const roomRoutes = Layer.mergeAll(
-  ActionRpc.layer(RoomRpc, room).pipe(Layer.provide(pageSocket)),
-  ActionHttp.layer(RoomHttp, room)
-).pipe(Layer.provide(authenticate));
-
-export const lobbyRoutes = ActionRpc.layer(LobbyRpc, [previewEvents]).pipe(
-  Layer.provide(pageSocket)
+const roomOfAddress = Layer.effect(CurrentRoom)(
+  Effect.flatMap(Entity.CurrentAddress, ({ entityId }) =>
+    Effect.orDie(Schema.decodeUnknownEffect(DemoRoomName)(entityId))
+  )
 );
 
-export const lobbyCalls = RpcServer.layer(LobbyCalls).pipe(
-  Layer.provide(lobbyHandlers)
+const roomWebhooks = Webhook.layer({
+  persist: true,
+  resolveCallbacks: false,
+}).pipe(Layer.provide(layerWebhookDelivery));
+
+const roomServices = Layer.merge(Stored.layerEvents, roomWebhooks).pipe(
+  Layer.provideMerge(Layer.mergeAll(layerSqlMessages, roomOfAddress)),
+  Layer.provideMerge(layerObjectSql)
 );
 
-const inRooms = ActionDurableObject.reaching(rooms, () => env.CHAT_ROOM);
+export const entities = ActionEntity.layer(Room, [messages, messageEvents], {
+  services: roomServices,
+}).pipe(Layer.provide(authenticate));
+
+const inRooms = ActionEntity.reaching(Room);
 
 export const workerRoutes = Layer.mergeAll(
-  ActionHttp.layer(LobbyHttp, lobby),
   ActionHttp.layer(RoomHttp, inRooms),
-  ActionMcp.layerHttp([lobby, ...inRooms], {
+  ActionMcp.layerHttp(inRooms, {
     name: "chat-rooms",
     version: "1.0.0",
     authentication: Login,

@@ -23,6 +23,7 @@ export const Stored = Schema.Struct({
   expiresAt: Schema.Finite,
   watermark: Schema.NullOr(Schema.String),
   status: DeliveryStatus,
+  retryingAt: Schema.optional(Schema.Finite),
 });
 
 export type Stored = typeof Stored.Type;
@@ -38,7 +39,10 @@ export interface Storage {
   >;
 }
 
-const prefix = "effect-actions/webhook/";
+export const storePrefix = "effect-actions/webhook/";
+
+export const entityStorePrefix = (entityType: string, entityId: string) =>
+  `effect-actions/entity-webhook/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}/`;
 
 const flushTimeout = Duration.seconds(5);
 
@@ -58,7 +62,8 @@ class UnfinishedWrites extends Schema.TaggedError<
 }
 
 export const makeWriteBehindStorage = (
-  store: KeyValueStore.KeyValueStore
+  store: KeyValueStore.KeyValueStore,
+  prefix = storePrefix
 ): Effect.Effect<Storage, never, Scope.Scope> =>
   Effect.gen(function* () {
     const records = KeyValueStore.toSchemaStore(

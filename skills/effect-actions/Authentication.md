@@ -26,7 +26,9 @@ export class CurrentUser extends Context.Service<CurrentUser, User>()(
   "notes-service/CurrentUser"
 ) {}
 
-export const Login = Authentication.make("notes-service.Login", CurrentUser);
+export const Login = Authentication.make("notes-service.Login", CurrentUser, {
+  principal: (user) => user.id,
+});
 
 export const WhoAmI = Action.make("whoAmI", {
   description: "Show who the credential identifies and which scopes it holds.",
@@ -36,7 +38,7 @@ export const WhoAmI = Action.make("whoAmI", {
 });
 ```
 
-Name it in every binding and MCP endpoint that serves a protected action: an HTTP binding ([notes-service/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/Api.ts)), an MCP endpoint ([notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts)) and an RPC binding ([live-rpc/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/Rpc.ts)); a local surface takes none ([Action.md](Action.md#say-who-may-call-an-action)). The name's rules are on `Authentication.make`, the scheme's on `Authentication.Options.security`; a second credential for one identity is in [kitchen-sink/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/Identity.ts). A descriptor of protected [events](Event.md) may also say which subscriber an identity is, its `principal`, for what a surface holds between one subscriber's requests: [build-events/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/identity/Identity.ts). When it is required is on `Authentication.Options.principal`; its `schema`, which keeps an identity past a restart, on `Authentication.Options.schema`.
+Name it in every binding and MCP endpoint that serves a protected action: an HTTP binding ([notes-service/src/Api.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/Api.ts)), an MCP endpoint ([notes-service/src/routes.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/routes.ts)) and an RPC binding ([live-rpc/src/Rpc.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/Rpc.ts)); a local surface takes none ([Action.md](Action.md#say-who-may-call-an-action)). The name's rules are on `Authentication.make`, the scheme's on `Authentication.Options.security`; a second credential for one identity is in [kitchen-sink/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/identity/Identity.ts). Its `principal` names the stable id of an identity, which a surface keys each caller's [event](Event.md) subscriptions and idempotency keys by; what it must tell apart is on `Authentication.Options.principal`. A descriptor of protected events delivered by webhook may also give a `schema`, which keeps an identity past a restart, on `Authentication.Options.schema`: [build-events/src/identity/Identity.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/identity/Identity.ts).
 
 - **Protecting an action that tests already call breaks them**, at compile time ([Testing-failures.md](Testing-failures.md), [Authentication-failures.md](Authentication-failures.md#types-and-startup)), and a call over HTTP without a credential gets `Unauthenticated` at run time.
 

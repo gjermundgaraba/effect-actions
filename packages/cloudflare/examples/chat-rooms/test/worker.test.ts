@@ -1,32 +1,69 @@
+import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
 import { describe, expect, it } from "@effect/vitest";
-import * as ActionDurableObject from "@gjermundgaraba/effect-actions-cloudflare/ActionDurableObject";
-import * as DurableObjectClient from "@gjermundgaraba/effect-actions-cloudflare/DurableObjectClient";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { evictDurableObject, runInDurableObject } from "cloudflare:test";
+import { evictDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import type { Schema } from "effect";
-import { DateTime, Effect, Schedule, Stream } from "effect";
+import { Effect, Layer, Schedule, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { TestClock } from "effect/testing";
+import { Socket } from "effect/socket";
 
-import { LobbyHttp, RoomHttp } from "../src/Api.js";
-import { followLobby, openRoom } from "../src/browser.js";
+import { RoomHttp } from "../src/Api.js";
+import { initialize } from "../src/application.js";
+import { followRoom, openRoom, overSocket } from "../src/browser.js";
 import { MessagePosted, PostMessage } from "../src/chat/Chat.js";
 import type { DemoRoomName } from "../src/chat/Chat.js";
+import { Room } from "../src/entities.js";
 import { Login } from "../src/identity/Identity.js";
-import { RoomRpc, unsupportedProtocol } from "../src/Rpc.js";
-import { pageSocket, roomSocket } from "./support/socket.js";
+import { protocolVersion } from "../src/Rpc.js";
+import {
+  baseUrl,
+  evict,
+  objectOf,
+  rowsIn,
+  sqlIn,
+  within,
+  worker,
+} from "./support.js";
 
-const day = 24 * 60 * 60 * 1000;
+const socketTo = (room: DemoRoomName) =>
+  overSocket.pipe(
+    Layer.provide(
+      Layer.effect(Socket.Socket)(
+        Socket.fromWebSocket(
+          Effect.acquireRelease(
+            Effect.flatMap(
+              Effect.promise(
+                async () =>
+                  await exports.default.fetch(
+                    `${baseUrl}/rooms/${room}/rpc?protocol=${protocolVersion}`,
+                    { headers: { upgrade: "websocket" } }
+                  )
+              ),
+              ({ status, webSocket }) => {
+                if (webSocket === null) {
+                  return Effect.die(new Error(`No WebSocket: ${status}`));
+                }
 
-const worker = DurableObjectClient.layerHttpClient(exports.default);
+                webSocket.accept();
+
+                return Effect.succeed(webSocket);
+              }
+            ),
+            (webSocket) =>
+              Effect.sync(() => {
+                webSocket.close(1000);
+              })
+          )
+        )
+      )
+    )
+  );
 
 const jsonAs = (token?: string) =>
   ActionHttp.client(RoomHttp, {
-    baseUrl: "https://chat.example",
+    baseUrl,
     ...(token === undefined
       ? {}
       : {
@@ -38,118 +75,111 @@ const jsonAs = (token?: string) =>
 
 const agentAs = (token: string) =>
   ActionMcp.client([PostMessage, MessagePosted], {
-    url: "https://chat.example/mcp",
+    url: `${baseUrl}/mcp`,
     authentication: Login,
     transformClient: HttpClient.mapRequest(
       HttpClientRequest.bearerToken(token)
     ),
   });
 
-const eventually = <A, E>(
-  check: Effect.Effect<A, E>,
-  until: (value: A) => boolean
-) =>
-  check.pipe(
-    Effect.repeat({ until, schedule: Schedule.spaced("10 millis") }),
-    Effect.timeout("5 seconds")
-  );
-
 const arrivedIn = (received: readonly unknown[]) => (count: number) =>
-  eventually(
+  within(
     Effect.sync(() => received.length),
-    (length) => length >= count
+    (length) => length >= count,
+    10
   );
 
-const pageIn = (
-  room: DemoRoomName,
-  token: string,
-  headers: Record<string, string> = {}
-) =>
-  Effect.flatMap(roomSocket(room, headers), ({ protocol }) =>
-    Effect.provideContext(openRoom(room, token), protocol)
+const failing = (type: string, id: string, trigger: string) =>
+  Effect.acquireRelease(sqlIn(type, id, trigger), () =>
+    sqlIn(type, id, "DROP TRIGGER IF EXISTS planted_failure")
   );
 
-const generalIn = (
-  previews: ReadonlyArray<{ room: string; latestAt: number | null }>
-) => previews.find(({ room }) => room === "general")?.latestAt;
+const notifiedIn = (room: DemoRoomName) =>
+  rowsIn(
+    "Room",
+    room,
+    "SELECT total(count) AS notified FROM effect_actions_event_revision"
+  );
 
-const status = (path: string, body: Schema.Json = {}) =>
+const failAfterNext = (tag: string) =>
   Effect.promise(
-    async () =>
-      await exports.default.fetch(`https://chat.example${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: "Bearer ada",
-        },
-        body: JSON.stringify(body),
-      })
-  ).pipe(Effect.map((response) => response.status));
-
-const readAll = (room: string) => ({ room, after: 0 });
-
-describe("the Worker's handler, built as the module loads, before any other test of this file reaches the lobby", () => {
-  it.effect(
-    "answers a first request ending without I/O, then a call reaching the lobby",
-    () =>
-      Effect.gen(function* () {
-        const missing = yield* Effect.promise(
-          async () =>
-            await exports.default.fetch("https://chat.example/missing")
-        );
-
-        const lobby = yield* ActionHttp.client(LobbyHttp, {
-          baseUrl: "https://chat.example",
-        });
-
-        const { previews } = yield* lobby.previews();
-
-        expect(missing.status).toBe(404);
-        expect(previews.map(({ room }) => room)).toStrictEqual([
-          "general",
-          "design",
-        ]);
-      }).pipe(Effect.provide(worker))
+    async () => await exports.default.fetch(`${baseUrl}/fail-after?tag=${tag}`)
   );
+
+const StubCalls = Schema.Struct({
+  invokes: Schema.Array(
+    Schema.Struct({
+      object: Schema.String,
+      tag: Schema.String,
+      settled: Schema.Boolean,
+    })
+  ),
+  others: Schema.Struct({ hold: Schema.Int, acknowledge: Schema.Int }),
+  messages: Schema.Struct({ received: Schema.Int, settled: Schema.Int }),
 });
 
+const settledStubCalls = Effect.promise(
+  async () =>
+    await exports.default
+      .fetch(`${baseUrl}/stub-calls`)
+      .then(async (response) => await response.json())
+).pipe(
+  Effect.flatMap(Schema.decodeUnknownEffect(StubCalls)),
+  Effect.orDie,
+  Effect.repeat({
+    until: ({ invokes }) => invokes.every(({ settled }) => settled),
+    schedule: Schedule.spaced("100 millis"),
+  })
+);
+
+const pollsParkedSince = (received: number, polls: number) =>
+  settledStubCalls.pipe(
+    Effect.repeat({
+      until: ({ messages }) =>
+        messages.received >= received + polls &&
+        messages.settled === messages.received,
+      schedule: Schedule.spaced("100 millis"),
+    }),
+    Effect.timeout("20 seconds")
+  );
+
+const counted = (
+  calls: ReadonlyArray<{ readonly object: string; readonly tag: string }>
+) => {
+  const counts: Record<string, number> = {};
+
+  for (const { object, tag } of calls) {
+    const address = CloudflareCluster.decodeName(object);
+    const call = `${address?.type ?? object}/${address?.id ?? ""} ${tag}`;
+
+    counts[call] = (counts[call] ?? 0) + 1;
+  }
+
+  return counts;
+};
+
 describe("the Worker and its rooms", () => {
-  it.effect(
-    "serves a room's page over its socket, the token on each message",
-    () =>
-      Effect.gen(function* () {
-        const room = yield* pageIn("design", "ada");
-        const posted = yield* room.post("Mock-ups are up.");
+  it.effect("reads the messages posted after an id", () =>
+    Effect.gen(function* () {
+      const reader = yield* openRoom(baseUrl, "general", "ada");
+      const json = yield* jsonAs("ada");
 
-        expect(yield* room.read(posted.id - 1)).toStrictEqual([posted]);
-        expect(yield* room.remove(posted.id)).toBe("removed");
-      }).pipe(Effect.scoped)
+      const first = yield* reader.post("Through the page's client.");
+
+      const second = yield* json.postMessage({
+        room: "general",
+        text: "Through the JSON routes.",
+      });
+
+      expect(yield* reader.read(first.id - 1)).toStrictEqual([first, second]);
+      expect(yield* reader.read(first.id)).toStrictEqual([second]);
+    }).pipe(Effect.provide(worker))
   );
 
   it.effect(
-    "reads the messages posted after an id, over a socket or JSON",
+    "posts a message sent again with its request once across the room's eviction, answering and notifying nothing new",
     () =>
       Effect.gen(function* () {
-        const reader = yield* pageIn("general", "ada");
-        const writer = yield* pageIn("general", "ada");
-        const json = yield* jsonAs("ada");
-        const first = yield* writer.post("Over a socket.");
-
-        const second = yield* json.postMessage({
-          room: "general",
-          text: "Over the JSON routes.",
-        });
-
-        expect(yield* reader.read(first.id - 1)).toStrictEqual([first, second]);
-        expect(yield* reader.read(first.id)).toStrictEqual([second]);
-      }).pipe(Effect.scoped, Effect.provide(worker))
-  );
-
-  it.effect(
-    "posts a message sent again with its request once, answering the repeat as the first",
-    () =>
-      Effect.gen(function* () {
-        const reader = yield* pageIn("general", "ada");
         const json = yield* jsonAs("ada");
 
         const sent = {
@@ -159,126 +189,290 @@ describe("the Worker and its rooms", () => {
         } as const;
 
         const first = yield* json.postMessage(sent);
+        const notified = yield* notifiedIn("general");
+
+        yield* evict("Room", "general");
 
         expect(yield* json.postMessage(sent)).toStrictEqual(first);
-        expect(yield* reader.read(first.id - 1)).toStrictEqual([first]);
-      }).pipe(Effect.scoped, Effect.provide(worker))
+
+        const { messages } = yield* json.readMessages({
+          room: "general",
+          after: first.id - 1,
+        });
+
+        expect(messages).toStrictEqual([first]);
+        expect(yield* notifiedIn("general")).toStrictEqual(notified);
+      }).pipe(Effect.provide(worker))
   );
 
   it.effect(
-    "refuses a page built for another version of the rpcs, closing its socket with the code it reads, which stops its client connecting again",
+    "posts each message sent without a request, and the same request from two authors, as its own",
     () =>
       Effect.gen(function* () {
-        const { protocol, connects } = yield* roomSocket("general", {}, "0");
+        const ada = yield* jsonAs("ada");
+        const grace = yield* jsonAs("grace");
+        const request = crypto.randomUUID();
 
-        const page = yield* Effect.provideContext(
-          openRoom("general", "ada"),
-          protocol
-        );
-
-        const refused = yield* Effect.flip(page.read(0));
-
-        yield* TestClock.adjust("1 minute");
-
-        expect(refused).toMatchObject({
-          _tag: "RpcClientError",
-          reason: { _tag: "SocketCloseError", code: unsupportedProtocol },
+        const first = yield* ada.postMessage({
+          room: "general",
+          text: "Without one.",
         });
-        expect(connects()).toBe(1);
-      }).pipe(Effect.scoped)
+
+        const posted = [
+          first,
+          yield* ada.postMessage({ room: "general", text: "Without one." }),
+          yield* ada.postMessage({ room: "general", text: "Ada's.", request }),
+          yield* grace.postMessage({
+            room: "general",
+            text: "Grace's.",
+            request,
+          }),
+        ];
+
+        const { messages } = yield* ada.readMessages({
+          room: "general",
+          after: first.id - 1,
+        });
+
+        expect(messages).toStrictEqual(posted);
+      }).pipe(Effect.provide(worker))
   );
 
   it.effect(
-    "authenticates a socket's messages by the token of its upgrade, after eviction",
+    "refuses a room DemoRoomName does not list with InvalidInput, before any object holds it",
     () =>
       Effect.gen(function* () {
-        const { protocol } = yield* roomSocket("design", {
-          authorization: "Bearer ada",
-        });
-
-        const client = yield* Effect.provideContext(
-          ActionRpc.client(RoomRpc),
-          protocol
+        const response = yield* Effect.promise(
+          async () =>
+            await exports.default.fetch(`${baseUrl}/api/postMessage`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: "Bearer ada",
+              },
+              body: JSON.stringify({ room: "kitchen", text: "Hello?" }),
+            })
         );
 
-        const posted = yield* client.postMessage({
-          room: "design",
-          text: "Before the eviction.",
-        });
-
-        yield* Effect.promise(async () => {
-          await evictDurableObject(env.CHAT_ROOM.getByName("design"));
-        });
-
-        const read = yield* client.readMessages({
-          room: "design",
-          after: posted.id - 1,
-        });
-
-        const anonymous = yield* jsonAs().pipe(
-          Effect.flatMap((json) =>
-            Effect.flip(
-              json.postMessage({ room: "design", text: "Anonymous." })
-            )
+        const body = yield* Effect.promise(
+          async () => await response.json()
+        ).pipe(
+          Effect.flatMap(
+            Schema.decodeUnknownEffect(Schema.Struct({ _tag: Schema.String }))
           )
         );
 
-        expect(read.messages).toStrictEqual([posted]);
-        expect(anonymous).toBeInstanceOf(Action.Unauthenticated);
-      }).pipe(Effect.scoped, Effect.provide(worker))
+        expect(response.status).toBe(400);
+        expect(body._tag).toBe("InvalidInput");
+        expect(
+          yield* rowsIn(
+            "Room",
+            "kitchen",
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'messages'"
+          )
+        ).toStrictEqual([]);
+      })
+  );
+
+  it.effect("refuses, in a room's entity, a call naming another room", () =>
+    Effect.gen(function* () {
+      const context = yield* Effect.promise(async () => await initialize(env));
+
+      const clientFor = yield* Effect.provideContext(Room.client, context);
+
+      const { readMessages } = clientFor("design");
+
+      if (readMessages === undefined) {
+        return yield* Effect.die(new Error("no readMessages rpc"));
+      }
+
+      const call = readMessages(
+        { room: "general", after: 0 },
+        { headers: { authorization: "Bearer ada" } }
+      );
+
+      if (!Effect.isEffect(call)) {
+        return yield* Effect.die(new Error("a streamed readMessages"));
+      }
+
+      const refused = yield* Effect.flip(call);
+
+      expect(refused).toMatchObject({ json: { _tag: "Forbidden" } });
+      expect(String(refused)).toContain("names general");
+    })
+  );
+
+  it.effect("refuses a member outside the room, and a signed-out caller", () =>
+    Effect.gen(function* () {
+      const grace = yield* jsonAs("grace");
+      const anonymous = yield* jsonAs();
+
+      expect(
+        yield* Effect.flip(
+          grace.postMessage({ room: "design", text: "Let me in." })
+        )
+      ).toBeInstanceOf(Action.Forbidden);
+      expect(
+        yield* Effect.flip(
+          anonymous.postMessage({ room: "design", text: "Anonymous." })
+        )
+      ).toBeInstanceOf(Action.Unauthenticated);
+    }).pipe(Effect.provide(worker))
   );
 
   it.live(
-    "follows a room through MessagePosted from the last id a page read, across the object's eviction",
+    "follows a room through MessagePosted over its socket, from the last id a page read, across the room's eviction",
     () =>
       Effect.gen(function* () {
-        const reader = yield* pageIn("design", "ada");
-        const writer = yield* pageIn("design", "ada");
-        const json = yield* jsonAs("ada");
-        const before = yield* writer.post("Before the page opened.");
-        const read = yield* reader.read(before.id - 1);
-        const after = read.at(-1)?.id ?? 0;
+        const page = yield* openRoom(baseUrl, "design", "ada");
+        const messages = yield* followRoom("design", "ada");
+
+        const before = yield* page.post("Before the page watched.");
 
         const received: unknown[] = [];
 
-        yield* reader.messages(after).pipe(
+        yield* messages(before.id).pipe(
           Stream.runForEach((item) => Effect.sync(() => received.push(item))),
           Effect.forkScoped
         );
 
-        const arrived = arrivedIn(received);
+        const first = yield* page.post("While the page watches.");
 
-        const first = yield* writer.post("Read as the watch starts.");
+        yield* arrivedIn(received)(1);
 
-        yield* arrived(1);
-
-        const second = yield* writer.post(
-          "Over a socket, while the page watches."
-        );
-
-        yield* arrived(2);
         yield* Effect.promise(async () => {
-          await evictDurableObject(env.CHAT_ROOM.getByName("design"));
+          await evictDurableObject(objectOf("Room", "design"));
         });
 
-        const third = yield* json.postMessage({
-          room: "design",
-          text: "Over the JSON routes, after a sleep.",
-        });
+        const second = yield* page.post("After the room's eviction.");
 
-        yield* arrived(3);
+        yield* arrivedIn(received)(2);
 
-        expect(read).toStrictEqual([before]);
         expect(received).toMatchObject([
           { _tag: "Occurrence", data: first },
           { _tag: "Occurrence", data: second },
-          { _tag: "Occurrence", data: third },
         ]);
-      }).pipe(Effect.scoped, Effect.provide(worker))
+      }).pipe(Effect.scoped, Effect.provide([worker, socketTo("design")])),
+    { timeout: 30_000 }
   );
 
   it.live(
-    "serves every room over one MCP connection: a post and a poll in each, across an eviction, and a member outside a room refused",
+    "follows a room through MessagePosted over one JSON watch held open across the room's eviction",
+    () =>
+      Effect.gen(function* () {
+        const ada = yield* jsonAs("ada");
+
+        const before = yield* ada.postMessage({
+          room: "design",
+          text: "Before the JSON watch.",
+        });
+
+        const received: unknown[] = [];
+
+        yield* ada
+          .watch(
+            MessagePosted,
+            { room: "design" },
+            { cursor: String(before.id) }
+          )
+          .pipe(
+            Stream.filter((item) => item._tag === "Occurrence"),
+            Stream.runForEach((item) => Effect.sync(() => received.push(item))),
+            Effect.forkScoped
+          );
+
+        const first = yield* ada.postMessage({
+          room: "design",
+          text: "While the JSON watch runs.",
+        });
+
+        yield* arrivedIn(received)(1);
+        yield* evict("Room", "design");
+
+        const second = yield* ada.postMessage({
+          room: "design",
+          text: "After the room's eviction, on the same watch.",
+        });
+
+        yield* arrivedIn(received)(2);
+
+        expect(received).toMatchObject([{ data: first }, { data: second }]);
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 60_000 }
+  );
+
+  it.live(
+    "costs each post 1 + P stub calls with two pages watching: the post, and one re-poll a page",
+    () =>
+      Effect.gen(function* () {
+        const page = yield* openRoom(baseUrl, "general", "ada");
+        const received: unknown[] = [];
+
+        const watching = (socket: ReturnType<typeof socketTo>) =>
+          Effect.flatMap(Layer.build(socket), (context) =>
+            followRoom("general", "ada").pipe(
+              Effect.flatMap((messages) =>
+                messages(0).pipe(
+                  Stream.runForEach((item) =>
+                    Effect.sync(() => received.push(item))
+                  ),
+                  Effect.forkScoped
+                )
+              ),
+              Effect.provideContext(context)
+            )
+          );
+
+        const { messages } = yield* settledStubCalls;
+
+        yield* watching(socketTo("general"));
+        yield* watching(socketTo("general"));
+        yield* pollsParkedSince(messages.received, 4);
+
+        const posts = [
+          { text: "Counted, the first.", evicted: false },
+          { text: "Counted, after an eviction.", evicted: true },
+        ];
+
+        const outcomes = yield* Effect.forEach(posts, ({ text, evicted }) =>
+          Effect.gen(function* () {
+            if (evicted) {
+              yield* evict("Room", "general");
+            }
+
+            const before = yield* settledStubCalls;
+            const arrived = received.length;
+
+            yield* page.post(text);
+            yield* arrivedIn(received)(arrived + 2);
+            yield* pollsParkedSince(before.messages.received, 2);
+
+            const after = yield* settledStubCalls;
+
+            return {
+              calls: counted(after.invokes.slice(before.invokes.length)),
+              others: {
+                hold: after.others.hold - before.others.hold,
+                acknowledge:
+                  after.others.acknowledge - before.others.acknowledge,
+              },
+            };
+          })
+        );
+
+        for (const { calls, others } of outcomes) {
+          expect(calls).toStrictEqual({
+            "Room/general postMessage": 1,
+            "Room/general message.posted/poll": 2,
+          });
+          expect(others).toStrictEqual({ hold: 0, acknowledge: 0 });
+        }
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 60_000 }
+  );
+
+  it.live(
+    "serves both rooms over one MCP connection, each tool answering from its own room",
     () =>
       Effect.gen(function* () {
         const ada = yield* agentAs("ada");
@@ -300,267 +494,178 @@ describe("the Worker and its rooms", () => {
               { room },
               { mode: "poll", cursor: String(after) }
             )
-            .pipe(
-              Stream.take(1),
-              Stream.runCollect,
-              Effect.timeout("5 seconds")
-            );
+            .pipe(Stream.take(1), Stream.runCollect);
 
-        const fromGeneral = yield* polled("general", general.id - 1);
-
-        yield* Effect.promise(async () => {
-          await evictDurableObject(env.CHAT_ROOM.getByName("design"));
-        });
-
-        const fromDesign = yield* polled("design", design.id - 1);
-        const grace = yield* agentAs("grace");
-
-        const refused = yield* Effect.flip(
-          grace.postMessage({ room: "design", text: "Not a member." })
-        );
-
-        expect(fromGeneral).toMatchObject([
+        expect(yield* polled("general", general.id - 1)).toMatchObject([
           { _tag: "Occurrence", data: general },
         ]);
-        expect(fromDesign).toMatchObject([
+        expect(yield* polled("design", design.id - 1)).toMatchObject([
           { _tag: "Occurrence", data: design },
         ]);
-        expect(refused).toBeInstanceOf(Action.Forbidden);
-      }).pipe(Effect.scoped, Effect.provide(worker))
-  );
 
-  it.effect(
-    "refuses, in a room's object, a call on its socket naming another room",
-    () =>
-      Effect.gen(function* () {
-        const { protocol } = yield* roomSocket("design", {
-          authorization: "Bearer ada",
-        });
+        const grace = yield* agentAs("grace");
 
-        const client = yield* Effect.provideContext(
-          ActionRpc.client(RoomRpc),
-          protocol
-        );
-
-        const refused = yield* Effect.flip(
-          client.postMessage({
-            room: "general",
-            text: "Through the wrong room.",
-          })
-        );
-
-        expect(refused).toBeInstanceOf(Action.Forbidden);
-        expect(refused.message).toContain("names general");
-      }).pipe(Effect.scoped)
-  );
-
-  it.effect(
-    "refuses a member outside the room, on its socket and on its JSON routes",
-    () =>
-      Effect.gen(function* () {
-        const page = yield* pageIn("design", "grace");
-        const json = yield* jsonAs("grace");
-
-        expect(yield* Effect.flip(page.read(0))).toBeInstanceOf(
-          Action.Forbidden
-        );
-        expect(
-          yield* Effect.flip(Stream.runDrain(page.messages(0)))
-        ).toBeInstanceOf(Action.Forbidden);
         expect(
           yield* Effect.flip(
-            json.postMessage({ room: "design", text: "Let me in." })
+            grace.postMessage({ room: "design", text: "Not a member." })
           )
         ).toBeInstanceOf(Action.Forbidden);
-      }).pipe(Effect.scoped, Effect.provide(worker))
-  );
-
-  it.effect("refuses to delete another member's message", () =>
-    Effect.gen(function* () {
-      const ada = yield* pageIn("general", "ada");
-      const grace = yield* pageIn("general", "grace");
-      const posted = yield* ada.post("Mine.");
-
-      expect(yield* grace.remove(posted.id)).toBe("not-yours");
-
-      expect(yield* grace.read(posted.id - 1)).toStrictEqual([posted]);
-    }).pipe(Effect.scoped)
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 30_000 }
   );
 
   it.live(
-    "answers the lobby's previews as each room told its object, without what was said",
+    "polls a room over one MCP connection across the room's eviction",
     () =>
       Effect.gen(function* () {
-        const json = yield* jsonAs("ada");
+        const ada = yield* agentAs("ada");
 
-        const posted = yield* json.postMessage({
+        const polled = (after: number) =>
+          ada
+            .watch(
+              MessagePosted,
+              { room: "design" },
+              { mode: "poll", cursor: String(after) }
+            )
+            .pipe(Stream.take(1), Stream.runCollect);
+
+        const before = yield* ada.postMessage({
           room: "design",
-          text: "Seen from the lobby.",
+          text: "Before the eviction.",
         });
 
-        const lobby = yield* ActionHttp.client(LobbyHttp, {
-          baseUrl: "https://chat.example",
+        expect(yield* polled(before.id - 1)).toMatchObject([
+          { _tag: "Occurrence", data: before },
+        ]);
+
+        yield* evict("Room", "design");
+
+        const after = yield* ada.postMessage({
+          room: "design",
+          text: "After the eviction.",
         });
 
-        const { previews } = yield* eventually(lobby.previews(), (answer) =>
-          answer.previews.some(
-            ({ room, latestAt }) => room === "design" && latestAt === posted.at
-          )
-        );
+        expect(yield* polled(before.id)).toMatchObject([
+          { _tag: "Occurrence", data: after },
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 30_000 }
+  );
 
-        expect(previews.map(({ room }) => room)).toStrictEqual([
+  it.live(
+    "does not send a page's post again when the room fails it",
+    () =>
+      Effect.gen(function* () {
+        const page = yield* openRoom(baseUrl, "general", "ada");
+
+        yield* page.post("Before the room fails.");
+
+        yield* failing(
+          "Room",
           "general",
-          "design",
-        ]);
-        expect(previews).toContainEqual({
-          room: "design",
-          latestAt: posted.at,
-        });
-      }).pipe(Effect.provide(worker))
-  );
-
-  it.live(
-    "sends a page following the lobby, signed out, the previews at once, then whole at each change",
-    () =>
-      Effect.gen(function* () {
-        const general = yield* jsonAs("grace");
-
-        const { messages } = yield* general.readMessages({
-          room: "general",
-          after: 0,
-        });
-
-        const before = messages.at(-1)?.at ?? null;
-        const { protocol } = yield* pageSocket("/lobby");
-
-        const received: Array<
-          ReadonlyArray<{ room: string; latestAt: number | null }>
-        > = [];
-
-        yield* Effect.flatMap(followLobby, (previews) =>
-          Stream.runForEach(previews, (each) =>
-            Effect.sync(() => received.push(each))
-          )
-        ).pipe(Effect.provideContext(protocol), Effect.forkScoped);
-
-        yield* arrivedIn(received)(1);
-
-        const posted = yield* general.postMessage({
-          room: "general",
-          text: "Seen by the lobby's pages.",
-        });
-
-        yield* arrivedIn(received)(2);
-        yield* general.deleteMessage({ room: "general", id: posted.id });
-        yield* arrivedIn(received)(3);
-
-        expect(received.map(generalIn)).toStrictEqual([
-          before,
-          posted.at,
-          before,
-        ]);
-        expect(received.every((previews) => previews.length === 2)).toBe(true);
-      }).pipe(Effect.scoped, Effect.provide(worker))
-  );
-
-  it.live(
-    "answers another Worker's call of RoomsEntrypoint as the lobby keeps it, and refuses a room it does not list",
-    () =>
-      Effect.gen(function* () {
-        const posted = yield* (yield* jsonAs("grace")).postMessage({
-          room: "general",
-          text: "Seen from another Worker.",
-        });
-
-        const refused = yield* Effect.flip(
-          Effect.tryPromise(
-            async () => await exports.RoomsEntrypoint.latestAt("kitchen")
-          )
+          "CREATE TRIGGER planted_failure BEFORE INSERT ON effect_actions_event_revision BEGIN SELECT RAISE(ABORT, 'planted'); END"
         );
 
-        const latestAt = yield* eventually(
-          Effect.promise(
-            async () => await exports.RoomsEntrypoint.latestAt("general")
-          ),
-          (at) => at === posted.at
-        );
+        const before = yield* settledStubCalls;
 
-        expect(latestAt).toBe(posted.at);
-        expect(String(refused.cause)).toContain(
-          'Expected "general" | "design"'
-        );
-      }).pipe(Effect.provide(worker))
-  );
+        yield* Effect.flip(page.post("Failed by the room."));
 
-  it.effect(
-    "sends a page's socket alone on to its object, and answers every other path itself, a room it does not list an invalid input",
-    () =>
-      Effect.gen(function* () {
-        expect(yield* status("/api/readMessages", readAll("design"))).toBe(200);
-        expect(yield* status("/api/readMessages", readAll("unlisted"))).toBe(
-          400
-        );
+        const after = yield* settledStubCalls;
+
         expect(
-          yield* status("/rooms/design/api/readMessages", readAll("design"))
-        ).toBe(404);
-        expect(yield* status("/rooms/unlisted/rpc")).toBe(404);
-        expect(yield* status("/rooms/design//elsewhere.example/rpc")).toBe(404);
-      })
+          counted(after.invokes.slice(before.invokes.length))[
+            "Room/general postMessage"
+          ]
+        ).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 30_000 }
   );
 
   it.live(
-    "expires a message a day old when the room's alarm runs, and sets the next",
+    "keeps nothing of a post whose notification fails, posting it once when sent again with its request",
     () =>
       Effect.gen(function* () {
         const json = yield* jsonAs("ada");
-        const stub = env.CHAT_ROOM.getByName("design");
 
-        yield* Effect.promise(async () => {
-          await runInDurableObject(stub, (_, state) => {
-            state.storage.sql.exec("DELETE FROM messages");
-          });
-        });
+        const sent = {
+          room: "general",
+          text: "Failed with its notification, then sent again.",
+          request: crypto.randomUUID(),
+        } as const;
 
-        const old = yield* json.postMessage({
-          room: "design",
-          text: "From yesterday.",
-        });
+        const last = yield* json.readMessages({ room: "general", after: 0 });
+        const after = last.messages.at(-1)?.id ?? 0;
 
-        const recent = yield* json.postMessage({
-          room: "design",
-          text: "From today.",
-        });
-
-        yield* Effect.promise(async () => {
-          await runInDurableObject(stub, async (room, state) => {
-            state.storage.sql.exec(
-              "UPDATE messages SET at = at - ? WHERE id = ?",
-              day,
-              old.id
-            );
-
-            await room.run(
-              ActionDurableObject.Alarm.use((alarm) =>
-                alarm.set(DateTime.makeUnsafe(old.at))
-              )
-            );
-          });
-        });
-
-        yield* eventually(
-          Effect.promise(
-            async () =>
-              await runInDurableObject(
-                stub,
-                async (_, state) => await state.storage.getAlarm()
-              )
-          ),
-          (alarm) => alarm === recent.at + day
+        yield* failing(
+          "Room",
+          "general",
+          "CREATE TRIGGER planted_failure BEFORE INSERT ON effect_actions_event_revision BEGIN SELECT RAISE(ABORT, 'planted'); END"
         );
 
-        expect(yield* (yield* pageIn("design", "ada")).read(0)).toStrictEqual([
-          recent,
-        ]);
-      }).pipe(Effect.scoped, Effect.provide(worker))
+        yield* Effect.flip(json.postMessage(sent));
+
+        yield* sqlIn("Room", "general", "DROP TRIGGER planted_failure");
+
+        const posted = yield* json.postMessage(sent);
+
+        const { messages } = yield* json.readMessages({
+          room: "general",
+          after,
+        });
+
+        expect(messages).toStrictEqual([posted]);
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "posts a message once when the room fails after its write and the page sends it again with its request, notifying once",
+    () =>
+      Effect.gen(function* () {
+        const json = yield* jsonAs("ada");
+
+        const sent = {
+          room: "general",
+          text: "Failed after its write, then sent again.",
+          request: crypto.randomUUID(),
+        } as const;
+
+        const last = yield* json.readMessages({ room: "general", after: 0 });
+        const after = last.messages.at(-1)?.id ?? 0;
+        const notified = yield* notifiedIn("general");
+
+        yield* failAfterNext("postMessage");
+
+        const before = yield* settledStubCalls;
+
+        yield* Effect.flip(json.postMessage(sent));
+
+        const { messages: written } = yield* json.readMessages({
+          room: "general",
+          after,
+        });
+
+        const notifiedByTheWrite = yield* notifiedIn("general");
+
+        const posted = yield* json.postMessage(sent);
+        const calls = yield* settledStubCalls;
+
+        const { messages } = yield* json.readMessages({
+          room: "general",
+          after,
+        });
+
+        expect(written).toMatchObject([{ text: sent.text }]);
+        expect(messages).toStrictEqual([posted]);
+        expect(posted).toStrictEqual(written[0]);
+        expect(
+          counted(calls.invokes.slice(before.invokes.length))[
+            "Room/general postMessage"
+          ]
+        ).toBe(2);
+        expect(notifiedByTheWrite).not.toStrictEqual(notified);
+        expect(yield* notifiedIn("general")).toStrictEqual(notifiedByTheWrite);
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 30_000 }
   );
 });

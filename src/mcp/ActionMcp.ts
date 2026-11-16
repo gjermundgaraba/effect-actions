@@ -515,7 +515,7 @@ const server = <Out, E, R>(
       );
     }
 
-    yield* servingFeeds("MCP", serving.events, serving.authentication);
+    yield* servingFeeds(serving.events, serving.authentication);
     yield* registerTools(apps, authentication);
   });
 
@@ -619,7 +619,7 @@ type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [
  * tools need `authentication`; for a serverless host, see `requestScoped`. In a tool call, what
  * middleware provides per request wins over what the endpoint was built with. The event
  * types among `implementations`, or those `actions` lists, are served as SEP-3415 events,
- * `events/list`, `events/poll` and `events/stream`, and, where `Webhook.layer` is provided, `events/subscribe`
+ * `events/list`, `events/poll` and `events/stream`, and, where `Webhook.layer` is provided or for a protected event `ActionEntity.reaching` serves, `events/subscribe`
  * and `events/unsubscribe`: experimental, as that extension is a draft, pinned to its PR head
  * 2ec39b9c49c583411b73cb460dea5f52b5c541a6.
  * Guide: `docs/ActionMcp.md` in this package; in an application: `examples/mcp-tools/`, and
@@ -639,9 +639,8 @@ type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [
  * - A request body is read whole, however large, and a 2025 session holds what its `initialize` sent until it ends, so an oversized `initialize` costs memory for that long: limit bodies as `ActionHttp.layer` says.
  * - An event type named starting with `mcp.`, a prefix MCP keeps for its own events, is refused as the endpoint is made, with `MCP event name starts with "mcp."`.
  * - Events are 2026-07-28's alone: a 2025 session gets `-32601` for `events/*`, and its `initialize` advertises no events extension.
- * - With `requestScoped`, `events/stream` answers `-32026`, no server outliving a request to push, so events are served by poll, and by webhook where `Webhook.layer` is provided; their sources, logs, `subscription` hooks' leases and webhook subscriptions are built once with the endpoint, as without it.
+ * - With `requestScoped`, `events/stream` answers `-32026`, no server outliving a request to push, so events are served by poll, and by webhook where `Webhook.layer` is provided or the event is a protected one `ActionEntity.reaching` serves; their sources, logs, `subscription` hooks' leases and webhook subscriptions are built once with the endpoint, as without it.
  * - On a host with no lasting process, such as a serverless platform, serve check sources alone, without a `subscription` hook: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a gap, and its own leases, lost as it ends.
- * - A protected event with a `subscription` hook needs `principal` on `authentication`, or the endpoint is refused at startup: a poll's hook is held per principal between requests.
  * - A push stream holds its request open while it is read, a heartbeat every 30 seconds: a host's request timeout ends it, and `client`'s `watch` reconnects from its cursor.
  * - A poll's `maxEvents` caps a log source's page, at most 100, and is not honored for a check source, whose page is answered whole since only its last cursor resumes; `maxAgeMs` is accepted and not honored, a log source keeping what its `log.maxAge` and `log.maxEvents` say.
  * - A push stream's failure that no refusal explains, such as an upstream's outage, is `notifications/events/error`, its cause logged and reported, and the stream resumes from where it reached after 5 seconds; a refusal ends it with `notifications/events/terminated`. One before `active`, or a poll's, is a JSON-RPC `-32603`, which `client`'s `watch` reconnects after, as after a 5xx.

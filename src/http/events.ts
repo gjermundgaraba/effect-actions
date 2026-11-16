@@ -1,5 +1,4 @@
 import { Effect, Function, Schema, Stream } from "effect";
-import type { Option } from "effect";
 import { HttpServerRequest } from "effect/http";
 import { HttpApiEndpoint, HttpApiSchema, OpenApi } from "effect/http-api";
 
@@ -10,7 +9,7 @@ import { assertDistinctTags } from "../contract/declared.js";
 import { Refusal } from "../contract/errors.js";
 import * as Event from "../contract/Event.js";
 import type { Feed } from "../contract/feed.js";
-import { OccurrenceOf } from "../contract/occurrence.js";
+import { pageOf } from "../contract/pages.js";
 import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
 import type { AnySubscription } from "../contract/push.js";
 import { declared } from "../contract/status.js";
@@ -19,22 +18,7 @@ import {
   WebhookCancellationOf,
   WebhookSubscriptionOf,
 } from "../contract/subscribe.js";
-import type {
-  AnyWebhookCancellation,
-  AnyWebhookSubscription,
-} from "../contract/subscribe.js";
-import { webhookSubscriber } from "../contract/webhooks.js";
-import type { Webhooks } from "../contract/webhooks.js";
 import { acceptsEventStream } from "./streamed.js";
-
-export const pageOf = <E extends Event.Any>(event: E) =>
-  Schema.Struct({
-    events: Schema.Array(OccurrenceOf(event)),
-    cursor: Schema.NullOr(Schema.String),
-    truncated: Schema.Boolean,
-    hasMore: Schema.Boolean,
-    nextPoll: Schema.DurationFromMillis,
-  }).pipe(Schema.encodeKeys({ nextPoll: "nextPollMs" }));
 
 export const sentOf = <E extends Event.Any>(event: E) =>
   HttpApiSchema.StreamSse({
@@ -91,27 +75,6 @@ export const webhookEndpointsOf = (
       `Stop delivering ${event.name} to a webhook.`
     ),
   ] as const;
-};
-
-export const webhookAnswers = (
-  feed: Feed,
-  authentication: Authentication | undefined,
-  webhooks: Option.Option<Webhooks["Service"]>
-) => {
-  const served = webhookSubscriber(feed, authentication, webhooks);
-
-  return {
-    subscribe: ({ payload }: { readonly payload: AnyWebhookSubscription }) =>
-      Effect.flatMap(served, ({ webhooks: service, ...subscriber }) =>
-        service.subscribe({ ...payload, ...subscriber })
-      ),
-    unsubscribe: ({ payload }: { readonly payload: AnyWebhookCancellation }) =>
-      Effect.flatMap(
-        served,
-        ({ webhooks: service, feed: subscribed, principal }) =>
-          service.unsubscribe({ ...payload, feed: subscribed, principal })
-      ),
-  };
 };
 
 export const answering = (

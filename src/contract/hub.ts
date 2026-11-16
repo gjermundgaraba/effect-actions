@@ -24,12 +24,11 @@ export type Wakes = (
 
 export interface Checking {
   readonly wakes: Wakes;
-  readonly polls: boolean;
   readonly revision: (key: string | undefined) => Effect.Effect<string>;
 }
 
 /**
- * Where an `Events` keeps its current sources' revisions: counters by name, which only count up,
+ * Where an `Events` keeps its check and current sources' revisions: counters by name, which only count up,
  * in an `epoch` telling them from counters that started again.
  */
 export interface RevisionStorage {
@@ -44,7 +43,7 @@ export interface RevisionStorage {
   readonly bump: (names: readonly string[]) => Effect.Effect<void>;
 }
 
-const memoryRevisions = (): RevisionStorage => {
+export const memoryRevisions = (): RevisionStorage => {
   const counts = new Map<string, number>();
 
   return {
@@ -69,7 +68,8 @@ const ofKey = (event: Event.Any, key: string) => `${event.name}\u0000=${key}`;
  * Where an event's occurrences are announced as they happen: `notify` wakes the subscribers of a
  * check source to read now, and `publish` appends an occurrence to a log source, both reaching
  * the subscribers of one `key` or every one. Domain code yields it as it yields a store, and an
- * entrypoint provides one implementation: `Event.layerMemory`, kept in a process's memory.
+ * entrypoint provides one implementation: `Event.layerMemory`, kept in a process's memory, or
+ * `Stored.layerEvents`, kept in a database.
  * Every surface serving events and `Action.client` watching them need it.
  *
  * **Gotchas**
@@ -77,7 +77,7 @@ const ofKey = (event: Event.Any, key: string) => `${event.name}\u0000=${key}`;
  * - The handlers announcing and the surfaces serving must share one, as they share a store: built separately, as a test building its handlers under a `provide` of their own does, each has its own, and an announcement reaches no subscriber of the other.
  * - An event no implementation attached here has no subscribers here: `publish` does nothing for it, and `notify` only moves its revision, so a current source attached later answers the change.
  * - `notify` of a log source and `publish` to a check source die naming the other: a check source reads your store, so write there and notify; a log source keeps what you publish.
- * - Implementations attach only to one `layerMemory` or `makeEvents` made: built over another, such as `Events.of` in a test, they die, naming both.
+ * - Implementations attach only to one `layerMemory` or `Stored.layerEvents` made: built over another, such as `Events.of` in a test, they die, naming both.
  */
 export class Events extends Context.Service<
   Events,
@@ -98,8 +98,7 @@ export class Events extends Context.Service<
 
 interface Attachments {
   readonly check: (
-    event: Event.Any,
-    current: boolean
+    event: Event.Any
   ) => Effect.Effect<Checking, never, Scope.Scope>;
   readonly log: (
     event: Event.Any,
@@ -119,7 +118,7 @@ export const attachmentsOf = (
     return attachments === undefined
       ? Effect.die(
           new Error(
-            "This Event.Events serves no event implementation: provide Event.layerMemory, or one Event.makeEvents builds"
+            "This Event.Events serves no event implementation: provide Event.layerMemory or Stored.layerEvents"
           )
         )
       : Effect.succeed(attachments);
@@ -158,7 +157,7 @@ const holding = <A>(
     () => Effect.sync(() => set.delete(value))
   );
 
-/** `makeEvents`' options: where it keeps logs, and whether check sources are read on a timer. */
+/** `makeEvents`' options: where it keeps logs and revisions. */
 export interface MakeEventsOptions {
   /**
    * The storage of `event`'s log, made at its first attachment: the core keeps the log's cursors,
@@ -166,20 +165,7 @@ export interface MakeEventsOptions {
    */
   readonly log: (event: Event.Any) => LogStorage<ErasedEmitted>;
   /**
-   * Whether a check source's subscribers also read it again on a timer, each page's `nextPoll`,
-   * besides when notified; defaults to `true`. `false` where a pending timer would keep the host
-   * awake, as it keeps a Durable Object from hibernating: its sources are read when notified, and
-   * 5 seconds after a read that fails.
-   */
-  readonly polls?: boolean | undefined;
-  /**
-   * Whether a log source's `emit` is consumed; defaults to `true`. `false` where the host does not
-   * last, as a Durable Object is evicted while idle and misses what a stream sends meanwhile: a
-   * log source fed by `emit` dies as it attaches, naming `publish`.
-   */
-  readonly emits?: boolean | undefined;
-  /**
-   * Where current sources' revisions are kept; defaults to memory, a new epoch with each
+   * Where check and current sources' revisions are kept; defaults to memory, a new epoch with each
    * `makeEvents`. A host keeping its logs in storage keeps them there too, so a subscriber's
    * cursor outlives the host.
    */
@@ -187,27 +173,25 @@ export interface MakeEventsOptions {
 }
 
 /**
- * An `Events` for as long as the scope lasts, over the log storage `log` makes: what a host keeping
- * logs elsewhere, such as a Durable Object's storage, provides as `Events`, its subscribers' wakes
- * in memory and its logs where `log` keeps them.
+ * An `Events` for as long as the scope lasts, over the log storage `log` makes: what
+ * `Stored.layerEvents` provides over SQL, its subscribers' wakes in memory and its logs where
+ * `log` keeps them.
  *
  * **Gotchas**
  *
- * - Make it once per host, around the handlers that announce and the surfaces that serve, as `layerMemory` is built.
- * - A log's storage is made once per event for the life of the scope, its position read on every append and read: a storage emptied behind its back, as `storage.deleteAll` empties one, starts a new epoch, and a cursor from before reads a gap.
+ * - Make it once per database, around the handlers that announce and the surfaces that serve, as `layerMemory` is built.
+ * - A log's storage is made once per event for the life of the scope, its position read on every append and read: a storage emptied behind its back starts a new epoch, and a cursor from before reads a gap.
  */
 export const makeEvents = (
   options: MakeEventsOptions
 ): Effect.Effect<Events["Service"], never, Scope.Scope> =>
   Effect.gen(function* () {
-    const polls = options.polls ?? true;
-    const emits = options.emits ?? true;
     const revisions = options.revisions ?? memoryRevisions();
     const scope = yield* Effect.scope;
 
     const checks = new Map<
       Event.Any,
-      { attached: Set<object>; waiters: Set<Waiter>; current?: boolean }
+      { attached: Set<object>; waiters: Set<Waiter> }
     >();
 
     const logs = new Map<Event.Any, Kept>();
@@ -268,12 +252,10 @@ export const makeEvents = (
           const key = notifyOptions?.key;
 
           return Effect.andThen(
-            checks.get(event)?.current === false
-              ? Effect.void
-              : revisions.bump([
-                  everyKey(event),
-                  key === undefined ? noKey(event) : ofKey(event, key),
-                ]),
+            revisions.bump([
+              everyKey(event),
+              key === undefined ? noKey(event) : ofKey(event, key),
+            ]),
             Effect.sync(() => {
               for (const waiter of checkOf(event).waiters) {
                 if (reaches(key, waiter.key)) {
@@ -302,48 +284,33 @@ export const makeEvents = (
     });
 
     attached.set(events, {
-      check: (event, current) =>
-        Effect.map(
-          holding(Object.assign(checkOf(event), { current }).attached, {}),
-          (): Checking => ({
-            polls,
-            wakes: (key) =>
-              Effect.flatMap(Queue.sliding<undefined>(1), (woken) =>
-                Effect.as(
-                  holding(checkOf(event).waiters, { key, woken }),
-                  Queue.take(woken)
+      check: (event) =>
+        Effect.map(holding(checkOf(event).attached, {}), (): Checking => ({
+          wakes: (key) =>
+            Effect.flatMap(Queue.sliding<undefined>(1), (woken) =>
+              Effect.as(
+                holding(checkOf(event).waiters, { key, woken }),
+                Queue.take(woken)
+              )
+            ),
+          revision: (key) =>
+            key === undefined
+              ? Effect.map(
+                  Effect.all([revisions.epoch, revisions.get(everyKey(event))]),
+                  ([epoch, count]) => `${epoch}:${count}`
                 )
-              ),
-            revision: (key) =>
-              key === undefined
-                ? Effect.map(
-                    Effect.all([
-                      revisions.epoch,
-                      revisions.get(everyKey(event)),
-                    ]),
-                    ([epoch, count]) => `${epoch}:${count}`
-                  )
-                : Effect.map(
-                    Effect.all([
-                      revisions.epoch,
-                      revisions.get(noKey(event)),
-                      revisions.get(ofKey(event, key)),
-                    ]),
-                    ([epoch, unkeyed, keyed]) =>
-                      `${epoch}:${unkeyed + keyed}:${key}`
-                  ),
-          })
-        ),
+              : Effect.map(
+                  Effect.all([
+                    revisions.epoch,
+                    revisions.get(noKey(event)),
+                    revisions.get(ofKey(event, key)),
+                  ]),
+                  ([epoch, unkeyed, keyed]) =>
+                    `${epoch}:${unkeyed + keyed}:${key}`
+                ),
+        })),
       log: (event, bounds, emit) =>
         Effect.suspend(() => {
-          if (emit !== undefined && !emits) {
-            return Effect.die(
-              new Error(
-                `Event "${event.name}" has a log source fed by emit, which this Event.Events does not consume, as its host does not last between requests (publish each occurrence with Event.Events.publish as the host receives it, such as in a call or a route)`
-              )
-            );
-          }
-
           const kept = logs.get(event) ?? {
             log: makeLog(makeLogStore(options.log(event), bounds)),
             waiting: new Set(),

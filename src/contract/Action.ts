@@ -12,7 +12,7 @@ import type { Scope, Context } from "effect";
 
 import { authorizerOf } from "./authorizer.js";
 import type { Authorizer, Deferred, ErasedAuthorizer } from "./authorizer.js";
-import { checked, checkedStream, jsonRoundTrip, watchInput } from "./call.js";
+import { checked, checkedStream, jsonRoundTrip, sentInput } from "./call.js";
 import type { Call, CheckedInput, CheckedMethod } from "./call.js";
 import { Anyone, assertCaller } from "./caller.js";
 import { codecOf } from "./codec.js";
@@ -124,8 +124,6 @@ export {
 
 export { Image } from "./media.js";
 
-export { InputCheck } from "./input-check.js";
-
 export { Idempotency, layerIdempotency } from "./idempotency.js";
 
 /** What `make` needs to define an action. */
@@ -219,8 +217,8 @@ export interface Options {
    * the key travels with the input. The caller makes the key at random for the call it means,
    * and sends it again on each retry; a call without it runs as any other. What is answered
    * again is kept by `Action.Idempotency`, which an implementation of the action requires at
-   * startup: provide `Action.layerIdempotency`, which a Durable Object's `make` and `handlers`
-   * provide over its storage.
+   * startup: provide `Action.layerIdempotency`, or `Stored.layerIdempotency` over a
+   * `SqlClient`, as a cluster entity does over its own database.
    *
    * **Gotchas**
    *
@@ -230,7 +228,7 @@ export interface Options {
    * - A repeat answers without the progress the first reported.
    * - An answer kept before a deployment changed `success` or an error schema, so that it no longer decodes, is ignored: the call runs again.
    * - An action answering `Action.Stream` throws at `make`: an answer is kept whole.
-   * - A key is each caller's own only where the surface's authentication has `principal`: without one, as over `Action.client`, `ActionToolkit`, the CLI or a public action, another caller sending it with the same input is given the answer, as a model filling the field in may, so make it at random, never from the input.
+   * - A key is each caller's own only on a surface with an authentication, by its `principal`: a public action's callers, and every caller over `Action.client`, `ActionToolkit` or the CLI, share one key space, so another sending it with the same input is given the answer, as a model filling the field in may: make it at random, never from the input.
    */
   readonly idempotencyKey?: string | undefined;
 }
@@ -763,7 +761,8 @@ export function implement(
  * The builders of `implementations`, as one layer providing nothing. Surfaces build them
  * themselves, once per layer graph, but routes under `HttpRouter.serve` or `Testing.layer`
  * are built in a graph of their own, sharing nothing they build: provided above the server and
- * its siblings, it runs each builder once for every surface, with the services it is given.
+ * its siblings, it runs each builder once, with the services it is given, for every surface but
+ * `ActionEntity.layer`, each of whose entity ids builds its own.
  *
  * **Gotchas**
  *
@@ -925,7 +924,7 @@ const watcherOf =
     }
 
     return Elements.unwrap(
-      Effect.map(watchInput(event, input), ({ value }) => {
+      Effect.map(sentInput(event, input), ({ value }) => {
         const subscriber = uniqueKey();
 
         return watching(

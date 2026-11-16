@@ -29,7 +29,7 @@ import type { Pushed } from "../contract/push.js";
 import { reported } from "../contract/reported.js";
 import { deliveryUnsupported } from "../contract/subscribe.js";
 import {
-  offersWebhook,
+  subscriberOf,
   Webhooks,
   webhookSubscriber,
 } from "../contract/webhooks.js";
@@ -340,20 +340,16 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
 
       const webhooks = Context.getOption(built, Webhooks);
 
-      const webhookOffered = (event: Event.Any) =>
-        Option.isSome(webhooks) && offersWebhook(event, authentication);
-
-      const deliveryOf = (event: Event.Any): EventDescriptor["delivery"] => [
+      const deliveryOf = (feed: Feed): EventDescriptor["delivery"] => [
         "poll",
         ...(send === undefined ? [] : ["push" as const]),
-        ...(webhookOffered(event) ? ["webhook" as const] : []),
+        ...(Option.isSome(webhookSubscriber(feed, authentication, webhooks))
+          ? ["webhook" as const]
+          : []),
       ];
 
       const served = new Map(
-        feeds.map((feed) => [
-          feed.event.name,
-          servedOf(feed, deliveryOf(feed.event)),
-        ])
+        feeds.map((feed) => [feed.event.name, servedOf(feed, deliveryOf(feed))])
       );
 
       const servedNamed = (name: string) => {
@@ -378,10 +374,7 @@ export const withEvents = (base: Adapter, serving: Serving): Adapter => {
           asCaller(
             authentication,
             feed.event,
-            Effect.flatMap(
-              webhookSubscriber(feed, authentication, webhooks),
-              run
-            )
+            Effect.flatMap(subscriberOf(feed, authentication, webhooks), run)
           ),
           (cause) => Effect.flatMap(wireErrorOf(cause), Effect.fail)
         );

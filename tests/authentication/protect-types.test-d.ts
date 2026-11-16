@@ -10,7 +10,9 @@ class Tenant extends Context.Service<Tenant, string>()(
   "protect-types/Tenant"
 ) {}
 
-const Login = Authentication.make("protect-types.Login", Actor);
+const Login = Authentication.make("protect-types.Login", Actor, {
+  principal: (actor) => actor,
+});
 
 type Owed<L> = L extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
 

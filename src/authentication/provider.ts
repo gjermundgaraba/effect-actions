@@ -123,8 +123,8 @@ export interface Descriptor<
   readonly security: S;
   /** `Options.error` of `make`, as a list. */
   readonly error: E;
-  /** `Options.principal` of `make`, the stable id of an identity, where given. */
-  principal?(identity: A): string;
+  /** `Options.principal` of `make`, the stable id of an identity. */
+  principal(identity: A): string;
   /** `Options.schema` of `make`, how an identity is kept, where given. */
   readonly schema?: Codec | undefined;
   readonly "~provider": Context.Key<Provider<I, Name>, Runtime>;

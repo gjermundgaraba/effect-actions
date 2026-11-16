@@ -27,7 +27,7 @@ import { assertDistinctTags, errorList } from "../contract/declared.js";
 import type { ErrorsOf } from "../contract/declared.js";
 import { builtIns, scopeToken, Unauthenticated } from "../contract/errors.js";
 import type { Refusal } from "../contract/errors.js";
-import type { Known, OptionalUnless } from "../contract/implementation.js";
+import type { Known } from "../contract/implementation.js";
 import { providerOf } from "./provider.js";
 import type {
   Any,
@@ -396,6 +396,7 @@ export interface Options<A = unknown> {
    * **Gotchas**
    *
    * - One scheme per descriptor, with no fallback: a host accepting two credentials for one identity declares two descriptors and serves them on two bindings or endpoints.
+   * - An API key in the query, or in a header the host's `HttpMiddleware.TracerHeaderFilter` records, is redacted from the spans of `ActionHttp` endpoints and `ActionHttp.client` calls alone: any other route, `ActionMcp` and `protect`ed routes included, records it as sent in its span's URL or headers.
    */
   readonly security?: Security;
   /**
@@ -408,17 +409,15 @@ export interface Options<A = unknown> {
    */
   readonly error?: Errors | Errors[number];
   /**
-   * The stable id of an identity, such as its user id: what tells subscribers apart where a
-   * surface keeps a subscription between requests, such as an MCP poll subscription's lease.
+   * The stable id of an identity, such as its user id, `(user) => user.id`: what a surface keys
+   * by caller, a poll subscription's `subscription` hook, a webhook subscription and an
+   * idempotency key.
    *
    * **Gotchas**
    *
-   * - A surface serving a protected event type whose source has a `subscription` hook refuses to start without it, its message naming this option.
-   * - Two identities with one principal share those subscriptions, so give each its own: a tenant's id alone merges its users.
-   * - Without it no surface offers a protected event by webhook, which a subscription keys by its principal: the listing names no webhook, and a webhook subscription fails with `Event.SubscriptionError`, reason `Unsupported`.
-   * - Without it every caller shares one idempotency key space: another caller sending a key with the same input is given the first call's answer, as `Action.Options.idempotencyKey` says.
+   * - Two identities with one principal share those, so give each its own: a tenant's id alone merges its users, who share subscription hooks, webhook subscriptions and each other's kept answers.
    */
-  readonly principal?: ((identity: A) => string) | undefined;
+  readonly principal: (identity: A) => string;
   /**
    * The identity's schema, its `Type` the identity: how a surface keeps an identity past a
    * restart, as `Webhook.layer` with `persist` keeps each webhook subscriber's, its JSON in the
@@ -456,19 +455,24 @@ export const make = <
   const Name extends string,
   I,
   A,
-  const O extends Options<never> = {},
+  const O extends Options<never>,
 >(
   name: Name,
   identity: Context.Key<I, A>,
-  ...options: OptionalUnless<
-    O,
-    O & NoInfer<Known<O, Options>> & PrincipalOf<A> & SchemaOf<O, A>
-  >
+  options: O & NoInfer<Known<O, Options>> & PrincipalOf<A> & SchemaOf<O, A>
 ): Descriptor<I, A, SecurityOf<O>, Name, ErrorsOf<O>> => {
-  const security: Security = options[0]?.security ?? HttpApiSecurity.bearer;
-  const error = errorList(options[0]?.error);
-  const principal = options[0]?.principal;
-  const schema = options[0]?.schema;
+  if (
+    !Predicate.hasProperty(options, "principal") ||
+    !Predicate.isFunction(options.principal)
+  ) {
+    throw new TypeError(
+      `Authentication "${name}" has no principal: give it the stable id of an identity, such as (user) => user.id`
+    );
+  }
+
+  const security: Security = options.security ?? HttpApiSecurity.bearer;
+  const error = errorList(options.error);
+  const { principal, schema } = options;
 
   if (!openApiComponentKey.test(name)) {
     throw new Error(
@@ -495,7 +499,7 @@ export const make = <
     security: security as SecurityOf<O>,
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     error: error as ErrorsOf<O>,
-    ...(principal === undefined ? {} : { principal }),
+    principal,
     ...(schema === undefined ? {} : { schema }),
     "~provider": Context.Service<Provider<I, Name>, Runtime>(
       `effect-actions/Authentication/Provider/${name}`

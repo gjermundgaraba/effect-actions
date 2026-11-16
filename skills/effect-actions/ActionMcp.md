@@ -26,7 +26,7 @@ export const routes = Layer.mergeAll(
 
 - Claude Code 2.1 and Codex CLI 0.162 connect: `claude mcp add --transport http <name> <url>/mcp --header "Authorization: Bearer <token>"`, `codex mcp add <name> --url <url>/mcp --bearer-token-env-var <VAR>`; [mcp-tools](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/README.md#connect-a-client) has stdio and Claude Desktop.
 - Where an endpoint without `authentication` listens, and its body limit: [mcp-tools/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/server.ts).
-- **On a serverless host**, such as Cloudflare Workers, pass `requestScoped: true`: [notes-service/src/worker.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/worker.ts). For an endpoint in a Cloudflare Durable Object: the `@gjermundgaraba/effect-actions-cloudflare` package's docs.
+- **On a serverless host**, such as Cloudflare Workers, pass `requestScoped: true`: [notes-service/src/worker.ts](node_modules/@gjermundgaraba/effect-actions/examples/notes-service/src/worker.ts). For an endpoint serving cluster entities on Cloudflare Durable Objects, also `requestScoped`: the `@gjermundgaraba/effect-actions-cloudflare` package's docs.
 - `McpServer.middleware` and `McpServer.visibility` provided around the endpoint run for its tools and its native features alike. A limit that must hold on every surface goes in the handlers: [kitchen-sink/src/issues/write-limit.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/issues/write-limit.ts).
 
 ## Serve tools over stdio
@@ -138,7 +138,7 @@ export const routes = Layer.mergeAll(mcp, api, rpc).pipe(
 
 Webhook delivery, `events/subscribe` and `events/unsubscribe`, is `Webhook.layer`'s ([Webhook.md](Webhook.md)), provided to the endpoint.
 
-- **Which deployment.** Push needs a server that outlives a request, so a `requestScoped` endpoint serves events by poll, and by webhook where `Webhook.layer` is provided. Sources, logs, `subscription` hooks' leases and webhook subscriptions are built once with the endpoint, either way. On a host with no lasting process, such as a serverless platform, serve check sources alone, without a `subscription` hook or `Webhook.layer`: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a gap, and its own leases and webhook subscriptions, lost as it ends.
+- **Which deployment.** Push needs a server that outlives a request, so a `requestScoped` endpoint serves events by poll, and by webhook where `Webhook.layer` is provided or the event is a protected one `ActionEntity.reaching` serves ([ActionEntity.md](ActionEntity.md#deliver-its-events-by-webhook)). Sources, logs, `subscription` hooks' leases and webhook subscriptions are built once with the endpoint, either way. On a host with no lasting process, such as a serverless platform, serve check sources alone, without a `subscription` hook or `Webhook.layer`: nothing refuses the others, and under `Event.layerMemory` each instance keeps its own log of a log source, whose cursors another reads as a gap, and its own leases and webhook subscriptions, lost as it ends.
 
 ## Allow browser clients
 

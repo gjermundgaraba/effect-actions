@@ -4,12 +4,21 @@
   "compatibility_date": "2026-10-01",
   "durable_objects": {
     "bindings": [
-      { "name": "CHAT_ROOM", "class_name": "ChatRoom" },
-      { "name": "CHAT_LOBBY", "class_name": "ChatLobby" },
+      { "name": "CLUSTER_ENTITY", "class_name": "ClusterEntity" },
+      { "name": "CLUSTER_WORKFLOW", "class_name": "ClusterWorkflow" },
+      { "name": "CLUSTER_QUEUE", "class_name": "ClusterDurableQueue" },
+      { "name": "CLUSTER_SINGLETON", "class_name": "ClusterSingleton" },
     ],
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["ChatRoom"] },
-    { "tag": "v2", "new_sqlite_classes": ["ChatLobby"] },
+    {
+      "tag": "cluster-v1",
+      "new_sqlite_classes": [
+        "ClusterEntity",
+        "ClusterWorkflow",
+        "ClusterDurableQueue",
+        "ClusterSingleton",
+      ],
+    },
   ],
 }

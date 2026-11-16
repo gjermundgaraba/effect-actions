@@ -661,7 +661,9 @@ describe("the MCP endpoint over HTTP", () => {
       "origin/Identity"
     ) {}
 
-    const Login = Authentication.make("origin.Login", Identity);
+    const Login = Authentication.make("origin.Login", Identity, {
+      principal: (identity) => identity,
+    });
 
     const Who = Action.make("who", {
       description: "The caller",

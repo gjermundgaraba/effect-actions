@@ -2,21 +2,18 @@ import { Effect, Layer, Queue, Schema } from "effect";
 import { RpcClient, RpcServer } from "effect/rpc";
 import type { RpcMessage, RpcSerialization } from "effect/rpc";
 
-import * as ActionRpc from "../../src/rpc/ActionRpc.js";
-
 const valuesCodecFor: RpcSerialization.CodecFor = Schema.toCodecIso;
 
 const unconnected = () => Effect.void;
 
 export interface ValuesProtocolOptions {
   readonly acknowledges?: boolean;
-  readonly keeper?: ActionRpc.SubscriptionKeeper;
   readonly sent?: RpcMessage.FromServerEncoded[];
 }
 
 export const inMemoryValuesProtocolTo = <E, R>(
   server: Layer.Layer<never, E, R>,
-  { acknowledges = false, keeper, sent }: ValuesProtocolOptions = {}
+  { acknowledges = false, sent }: ValuesProtocolOptions = {}
 ): Layer.Layer<RpcClient.Protocol, E, Exclude<R, RpcServer.Protocol>> =>
   Layer.unwrap(
     Effect.gen(function* () {
@@ -71,20 +68,10 @@ export const inMemoryValuesProtocolTo = <E, R>(
         });
       });
 
-      const keeping = {
-        ...serverProtocol,
-        [ActionRpc.subscriptionKeeper]: keeper,
-      };
-
       return Layer.merge(
         Layer.succeed(RpcClient.Protocol, clientProtocol),
         server.pipe(
-          Layer.provide(
-            Layer.succeed(
-              RpcServer.Protocol,
-              keeper === undefined ? serverProtocol : keeping
-            )
-          )
+          Layer.provide(Layer.succeed(RpcServer.Protocol, serverProtocol))
         )
       );
     })
