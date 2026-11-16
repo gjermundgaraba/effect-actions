@@ -2,15 +2,7 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import { Effect, Queue, Stream } from "effect";
 
-import type {
-  Heard,
-  Hooked,
-  Leased,
-  Logged,
-  Note,
-  Pinned,
-  Polled,
-} from "../board.js";
+import type { Hooked, Leased, Logged, Note, Pinned, Polled } from "../board.js";
 import { BoardHttp } from "../board.js";
 
 export const boards = ActionHttp.client(BoardHttp, {
@@ -20,7 +12,6 @@ export const boards = ActionHttp.client(BoardHttp, {
 type Watched =
   | Event.Received<typeof Pinned>
   | Event.Received<typeof Logged>
-  | Event.Received<typeof Heard>
   | Event.Received<typeof Hooked>
   | Event.Received<typeof Leased>
   | Event.Received<typeof Polled>;

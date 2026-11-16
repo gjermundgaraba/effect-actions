@@ -74,7 +74,7 @@ const signedOut = ActionRpc.make([Posted]);
 
 describe("ActionRpc.client's watch through polls", () => {
   it.live(
-    "falls back, with no mode, to the polls of a server serving no stream rpc, as an entity, and releases its watch as it ends",
+    "falls back, with no mode, to the polls of a server serving no stream rpc, as an entity, and sends nothing as it ends",
     () =>
       Effect.gen(function* () {
         const log = makeMessages();
@@ -117,9 +117,9 @@ describe("ActionRpc.client's watch through polls", () => {
 
         expect(texts(received)).toStrictEqual(["one", "two"]);
         expect(forwarded[0]).toMatchObject({ tag: postedPoll, cursor: "0" });
-        expect(forwarded.at(-1)).toStrictEqual({
-          tag: `${Posted.name}/release`,
-        });
+        expect(forwarded.map(({ tag }) => tag)).not.toContain(
+          `${Posted.name}/release`
+        );
       }),
     { timeout: 10_000 }
   );

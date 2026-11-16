@@ -1,6 +1,6 @@
 # Events over rpcs
 
-An [event type](Event.md) in an RPC binding is a stream rpc named after it, taking `{ input, cursor }`, which pushes each occurrence as the server reads it, beside a unary `<event>/poll` answering a page and its `<event>/release`. A client's `watch(event, input, options)` holds it open over the client's protocol, a socket or HTTP, as `Action.client`'s does, and connects again after a drop, resuming from the last occurrence it delivered. Experimental, as [events](Event.md) are.
+An [event type](Event.md) in an RPC binding is a stream rpc named after it, taking `{ input, cursor }`, which pushes each occurrence as the server reads it, beside a unary `<event>/poll` answering a page. A client's `watch(event, input, options)` holds it open over the client's protocol, a socket or HTTP, as `Action.client`'s does, and connects again after a drop, resuming from the last occurrence it delivered. Experimental, as [events](Event.md) are.
 
 A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionRpc-failures.md](ActionRpc-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`.
 

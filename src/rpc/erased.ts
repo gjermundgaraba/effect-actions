@@ -188,12 +188,6 @@ const streamsEvents = (server: Server["_tag"]) => server === "ActionRpc.layer";
  */
 export const pollTag = (name: string) => `${name}/poll`;
 
-/**
- * The tag of the unary rpc releasing a watch of the event type `name`, `<name>/release`, taking
- * `Release` beside its `input`, which `ActionRpc.client`'s polling watch calls as it ends.
- */
-export const releaseTag = (name: string) => `${name}/release`;
-
 const subscribeTag = (name: string) => `${name}/subscribe`;
 
 const unsubscribeTag = (name: string) => `${name}/unsubscribe`;
@@ -224,7 +218,6 @@ export const erasedOf = (
     ...events.flatMap((event) => [
       ...(streamsEvents(server) ? [streamOf(event.name)] : []),
       unaryOf(pollTag(event.name)),
-      unaryOf(releaseTag(event.name)),
     ])
   );
 
@@ -233,7 +226,8 @@ const Watch = Schema.String.check(Schema.isUUID());
 /**
  * The payload of an event type's poll rpc, `<event>/poll`, past its `input`, as a client sends
  * it: the `cursor` to read after, `null` reading from now, at most `maxEvents` occurrences, and
- * the `watch`, a UUID, whose own subscription hook the poll holds.
+ * the `watch`, a UUID one watch sends with each of its polls, which tells a page's watches apart
+ * on a socket and holds nothing on the server: a poll's subscription hook is its caller's.
  */
 export const Poll = Schema.Struct({
   cursor: Schema.NullOr(Schema.String),
@@ -243,18 +237,6 @@ export const Poll = Schema.Struct({
 
 const PollOf = (event: Event.Any) =>
   Schema.Struct({ ...Poll.fields, ...SubscriptionOf(event).fields });
-
-/**
- * The payload of an event type's `<event>/release`, past its `input`: the `watch` whose
- * subscription hook it frees.
- */
-export const Release = Schema.Struct({ watch: Watch });
-
-const ReleaseOf = (event: Event.Any) =>
-  Schema.Struct({ input: event.input, ...Release.fields });
-
-const watcherOf = (principal: string | undefined, watch: string) =>
-  JSON.stringify([principal ?? null, watch]);
 
 export interface ErasedCall {
   readonly unary: (
@@ -433,21 +415,12 @@ export const pollOf = (event: Event.Any, binding: Declaring) => {
 export const watchedOf = (event: Event.Any, binding: Declaring) => {
   const pollThrough = pollOf(event, binding);
 
-  const releaseUnserved = isUnknownTag(releaseTag(event.name));
-
   return (call: ErasedCall) => {
     const poll = pollThrough(call);
 
-    return (
-      input: Schema.Json
-    ): Pick<Transport<unknown, never>, "poll" | "release"> => ({
+    return (input: Schema.Json): Pick<Transport<unknown, never>, "poll"> => ({
       poll: (cursor, watch) =>
         poll({ input, cursor, ...(watch === undefined ? {} : { watch }) }),
-      release: (watch) =>
-        call.unary(releaseTag(event.name), { input, watch }).pipe(
-          Effect.asVoid,
-          Effect.catchCauseIf(releaseUnserved, () => Effect.void)
-        ),
     });
   };
 };
@@ -508,14 +481,13 @@ export const polledTransport =
       const watched = watchedThrough(call);
 
       return (input) => {
-        const { poll, release } = watched(input);
+        const { poll } = watched(input);
 
         return polledTransportOf(
           event,
           {
             poll:
               resendAfter === undefined ? poll : resending(poll, resendAfter),
-            release,
           },
           transient,
           pollUnserved
@@ -790,42 +762,15 @@ const pollHandlerOf = (
 
   return servedCall(steps, callBoundaryOf(error), (payload) =>
     Effect.gen(function* () {
-      const { input, cursor, maxEvents, watch } = yield* decode(payload);
+      const { input, cursor, maxEvents } = yield* decode(payload);
 
       yield* check(input);
 
-      const principal = yield* principalOf(feed.event, authentication);
-
-      const subscriber =
-        watch === undefined ? principal : watcherOf(principal, watch);
+      const subscriber = yield* principalOf(feed.event, authentication);
 
       const page = yield* feed.poll(input, cursor, { subscriber, maxEvents });
 
       return yield* encode({ ...page, notified: !feed.polls });
-    })
-  );
-};
-
-const releaseHandlerOf = (
-  feed: Feed,
-  steps: readonly Step[],
-  error: Schema.Union<Action.Errors>,
-  authentication: Authentication | undefined,
-  check: Checking
-) => {
-  const decode = decodeInput({ input: ReleaseOf(feed.event) });
-
-  return servedCall(steps, callBoundaryOf(error), (payload) =>
-    Effect.gen(function* () {
-      const { input, watch } = yield* decode(payload);
-
-      yield* check(input);
-
-      const principal = yield* principalOf(feed.event, authentication);
-
-      yield* feed.release?.(input, watcherOf(principal, watch)) ?? Effect.void;
-
-      return null;
     })
   );
 };
@@ -1007,10 +952,6 @@ export const handlersOf = Effect.fnUntraced(function* (
           [
             pollTag(feed.event.name),
             pollHandlerOf(feed, steps, error, authentication, checking),
-          ],
-          [
-            releaseTag(feed.event.name),
-            releaseHandlerOf(feed, steps, error, authentication, checking),
           ],
         ] as const;
       })

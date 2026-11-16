@@ -253,6 +253,43 @@ describe("A webhook retry wait in an entity on a SQL runner", () => {
   );
 
   it.live(
+    "keeps a failing delivery's retry wait across a restart that another call starts before it is due",
+    () => {
+      const { seen, tick, server } = makeWorld({
+        accepts: () => false,
+        maxIdleTime: "1 second",
+      });
+
+      return Effect.gen(function* () {
+        yield* subscribed;
+        yield* tick(1);
+        yield* eventually(() => seen.attempts.length >= 5, "30 seconds");
+
+        const first = seen.attempts[0]?.at ?? Number.NaN;
+        const last = seen.attempts.at(-1)?.at ?? Number.NaN;
+
+        yield* eventually(
+          () => seen.stops.some((at) => at > last),
+          "15 seconds"
+        );
+
+        const before = seen.attempts.length;
+        const polled = yield* pollOf("a");
+        const polledAt = Date.now();
+
+        yield* eventually(() => seen.attempts.length > before, "30 seconds");
+
+        const resumed = seen.attempts[before]?.at ?? Number.NaN;
+
+        expect(polled.status).toBe(200);
+        expect(polledAt).toBeLessThan(last + (last - first));
+        expect(resumed - last).toBeGreaterThanOrEqual(last - first);
+      }).pipe(Effect.scoped, Effect.provide(server));
+    },
+    { timeout: 90_000 }
+  );
+
+  it.live(
     "delivers after growing retry waits the reaper cut again and again, each wake building the entity anew, and keeps no credential in its stored wakes",
     () => {
       const { seen, tick, server } = makeWorld({
@@ -340,6 +377,7 @@ describe("A failing webhook subscription in an entity, refreshed while it waits 
           .map((at, index) => at - (attempts[index] ?? at));
 
         expect(Math.max(...pending)).toBeLessThanOrEqual(1);
+        expect(apart.length).toBeGreaterThan(0);
         expect(Math.min(...apart)).toBeGreaterThanOrEqual(1000);
       }).pipe(Effect.scoped, Effect.provide(server));
     },

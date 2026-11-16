@@ -37,4 +37,29 @@ describe("ActionCluster.handler", () => {
       }),
     { timeout: 30_000 }
   );
+
+  it.live(
+    "hands an upgrade to the object of the route's id percent-decoded, the id ActionEntity.reaching keys a call to",
+    () =>
+      Effect.gen(function* () {
+        const admitted = yield* upgrade("Board", encodeURIComponent("café"));
+
+        admitted.webSocket?.accept();
+        admitted.webSocket?.close(1000);
+
+        const { instances } = yield* stubs;
+
+        const reached = (id: string) =>
+          instances.some((instance) =>
+            instance.startsWith(`${CloudflareCluster.encodeName("Board", id)}#`)
+          );
+
+        expect(admitted.status).toBe(101);
+        expect([reached("café"), reached("caf%C3%A9")]).toStrictEqual([
+          true,
+          false,
+        ]);
+      }),
+    { timeout: 30_000 }
+  );
 });

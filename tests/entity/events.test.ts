@@ -603,7 +603,7 @@ describe("ActionEntity.reaching's event streams", () => {
   );
 
   it.live(
-    "end on a cluster failure no retry outlasts, which the HTTP stream reports as Failed and opens again under a hook of its own",
+    "end on a cluster failure no retry outlasts, which the HTTP stream reports as Failed and opens again under the caller's hook",
     () => {
       const { counted, ticks, server } = makeTicker({
         fails: (call) => call === 2,
@@ -637,17 +637,16 @@ describe("ActionEntity.reaching's event streams", () => {
         ticks.push(2);
 
         yield* Fiber.join(watched);
-        yield* eventually(() => counted.unhooked === 2);
 
         expect(received).toStrictEqual([1, 2]);
-        expect(counted).toMatchObject({ hooked: 2, unhooked: 2 });
+        expect(counted).toMatchObject({ hooked: 1, unhooked: 0 });
       }).pipe(Effect.scoped, Effect.provide(server));
     },
     { timeout: 30_000 }
   );
 
   it.live(
-    "end on an error the entity's verifier declares, which the HTTP stream sends as Failed and opens again under a hook of its own",
+    "end on an error the entity's verifier declares, which the HTTP stream sends as Failed and opens again under the caller's hook",
     () => {
       const { counted, ticks, server } = makeTicker({
         entityUnavailable: (call) => call === 2,
@@ -683,8 +682,6 @@ describe("ActionEntity.reaching's event streams", () => {
           Stream.runCollect
         );
 
-        yield* eventually(() => counted.unhooked === 2);
-
         expect(frames).toMatchObject([
           { _tag: "Checked", cursor: "0" },
           { _tag: "Occurrence", cursor: "1", data: { at: 1 } },
@@ -692,7 +689,7 @@ describe("ActionEntity.reaching's event streams", () => {
           { _tag: "Occurrence", cursor: "2", data: { at: 2 } },
         ]);
         expect(JSON.stringify(frames)).not.toContain("auth.example.com");
-        expect(counted).toMatchObject({ hooked: 2, unhooked: 2 });
+        expect(counted).toMatchObject({ hooked: 1, unhooked: 0 });
       }).pipe(Effect.scoped, Effect.provide(server));
     },
     { timeout: 30_000 }
@@ -743,7 +740,7 @@ describe("ActionEntity.reaching's event streams", () => {
   );
 
   it.live(
-    "release the subscription hook their polls hold in the entity as each closes, leaving another stream's of the same input held",
+    "share the caller's subscription hook in the entity, which outlives the streams until its lease lapses",
     () => {
       const { counted, server } = makeTicker();
 
@@ -763,22 +760,13 @@ describe("ActionEntity.reaching's event streams", () => {
         yield* eventually(() => counted.hooked === 1);
 
         const second = yield* opened;
-
-        yield* eventually(() => counted.hooked === 2);
-        yield* Fiber.interrupt(first);
-        yield* eventually(() => counted.unhooked === 1);
-
         const checked = counted.checks;
 
         yield* eventually(() => counted.checks > checked);
-
-        const whileSecondOpen = { ...counted };
-
+        yield* Fiber.interrupt(first);
         yield* Fiber.interrupt(second);
-        yield* eventually(() => counted.unhooked === 2);
 
-        expect(whileSecondOpen).toMatchObject({ hooked: 2, unhooked: 1 });
-        expect(counted).toMatchObject({ hooked: 2, unhooked: 2 });
+        expect(counted).toMatchObject({ hooked: 1, unhooked: 0 });
       }).pipe(Effect.scoped, Effect.provide(server));
     },
     { timeout: 30_000 }
@@ -793,7 +781,7 @@ const signedIn = (token: string) =>
 
 describe("ActionEntity.client's watches", () => {
   it.live(
-    "each hold a subscription hook of their own in the entity, which each releases as it ends, interrupted or done",
+    "share the caller's subscription hook in the entity, whatever their mode, which outlives them until its lease lapses",
     () => {
       const { counted, ticks, server } = makeTicker();
 
@@ -812,18 +800,11 @@ describe("ActionEntity.client's watches", () => {
           Stream.runDrain(watched({ mode: "poll" }))
         );
 
-        yield* eventually(() => counted.hooked === 2);
-        yield* Fiber.interrupt(first);
-        yield* eventually(() => counted.unhooked === 1);
-
         const checked = counted.checks;
 
         yield* eventually(() => counted.checks > checked);
-
-        const whileSecondOpen = { ...counted };
-
+        yield* Fiber.interrupt(first);
         yield* Fiber.interrupt(second);
-        yield* eventually(() => counted.unhooked === 2);
 
         ticks.push(1);
 
@@ -831,18 +812,15 @@ describe("ActionEntity.client's watches", () => {
           watched({ cursor: "0" }).pipe(Stream.take(1))
         );
 
-        yield* eventually(() => counted.unhooked === 3);
-
-        expect(whileSecondOpen).toMatchObject({ hooked: 2, unhooked: 1 });
         expect(taken).toMatchObject([{ _tag: "Occurrence", data: { at: 1 } }]);
-        expect(counted).toMatchObject({ hooked: 3, unhooked: 3 });
+        expect(counted).toMatchObject({ hooked: 1, unhooked: 0 });
       }).pipe(Effect.scoped, Effect.provide(server));
     },
     { timeout: 30_000 }
   );
 
   it.live(
-    "ask the entity again after a transient cluster failure, from where the watch reached, under the hook it held",
+    "ask the entity again after a transient cluster failure, from where the watch reached, under the caller's hook",
     () => {
       const { counted, ticks, server } = makeTicker({
         fails: (call) => call === 2,
@@ -871,10 +849,9 @@ describe("ActionEntity.client's watches", () => {
         ticks.push(2);
 
         yield* Fiber.join(watched);
-        yield* eventually(() => counted.unhooked === 1);
 
         expect(received).toStrictEqual([1, 2]);
-        expect(counted).toMatchObject({ hooked: 1, unhooked: 1 });
+        expect(counted).toMatchObject({ hooked: 1, unhooked: 0 });
       }).pipe(Effect.scoped, Effect.provide(server));
     },
     { timeout: 30_000 }
@@ -891,37 +868,26 @@ const rpcOfRoomA = Effect.map(Ticker.client, (clientFor) => {
 const refusalOf = (refused: unknown) =>
   refused instanceof DeclaredFailure ? refused.json : refused;
 
-describe("An entity's release rpc", () => {
+describe("An entity's polls", () => {
   it.live(
-    "frees the hook a watch's polls hold for their own principal alone, and refuses a caller without a credential",
+    "hold one subscription hook per principal, whatever watch each poll names",
     () => {
       const { counted, server } = makeTicker();
 
       return Effect.gen(function* () {
         const sent = yield* rpcOfRoomA;
         const input = { room: "a" };
-        const watch = "6f1c2a4e-8b3d-4c5e-9a7f-0d1e2f3a4b5c";
-        const polled = { input, cursor: null, watch };
-        const released = { input, watch };
         const asBob = { authorization: "Bearer bob" };
 
-        yield* sent("ticked/poll", polled, asAlice.headers);
-        yield* sent("ticked/release", released, asBob);
+        for (const headers of [asAlice.headers, asAlice.headers, asBob]) {
+          yield* sent(
+            "ticked/poll",
+            { input, cursor: null, watch: crypto.randomUUID() },
+            headers
+          );
+        }
 
-        const refused = yield* Effect.flip(
-          sent("ticked/release", released, {})
-        );
-
-        yield* sent("ticked/poll", polled, asAlice.headers);
-
-        const beforeAlice = { ...counted };
-
-        yield* sent("ticked/release", released, asAlice.headers);
-        yield* eventually(() => counted.unhooked > beforeAlice.unhooked);
-
-        expect(refusalOf(refused)).toMatchObject({ _tag: "Unauthenticated" });
-        expect(beforeAlice).toMatchObject({ hooked: 1, unhooked: 0 });
-        expect(counted).toMatchObject({ hooked: 1, unhooked: 1 });
+        expect(counted).toMatchObject({ hooked: 2, unhooked: 0 });
       }).pipe(Effect.scoped, Effect.provide(server));
     }
   );
@@ -934,18 +900,11 @@ describe("An entity's release rpc", () => {
       const input = { room: "a" };
       const watch = "w".repeat(36);
 
-      const refusals = yield* Effect.forEach(
-        [
-          ["ticked/poll", { input, cursor: null, watch }],
-          ["ticked/release", { input, watch }],
-        ] as const,
-        ([tag, payload]) => Effect.flip(sent(tag, payload, asAlice.headers))
+      const refused = yield* Effect.flip(
+        sent("ticked/poll", { input, cursor: null, watch }, asAlice.headers)
       );
 
-      expect(refusals.map(refusalOf)).toMatchObject([
-        { _tag: "InvalidInput" },
-        { _tag: "InvalidInput" },
-      ]);
+      expect(refusalOf(refused)).toMatchObject({ _tag: "InvalidInput" });
       expect(counted).toMatchObject({ checks: 0, hooked: 0 });
     }).pipe(Effect.scoped, Effect.provide(server));
   });

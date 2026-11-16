@@ -190,6 +190,7 @@ export const makeWebhooks = (
             expiresAt: subscription.expiresAt,
             watermark: subscription.watermark,
             status: statusOf(subscription.health),
+            retryingAt: subscription.retryingAt,
           });
         }
       });
@@ -317,6 +318,7 @@ export const makeWebhooks = (
             }
 
             subscription.retryingAt = retryAt(subscription, at);
+            yield* kept(subscription);
 
             return yield* attempted(subscription, webhookId, body);
           })
@@ -707,22 +709,28 @@ export const makeWebhooks = (
           return;
         }
 
-        const subscription = heldOf({
-          id: current,
-          url,
-          feed,
-          principal,
-          kept: { input: record.input, identity: record.identity },
-          secret,
-          context: Context.add(
-            Context.merge(built, snapshotOf(yield* Effect.context<unknown>())),
-            feed.event.caller,
-            identity
-          ),
-          expiresAt,
-          health: restoredHealth,
-          watermark: record.watermark,
-        });
+        const subscription: Held = {
+          ...heldOf({
+            id: current,
+            url,
+            feed,
+            principal,
+            kept: { input: record.input, identity: record.identity },
+            secret,
+            context: Context.add(
+              Context.merge(
+                built,
+                snapshotOf(yield* Effect.context<unknown>())
+              ),
+              feed.event.caller,
+              identity
+            ),
+            expiresAt,
+            health: restoredHealth,
+            watermark: record.watermark,
+          }),
+          retryingAt: record.retryingAt,
+        };
 
         const confirmation = yield* confirmedAt(record.watermark);
 

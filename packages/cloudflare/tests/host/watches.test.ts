@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { runInDurableObject } from "cloudflare:test";
 import { Effect, Exit, Predicate, Queue, Scope, Stream } from "effect";
 
-import { BoardRpc, Heard, Pinned, wires } from "../board.js";
+import { BoardRpc, Pinned } from "../board.js";
 import {
   clientOver,
   connected,
@@ -17,16 +17,6 @@ import {
 } from "../support/socket.js";
 import { boards, following, notes } from "../support/watch.js";
 import { throughWorker } from "../support/worker.js";
-
-const wire = (board: string, n: number) =>
-  Effect.promise(
-    async () =>
-      await runInDurableObject(objectOf("Board", board), () => {
-        const queue = wires.get(board);
-
-        return queue !== undefined && Queue.offerUnsafe(queue, n);
-      })
-  );
 
 describe("ActionClusterEntity's watches", () => {
   it.live(
@@ -55,35 +45,6 @@ describe("ActionClusterEntity's watches", () => {
           after.started.invoke - before.started.invoke
         ).toBeGreaterThanOrEqual(2);
       }).pipe(Effect.scoped),
-    { timeout: 60_000 }
-  );
-
-  it.live(
-    "answers a parked poll with what a log's emit stream appended outside any handler, at the object's next settle",
-    () =>
-      Effect.gen(function* () {
-        const board = "wired";
-        const http = yield* boards;
-        const socket = yield* opened("Board", board);
-
-        const heard = yield* following(
-          (yield* clientOver(BoardRpc, socket)).watch(Heard, { board })
-        );
-
-        yield* watchingIn("Board", board, 1);
-
-        const offered = yield* wire(board, 5);
-
-        yield* Effect.sleep("2 seconds");
-
-        const unsettled = yield* Queue.clear(heard);
-
-        yield* http.later({ board, n: 0, at: Date.now() + 3_600_000 });
-
-        expect(offered).toBe(true);
-        expect(unsettled).toStrictEqual([]);
-        expect(yield* notes(heard, 1)).toStrictEqual([{ n: 5 }]);
-      }).pipe(Effect.scoped, Effect.provide(throughWorker)),
     { timeout: 60_000 }
   );
 

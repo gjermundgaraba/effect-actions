@@ -108,14 +108,9 @@ const servingOf = (
     entity.binding.events.map(({ name }) => ActionRpc.pollTag(name))
   );
 
-  const releases = new Set(
-    entity.binding.events.map(({ name }) => ActionRpc.releaseTag(name))
-  );
-
   return (entityId) => ({
     rpcs,
     polls,
-    releases,
     call: (tag, payload, headers) =>
       Effect.suspend(() => {
         const answer = clientFor(entityId)[tag]?.(payload, { headers });
@@ -217,7 +212,9 @@ const hostOf = (
 /**
  * The Durable Object `make`'s class builds: Effect's own `ClusterEntity`, with the WebSocket
  * handlers serving `sockets`. Exported as a type alone, to name the class in a Worker's
- * declarations; a subclass of `make`'s class overrides a WebSocket handler by calling `super`.
+ * declarations; a subclass of `make`'s class overrides a WebSocket handler by calling `super`,
+ * and not `fetch`, which Effect's class types as `() => never`: judge an upgrade in the Worker,
+ * before it hands it to the object.
  */
 class Host<Env> extends ClusterEntity {
   #host!: ReturnType<typeof hostOf>;
@@ -233,6 +230,8 @@ class Host<Env> extends ClusterEntity {
 
     Object.defineProperty(this, "fetch", {
       value: (request: Request) => this.#host.upgrade(request),
+      writable: true,
+      configurable: true,
     });
 
     void ctx.blockConcurrencyWhile(async () => {
@@ -283,8 +282,8 @@ class Host<Env> extends ClusterEntity {
  * **Gotchas**
  *
  * - A watch's poll that finds nothing new, on a page `notified`, is parked in the socket's attachment and asked again once `Stored.layerEvents`' change signal moved, read as each handler the object runs ends, whether a call, a tell or an alarm ran it: an entity whose events are not on `Stored.layerEvents`, and a check source not `notified`, have their polls answered at once, their watches polling at `nextPoll`, each poll a stub call.
- * - A post a socket watches, by a handler that sends no calls or tells, costs 1 + P stub calls, `invoke` each: the post, and one for each of the P polls parked on that object, sent as it settles; the page's client polls again `nextPoll` later, and that poll is parked with no call when nothing changed meanwhile and the last poll's call was under 30 seconds earlier, so a source whose `nextPoll` is 30 seconds or more costs one call a page each `nextPoll`.
- * - An `emit` stream's append, which no handler runs, moves the change signal but is read only when the object's next handler ends; a change a `notified` check source reads from an upstream, which no handler `notify`s, moves no signal at all, so a parked poll answers it only when its client sends it again, `ActionRpc.pollResentAfter` after it was sent: `notify` the source from a handler, or leave it not `notified`, to answer it at `nextPoll`.
+ * - A post a socket watches, by a handler that sends no calls or tells, costs 1 + P stub calls, `invoke` each: the post, and one for each of the P polls parked on that object, sent as it settles; the page's client polls again `nextPoll` later, and that poll is parked with no call when nothing changed meanwhile and the last poll's call was under 30 seconds earlier, so a source whose `nextPoll` is 30 seconds or more costs one call a page each `nextPoll`; the signal is one for all the object's events, so any handler appending to any of its logs, or `notify`ing any of its sources, asks every parked poll again, whatever event it watches.
+ * - A change a `notified` check source reads from an upstream, which no handler `notify`s, moves no signal at all, so a parked poll answers it only when its client sends it again, `ActionRpc.pollResentAfter` after it was sent: `notify` the source from a handler, or leave it not `notified`, to answer it at `nextPoll`.
  * - A source's subscription hook is held by the entity's activation until its `lease`, 5 minutes by default, after the last poll the host sent the entity, on a timer that keeps the object awake, so the object of a page watching a hooked source does not hibernate until the hook lapses: the host sends a page's poll at most 4 minutes 30 seconds after its last, or `nextPoll` after its last answer when that is longer, so a `lease` under 4 minutes 30 seconds may lapse while a poll is parked, and one not longer than its `nextPoll`, as the default is at a `nextPoll` of 5 minutes, may lapse after each answered page; a lapsed hook is set up again by the next poll the host sends the entity.
  * - Only the binding's actions and event types are forwarded: a native rpc, which authenticates nothing, and a streaming action, whose frames would hold the object awake, each fail the call with a defect naming it.
  * - A call under way is interrupted, through Effect's own interrupt to the entity, when the page interrupts it, as `Effect.timeout` does, or its socket closes or fails; a frame the host cannot read is answered with Effect's `Defect`, which fails the page's calls under way on that socket, though each runs on in the entity to its end.

@@ -23,6 +23,7 @@ export const Stored = Schema.Struct({
   expiresAt: Schema.Finite,
   watermark: Schema.NullOr(Schema.String),
   status: DeliveryStatus,
+  retryingAt: Schema.optional(Schema.Finite),
 });
 
 export type Stored = typeof Stored.Type;

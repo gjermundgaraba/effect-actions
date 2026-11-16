@@ -115,6 +115,8 @@ A post a socket watches, by a handler that sends no calls or tells, costs **1 + 
 - **1**, the post itself, the Worker's call into the room;
 - **P**, the parked polls on that object, each asked again once, by the host, through the room's own `Entity.client`, which the runtime sends as a stub call to the object itself.
 
+The P is paid by any handler that appends to any of the object's logs or `notify`s any of its sources, not only a post to the event a page watches: the host reads one change signal for all of them.
+
 No `hold` or `acknowledge` is called: a poll is unary. A page's next poll after an answer reaches the object as a socket message, not a stub call, and is parked at once when nothing changed since the answer and the answer's call was under 30 seconds earlier; later it is sent to the entity, one stub call, which renews a subscription hook's lease. A page watching over HTTP adds no P. The example's test of these counts, "costs each post 1 + P stub calls", runs the Worker through [`chat-rooms/test/worker.ts`](../examples/chat-rooms/test/worker.ts), which exports a `ClusterEntity` counting each `invoke` by object and tag.
 
 ## Test on workerd

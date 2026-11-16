@@ -44,8 +44,6 @@ export interface Transport<E, R> {
     cursor: string | null,
     watch?: string
   ) => Effect.Effect<Page, E, R>;
-  /** Present where polls naming a `watch` hold a hook of their own, which this frees. */
-  readonly release?: ((watch: string) => Effect.Effect<void, E, R>) | undefined;
   readonly stream: (cursor: string | null) => Stream.Stream<Fed, E, R>;
   readonly webhook?: WebhookTransport<E, R> | undefined;
   readonly transient?: ((error: E) => boolean) | undefined;
@@ -121,26 +119,19 @@ const closing = <E, R>(closed: Effect.Effect<void, E, R>) =>
 
 export const polling =
   <E, R>(
-    { poll, release }: Pick<Transport<E, R>, "poll" | "release">,
+    { poll }: Pick<Transport<E, R>, "poll">,
     transient: ((error: E) => boolean) | undefined
   ) =>
   (cursor: string | null): Stream.Stream<Fed, E, R> =>
-    release === undefined
-      ? reconnecting(transient, (at) => paged(poll, at), cursor)
-      : Stream.unwrap(
-          Effect.map(
-            Effect.acquireRelease(
-              Effect.sync(() => globalThis.crypto.randomUUID()),
-              (watch) => closing(release(watch))
-            ),
-            (watch) =>
-              reconnecting(
-                transient,
-                (at) => paged((from) => poll(from, watch), at),
-                cursor
-              )
-          )
-        );
+    Stream.suspend(() => {
+      const watch = globalThis.crypto.randomUUID();
+
+      return reconnecting(
+        transient,
+        (at) => paged((from) => poll(from, watch), at),
+        cursor
+      );
+    });
 
 const capacity = 16;
 

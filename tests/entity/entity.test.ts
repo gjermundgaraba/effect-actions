@@ -101,6 +101,43 @@ const Probe = Action.make("probe", {
   caller: Action.Anyone,
 });
 
+describe("ActionEntity's log sources on Entity.makeTestClient", () => {
+  it.effect(
+    "dies as it builds an entity whose log source has an emit stream, naming Events.publish",
+    () => {
+      const rooms = makeRooms();
+
+      const emitting = Event.implement(Posted, {
+        log: { emit: Stream.never },
+        key: ({ room: named }) => named,
+      });
+
+      const [echoing, actions, tallying] = rooms.implementations;
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Effect.gen(function* () {
+            const clientFor = yield* Entity.makeTestClient(
+              Room,
+              ActionEntity.layer(Room, [echoing, actions, tallying, emitting])
+            );
+
+            const { read } = yield* clientFor("lobby");
+
+            return yield* unaryOf(read?.({ room: "lobby" }), "read");
+          }).pipe(Effect.scoped)
+        );
+
+        expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toContain(
+          "a cluster entity runs no log source's emit stream"
+        );
+      }).pipe(
+        Effect.provide([ShardingConfig.layer(), signIn, Event.layerMemory])
+      );
+    }
+  );
+});
+
 describe("ActionEntity's streaming action on Entity.makeTestClient", () => {
   it.effect(
     "streams each progress as a Progress before the answer as its Final",

@@ -139,9 +139,9 @@ export interface HandlerOptions<Env> {
         readonly routes: ReadonlyArray<{
           /** The entity whose objects serve the sockets, one of `ActionClusterEntity.make`'s `sockets`. */
           readonly entity: ActionEntity.Any;
-          /** The pathname matched, a `URLPattern` pathname such as `/rooms/:id/rpc`, whose group `id` holds the entity id as the page sent it; a pattern naming no `id` matches no request. */
+          /** The pathname matched, a `URLPattern` pathname such as `/rooms/:id/rpc`, whose group `id`, percent-decoded, holds the entity id, as `ActionEntity.reaching` keys a call's decoded input; a pattern naming no `id`, or a segment that does not decode, matches no request. */
           readonly path: string;
-          /** The entity id for the `id` group the page sent in `request`, or `undefined` to answer the request as one matching no route; by default, the group as sent. */
+          /** The entity id for the decoded `id` group the page sent in `request`, or `undefined` to answer the request as one matching no route; by default, the decoded group. */
           readonly id?:
             | ((sent: string, request: Request) => string | undefined)
             | undefined;
@@ -149,6 +149,14 @@ export interface HandlerOptions<Env> {
       }
     | undefined;
 }
+
+const decoded = (segment: string | undefined) => {
+  try {
+    return segment === undefined ? undefined : decodeURIComponent(segment);
+  } catch {
+    return undefined;
+  }
+};
 
 const objectsOf = <Env>({
   entityNamespace,
@@ -162,7 +170,7 @@ const objectsOf = <Env>({
 
   return (env: Env, request: Request) => {
     for (const { entity, id, pattern } of patterns) {
-      const sent = pattern.exec(request.url)?.pathname.groups["id"];
+      const sent = decoded(pattern.exec(request.url)?.pathname.groups["id"]);
       const entityId = sent === undefined ? undefined : id(sent, request);
 
       if (entityId !== undefined) {

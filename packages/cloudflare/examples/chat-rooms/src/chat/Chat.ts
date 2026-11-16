@@ -39,7 +39,7 @@ export const PostMessage = Action.make("postMessage", {
       Schema.String.annotate({
         description:
           "A random id for this message, sent again on a retry: the room keeps one message per author and request, answering a repeat with it, whatever its text.",
-      }).check(Schema.isMaxLength(64))
+      }).check(Schema.isMinLength(1), Schema.isMaxLength(64))
     ),
   },
   success: Message,

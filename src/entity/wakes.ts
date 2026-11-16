@@ -1,4 +1,4 @@
-import { Clock, DateTime, Duration, Effect, Latch, Schema } from "effect";
+import { Clock, DateTime, Duration, Effect, Exit, Latch, Schema } from "effect";
 import { ClusterSchema, DeliverAt } from "effect/cluster";
 import { Rpc } from "effect/rpc";
 
@@ -46,16 +46,20 @@ export const makeWake = <E>(
           waiter.woken.await,
           sent.has(at)
             ? Effect.never
-            : send(new WakeAt({ at })).pipe(
-                Effect.matchCauseEffect({
-                  onSuccess: () =>
-                    Effect.andThen(
-                      Effect.sync(() => sent.add(at)),
-                      Effect.never
-                    ),
-                  onFailure: (cause) =>
-                    Effect.andThen(reported(cause), slept(at)),
-                })
+            : Effect.uninterruptible(
+                Effect.exit(
+                  Effect.tap(send(new WakeAt({ at })), () =>
+                    Effect.sync(() => sent.add(at))
+                  )
+                )
+              ).pipe(
+                Effect.flatMap(
+                  Exit.match({
+                    onSuccess: () => Effect.never,
+                    onFailure: (cause) =>
+                      Effect.andThen(reported(cause), slept(at)),
+                  })
+                )
               )
         ).pipe(
           Effect.ensuring(

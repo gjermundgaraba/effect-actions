@@ -140,7 +140,7 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
    * **Gotchas**
    *
    * - A native rpc authenticates nothing, whatever the binding's `authentication`: it is for tells the entity and other entities send with `Entity.client`, never for a surface's callers.
-   * - A native rpc named after an action, an event type, an event's `<event>/poll` or `<event>/release`, a protected event's `<event>/subscribe` or `<event>/unsubscribe`, or the entity's wake, `effect-actions/wake`, throws as the entity is made.
+   * - A native rpc named after an action, an event type, an event's `<event>/poll`, a protected event's `<event>/subscribe` or `<event>/unsubscribe`, or the entity's wake, `effect-actions/wake`, throws as the entity is made.
    */
   readonly rpcs?: RpcGroup.RpcGroup<N> | undefined;
 }
@@ -151,10 +151,8 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
  * its input. Each event type is a unary rpc named `<event>/poll`, `ActionRpc.pollTag`, taking
  * `{ input, cursor, maxEvents, watch }` and answering a page,
  * `{ events, cursor, truncated, hasMore, nextPollMs, notified }`, an HTTP poll's page and
- * `notified`, `ActionRpc.Page`, and one named
- * `<event>/release`, taking `{ input, watch }`, as `ActionRpc.layer` serves them too: polls naming a `watch`, a UUID, hold a
- * subscription hook of their own, keyed by it and their caller's principal, which its release by
- * that principal frees. A protected event type has two more, `<event>/subscribe` and
+ * `notified`, `ActionRpc.Page`, as `ActionRpc.layer` serves it too, its subscription hook held
+ * for the caller's principal. A protected event type has two more, `<event>/subscribe` and
  * `<event>/unsubscribe`, taking a webhook subscription and its cancellation, and the entity has
  * its wake, `effect-actions/wake`, a persisted tell it sends itself to end a webhook delivery's
  * retry wait. Guide: `docs/ActionEntity.md` in this package.
@@ -198,7 +196,7 @@ export const make = <
 
   if (taken.length > 0) {
     throw new Error(
-      `ActionEntity.make: the native rpcs of ${type}, ${taken.join(", ")}, are named after an action, an event type, an event's poll, release, subscribe or unsubscribe, or the entity's wake, ${wakeTag} (rename them)`
+      `ActionEntity.make: the native rpcs of ${type}, ${taken.join(", ")}, are named after an action, an event type, an event's poll, subscribe or unsubscribe, or the entity's wake, ${wakeTag} (rename them)`
     );
   }
 
@@ -213,7 +211,7 @@ export const make = <
 
 /**
  * The rpcs of `entity`'s binding, as its `protocol` holds them without its native rpcs: one per
- * action, and per event type its poll and its `<event>/release`. What a surface outside the
+ * action, and per event type its poll. What a surface outside the
  * cluster may forward to the entity, as the Cloudflare package's socket host does, which
  * `ActionRpc.client`'s watch polls, finding no stream rpc.
  */
@@ -655,8 +653,7 @@ const reachOf =
  *
  * - An input whose key names no entity, such as one missing the key's field, fails with `Forbidden`, sending nothing.
  * - Headers set with `RpcClient.withHeaders` around a call go with its envelope, which is how a protected call sends its credential; a call without them fails `Unauthenticated`.
- * - A watch polls, its only `mode` `"poll"`, at the page's `nextPollMs`, its polls holding a subscription hook of their own in the entity, which its end releases.
- * - Ending a watch waits up to 5 seconds for the entity to answer its release, so interrupting one whose entity is slow to answer, such as one with a full mailbox, takes up to 5 seconds; a release that never arrives leaves the hook held until the entity stops or its source's `lease` lapses.
+ * - A watch polls, its only `mode` `"poll"`, at the page's `nextPollMs`, its polls holding the subscription hook of the caller's principal in the entity until its source's `lease` lapses after the last, whichever watch sent it.
  * - A watch asks the entity again after `MailboxFull` or `PersistenceError`, from where it reached, a second later and doubling to 30 seconds; a declared error, a refusal included, ends it.
  */
 export const client = <
@@ -699,7 +696,7 @@ type Nothing<C extends Action.Any | Event.Any> = {
  * - A stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface, at once while a page has more and otherwise at its `nextPollMs`, a second at least: it holds the caller's request open but no entity, an occurrence arrives up to that interval late, and the entity's object takes a call each `nextPollMs` while the stream is open, so on Cloudflare a stream polling every few seconds keeps it from ever hibernating.
  * - A stream asks the entity again after `MailboxFull` or `PersistenceError`, from where it reached, a second later and doubling to 30 seconds, as `client`'s watch does; any other failure, a declared error or a defect, ends its polling.
  * - HTTP's `text/event-stream` whose polling ended on a failure other than a refusal sends `Failed` and opens it again 5 seconds later, from where it reached; MCP's `events/stream` does what `ActionMcp.layerHttp` says of an upstream's failure, a `-32603` before `active`.
- * - A stream's polls hold a subscription hook of their own in the entity, which its end releases, as `client`'s watch does; a poll, MCP's `events/poll` included, holds the subscriber's until its source's `lease` lapses, as on any surface.
+ * - A stream's polls, and a poll, MCP's `events/poll` included, hold the subscriber's subscription hook in the entity until its source's `lease` lapses after the last, as on any surface.
  * - A protected event's webhook subscription is held by the entity its input's key names, the subscribe and unsubscribe sent there with the caller's headers, and delivered by the `Webhook.layer` in that entity's `services`, never the serving surface's: an entity without one fails the subscribe with `Event.SubscriptionError`, reason `Unsupported`, a 409 over HTTP, before any callback is sent.
  * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's defect, carrying that error alone, since no action declares it: a 500 over HTTP and a defect through `Action.client`, never a typed error.
  * - An error the entity declares beyond the action's own and the built-in ones, its binding's `error` or its verifier's, is undeclared where the serving surface's binding does not declare it too.

@@ -34,6 +34,7 @@ import { AnyOccurrence, Gap } from "./occurrence.js";
 import { fedOf, pagedFrom } from "./pages.js";
 import type { Fed, Page } from "./pages.js";
 import { reported } from "./reported.js";
+import { Wake } from "./wake.js";
 import type { WebhookHolder } from "./webhooks.js";
 
 type ErasedOccurrence = Event.Occurrence<Event.Any>;
@@ -422,6 +423,17 @@ const runOf = (
     } else if (isCurrent(source)) {
       run = currentRun(event, source, yield* attach.check(event));
     } else {
+      if (
+        source.log.emit !== undefined &&
+        Option.isSome(yield* Effect.serviceOption(Wake))
+      ) {
+        return yield* Effect.die(
+          new Error(
+            `Event "${event.name}": a cluster entity runs no log source's emit stream, as Effect's entity reaper stops the entity while it runs and what it sends meanwhile is lost (append with Events.publish from a handler, or serve the event from a surface outside the entity)`
+          )
+        );
+      }
+
       run = logRun(
         event,
         source,

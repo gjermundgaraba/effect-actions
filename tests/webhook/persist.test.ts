@@ -542,7 +542,7 @@ describe("webhook subscriptions kept by persist", () => {
   );
 
   it.effect(
-    "restores a failing subscription with the retry budget its failures began, waiting as long as it has failed",
+    "restores a failing subscription with the retry budget its failures began and the retry wait it was in, waiting as long as it has failed",
     () =>
       Effect.gen(function* () {
         const store = yield* KeyValueStore.KeyValueStore;
@@ -562,13 +562,18 @@ describe("webhook subscriptions kept by persist", () => {
         after.world.changes.push({ id: "c1", by: "bob" });
 
         const refreshed = yield* Effect.gen(function* () {
-          yield* passed();
+          yield* passed(3);
 
-          return yield* subscribed(secretOf(1));
+          const beforeItsRetry = events(after.world.received).length;
+
+          yield* passed(71);
+
+          return [beforeItsRetry, yield* subscribed(secretOf(1))] as const;
         }).pipe(Effect.provide(after.server));
 
+        expect(refreshed[0]).toBe(0);
         expect(events(after.world.received).length).toBeLessThanOrEqual(3);
-        expect(refreshed.deliveryStatus).toMatchObject({
+        expect(refreshed[1].deliveryStatus).toMatchObject({
           active: false,
           lastError: "http_5xx",
         });

@@ -162,11 +162,6 @@ describe("ActionEntity's key check", () => {
             "alice"
           ),
           yield* outcomeOf(
-            ActionRpc.releaseTag(Moved.name),
-            { input: elsewhere, watch: crypto.randomUUID() },
-            "alice"
-          ),
-          yield* outcomeOf(
             "room.moved/subscribe",
             {
               input: elsewhere,
@@ -182,11 +177,11 @@ describe("ActionEntity's key check", () => {
         ];
 
         expect(signedIn).toStrictEqual(
-          Array.from({ length: 5 }, () => "Forbidden")
+          Array.from({ length: 4 }, () => "Forbidden")
         );
         expect(yield* outcomeOf("guarded", elsewhere)).toBe("Unauthenticated");
         expect(steps).toStrictEqual(
-          Array.from({ length: 5 }, () => "verified")
+          Array.from({ length: 4 }, () => "verified")
         );
       }).pipe(Effect.scoped, Effect.provide(guarding));
     }

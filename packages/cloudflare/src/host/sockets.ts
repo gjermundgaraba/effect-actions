@@ -113,13 +113,10 @@ const decodePoll = Schema.decodeUnknownOption(ActionRpc.Poll);
 
 const decodePage = Schema.decodeUnknownOption(ActionRpc.Page);
 
-const decodeRelease = Schema.decodeUnknownOption(ActionRpc.Release);
-
 /** One entity's binding, as a socket reaches it: its rpcs by tag, its polls, and a call into it. */
 export interface Served {
   readonly rpcs: ReadonlyMap<string, Rpc.AnyWithProps>;
   readonly polls: ReadonlySet<string>;
-  readonly releases: ReadonlySet<string>;
   readonly call: (
     tag: string,
     payload: Schema.Json,
@@ -338,7 +335,12 @@ export const makeSockets = (options: {
         updated(socket, (held) => ({
           ...held,
           answered: [
-            ...without(held.answered, (answer) => answer.watch === watch),
+            ...without(
+              held.answered,
+              (answer) =>
+                answer.watch === watch ||
+                at - answer.at >= Duration.toMillis(uncalledWithin)
+            ),
             { watch, cursor, gate: before, at },
           ],
         }));
@@ -450,12 +452,6 @@ export const makeSockets = (options: {
         send(socket, died(id, untracked));
 
         return;
-      }
-
-      if (served.releases.has(tag)) {
-        Option.map(decodeRelease(payload), ({ watch }) =>
-          forget(socket, watch)
-        );
       }
 
       const upgrade = attachmentOf(socket)?.headers ?? [];

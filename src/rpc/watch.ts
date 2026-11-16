@@ -87,12 +87,11 @@ export const streamingOf = (
 
 export const polledTransportOf = (
   event: Event.Any,
-  { poll, release }: Pick<Transport<unknown, never>, "poll" | "release">,
+  { poll }: Pick<Transport<unknown, never>, "poll">,
   transient: (error: unknown) => boolean,
   unserved: (cause: Cause.Cause<unknown>) => boolean
 ): Transport<unknown, never> => ({
   name: event.name,
-  release,
   poll: (cursor, watch) =>
     poll(cursor, watch).pipe(
       Effect.catchCauseIf(unserved, () =>

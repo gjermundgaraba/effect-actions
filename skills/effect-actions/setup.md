@@ -13,6 +13,7 @@ pnpm add @gjermundgaraba/effect-actions effect@~4.1.4
 | Need | Add |
 | --- | --- |
 | Node HTTP server, stdio host or CLI | `@effect/platform-node@~4.1.4` |
+| `Stored`'s event logs and idempotency on Node's SQLite, or an entity's storage on Effect's SQL runners | `@effect/sql-sqlite-node@~4.1.4` |
 | Tests | `vitest@^5` and `@effect/vitest@~4.1.4`, as dev dependencies |
 | Type checking | `typescript@^7.0.2`, as a dev dependency |
 | Node's types, for `node:` imports | `@types/node`, as a dev dependency |
