@@ -97,7 +97,7 @@ const lint: ReturnType<typeof config> = config({
     {
       files: [
         "packages/cloudflare/examples/chat-rooms/src/{application,platform/object-sql}.ts",
-        "packages/cloudflare/examples/chat-rooms/test/{support,worker.test}.ts",
+        "packages/cloudflare/examples/chat-rooms/test/{support,worker,worker.test}.ts",
         "packages/cloudflare/src/cluster/ActionCluster.ts",
         "packages/cloudflare/src/host/ActionClusterEntity.ts",
         "packages/cloudflare/tests/{worker,cluster/{eviction,handler,redaction}.test,support/socket}.ts",

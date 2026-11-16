@@ -13,6 +13,7 @@ import {
   Effect,
   Layer,
   Logger,
+  Predicate,
   Redacted,
   Schedule,
   Schema,
@@ -500,25 +501,28 @@ export class ClusterEntity extends Host {
     super(ctx, env);
     instances.push(`${ctx.id.name ?? ""}#${crypto.randomUUID()}`);
   }
+}
 
-  override async invoke(
-    ...args: Parameters<InstanceType<typeof Host>["invoke"]>
-  ) {
-    return await counted("invoke", async () => await super.invoke(...args));
+const countedMethods = ["invoke", "hold", "acknowledge"] as const;
+
+for (const method of countedMethods) {
+  const original: unknown = Object.getOwnPropertyDescriptor(
+    CloudflareDurableObjects.ClusterEntity.prototype,
+    method
+  )?.value;
+
+  if (!Predicate.isFunction(original)) {
+    throw new TypeError(`ClusterEntity has no ${method} to count`);
   }
 
-  override async hold() {
-    await counted("hold", async () => {
-      await super.hold();
-    });
-  }
-
-  override async acknowledge(requestId: string, replyId: string) {
-    return await counted(
-      "acknowledge",
-      async () => await super.acknowledge(requestId, replyId)
-    );
-  }
+  Object.defineProperty(ClusterEntity.prototype, method, {
+    async value(this: unknown, ...args: unknown[]): Promise<unknown> {
+      return await counted(
+        method,
+        async (): Promise<unknown> => await original.apply(this, args)
+      );
+    },
+  });
 }
 
 export const foreignOrigin = "https://elsewhere.example";

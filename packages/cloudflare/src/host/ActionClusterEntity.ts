@@ -1,14 +1,8 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
-import { makeClusterEntityProgram } from "@effect/platform-cloudflare/CloudflareDurableObjectPrograms";
-import type {
-  ClusterEntityProgram,
-  EntityDeliveryOptions,
-  EntityInvokeResult,
-} from "@effect/platform-cloudflare/CloudflareDurableObjectPrograms";
+import { ClusterEntity } from "@effect/platform-cloudflare/CloudflareDurableObjects";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
-import { DurableObject } from "cloudflare:workers";
 import { Effect, Predicate } from "effect";
 import type { Context, Schema, Stream } from "effect";
 import type { Sharding } from "effect/cluster";
@@ -20,8 +14,8 @@ import type { Served } from "./sockets.js";
 /** `make`'s options. */
 export interface Options<Env> {
   /**
-   * The function `CloudflareDurableObjects.setInitializer` returned, which the host waits on
-   * before it runs the entity program, as Effect's own `ClusterEntity` waits on the initializer.
+   * The function `CloudflareDurableObjects.setInitializer` returned, whose cluster the host
+   * forwards each socket's calls through.
    */
   readonly initialize: (
     env: Env
@@ -141,7 +135,8 @@ const servingOf = (
 const hostOf = (
   ctx: DurableObjectState,
   context: Context.Context<Sharding.Sharding>,
-  { byType, refusal }: Bound
+  { byType, refusal }: Bound,
+  waitUntil: (promise: Promise<unknown>) => void
 ) => {
   const serving = new Map<string, (entityId: string) => Served>();
 
@@ -165,9 +160,7 @@ const hostOf = (
     gate: gateOf(ctx.storage.sql),
     now: Date.now,
     sockets: () => ctx.getWebSockets(),
-    waitUntil: (promise) => {
-      ctx.waitUntil(promise);
-    },
+    waitUntil,
   });
 
   return {
@@ -222,13 +215,11 @@ const hostOf = (
 };
 
 /**
- * The Durable Object `make`'s class builds: the seven methods of Effect's own `ClusterEntity`,
- * forwarded to `makeClusterEntityProgram`, and the WebSocket handlers serving `sockets`. Exported
- * as a type alone, to name the class in a Worker's declarations; a subclass of `make`'s class
- * overrides a method by calling `super`.
+ * The Durable Object `make`'s class builds: Effect's own `ClusterEntity`, with the WebSocket
+ * handlers serving `sockets`. Exported as a type alone, to name the class in a Worker's
+ * declarations; a subclass of `make`'s class overrides a WebSocket handler by calling `super`.
  */
-class Host<Env> extends DurableObject<Env> {
-  #program!: ClusterEntityProgram;
+class Host<Env> extends ClusterEntity {
   #host!: ReturnType<typeof hostOf>;
 
   constructor(
@@ -240,74 +231,22 @@ class Host<Env> extends DurableObject<Env> {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(pingPong());
 
-    void ctx.blockConcurrencyWhile(async () => {
-      const host = hostOf(ctx, await initialize(env), bound);
+    Object.defineProperty(this, "fetch", {
+      value: (request: Request) => this.#host.upgrade(request),
+    });
 
-      this.#program = await Effect.runPromise(
-        makeClusterEntityProgram({
-          id: ctx.id,
-          storage: ctx.storage,
-          exports: ctx.exports,
-          waitUntil: (promise) => {
-            ctx.waitUntil(promise);
-            void promise.then(host.settled, host.settled);
-          },
-        })
-      );
+    void ctx.blockConcurrencyWhile(async () => {
+      const waitUntil = ctx.waitUntil.bind(ctx);
+      const host = hostOf(ctx, await initialize(env), bound, waitUntil);
+
+      ctx.waitUntil = (promise) => {
+        waitUntil(promise);
+        void promise.then(host.settled, host.settled);
+      };
 
       this.#host = host;
       host.started();
     });
-  }
-
-  override async alarm(): Promise<void> {
-    await Effect.runPromise(this.#program.alarm());
-  }
-
-  async hold(): Promise<void> {
-    await Effect.runPromise(this.#program.hold());
-  }
-
-  async invoke(
-    envelopeText: string,
-    discard: boolean,
-    delivery?: EntityDeliveryOptions
-  ): Promise<EntityInvokeResult> {
-    return await Effect.runPromise(
-      this.#program.invoke(envelopeText, discard, delivery)
-    );
-  }
-
-  async acknowledge(
-    requestId: string,
-    replyId: string
-  ): Promise<readonly string[]> {
-    return await Effect.runPromise(
-      this.#program.acknowledge(requestId, replyId)
-    );
-  }
-
-  async interrupt(
-    storageRequestId: string,
-    clientRequestId = storageRequestId
-  ): Promise<void> {
-    await Effect.runPromise(
-      this.#program.interrupt(storageRequestId, clientRequestId)
-    );
-  }
-
-  async reset(requestId: string): Promise<void> {
-    await Effect.runPromise(this.#program.reset(requestId));
-  }
-
-  async deliverReply(requestId: string, reply: string): Promise<boolean> {
-    return await Effect.runPromise(
-      this.#program.deliverReply(requestId, reply)
-    );
-  }
-
-  override fetch(request: Request): Response {
-    return this.#host.upgrade(request);
   }
 
   override async webSocketMessage(
@@ -333,10 +272,9 @@ class Host<Env> extends DurableObject<Env> {
 
 /**
  * A Durable Object class to export from the Worker as `ClusterEntity`, in place of Effect's own:
- * it runs `makeClusterEntityProgram` and forwards its seven methods, so every entity of the
- * cluster runs on it, and it serves Effect RPC over WebSockets, which the runtime holds while the
- * object hibernates, for the entities of `sockets`. The Worker hands a page's upgrade to the
- * entity's object, `getByName(CloudflareCluster.encodeName(type, id)).fetch(request)`; each call
+ * a subclass of it, so every entity of the cluster runs on it, and it serves Effect RPC over
+ * WebSockets, which the runtime holds while the object hibernates, for the entities of `sockets`.
+ * The Worker hands a page's upgrade to the entity's object, `getByName(CloudflareCluster.encodeName(type, id)).fetch(request)`; each call
  * on the socket is forwarded into that entity through `Entity.client`, with the upgrade's
  * headers `ActionEntity.forwardedHeaders` keeps under its own, its own winning, and answered as
  * the entity answers it. A page calls with `ActionRpc.client(binding)`, watching with `mode: "poll"`,
@@ -354,7 +292,6 @@ class Host<Env> extends DurableObject<Env> {
  * - The upgrade's headers, cookies included, are each call's credentials, and the host judges no `Origin`: refuse a page of another site, or keep cookies off the socket, in the Worker, before it hands the upgrade to the object, as in an `ActionCluster.handler` socket route's `id`, which reads the request.
  * - The upgrade's headers, the calls under way and the parked polls, each with the headers its message sent, share the runtime's 16 KiB attachment: an upgrade past it is answered 431, and a call past it fails with a defect naming it.
  * - The runtime answers the page's pings itself, so an open page does not wake the object, and the host answers a page's close with its code and reason; a request that is no upgrade is answered 426, an upgrade to an object of an entity type not in `sockets` 404.
- * - It waits on `initialize` alone, so a build pending past 15 seconds is taken over without Effect's own `ClusterEntity`'s bound, which keeps a replacement build inside the runtime's 30 seconds; Effect does not export that wait.
  */
 export const make = <Env>(
   options: Options<Env>

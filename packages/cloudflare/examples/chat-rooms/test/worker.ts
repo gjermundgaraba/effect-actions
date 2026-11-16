@@ -1,4 +1,5 @@
-import { Schema } from "effect";
+import * as CloudflareDurableObjects from "@effect/platform-cloudflare/CloudflareDurableObjects";
+import { Predicate, Schema } from "effect";
 
 import worker, { ClusterEntity as Counted } from "../src/worker.js";
 
@@ -34,35 +35,6 @@ export class ClusterEntity extends Counted {
     instances.push(`${this.ctx.id.name ?? ""}#${crypto.randomUUID()}`);
   }
 
-  override async invoke(...args: Parameters<Counted["invoke"]>) {
-    const counted = {
-      object: this.ctx.id.name ?? "",
-      tag: decodeEnvelope(args[0]).tag,
-      settled: false,
-    };
-
-    invokes.push(counted);
-
-    try {
-      const answer = await super.invoke(...args);
-
-      if (counted.tag === failingAfter) {
-        failingAfter = undefined;
-
-        throw new Error(`planted failure after ${counted.tag}`);
-      }
-
-      return answer;
-    } finally {
-      invokes[invokes.indexOf(counted)] = { ...counted, settled: true };
-    }
-  }
-
-  override async hold() {
-    others.hold += 1;
-    await super.hold();
-  }
-
   override async webSocketMessage(
     ...args: Parameters<Counted["webSocketMessage"]>
   ) {
@@ -74,12 +46,58 @@ export class ClusterEntity extends Counted {
       messages.settled += 1;
     }
   }
+}
 
-  override async acknowledge(requestId: string, replyId: string) {
-    others.acknowledge += 1;
+const effects = CloudflareDurableObjects.ClusterEntity.prototype;
 
-    return await super.acknowledge(requestId, replyId);
+const methodOf = (name: string) => {
+  const method: unknown = Object.getOwnPropertyDescriptor(effects, name)?.value;
+
+  if (!Predicate.isFunction(method)) {
+    throw new TypeError(`ClusterEntity has no ${name} to count`);
   }
+
+  return method;
+};
+
+const invoke = methodOf("invoke");
+
+Object.defineProperty(ClusterEntity.prototype, "invoke", {
+  async value(this: ClusterEntity, ...args: unknown[]): Promise<unknown> {
+    const counted = {
+      object: this.ctx.id.name ?? "",
+      tag: decodeEnvelope(args[0]).tag,
+      settled: false,
+    };
+
+    invokes.push(counted);
+
+    try {
+      const answer: unknown = await invoke.apply(this, args);
+
+      if (counted.tag === failingAfter) {
+        failingAfter = undefined;
+
+        throw new Error(`planted failure after ${counted.tag}`);
+      }
+
+      return answer;
+    } finally {
+      invokes[invokes.indexOf(counted)] = { ...counted, settled: true };
+    }
+  },
+});
+
+for (const name of ["hold", "acknowledge"] as const) {
+  const method = methodOf(name);
+
+  Object.defineProperty(ClusterEntity.prototype, name, {
+    async value(this: ClusterEntity, ...args: unknown[]): Promise<unknown> {
+      others[name] += 1;
+
+      return await method.apply(this, args);
+    },
+  });
 }
 
 export default {
