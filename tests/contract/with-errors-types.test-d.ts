@@ -8,10 +8,10 @@ class Missing extends Schema.TaggedError<
   { readonly brand: unique symbol }
 >()("NotFound", { id: Schema.String }) {}
 
-class Unavailable extends Schema.TaggedError<
-  Unavailable,
+class Offline extends Schema.TaggedError<
+  Offline,
   { readonly brand: unique symbol }
->()("Unavailable", {}) {}
+>()("Offline", {}) {}
 
 class UncertainOutcome extends Schema.TaggedError<
   UncertainOutcome,
@@ -34,16 +34,12 @@ const Save = Action.make("save", {
   idempotencyKey: "key",
 });
 
-const dataFirst = Action.withErrors(Save, [Unavailable, UncertainOutcome]);
+const dataFirst = Action.withErrors(Save, [Offline, UncertainOutcome]);
 
-const piped = pipe(Save, Action.withErrors([Unavailable, UncertainOutcome]));
+const piped = pipe(Save, Action.withErrors([Offline, UncertainOutcome]));
 
 expectTypeOf(dataFirst.error).toEqualTypeOf<
-  readonly [
-    ...(typeof Save)["error"],
-    typeof Unavailable,
-    typeof UncertainOutcome,
-  ]
+  readonly [...(typeof Save)["error"], typeof Offline, typeof UncertainOutcome]
 >();
 
 expectTypeOf(piped).toEqualTypeOf(dataFirst);
@@ -63,7 +59,7 @@ expectTypeOf(dataFirst.caller).toEqualTypeOf(Save.caller);
 expectTypeOf(dataFirst.idempotencyKey).toEqualTypeOf<"key">();
 
 expectTypeOf<(typeof dataFirst)["error"][number]["Type"]>().toEqualTypeOf<
-  Missing | Unavailable | UncertainOutcome
+  Missing | Offline | UncertainOutcome
 >();
 
 Action.implement(dataFirst, ({ key }) =>
@@ -79,5 +75,5 @@ Action.implement(
 Action.implement(
   Save,
   // @ts-expect-error -- The action it was made from declares none of the added errors.
-  () => Effect.fail(new Unavailable())
+  () => Effect.fail(new Offline())
 );

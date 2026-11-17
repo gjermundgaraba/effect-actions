@@ -4,19 +4,40 @@ import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import { Effect, Predicate } from "effect";
-import type { Context, Schema, Stream } from "effect";
+import type { Context, Layer, Schema, Stream } from "effect";
 import type { Sharding } from "effect/cluster";
+import type { HttpRouter } from "effect/http";
 
+import * as ActionCluster from "../cluster/ActionCluster.js";
 import { hold, listen } from "../cluster/objects.js";
 import { pingPong, replyToClose } from "./frames.js";
 import { makeSockets } from "./sockets.js";
 import type { Served } from "./sockets.js";
 
+/**
+ * Register `application` as the isolate's Durable Object initializer,
+ * `CloudflareDurableObjects.setInitializer(ActionCluster.initializer(application))`, and return the function
+ * `setInitializer` returns, which `ActionCluster.handler` and `make`'s `initialize` take:
+ * `export const initialize = ActionClusterEntity.register(application)`. Call it once, from the Worker's
+ * module. It lives here, beside the classes, since `setInitializer`'s module, as this one, loads only in a Worker, where `ActionCluster` loads in Node too. Guide: `docs/ActionCluster.md` in this package.
+ *
+ * **Gotchas**
+ *
+ * - A second call in one isolate throws `the Durable Object initializer is already set`, as from two modules each registering one: register the whole application once.
+ * - Every object of the runtime's four classes, and `ActionCluster.handler`'s requests but its socket routes', waits on the build it starts, under `ActionCluster.initializer`'s rules: build nothing slow above `ActionCluster.layer`.
+ */
+export const register = <Env, A, E>(
+  application: (env: Env) => Layer.Layer<A, E, HttpRouter.HttpRouter>
+): ((env: Env) => Promise<Context.Context<A | HttpRouter.HttpRouter>>) =>
+  CloudflareDurableObjects.setInitializer(
+    ActionCluster.initializer(application)
+  );
+
 /** `make`'s options. */
 export interface Options<Env> {
   /**
-   * The function `CloudflareDurableObjects.setInitializer` returned, whose cluster the host
-   * forwards each socket's calls through.
+   * The function `register` returned, whose cluster the host forwards each
+   * socket's calls through.
    */
   readonly initialize: (
     env: Env

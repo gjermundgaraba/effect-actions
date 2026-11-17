@@ -93,6 +93,7 @@ export const watchOverHttp = Effect.gen(function* () {
     | "InvalidInput"
     | "Unauthenticated"
     | "Forbidden"
+    | "Unavailable"
     | "Quota"
     | "HttpClientError"
     | "SchemaError"

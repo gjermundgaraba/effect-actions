@@ -59,6 +59,7 @@ export const watchOverRpc = Effect.gen(function* () {
     | Action.InvalidInput
     | Action.Unauthenticated
     | Action.Forbidden
+    | Action.Unavailable
     | Quota
     | RpcClientError.RpcClientError
   >();

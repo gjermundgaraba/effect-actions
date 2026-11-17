@@ -656,6 +656,7 @@ describe("projection boundaries", () => {
         "403",
         "404",
         "409",
+        "503",
       ]);
 
       yield* Effect.gen(function* () {
@@ -744,6 +745,7 @@ describe("projection boundaries", () => {
           "409",
           "410",
           "422",
+          "503",
         ]);
 
         yield* Effect.gen(function* () {
@@ -775,7 +777,7 @@ describe("projection boundaries", () => {
       statuses([
         Schema.Union([Missing, Conflict]).annotate({ httpApiStatus: 410 }),
       ])
-    ).toStrictEqual(["200", "400", "401", "403", "410"]);
+    ).toStrictEqual(["200", "400", "401", "403", "410", "503"]);
     expect(statuses([Schema.Union([Missing, Late])])).toStrictEqual([
       "200",
       "400",
@@ -783,6 +785,7 @@ describe("projection boundaries", () => {
       "403",
       "404",
       "422",
+      "503",
     ]);
   });
 
@@ -927,6 +930,7 @@ describe("projection boundaries", () => {
       new Action.InvalidInput(),
       new Action.Unauthenticated(),
       new Action.Forbidden(),
+      new Action.Unavailable(),
     ]) {
       const json = Schema.encodeSync(Schema.toCodecJson(Action.BuiltIn))(error);
 
@@ -944,11 +948,13 @@ describe("projection boundaries", () => {
       "400",
       "401",
       "403",
+      "503",
     ]);
 
     for (const [status, error] of [
       ["401", "UnauthenticatedEncoded"],
       ["403", "ForbiddenEncoded"],
+      ["503", "UnavailableEncoded"],
     ] as const) {
       expect(
         responses?.[status]?.content?.["application/json"]?.schema

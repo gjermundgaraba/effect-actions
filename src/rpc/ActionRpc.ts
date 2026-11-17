@@ -272,7 +272,7 @@ const authenticatedIn = (rpc: Rpc.AnyWithProps) =>
  * Bind actions once, for servers and clients alike, each as an rpc named after it, taking
  * its action's input and answering its success, and event types, each a stream rpc named after
  * it, taking `{ input, cursor }`, which `layer` serves by poll too, as its `pollTag` and `releaseTag` rpcs. Every rpc declares its action's errors, the binding's `error`,
- * and the built-in `InvalidInput`, `Unauthenticated` and `Forbidden`, so clients decode each as
+ * and the built-in `InvalidInput`, `Unauthenticated`, `Forbidden` and `Unavailable`, so clients decode each as
  * a typed failure; a protected one also declares what its descriptor's verifier fails with.
  * `rpcs` adds native ones beside them. Browser-safe, as an HTTP binding is.
  * Guide: `docs/ActionRpc.md` in this package; in an application: `examples/live-rpc/`.
@@ -694,7 +694,7 @@ export const pollResentAfter = Duration.minutes(4);
  * - `watch(event, input, options)` with no `mode` holds the event's stream rpc open, as `Action.client`'s does, and polls instead, for that watch, where the server answers the stream rpc `Unknown request tag`, as an `ActionEntity` and the Cloudflare package's socket host do: one round trip more per watch, which `mode: "poll"` skips.
  * - `mode: "poll"` calls the event's `<event>/poll` for each page, a poll unanswered for `pollResentAfter` sent again from the same cursor, the first interrupted, so a server that holds a poll until something changes, as the Cloudflare package's socket host does, reads it again at least that often.
  * - A watch of an event the server does not serve fails with `Event.SubscriptionError`, reason `NotServed`, as over HTTP, whatever its `mode`; a webhook `mode` fails with reason `Unsupported`.
- * - A watch reconnects after the protocol's socket or HTTP transport fails, a response ends before its stream does, as a server's restart ends it, a status a server sends while it recovers, or, over Effect's HTTP protocol, 60 seconds without an element, a socket's own pings telling a dead one, a second later and doubling to 30 seconds, each reconnect logged as a warning; a declared error, a refusal included, or a socket's close with an application's code, 4000 to 4999, ends it.
+ * - A watch reconnects after the protocol's socket or HTTP transport fails, a response ends before its stream does, as a server's restart ends it, a status a server sends while it recovers, or, over Effect's HTTP protocol, 60 seconds without an element, a socket's own pings telling a dead one, a second later and doubling to 30 seconds, each reconnect logged as a warning, and after `Action.Unavailable`; another declared error, a refusal included, or a socket's close with an application's code, 4000 to 4999, ends it.
  * - A native rpc of the binding's `rpcs` is the native client's method: a stream rpc's is a `Stream`, its headers given as its options' `headers`, since `RpcClient.withHeaders` wraps an Effect.
  */
 export function client<const B extends Any>(

@@ -725,10 +725,10 @@ ActionCli.make(stored, { name: "s", commands: { store: { stdin: "note" } } });
 // @ts-expect-error -- An optional field is not read from stdin.
 ActionCli.command(stored, Store, { stdin: "note" });
 
-class Unavailable extends Schema.TaggedError<
-  Unavailable,
+class Offline extends Schema.TaggedError<
+  Offline,
   { readonly brand: unique symbol }
->()("Unavailable", {}) {}
+>()("Offline", {}) {}
 
 const Declares = Action.make("declares", {
   description: "Declares an error",
@@ -741,13 +741,13 @@ const Declares = Action.make("declares", {
 const declares = ActionCli.command(
   Action.implement(
     Declares,
-    Effect.as(Effect.fail(new Unavailable()), () => Effect.succeed("declared"))
+    Effect.as(Effect.fail(new Offline()), () => Effect.succeed("declared"))
   ),
   Declares
 );
 
 expectTypeOf<Command.Error<typeof declares>>().toEqualTypeOf<
-  ActionCli.UserError<Domain | Unavailable | Action.BuiltIn>
+  ActionCli.UserError<Domain | Offline | Action.BuiltIn>
 >();
 
 Command.runWith(declares, { version: "0" })([]).pipe(

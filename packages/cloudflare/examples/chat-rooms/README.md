@@ -20,7 +20,7 @@ In a project that installs the package, copy this directory out of `node_modules
 
 Each trap below is shown in the code of the files it names.
 
-- **One initializer, `ActionCluster.initializer`, builds the whole application, and nothing slow builds after the cluster**: `quickOnceTheClusterIsBuilt` in `src/application.ts`, registered by `src/worker.ts`'s import.
+- **One initializer, registered with `ActionClusterEntity.register`, builds the whole application, and nothing slow builds after the cluster**: `quickOnceTheClusterIsBuilt` in `src/application.ts`, registered by `src/worker.ts`'s import.
 - **The room is the entity's id**, and only a room `DemoRoomName` lists is reached: `src/chat/Chat.ts`, `src/entities.ts`, `roomOfAddress` in `src/routes.ts`.
 - **The Worker serves every room, and each room builds its stores over its own database as it activates**: `services` in `src/routes.ts`.
 - **A post writes its message and wakes its followers in one transaction, and the table keeps one message per author and `request`**, so a post whose notification fails keeps nothing, and a page sending it again with its `request`, even after the room failed past its write, is answered with the first message, notifying nothing; the page sends it again only after a transport failure: `src/platform/sql-messages.ts`, `src/chat/handlers.ts`, `src/browser.ts`.

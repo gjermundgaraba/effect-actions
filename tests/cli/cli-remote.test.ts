@@ -440,18 +440,14 @@ it.effect(
         "cli-remote/Caller"
       ) {}
 
-      class Unavailable extends Schema.TaggedError<
-        Unavailable,
+      class Offline extends Schema.TaggedError<
+        Offline,
         { readonly brand: unique symbol }
-      >()(
-        "Unavailable",
-        { retryAfter: Schema.Finite },
-        { httpApiStatus: 503 }
-      ) {}
+      >()("Offline", { retryAfter: Schema.Finite }, { httpApiStatus: 503 }) {}
 
       const Login = Authentication.make("cli-remote.Login", Caller, {
         principal: (caller) => caller.id,
-        error: Unavailable,
+        error: Offline,
       });
 
       const Secret = Action.make("secret", {
@@ -479,9 +475,7 @@ it.effect(
           Effect.provide(
             Testing.layer(async () =>
               Response.json(
-                Schema.encodeSync(Unavailable)(
-                  new Unavailable({ retryAfter: 5 })
-                ),
+                Schema.encodeSync(Offline)(new Offline({ retryAfter: 5 })),
                 {
                   status: 503,
                 }
@@ -492,11 +486,9 @@ it.effect(
 
       const { exit: derived, stderr: derivedErr } = yield* stderrOf(["secret"]);
 
-      expect(causeOf(derived)).toStrictEqual(
-        new Unavailable({ retryAfter: 5 })
-      );
+      expect(causeOf(derived)).toStrictEqual(new Offline({ retryAfter: 5 }));
       expect(derivedErr).toStrictEqual([
-        expect.stringContaining('{"_tag":"Unavailable","retryAfter":5}'),
+        expect.stringContaining('{"_tag":"Offline","retryAfter":5}'),
       ]);
       expect((yield* stderrOf(["own"])).stderr).toStrictEqual(derivedErr);
     })
@@ -510,10 +502,10 @@ it.effect(
         "cli-remote/RpcCaller"
       ) {}
 
-      class Unavailable extends Schema.TaggedError<
-        Unavailable,
+      class Offline extends Schema.TaggedError<
+        Offline,
         { readonly brand: unique symbol }
-      >()("Unavailable", {
+      >()("Offline", {
         retryAfter: Schema.Finite,
       }) {}
 
@@ -526,7 +518,7 @@ it.effect(
 
       const Login = Authentication.make("cli-remote.RpcLogin", Caller, {
         principal: (caller) => caller.id,
-        error: Unavailable,
+        error: Offline,
       });
 
       const Secret = Action.make("secret", {
@@ -548,7 +540,7 @@ it.effect(
             )
           ),
           Command.make("unavailable", {}, () =>
-            Effect.fail(new Unavailable({ retryAfter: 9 })).pipe(
+            Effect.fail(new Offline({ retryAfter: 9 })).pipe(
               ActionCli.toUserError(Rpc)
             )
           ),
@@ -567,7 +559,7 @@ it.effect(
         expect.stringContaining('{"_tag":"Throttled","retryAfter":5}'),
       ]);
       expect(yield* stderrOf("unavailable")).toStrictEqual([
-        expect.stringContaining('{"_tag":"Unavailable","retryAfter":9}'),
+        expect.stringContaining('{"_tag":"Offline","retryAfter":9}'),
       ]);
       expect(yield* stderrOf("by-actions")).toStrictEqual([
         expect.not.stringContaining("retryAfter"),

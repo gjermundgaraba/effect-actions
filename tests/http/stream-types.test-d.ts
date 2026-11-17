@@ -58,6 +58,7 @@ export const tailOverHttp = Effect.gen(function* () {
     | "InvalidInput"
     | "Unauthenticated"
     | "Forbidden"
+    | "Unavailable"
     | "HttpClientError"
     | "SchemaError"
     | "SseError"

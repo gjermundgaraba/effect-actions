@@ -72,11 +72,11 @@ const Login = Authentication.make("test.Login", Identity, {
   principal: (identity) => identity.id,
 });
 
-class Unavailable extends Schema.TaggedError<
-  Unavailable,
+class Offline extends Schema.TaggedError<
+  Offline,
   { readonly brand: unique symbol }
 >()(
-  "Unavailable",
+  "Offline",
   { operation: Schema.String, retryAfter: Schema.FiniteFromString },
   { httpApiStatus: 503 }
 ) {}
@@ -88,7 +88,7 @@ class Expired extends Schema.TaggedError<
 
 const Checked = Authentication.make("test.Checked", Identity, {
   principal: (identity) => identity.id,
-  error: [Unavailable, Expired],
+  error: [Offline, Expired],
 });
 
 const Identify = Action.make("identify", {
@@ -982,7 +982,7 @@ describe("an error a descriptor declares", () => {
     Action.implement(Open, () => Effect.succeed("open")),
   ];
 
-  const unavailable = new Unavailable({
+  const unavailable = new Offline({
     operation: " verify ",
     retryAfter: 30,
   });
@@ -1019,13 +1019,13 @@ describe("an error a descriptor declares", () => {
         );
         expect(yield* client.open()).toBe("open");
 
-        expectTypeOf<Unavailable>().toExtend<
+        expectTypeOf<Offline>().toExtend<
           Effect.Error<ReturnType<typeof client.identify>>
         >();
         expectTypeOf<Expired>().toExtend<
           Effect.Error<ReturnType<typeof client.identify>>
         >();
-        expectTypeOf<Unavailable>().not.toExtend<
+        expectTypeOf<Offline>().not.toExtend<
           Effect.Error<ReturnType<typeof client.open>>
         >();
 
@@ -1034,8 +1034,11 @@ describe("an error a descriptor declares", () => {
           Object.keys(document.paths["/api/identify"]?.post?.responses ?? {})
         ).toStrictEqual(expect.arrayContaining(["401", "503"]));
         expect(
-          Object.keys(document.paths["/api/open"]?.post?.responses ?? {})
-        ).not.toContain("503");
+          JSON.stringify(document.paths["/api/identify"]?.post?.responses)
+        ).toContain("Offline");
+        expect(
+          JSON.stringify(document.paths["/api/open"]?.post?.responses)
+        ).not.toContain("Offline");
       }).pipe(Effect.provide(Testing.layer(routes)))
   );
 
@@ -1077,7 +1080,7 @@ describe("an error a descriptor declares", () => {
       503,
       null,
       "no-store",
-      Schema.encodeSync(Schema.toCodecJson(Unavailable))(unavailable),
+      Schema.encodeSync(Schema.toCodecJson(Offline))(unavailable),
     ]);
     expect([mcp, own, outside]).toStrictEqual([action, action, action]);
 

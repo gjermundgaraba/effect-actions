@@ -372,14 +372,14 @@ describe("ActionRpc native rpcs", () => {
     "fails a native rpc with its verifier's own declared error, decoded as its class",
     () =>
       Effect.gen(function* () {
-        class Unavailable extends Schema.TaggedError<
-          Unavailable,
+        class Offline extends Schema.TaggedError<
+          Offline,
           { readonly brand: unique symbol }
-        >()("Unavailable", {}) {}
+        >()("Offline", {}) {}
 
         const Down = Authentication.make("native-test.Down", CurrentActor, {
           principal: (actor) => actor.id,
-          error: Unavailable,
+          error: Offline,
         });
 
         const Guarded = ActionRpc.make([], {
@@ -396,7 +396,7 @@ describe("ActionRpc native rpcs", () => {
           Layer.provide(
             Authentication.layer(Down, (token: Redacted.Redacted) =>
               Redacted.value(token) === "down"
-                ? Effect.fail(new Unavailable())
+                ? Effect.fail(new Offline())
                 : verify(token)
             )
           )
@@ -408,7 +408,7 @@ describe("ActionRpc native rpcs", () => {
           )
         );
 
-        expect(refused).toBeInstanceOf(Unavailable);
+        expect(refused).toBeInstanceOf(Offline);
       })
   );
 

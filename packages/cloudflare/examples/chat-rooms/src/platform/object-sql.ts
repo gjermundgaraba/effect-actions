@@ -1,7 +1,7 @@
-import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
+import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/ActionCluster";
 import { Layer } from "effect";
 import { SqlClient } from "effect/sql";
 
 export const layerObjectSql = Layer.effect(SqlClient.SqlClient)(
-  CloudflareCluster.DurableObjectSqlClient.orDie
+  ActionCluster.Sql.orDie
 );

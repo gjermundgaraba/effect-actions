@@ -390,22 +390,18 @@ describe("client", () => {
     "decodes an error the endpoint's verifier declares, given its authentication, for a protected tool alone",
     () =>
       Effect.gen(function* () {
-        class Unavailable extends Schema.TaggedError<
-          Unavailable,
+        class Offline extends Schema.TaggedError<
+          Offline,
           { readonly brand: unique symbol }
-        >()(
-          "Unavailable",
-          { retryAfter: Schema.Finite },
-          { httpApiStatus: 503 }
-        ) {}
+        >()("Offline", { retryAfter: Schema.Finite }, { httpApiStatus: 503 }) {}
 
         const Guarded = Authentication.make(
           "mcp-client.Guarded",
           CurrentActor,
-          { principal: (actor) => actor.id, error: Unavailable }
+          { principal: (actor) => actor.id, error: Offline }
         );
 
-        const unavailable = new Unavailable({ retryAfter: 5 });
+        const unavailable = new Offline({ retryAfter: 5 });
 
         const failures = yield* Effect.all([
           Effect.flatMap(
@@ -419,7 +415,7 @@ describe("client", () => {
         ]).pipe(
           Effect.provide(
             Testing.layer(async () =>
-              Response.json(Schema.encodeSync(Unavailable)(unavailable), {
+              Response.json(Schema.encodeSync(Offline)(unavailable), {
                 status: 503,
               })
             )
@@ -432,7 +428,7 @@ describe("client", () => {
             _tag: "StatusError",
             status: 503,
             body: JSON.stringify(
-              yield* Schema.encodeEffect(Unavailable)(unavailable)
+              yield* Schema.encodeEffect(Offline)(unavailable)
             ),
           },
         };

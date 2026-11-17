@@ -579,16 +579,14 @@ describe("builder acquisition", () => {
     "fails runStdio with a builder's failure, rather than ending as the host closing",
     () =>
       Effect.gen(function* () {
-        class Unavailable extends Schema.TaggedError<
-          Unavailable,
+        class Offline extends Schema.TaggedError<
+          Offline,
           { readonly brand: unique symbol }
-        >()("Unavailable", {}) {}
+        >()("Offline", {}) {}
 
         const failing = Action.implement(
           Solo,
-          Effect.as(Effect.fail(new Unavailable()), () =>
-            Effect.succeed("solo")
-          )
+          Effect.as(Effect.fail(new Offline()), () => Effect.succeed("solo"))
         );
 
         const exit = yield* Effect.exit(
@@ -598,7 +596,7 @@ describe("builder acquisition", () => {
         );
 
         assert(Exit.isFailure(exit));
-        expect(Cause.squash(exit.cause)).toBeInstanceOf(Unavailable);
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(Offline);
       })
   );
 

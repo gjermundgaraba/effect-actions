@@ -120,6 +120,7 @@ export {
   type Issue,
   Refusal,
   Unauthenticated,
+  Unavailable,
 } from "./errors.js";
 
 export { Image } from "./media.js";
@@ -473,8 +474,8 @@ const appendErrors = <
  * `action` with the errors `more` declared after its own, as if `make` had been given them in
  * `error`: its handler may fail with them, and every surface answers and every client decodes
  * them. For errors a module adds to the actions it serves, such as a proxy's or a store's,
- * whose contracts are written elsewhere: `pipe(action, Action.withErrors([Unavailable]))`, or
- * `Action.withErrors(action, [Unavailable])`.
+ * whose contracts are written elsewhere: `pipe(action, Action.withErrors([Throttled]))`, or
+ * `Action.withErrors(action, [Throttled])`.
  *
  * **Gotchas**
  *

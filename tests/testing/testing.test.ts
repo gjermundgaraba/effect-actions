@@ -402,10 +402,10 @@ describe("layer", () => {
 
   it.effect("fails with the routes' build failure", () =>
     Effect.gen(function* () {
-      class Unavailable extends Schema.TaggedError<
-        Unavailable,
+      class Offline extends Schema.TaggedError<
+        Offline,
         { readonly brand: unique symbol }
-      >()("Unavailable", {}) {}
+      >()("Offline", {}) {}
 
       const Ping = Action.make("ping", {
         description: "Ping",
@@ -416,7 +416,7 @@ describe("layer", () => {
 
       const routes = ActionHttp.layer(
         ActionHttp.make([Ping]),
-        Action.implement(Ping, Effect.fail(new Unavailable()))
+        Action.implement(Ping, Effect.fail(new Offline()))
       );
 
       const failure = yield* HttpClient.get("/api/ping").pipe(
@@ -424,7 +424,7 @@ describe("layer", () => {
         Effect.flip
       );
 
-      expect(failure).toStrictEqual(new Unavailable());
+      expect(failure).toStrictEqual(new Offline());
 
       const Guarded = Action.make("ping", {
         description: "Ping",
@@ -436,7 +436,7 @@ describe("layer", () => {
       const guarded = ActionHttp.layer(
         ActionHttp.make([Guarded], { authentication: Login }),
         Action.implement(Guarded, () => Effect.succeed(true), {
-          authorize: Effect.fail(new Unavailable()),
+          authorize: Effect.fail(new Offline()),
         })
       ).pipe(Layer.provide(authenticate));
 
@@ -445,7 +445,7 @@ describe("layer", () => {
         Effect.flip
       );
 
-      expect(authorizeFailure).toStrictEqual(new Unavailable());
+      expect(authorizeFailure).toStrictEqual(new Offline());
     })
   );
 

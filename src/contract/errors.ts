@@ -126,6 +126,31 @@ export class Forbidden extends Schema.TaggedError<
   declare private readonly "~declared in the action's error, or built in": unknown;
 }
 
+/**
+ * The server could not answer now, and the call's outcome is unknown: a caller may try again
+ * later. `ActionEntity.reaching` fails with it when the entity a call names could not be reached
+ * or did not answer within its `timeout`, its message saying the entity may still run the call;
+ * a handler fails with it, a message of its own, for a dependency it could not reach, instead of
+ * declaring a second error for that.
+ *
+ * **Gotchas**
+ *
+ * - Over HTTP its JSON with a 503 and `Retry-After: 1`; over MCP an `isError: true` tool result in a 200; over RPC the typed failure; on a Toolkit and in a CLI as a declared error.
+ * - The call may have run, or may still run: retry only a call safe to repeat, such as a read or one carrying an idempotency key.
+ * - A watch, on every surface's client, takes it as a transient failure, asking again a second later and doubling to 30 seconds, where another declared error ends it.
+ * - An answer `Action.Idempotency` keeps is never this error, as for any 5xx: a repeat runs the call again.
+ */
+export class Unavailable extends Schema.TaggedError<
+  Unavailable,
+  { readonly brand: unique symbol }
+>()(
+  "Unavailable",
+  { message: defaultedMessage("The service is unavailable: try again later.") },
+  { httpApiStatus: 503 }
+) {
+  declare private readonly "~declared in the action's error, or built in": unknown;
+}
+
 const refusals = [Unauthenticated, Forbidden] as const;
 
 /**
@@ -137,7 +162,7 @@ export const Refusal = Schema.Union(refusals);
 /** A refusal: `Unauthenticated | Forbidden`. */
 export type Refusal = (typeof Refusal)["Type"];
 
-export const builtIns = [InvalidInput, ...refusals] as const;
+export const builtIns = [InvalidInput, ...refusals, Unavailable] as const;
 
 /** The built-in failures' schemas. */
 export type BuiltIns = (typeof builtIns)[number];
@@ -145,5 +170,5 @@ export type BuiltIns = (typeof builtIns)[number];
 /** The built-in failures as one schema: `Schema.is(Action.BuiltIn)(error)`. */
 export const BuiltIn = Schema.Union(builtIns);
 
-/** A built-in failure: `InvalidInput | Refusal`. */
+/** A built-in failure: `InvalidInput | Refusal | Unavailable`. */
 export type BuiltIn = (typeof BuiltIn)["Type"];

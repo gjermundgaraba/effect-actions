@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**`Action.Unavailable` is a built-in error, declared by every action and event type on every surface, beside `InvalidInput`, `Unauthenticated` and `Forbidden`.** Its tag is `Unavailable`, its one field a `message` with a default, its status 503: over HTTP its JSON with `Retry-After: 1`, over MCP an `isError: true` tool result, over RPC the typed failure, and every client decodes it as a typed failure. `Action.BuiltIn` and each surface's error types now include it, so an exhaustive match on a call's errors handles it too. A watch on every client takes it as transient, asking again a second later and doubling to 30 seconds, where every other declared error ended it, and `Action.Idempotency` keeps no answer of it, as for any 5xx. An action, binding or authentication declaring an error tagged `Unavailable` of its own now throws as it is made, with the library's `error _tag "Unavailable" names two error schemas` message.
+
+- Migrate: delete your own `Unavailable` error and fail with `Action.Unavailable`, `new Action.Unavailable({ message })`, which has the same tag, status and `message` field as the common hand-written one, `Schema.TaggedError(...)("Unavailable", { message: Schema.String }, { httpApiStatus: 503 })`; drop it from each action's `error`. An error of that tag with other fields, such as a `retryAfter`, takes another tag. Code matching `"Unavailable"` keeps working.
+
+**`ActionEntity.reaching(entity, options?)` answers an entity it could not reach, and a call past its deadline, with `Action.Unavailable`.** **Reversed: a cluster failure was the call's defect, and a call had no deadline.** What `Entity.client` fails with, `MailboxFull`, `PersistenceError`, `AlreadyProcessingMessage` or `EntityNotAssignedToRunner`, was the call's defect, a 500 over HTTP, and a call to an entity no runner is assigned waited without end, as Effect retries it every 100 milliseconds; now each fails with `Action.Unavailable`, as does a call, a poll or a webhook subscribe or unsubscribe unanswered within `options.timeout`, 20 seconds by default, its message naming the entity and saying the outcome is unknown, as the entity may still run the call. The deadline bounds each call and each poll alone, never a stream's or a watch's life, and a streaming action, one declaring `progress` or answering `Action.Stream`, has none. A stream following an event through `reaching` now asks the entity again after any of the four failures, where it ended on `AlreadyProcessingMessage` and `EntityNotAssignedToRunner`. An interrupt stays an interrupt.
+
+- Migrate: drop a wrapper mapping `ActionEntity.isClusterFailure` or a timeout to an error of your own around calls through `reaching`, and its `Unavailable`; give `reaching(entity, { timeout })` where a call legitimately runs longer than 20 seconds. `ActionEntity.client` is unchanged: its methods still fail with the cluster's own errors and have no deadline.
+
+### Other changes
+
+- New `ActionEntity.ReachingOptions`, `reaching`'s options, holding `timeout`.
+- New `ActionCluster.Sql` in `@gjermundgaraba/effect-actions-cloudflare`, the entity object's own SQL client, a service class of the package's own under the key of `@effect/platform-cloudflare`'s `CloudflareCluster.DurableObjectSqlClient`, so the same service at run time, which an application reads, `ActionCluster.Sql.orDie`, or provides in a test, `Layer.succeed(ActionCluster.Sql, client)`, without a lint exception for Effect's experimental API. Guide: `docs/ActionCluster.md` in the package; chat-rooms' `src/platform/object-sql.ts` reads it.
+- New `ActionClusterEntity.register(application)` in `@gjermundgaraba/effect-actions-cloudflare`: `CloudflareDurableObjects.setInitializer(ActionCluster.initializer(application))`, returning what `setInitializer` returns, the `initialize` that `ActionCluster.handler` and `ActionClusterEntity.make` take, so an application registers its initializer without a lint exception for Effect's experimental API; it is `ActionClusterEntity`'s and not `ActionCluster`'s, since `setInitializer`'s module imports `cloudflare:workers` and `ActionCluster` loads in Node too. Migrate: replace `CloudflareDurableObjects.setInitializer(ActionCluster.initializer(application))` with `ActionClusterEntity.register(application)`, as chat-rooms' `src/application.ts` does.
+- New `ActionCluster.failureResponse(cause)` in `@gjermundgaraba/effect-actions-cloudflare`, for a Worker route that calls an entity's client itself, outside `ActionEntity.reaching`: an Effect answering a failed call's cause with a web `Response`, a 503 with `Retry-After: 1` where `ActionEntity.isClusterFailure` matches the squashed error, a 499 where the cause holds only interrupts, and otherwise a 500, after logging the cause with `Effect.logError`.
+
 ## 0.33.0
 
 ### Breaking changes

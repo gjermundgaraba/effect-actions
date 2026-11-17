@@ -1,7 +1,8 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
-import type * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
+import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import {
+  Cause,
   Context,
   Effect,
   Function,
@@ -14,6 +15,7 @@ import type { Scope } from "effect";
 import { ClusterSchema, Sharding } from "effect/cluster";
 import { Headers, HttpEffect, HttpRouter } from "effect/http";
 import type { HttpServerRequest } from "effect/http";
+import type { SqlClient } from "effect/sql";
 
 import { changedIn, stateOf, storageHere } from "./objects.js";
 
@@ -101,6 +103,29 @@ export const layer = (
   ).pipe(Layer.provideMerge(CloudflareCluster.layer(options)));
 
 /**
+ * The entity object's own SQL client, `@effect/platform-cloudflare`'s
+ * `CloudflareCluster.DurableObjectSqlClient`, under its key: an `@effect/sql-sqlite-do` `SqlClient` over the
+ * Durable Object's SQLite storage, which an entity's build, its `services`, its handlers and the
+ * fibers they fork read with `ActionCluster.Sql.orDie`, such as to provide it as `SqlClient` to
+ * `Stored.layerEvents`: `Layer.effect(SqlClient.SqlClient)(ActionCluster.Sql.orDie)`. Guide:
+ * `docs/ActionCluster.md` in this package.
+ *
+ * **Gotchas**
+ *
+ * - It is the runtime's service under the package's own class, one key for both: a test provides it from any SQL layer, `Layer.succeed(ActionCluster.Sql, client)`, and the runtime's `DurableObjectSqlClient` reads that too.
+ * - Read outside an entity's Durable Object, as in the Worker's routes, `orDie` dies: build what reads it in `ActionEntity.layer`'s `services`.
+ * - `withTransaction` closes the object's input gate until it ends, so a timer or I/O awaited inside it never resumes: keep a transaction to SQL work.
+ * - Tables whose names start with `cluster_` are the runtime's mailbox: write none.
+ */
+export class Sql extends Context.Service<Sql, SqlClient.SqlClient>()(
+  CloudflareCluster.DurableObjectSqlClient.key
+) {
+  /** The entity object's SQL client, or a defect where no entity's Durable Object provides one. */
+  static readonly orDie: Effect.Effect<SqlClient.SqlClient> =
+    CloudflareCluster.DurableObjectSqlClient.orDie;
+}
+
+/**
  * The Durable Object state of the entity object running the effect that reads it: its `id`, whose
  * `name` is `CloudflareCluster.encodeName(type, id)`, its `storage`, `waitUntil`, which keeps the
  * object alive until a promise settles, such as work forked past the call that started it, and
@@ -112,7 +137,7 @@ export const layer = (
  * **Gotchas**
  *
  * - On an object of Effect's own `ClusterEntity` class, which records no state, `orDie` dies naming the class to export: export `ActionClusterEntity.ClusterEntity`, or `make`'s class, as `ClusterEntity` from the Worker's module.
- * - `storage.transaction()` and `transactionSync()` called directly skip the gate the runtime's mailbox writes wait on, so another call's reply written while yours is open is lost to your rollback: open a transaction through `CloudflareCluster.DurableObjectSqlClient`'s `withTransaction`, which takes that gate, and await no timer or I/O in it, as the input gate it closes never lets them resume.
+ * - `storage.transaction()` and `transactionSync()` called directly skip the gate the runtime's mailbox writes wait on, so another call's reply written while yours is open is lost to your rollback: open a transaction through `Sql`'s `withTransaction`, which takes that gate, and await no timer or I/O in it, as the input gate it closes never lets them resume.
  * - The runtime owns the object's alarm, for scheduled tells, replays and `Entity.keepAlive`: `storage.setAlarm` or `deleteAlarm` replaces its alarm and loses what it scheduled, and the class's `alarm` runs the runtime's; schedule work with a persisted tell carrying `DeliverAt` instead.
  * - Tables whose names start with `cluster_` are the runtime's mailbox: write none, and read them only as its tests do.
  * - `abort` ends every call under way on the object and evicts it; the next call builds it again, and the runtime replays its unprocessed persisted messages.
@@ -151,12 +176,12 @@ export class ObjectState extends Context.Service<
 }
 
 /**
- * The function `CloudflareDurableObjects.setInitializer` takes: it builds `application(env)`, with
+ * The function `CloudflareDurableObjects.setInitializer` takes, which `ActionClusterEntity.register` registers: it builds `application(env)`, with
  * `HttpRouter.layer` beneath it, in a `ManagedRuntime` of its own on each call, and keeps the first
  * runtime to finish for the isolate, disposing a failed one and leaving a later one alive for the
- * isolate's life, since it may hold the isolate's entity registrations. Register it once, from the
- * Worker's module, and give the function `setInitializer` returns to `handler` and to
- * `ActionClusterEntity.make`. Guide: `docs/ActionCluster.md` in this package.
+ * isolate's life, since it may hold the isolate's entity registrations. An application registers
+ * it with `ActionClusterEntity.register`, and calls it itself only to test it. Guide: `docs/ActionCluster.md` in this
+ * package.
  *
  * **Gotchas**
  *
@@ -256,7 +281,7 @@ const objectsOf = <Env>({
  * `sockets` matches, with an id that route admits, goes to the entity's object,
  * `entityNamespace(env).getByName(CloudflareCluster.encodeName(entity.type, id)).fetch(request)`,
  * and every other request is answered by the `HttpRouter` of the context `initialize` returns,
- * the function `CloudflareDurableObjects.setInitializer` returned for `initializer`. Guide:
+ * the function `ActionClusterEntity.register` returned. Guide:
  * `docs/ActionCluster.md` in this package.
  *
  * **Gotchas**
@@ -290,4 +315,36 @@ export const handler = <Env>(
         : await object.fetch(request);
     },
   };
+};
+
+const clientClosedRequest = 499;
+
+/**
+ * The web `Response` for a call a Worker made through an entity's client itself, outside any
+ * surface, as `Entity.client` or `ActionEntity.client`, that failed with `cause`: a 503 with
+ * `Retry-After: 1` where `ActionEntity.isClusterFailure` matches the squashed error, as the
+ * entity could not be reached; a 499 where the cause holds only interrupts, as the request's
+ * client went away; otherwise a 500, after logging the cause with `Effect.logError`. None has a
+ * body. Guide: `docs/ActionCluster.md` in this package.
+ *
+ * **Gotchas**
+ *
+ * - A 503 tells the client to try again, though the entity may have run the call: send again only a call safe to repeat.
+ * - A declared error of the call, which the Worker answers itself, is a 500 here, logged: catch it first.
+ */
+export const failureResponse = <E>(
+  cause: Cause.Cause<E>
+): Effect.Effect<Response> => {
+  if (Cause.hasInterruptsOnly(cause)) {
+    return Effect.succeed(new Response(null, { status: clientClosedRequest }));
+  }
+
+  return ActionEntity.isClusterFailure(Cause.squash(cause))
+    ? Effect.succeed(
+        new Response(null, { status: 503, headers: { "retry-after": "1" } })
+      )
+    : Effect.as(
+        Effect.logError("A call to an entity failed", cause),
+        new Response(null, { status: 500 })
+      );
 };

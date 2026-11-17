@@ -4,6 +4,7 @@ import {
   Cause,
   Effect,
   Exit,
+  Fiber,
   Layer,
   Logger,
   Predicate,
@@ -679,37 +680,52 @@ const unreachable = Layer.effect(
 
 describe("ActionEntity.reaching's cluster failures", () => {
   it.live(
-    "answers Entity.client's PersistenceError as an undeclared failure, a defect in process and a 500 over HTTP",
+    "answers Entity.client's PersistenceError as Action.Unavailable, typed in process and over MCP, and a 503 with Retry-After over HTTP, never a 500",
     () => {
       const rooms = makeRooms();
 
       return Effect.gen(function* () {
         const inProcess = yield* Action.client(reached);
-        const http = yield* ActionHttp.client(RoomHttp);
 
-        const failed = yield* Effect.exit(inProcess.read({ room: "a" }));
-        const answered = yield* Effect.exit(http.read({ room: "a" }));
+        const failed = yield* Effect.flip(inProcess.read({ room: "a" }));
 
-        const reasons = Exit.isFailure(failed) ? failed.cause.reasons : [];
+        const mcp = yield* ActionMcp.client([Read], {
+          transformClient: bearer("alice"),
+        });
 
-        expect(reasons).toHaveLength(1);
-        expect(
-          reasons.every(
-            (reason) =>
-              Cause.isDieReason(reason) &&
-              reason.defect instanceof ClusterError.PersistenceError
-          )
-        ).toBe(true);
-        expect(Exit.isFailure(answered) && String(answered.cause)).toContain(
-          "undeclared status code (500"
+        const overMcp = yield* Effect.flip(mcp.read({ room: "a" }));
+
+        const answered = yield* call(
+          "read",
+          { room: "a" },
+          { "content-type": "application/json" }
         );
+
+        expect(failed).toBeInstanceOf(Action.Unavailable);
+        expect(failed.message).toBe(
+          "read: the entity Room/a could not be reached (PersistenceError); the call's outcome is unknown, as the entity may still run it"
+        );
+        expect(answered.status).toBe(503);
+        expect(answered.headers["retry-after"]).toBe("1");
+        expect(yield* answered.json).toStrictEqual({
+          _tag: "Unavailable",
+          message: failed.message,
+        });
+        expect(overMcp).toStrictEqual(failed);
+        expect(rooms.ran.read).toBe(0);
       }).pipe(
         Effect.scoped,
         Effect.provide(
           Testing.layer(
-            ActionHttp.layer(RoomHttp, reached).pipe(
-              Layer.provide(authenticate)
-            )
+            Layer.mergeAll(
+              ActionHttp.layer(RoomHttp, reached),
+              ActionMcp.layerHttp(reached, {
+                name: "worker",
+                version: "0.0.0",
+                authentication: Login,
+                requestScoped: true,
+              })
+            ).pipe(Layer.provide(authenticate))
           ).pipe(
             Layer.provideMerge(unreachable),
             Layer.provideMerge(entities(rooms))
@@ -717,5 +733,149 @@ describe("ActionEntity.reaching's cluster failures", () => {
         )
       );
     }
+  );
+});
+
+const Nap = Action.make("nap", {
+  description: "Sleep for the milliseconds given, then answer the entity.",
+  input: { room: Schema.String, ms: Schema.Int },
+  success: Schema.String,
+  readOnly: true,
+  caller: Action.Anyone,
+});
+
+const NapRpc = ActionRpc.make([Nap]);
+
+const Napper = ActionEntity.make("Napper", NapRpc, {
+  key: ({ room }) => room,
+});
+
+const napping = Action.implement(
+  Nap,
+  Effect.map(
+    Entity.CurrentAddress,
+    ({ entityId }) =>
+      ({ ms }) =>
+        Effect.as(Effect.sleep(ms), entityId)
+  )
+);
+
+const nappers = ActionEntity.layer(Napper, napping).pipe(
+  Layer.provideMerge(TestRunner.layer)
+);
+
+describe("ActionEntity.reaching's timeout", () => {
+  it.live(
+    "answers a call past it with Action.Unavailable, in process and as a 503 with Retry-After over HTTP, and one within it as the entity does",
+    () => {
+      const hurried = ActionEntity.reaching(Napper, { timeout: "200 millis" });
+      const NapHttp = ActionHttp.make([Nap]);
+
+      return Effect.gen(function* () {
+        const inProcess = yield* Action.client(hurried);
+
+        const quick = yield* inProcess.nap({ room: "a", ms: 0 });
+        const late = yield* Effect.flip(inProcess.nap({ room: "a", ms: 5000 }));
+
+        const answered = yield* call(
+          "nap",
+          { room: "b", ms: 5000 },
+          { "content-type": "application/json" }
+        );
+
+        expect(quick).toBe("a");
+        expect(late).toBeInstanceOf(Action.Unavailable);
+        expect(late.message).toContain(
+          "the entity Napper/a did not answer within"
+        );
+        expect(late.message).toContain("the call's outcome is unknown");
+        expect(answered.status).toBe(503);
+        expect(answered.headers["retry-after"]).toBe("1");
+        expect(yield* answered.json).toMatchObject({ _tag: "Unavailable" });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Testing.layer(ActionHttp.layer(NapHttp, hurried)).pipe(
+            Layer.provideMerge(nappers)
+          )
+        )
+      );
+    }
+  );
+
+  it.live("keeps a caller's interrupt an interrupt, never an Unavailable", () =>
+    Effect.gen(function* () {
+      const inProcess = yield* Action.client(ActionEntity.reaching(Napper));
+
+      const running = yield* Effect.forkChild(
+        inProcess.nap({ room: "a", ms: 5000 })
+      );
+
+      yield* Effect.sleep("100 millis");
+
+      yield* Fiber.interrupt(running);
+
+      const exit = yield* Fiber.await(running);
+
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(
+        true
+      );
+    }).pipe(Effect.scoped, Effect.provide(nappers))
+  );
+
+  it.live(
+    "bounds each poll alone, so a watch over HTTP's event stream and one polling in process outlive it, never failing to reconnect",
+    () => {
+      const hurried = ActionEntity.reaching(Room, { timeout: "200 millis" });
+      const warned: unknown[] = [];
+
+      const warnings = Logger.layer([
+        Logger.make(({ logLevel, message }) => {
+          if (logLevel === "Warn" || logLevel === "Error") {
+            warned.push(message);
+          }
+        }),
+      ]);
+
+      return Effect.gen(function* () {
+        const http = yield* signedIn;
+        const inProcess = yield* Action.client(hurried);
+        const from = yield* startOf("a");
+
+        const streamed = yield* Effect.forkChild(
+          http
+            .watch(Posted, { room: "a" }, { cursor: from })
+            .pipe(Stream.take(1), Stream.runCollect)
+        );
+
+        const polled = yield* Effect.forkChild(
+          inProcess
+            .watch(Posted, { room: "a" }, { cursor: from, mode: "poll" })
+            .pipe(Stream.take(1), Stream.runCollect)
+        );
+
+        yield* Effect.sleep("1 second");
+
+        yield* http.post({ room: "a", text: "late" });
+
+        expect(textsOf(yield* Fiber.join(streamed))).toStrictEqual(["late"]);
+        expect(textsOf(yield* Fiber.join(polled))).toStrictEqual(["late"]);
+        expect(warned).toStrictEqual([]);
+      }).pipe(
+        Effect.timeout("20 seconds"),
+        Effect.scoped,
+        Effect.provide(
+          Testing.layer(
+            ActionHttp.layer(RoomHttp, hurried).pipe(
+              Layer.provide(authenticate)
+            )
+          ).pipe(
+            Layer.provideMerge(entities(makeRooms())),
+            Layer.provideMerge(warnings)
+          )
+        )
+      );
+    },
+    { timeout: 30_000 }
   );
 });

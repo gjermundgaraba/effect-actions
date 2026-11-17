@@ -1,5 +1,5 @@
-import * as CloudflareDurableObjects from "@effect/platform-cloudflare/CloudflareDurableObjects";
 import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/ActionCluster";
+import * as ActionClusterEntity from "@gjermundgaraba/effect-actions-cloudflare/ActionClusterEntity";
 import { Layer } from "effect";
 import { HttpServer } from "effect/http";
 
@@ -24,6 +24,4 @@ const application = (env: Cloudflare.Env) =>
     )
   );
 
-export const initialize = CloudflareDurableObjects.setInitializer(
-  ActionCluster.initializer(application)
-);
+export const initialize = ActionClusterEntity.register(application);

@@ -48,9 +48,7 @@ class ClusterEntity extends ActionClusterEntity.make({
 The package owns the Worker's wiring: one initializer builds the application once per isolate, and the Worker's handler hands a page's upgrade to its room's object and serves every other request from the application's routes:
 
 ```ts
-const initialize = CloudflareDurableObjects.setInitializer(
-  ActionCluster.initializer(application)
-);
+const initialize = ActionClusterEntity.register(application);
 
 ActionCluster.handler(initialize, {
   sockets: {

@@ -642,16 +642,16 @@ it.effect(
       "rpc-test/Caller"
     ) {}
 
-    class Unavailable extends Schema.TaggedError<
-      Unavailable,
+    class Offline extends Schema.TaggedError<
+      Offline,
       { readonly brand: unique symbol }
-    >()("Unavailable", {
+    >()("Offline", {
       retryAfter: Schema.Finite,
     }) {}
 
     const Checked = Authentication.make("rpc-test.Checked", Caller, {
       principal: (caller) => caller.id,
-      error: Unavailable,
+      error: Offline,
     });
 
     const Secret = Action.make("secret", {
@@ -680,7 +680,7 @@ it.effect(
     const server = servedAtRpcOverHttp(ActionRpc.layer(Guarded, apps)).pipe(
       Layer.provide(
         Authentication.layer(Checked, () =>
-          Effect.fail(new Unavailable({ retryAfter: 30 }))
+          Effect.fail(new Offline({ retryAfter: 30 }))
         )
       )
     );
@@ -690,7 +690,7 @@ it.effect(
 
       expect(
         yield* Effect.flip(client.secret().pipe(signedInAs("down")))
-      ).toStrictEqual(new Unavailable({ retryAfter: 30 }));
+      ).toStrictEqual(new Offline({ retryAfter: 30 }));
       expect(yield* client.open().pipe(signedInAs("down"))).toBe("open");
     }).pipe(Effect.scoped, Effect.provide(inMemoryProtocolTo(server)));
   }

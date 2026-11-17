@@ -103,6 +103,7 @@ import {
   progressStreamOf,
 } from "./streamed.js";
 import type { SuccessOf } from "./streamed.js";
+import { RetryAfter, retryAfter } from "./unavailable.js";
 
 export type { Client } from "./client.js";
 
@@ -429,7 +430,7 @@ const withinLayerMiddleware = (
  * Bind actions once, for servers and clients alike, each at `POST <prefix>/<action>`, a
  * `readOnly` one too, and event types, each at `POST <prefix>/events/<name>`. Every endpoint
  * declares its action's errors, the binding's `error`, and the built-in `InvalidInput`,
- * `Unauthenticated` and `Forbidden`, so clients decode each as a typed failure; a protected one
+ * `Unauthenticated`, `Forbidden` and `Unavailable`, so clients decode each as a typed failure; a protected one
  * also declares what its descriptor's verifier fails with.
  * Guide: `docs/ActionHttp.md` in this package; in an application: `examples/notes-service/src/Api.ts`.
  *
@@ -642,9 +643,11 @@ export function layer(
       options.middleware
     );
 
-    return caller === Anyone || authentication === undefined
-      ? within
-      : within.middleware(StepUp).middleware(authentication["~middleware"]);
+    return (
+      caller === Anyone || authentication === undefined
+        ? within
+        : within.middleware(StepUp).middleware(authentication["~middleware"])
+    ).middleware(RetryAfter);
   };
 
   const api = apiOf(name, [
@@ -757,6 +760,7 @@ export function layer(
       ).pipe(
         Layer.provide([
           schemaErrors,
+          retryAfter,
           jsonContentType(),
           security,
           ...hostProvidedMiddleware,
@@ -785,7 +789,7 @@ export function layer(
  * - An input that does not encode fails with `InvalidInput`, and nothing is sent; undeclared input fields, which TypeScript lets through on a wider value, are dropped as it encodes, since the server would refuse them.
  * - It interprets no status and retries nothing: a failed write may have happened, and only a declared error says what the server did.
  * - `watch(event, input, options)` holds the event's SSE stream open, or polls its pages with `mode: "poll"`, as `Action.client`'s; a watch of an event the server does not serve, its route a 404, fails with `Event.SubscriptionError`, reason `NotServed`.
- * - A watch reconnects after the transport fails, a status such as 503, or 60 seconds without an answer or a frame, a second later and doubling to 30 seconds, each reconnect logged as a warning; a declared error, a refusal included, ends it.
+ * - A watch reconnects after the transport fails, a status such as 502, `Action.Unavailable`, or 60 seconds without an answer or a frame, a second later and doubling to 30 seconds, each reconnect logged as a warning; another declared error, a refusal included, ends it.
  * - A watch's stream ends at an SSE `retry:` field, which `ActionHttp.layer` never sends, as Effect's client decodes it, and the watch connects again: a server or proxy sending one as each stream starts delivers nothing.
  * - A call of an action declaring `progress` reads the route's event stream, as every request accepts it, and its answer from the `final` event; the server sends the values whether or not the call gave `onProgress`, and without one they are dropped.
  * - A call of an action answering a stream returns a `Stream` of its elements, failing as the route's stream fails, with `Sse.SseError` or `Sse.Retry` too; its `onProgress` gets each `progress` event, which the server sends whether or not the call gave one.

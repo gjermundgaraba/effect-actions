@@ -33,14 +33,14 @@ import { framesOf } from "../support/sse.js";
 import { Ticked } from "../support/ticked.js";
 import { challengeIn, secretOf } from "../support/webhook.js";
 
-class Unavailable extends Schema.TaggedError<
-  Unavailable,
+class Offline extends Schema.TaggedError<
+  Offline,
   { readonly brand: unique symbol }
->()("Unavailable", { issuer: Schema.String }, { httpApiStatus: 503 }) {}
+>()("Offline", { issuer: Schema.String }, { httpApiStatus: 503 }) {}
 
 const Principal = Authentication.make("reaching.Principal", CurrentActor, {
   principal: (actor) => actor.id,
-  error: Unavailable,
+  error: Offline,
 });
 
 const signIn = Authentication.layer(Principal, verify);
@@ -201,7 +201,7 @@ const makeTicker = ({
     counted.verified += 1;
 
     return entityUnavailable(counted.verified)
-      ? Effect.fail(new Unavailable({ issuer: "auth.example.com" }))
+      ? Effect.fail(new Offline({ issuer: "auth.example.com" }))
       : verify(token);
   });
 

@@ -15,10 +15,10 @@ class Archived extends Schema.TaggedError<
   { readonly brand: unique symbol }
 >()("NotFound", { id: Schema.String, archivedAt: Schema.String }) {}
 
-class Unavailable extends Schema.TaggedError<
-  Unavailable,
+class Offline extends Schema.TaggedError<
+  Offline,
   { readonly brand: unique symbol }
->()("Unavailable", {}, { httpApiStatus: 503 }) {}
+>()("Offline", {}, { httpApiStatus: 503 }) {}
 
 const Gone = Schema.TaggedStruct("Gone", {});
 
@@ -49,11 +49,11 @@ const outcome = (build: () => Action.Any) => {
 
 describe("Action.withErrors", () => {
   it("declares the errors after the action's own, data-first or piped, and leaves the action as it was", () => {
-    const dataFirst = Action.withErrors(Lookup, [Unavailable, Gone]);
-    const piped = pipe(Lookup, Action.withErrors([Unavailable, Gone]));
+    const dataFirst = Action.withErrors(Lookup, [Offline, Gone]);
+    const piped = pipe(Lookup, Action.withErrors([Offline, Gone]));
 
-    expect(dataFirst.error).toStrictEqual([Missing, Unavailable, Gone]);
-    expect(piped.error).toStrictEqual([Missing, Unavailable, Gone]);
+    expect(dataFirst.error).toStrictEqual([Missing, Offline, Gone]);
+    expect(piped.error).toStrictEqual([Missing, Offline, Gone]);
     expect(Lookup.error).toStrictEqual([Missing]);
     expect({ ...dataFirst, error: Lookup.error }).toStrictEqual(Lookup);
     expect(dataFirst).not.toBe(Lookup);
@@ -69,7 +69,7 @@ describe("Action.withErrors", () => {
       [[Missing], [Missing]],
       [[Missing], [Schema.Union([Missing, Gone])]],
       [[Missing], [Action.Forbidden]],
-      [[], [Missing, Unavailable]],
+      [[], [Missing, Offline]],
       [[Missing, Gone], []],
     ];
 
@@ -98,10 +98,10 @@ describe("Action.withErrors", () => {
     "lets the handler fail with an added error, which a surface answers and its client decodes",
     () =>
       Effect.gen(function* () {
-        const Proxied = pipe(Lookup, Action.withErrors([Unavailable]));
+        const Proxied = pipe(Lookup, Action.withErrors([Offline]));
 
         const app = Action.implement(Proxied, ({ id }) =>
-          id === "down" ? Effect.fail(new Unavailable()) : Effect.succeed(id)
+          id === "down" ? Effect.fail(new Offline()) : Effect.succeed(id)
         );
 
         const Http = ActionHttp.make([Proxied]);
@@ -113,7 +113,7 @@ describe("Action.withErrors", () => {
         expect(yield* remote.lookup({ id: "up" })).toBe("up");
         expect(
           yield* Effect.flip(remote.lookup({ id: "down" }))
-        ).toBeInstanceOf(Unavailable);
+        ).toBeInstanceOf(Offline);
       })
   );
 });

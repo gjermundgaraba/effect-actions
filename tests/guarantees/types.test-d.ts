@@ -1160,10 +1160,10 @@ export const builtAuthorizerTypes = () => {
 
   class Actor extends Context.Service<Actor, string>()("types-spec/Actor") {}
 
-  class Unavailable extends Schema.TaggedError<
-    Unavailable,
+  class Offline extends Schema.TaggedError<
+    Offline,
     { readonly brand: unique symbol }
-  >()("Unavailable", {}) {}
+  >()("Offline", {}) {}
 
   const ActorLogin = Authentication.make("types-spec.ActorLogin", Actor, {
     principal: (actor) => actor,
@@ -1198,7 +1198,7 @@ export const builtAuthorizerTypes = () => {
       const permissions = yield* Permissions;
 
       if (Math.random() > 2) {
-        return yield* new Unavailable();
+        return yield* new Offline();
       }
 
       return (action) =>
@@ -1218,7 +1218,7 @@ export const builtAuthorizerTypes = () => {
 
   expectTypeOf<CallServices<typeof guarded, "lookup">>().toEqualTypeOf<Actor>();
   expectTypeOf(Action.layer(guarded)).toEqualTypeOf<
-    Layer.Layer<never, Unavailable, Permissions>
+    Layer.Layer<never, Offline, Permissions>
   >();
 
   const routes = ActionHttp.layer(
@@ -1250,7 +1250,7 @@ export const builtAuthorizerTypes = () => {
 
   Action.implement([Lookup, Rename], handlers, {
     // @ts-expect-error -- A built authorizer, too, fails only with a refusal.
-    authorize: Effect.succeed(() => Effect.fail(new Unavailable())),
+    authorize: Effect.succeed(() => Effect.fail(new Offline())),
   });
 
   const admin = Action.implement(Rename, handlers.rename, {
@@ -1305,7 +1305,7 @@ export const builtAuthorizerTypes = () => {
       const permissions = yield* Permissions;
 
       if (Math.random() > 2) {
-        return yield* new Unavailable();
+        return yield* new Offline();
       }
 
       return Effect.fn(function* (action) {
@@ -1365,7 +1365,7 @@ export const builtAuthorizerTypes = () => {
     CallServices<typeof generated, "lookup">
   >().toEqualTypeOf<Actor>();
   expectTypeOf(Action.layer(generated)).toEqualTypeOf<
-    Layer.Layer<never, Unavailable, Permissions>
+    Layer.Layer<never, Offline, Permissions>
   >();
   expectTypeOf<CallServices<typeof single, "lookup">>().toEqualTypeOf<Actor>();
   expectTypeOf(Action.layer(single)).toEqualTypeOf<

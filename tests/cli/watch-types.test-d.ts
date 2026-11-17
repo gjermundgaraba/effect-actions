@@ -19,10 +19,10 @@ class Region extends Context.Service<Region, string>()(
   "cli-watch-types/Region"
 ) {}
 
-class Unavailable extends Schema.TaggedError<
-  Unavailable,
+class Down extends Schema.TaggedError<
+  Down,
   { readonly brand: unique symbol }
->()("Unavailable", {}) {}
+>()("Down", {}) {}
 
 const Login = Authentication.make("cli-watch-types.Login", Caller, {
   principal: (caller) => caller,
@@ -82,7 +82,7 @@ expectTypeOf<
 
 const Http = ActionHttp.make([Open, Ticked, Watched], {
   authentication: Login,
-  error: [Unavailable],
+  error: [Down],
 });
 
 const remote = ActionCli.remote(Http, { name: "x" });
@@ -95,6 +95,7 @@ expectTypeOf<
   | "Unauthenticated"
   | "Forbidden"
   | "Unavailable"
+  | "Down"
   | "HttpClientError"
   | "SchemaError"
   | "SseError"

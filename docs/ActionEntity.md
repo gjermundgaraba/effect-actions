@@ -74,6 +74,8 @@ A protected action authenticates each call from the headers its envelope carries
 
 The surface authenticates a protected call with its own binding's descriptor and the entity authenticates it again, so provide the authentication provider to both.
 
+A call the entity could not be reached for, or that did not answer within `reaching(entity, { timeout })`, 20 seconds by default, fails with the built-in `Action.Unavailable`, a 503 with `Retry-After` over HTTP, whose message says the entity may still run it. The deadline bounds each call and each poll, never a stream or a watch; its rules are on `ActionEntity.ReachingOptions`.
+
 An event is followed through the entity's poll rpc, so no watcher holds an entity open; a stream polls it from the surface. What crosses the two hops, and what does not, is on `ActionEntity.reaching`.
 
 A server outside the cluster that forwards a socket's calls into the entity, as the Cloudflare package's socket host does, forwards the rpcs of `ActionEntity.bindingRpcs(entity)` alone, never the entity's native rpcs, which authenticate nothing; its clients call them with `ActionRpc.client(binding)`, whose watch polls them.

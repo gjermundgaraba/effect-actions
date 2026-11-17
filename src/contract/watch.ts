@@ -11,6 +11,7 @@ import {
 } from "effect";
 
 import { CallbackUrl } from "./callback.js";
+import { Unavailable } from "./errors.js";
 import * as Event from "./Event.js";
 import { Checked, Gap } from "./occurrence.js";
 import { paged } from "./pages.js";
@@ -68,6 +69,9 @@ const afterFailures = <E>(transient: (error: E) => boolean) =>
     )
   );
 
+const isUnavailable: Predicate.Refinement<unknown, Unavailable> =
+  Schema.is(Unavailable);
+
 const isSubscriptionError: Predicate.Refinement<
   unknown,
   Event.SubscriptionError
@@ -99,10 +103,10 @@ const reconnecting = <E, R>(
 
   const reopened =
     transient === undefined
-      ? once
+      ? once.pipe(Stream.retry(afterFailures<E>(isUnavailable)))
       : once.pipe(
           Stream.repeat(Schedule.spaced(reconnectDelay)),
-          Stream.retry(afterFailures(transient))
+          Stream.retry(afterFailures(Predicate.or(transient, isUnavailable)))
         );
 
   return polled === undefined

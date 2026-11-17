@@ -76,7 +76,7 @@ type SseError = Extract<SseFailure, { readonly _tag: "SseError" }>;
 
 /**
  * What one call of `A` fails with: a declared error value (the action's own, one `E` of the
- * binding's, or a built-in `InvalidInput`, `Unauthenticated` or `Forbidden`), a native
+ * binding's, or a built-in `InvalidInput`, `Unauthenticated`, `Forbidden` or `Unavailable`), a native
  * `HttpClientError` for a failed request or an undeclared answer, or a `SchemaError` when
  * the success does not decode. A call reading an event stream, of an action answering a stream or
  * declaring `progress`, also fails with Effect's `Sse.SseError` or `Sse.Retry`.

@@ -105,10 +105,10 @@ export const builtAuthorizerStartupAndPerCall = Effect.gen(function* () {
   expectTypeOf<Effect.Services<typeof who>>().toEqualTypeOf<CurrentActor>();
 });
 
-class Unavailable extends Schema.TaggedError<
-  Unavailable,
+class Offline extends Schema.TaggedError<
+  Offline,
   { readonly brand: unique symbol }
->()("Unavailable", {}) {}
+>()("Offline", {}) {}
 
 const Ping = Action.make("ping", {
   description: "Ping",
@@ -120,7 +120,7 @@ const Ping = Action.make("ping", {
 const failingBuilderClient = Action.client(
   Action.implement(
     Ping,
-    Effect.as(Effect.fail(new Unavailable()), () => Effect.succeed(1))
+    Effect.as(Effect.fail(new Offline()), () => Effect.succeed(1))
   )
 );
 
@@ -129,7 +129,7 @@ export const buildErrorOnAcquisitionNotCalls = Effect.gen(function* () {
 
   expectTypeOf<
     Effect.Error<typeof failingBuilderClient>
-  >().toEqualTypeOf<Unavailable>();
+  >().toEqualTypeOf<Offline>();
   expectTypeOf<
     Effect.Error<ReturnType<typeof client.ping>>
   >().toEqualTypeOf<Action.BuiltIn>();

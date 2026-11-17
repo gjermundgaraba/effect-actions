@@ -38,10 +38,10 @@ class Throttled extends Schema.TaggedError<
   { readonly brand: unique symbol }
 >()("Throttled", {}) {}
 
-class Unavailable extends Schema.TaggedError<
-  Unavailable,
+class Offline extends Schema.TaggedError<
+  Offline,
   { readonly brand: unique symbol }
->()("Unavailable", {}) {}
+>()("Offline", {}) {}
 
 const Open = Action.make("open", {
   description: "Answer anyone, in the request's tenant",
@@ -75,7 +75,7 @@ const Login = Authentication.make("rpc-types.Login", Actor, {
 
 const Checked = Authentication.make("rpc-types.Checked", Actor, {
   principal: (actor) => actor,
-  error: Unavailable,
+  error: Offline,
 });
 
 const verify = (token: Redacted.Redacted) =>
@@ -103,8 +103,8 @@ expectTypeOf(ActionRpc.make([Open], { error: Throttled }).error).toEqualTypeOf<
 >();
 
 expectTypeOf(
-  ActionRpc.make([Open], { error: [Throttled, Unavailable] }).error
-).toEqualTypeOf<readonly [typeof Throttled, typeof Unavailable]>();
+  ActionRpc.make([Open], { error: [Throttled, Offline] }).error
+).toEqualTypeOf<readonly [typeof Throttled, typeof Offline]>();
 
 expectTypeOf(Rpc.error).toEqualTypeOf<[]>();
 
@@ -124,6 +124,7 @@ expectTypeOf<
   | Action.InvalidInput
   | Action.Unauthenticated
   | Action.Forbidden
+  | Action.Unavailable
   | RpcClientError.RpcClientError
 >();
 
@@ -131,6 +132,7 @@ type EveryCallFailure =
   | Action.InvalidInput
   | Action.Unauthenticated
   | Action.Forbidden
+  | Action.Unavailable
   | RpcClientError.RpcClientError;
 
 const made = ActionRpc.client(Rpc);
@@ -161,7 +163,7 @@ export const clientTypes = Effect.gen(function* () {
   );
 
   expectTypeOf<Effect.Error<ReturnType<typeof checked.get>>>().toEqualTypeOf<
-    Missing | Throttled | Unavailable | EveryCallFailure
+    Missing | Throttled | Offline | EveryCallFailure
   >();
 
   expectTypeOf<Effect.Error<ReturnType<typeof checked.open>>>().toEqualTypeOf<
@@ -384,9 +386,9 @@ ActionRpc.layer(Unsure, app, { middleware: [ThrottlingLimit] });
 
 const unsized: Array<typeof Throttled> = [];
 
-const either: readonly [typeof Throttled | typeof Unavailable] = [Unavailable];
+const either: readonly [typeof Throttled | typeof Offline] = [Offline];
 
-const extra: ReadonlyArray<typeof Unavailable> = [];
+const extra: ReadonlyArray<typeof Offline> = [];
 
 const Unsized = ActionRpc.make([Get], {
   authentication: Login,
@@ -455,7 +457,7 @@ export const watchedClient = Effect.gen(function* () {
   expectTypeOf(watching).toEqualTypeOf<
     Stream.Stream<
       string,
-      Action.Unauthenticated | Unavailable | RpcClientError.RpcClientError
+      Action.Unauthenticated | Offline | RpcClientError.RpcClientError
     >
   >();
 
@@ -463,7 +465,7 @@ export const watchedClient = Effect.gen(function* () {
   client.follow();
 
   expectTypeOf<Effect.Error<ReturnType<typeof client.get>>>().toEqualTypeOf<
-    Missing | Unavailable | EveryCallFailure
+    Missing | Offline | EveryCallFailure
   >();
 });
 

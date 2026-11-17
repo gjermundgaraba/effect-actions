@@ -51,6 +51,7 @@ type EveryCallFailure =
   | Action.InvalidInput
   | Action.Unauthenticated
   | Action.Forbidden
+  | Action.Unavailable
   | HttpClientError.HttpClientError
   | Schema.SchemaError;
 

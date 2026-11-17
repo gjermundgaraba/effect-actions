@@ -1,4 +1,4 @@
-import { Effect, Layer, Predicate, Schema, Stream } from "effect";
+import { Duration, Effect, Layer, Predicate, Schema, Stream } from "effect";
 import type { Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
@@ -532,30 +532,14 @@ type ClusterFailure = typeof ClusterFailures.Type;
 /**
  * Whether a failure is one of those Effect's entity client fails with when the entity could not
  * be reached, `MailboxFull`, `PersistenceError`, `AlreadyProcessingMessage` and
- * `EntityNotAssignedToRunner`, which `client`'s `MethodError` holds and `reaching` makes a
- * defect: a server forwarding calls into an entity, as the Cloudflare package's socket host
- * does, makes them one too.
+ * `EntityNotAssignedToRunner`, which `client`'s `MethodError` holds and `reaching` answers as
+ * `Action.Unavailable`: a server forwarding calls into an entity, as the Cloudflare package's
+ * socket host does, makes them a defect, and a Worker calling `client` itself answers them, as
+ * the Cloudflare package's `ActionCluster.failureResponse` does, with a 503.
  */
 export const isClusterFailure = Schema.is(ClusterFailures);
 
 const isTransient = Schema.is(Transients);
-
-function clusterFailuresAsDefects<A, E, R>(
-  answer: Effect.Effect<A, E, R>
-): Effect.Effect<A, E, R>;
-function clusterFailuresAsDefects<A, E, R>(
-  answer: Stream.Stream<A, E, R>
-): Stream.Stream<A, E, R>;
-function clusterFailuresAsDefects<A, E, R>(
-  answer: Effect.Effect<A, E, R> | Stream.Stream<A, E, R>
-): Effect.Effect<A, E, R> | Stream.Stream<A, E, R>;
-function clusterFailuresAsDefects<A, E, R>(
-  answer: Effect.Effect<A, E, R> | Stream.Stream<A, E, R>
-): Effect.Effect<A, E, R> | Stream.Stream<A, E, R> {
-  return Effect.isEffect(answer)
-    ? Effect.catchIf(answer, isClusterFailure, Effect.die)
-    : Stream.catchIf(answer, isClusterFailure, Stream.die);
-}
 
 /**
  * What one call of an action `A` fails with, beside the binding's errors `E`: its declared and
@@ -654,7 +638,7 @@ const reachOf =
  * - An input whose key names no entity, such as one missing the key's field, fails with `Forbidden`, sending nothing.
  * - Headers set with `RpcClient.withHeaders` around a call go with its envelope, which is how a protected call sends its credential; a call without them fails `Unauthenticated`.
  * - A watch polls, its only `mode` `"poll"`, at the page's `nextPollMs`, its polls holding the subscription hook of the caller's principal in the entity until its source's `lease` lapses after the last, whichever watch sent it.
- * - A watch asks the entity again after `MailboxFull` or `PersistenceError`, from where it reached, a second later and doubling to 30 seconds; a declared error, a refusal included, ends it.
+ * - A watch asks the entity again after `MailboxFull`, `PersistenceError` or `Action.Unavailable`, from where it reached, a second later and doubling to 30 seconds; another declared error, a refusal included, ends it.
  */
 export const client = <
   const Type extends string,
@@ -678,12 +662,32 @@ type Nothing<C extends Action.Any | Event.Any> = {
   readonly [K in C["name"]]: never;
 };
 
+/** `reaching`'s options. */
+export interface ReachingOptions {
+  /**
+   * How long one call to the entity waits for its answer before failing with
+   * `Action.Unavailable`: an action's call, a poll, and a webhook subscribe or unsubscribe.
+   * 20 seconds by default.
+   *
+   * **Gotchas**
+   *
+   * - It bounds each call and each poll alone: a stream following an event, HTTP's `text/event-stream`, an RPC subscription or a watch, outlives it, each of its polls bounded by it.
+   * - A streaming action, one declaring `progress` or answering `Action.Stream`, has no deadline, as it may answer for longer: bound it with the host's request timeout.
+   * - The call is interrupted at the deadline, and the entity may have run part of it or all of it: the answer is `Unavailable`, the outcome unknown.
+   */
+  readonly timeout?: Duration.Input | undefined;
+}
+
+const defaultTimeout = Duration.seconds(20);
+
 /**
  * The implementations of `entity`'s actions and event types that any surface serves beside its
  * own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`: each call sent through
  * `Entity.client` to the entity its contract's key names for its input, with the caller's
  * headers, and its answer, declared errors and progress passed back; each event followed through
- * the entity's poll rpc.
+ * the entity's poll rpc. A call the entity could not be reached for, or that did not answer
+ * within `timeout`, fails with the built-in `Action.Unavailable`, whose message says the entity
+ * may still run it.
  *
  * **Gotchas**
  *
@@ -692,13 +696,13 @@ type Nothing<C extends Action.Any | Event.Any> = {
  * - The caller's request's headers are sent on as `forwardedHeaders` keeps them: its connection's, its body's, what it accepts and an MCP request's routing headers are not.
  * - A credential in the query, an API key the serving surface's HTTP binding reads `in: "query"`, never reaches the entity, whose binding reads headers alone, so it refuses the call with `Unauthenticated`: read the key from a header on the HTTP binding too.
  * - A call with no HTTP request, as through `Action.client` in process or an MCP stdio surface, sends only the headers `RpcClient.withHeaders` sets around it: without them the entity refuses a protected one with `Unauthenticated`.
- * - A call to an entity no runner is assigned waits without an answer, an HTTP request without a response, as Effect's entity client retries `EntityNotAssignedToRunner` every `sendRetryInterval`, 100 milliseconds by default, without limit: bound it with a timeout, such as the host's request timeout.
+ * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's `Action.Unavailable`, its message naming that failure: a 503 with `Retry-After: 1` over HTTP, an `isError: true` tool result over MCP, the typed failure over RPC.
+ * - A call to an entity no runner is assigned, which Effect's entity client retries every `sendRetryInterval`, 100 milliseconds by default, without limit, answers `Action.Unavailable` at `timeout`.
  * - A stream, HTTP's `text/event-stream`, an RPC subscription or MCP's `events/stream`, polls the entity from the surface, at once while a page has more and otherwise at its `nextPollMs`, a second at least: it holds the caller's request open but no entity, an occurrence arrives up to that interval late, and the entity's object takes a call each `nextPollMs` while the stream is open, so on Cloudflare a stream polling every few seconds keeps it from ever hibernating.
- * - A stream asks the entity again after `MailboxFull` or `PersistenceError`, from where it reached, a second later and doubling to 30 seconds, as `client`'s watch does; any other failure, a declared error or a defect, ends its polling.
+ * - A stream asks the entity again after a poll failed with `Action.Unavailable`, from where it reached, a second later and doubling to 30 seconds, as `client`'s watch does; any other failure, a declared error or a defect, ends its polling.
  * - HTTP's `text/event-stream` whose polling ended on a failure other than a refusal sends `Failed` and opens it again 5 seconds later, from where it reached; MCP's `events/stream` does what `ActionMcp.layerHttp` says of an upstream's failure, a `-32603` before `active`.
  * - A stream's polls, and a poll, MCP's `events/poll` included, hold the subscriber's subscription hook in the entity until its source's `lease` lapses after the last, as on any surface.
  * - A protected event's webhook subscription is held by the entity its input's key names, the subscribe and unsubscribe sent there with the caller's headers, and delivered by the `Webhook.layer` in that entity's `services`, never the serving surface's: an entity without one fails the subscribe with `Event.SubscriptionError`, reason `Unsupported`, a 409 over HTTP, before any callback is sent.
- * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's defect, carrying that error alone, since no action declares it: a 500 over HTTP and a defect through `Action.client`, never a typed error.
  * - An error the entity declares beyond the action's own and the built-in ones, its binding's `error` or its verifier's, is undeclared where the serving surface's binding does not declare it too.
  */
 export const reaching = <
@@ -706,7 +710,8 @@ export const reaching = <
   const B extends ActionRpc.Any,
   N extends Rpc.Any = never,
 >(
-  entity: Entity<Type, B, N>
+  entity: Entity<Type, B, N>,
+  options: ReachingOptions = {}
 ): ReadonlyArray<
   | Implementation<
       B["actions"][number],
@@ -723,6 +728,42 @@ export const reaching = <
 > => {
   const { binding } = entity;
   const reaches = Effect.map(entity.client, reachOf(entity, forwarded));
+  const named = namedBy(entity.key);
+  const timeout = Duration.fromInputUnsafe(options.timeout ?? defaultTimeout);
+
+  const unavailable =
+    (contract: { readonly name: string }, input: ErasedValue) =>
+    (outcome: string) =>
+      new Action.Unavailable({
+        message: `${contract.name}: the entity ${entity.type}/${named(input) ?? "none"} ${outcome}; the call's outcome is unknown, as the entity may still run it`,
+      });
+
+  const unreached = <A, E, R>(
+    contract: { readonly name: string },
+    input: ErasedValue,
+    answer: Effect.Effect<A, E, R>
+  ) =>
+    Effect.catchIf(answer, isClusterFailure, (failure) =>
+      Effect.fail(
+        unavailable(contract, input)(`could not be reached (${failure._tag})`)
+      )
+    );
+
+  const bounded = <A, E, R>(
+    contract: { readonly name: string },
+    input: ErasedValue,
+    answer: Effect.Effect<A, E, R>
+  ) =>
+    Effect.timeoutOrElse(unreached(contract, input, answer), {
+      duration: timeout,
+      orElse: () =>
+        Effect.fail(
+          unavailable(
+            contract,
+            input
+          )(`did not answer within ${Duration.format(timeout)}`)
+        ),
+    });
 
   const handlerOf = (
     action: Action.Any,
@@ -730,15 +771,24 @@ export const reaching = <
   ): WrittenHandler<unknown> => {
     const method = actionMethodOf(action, binding)(reach);
 
-    return (input, reporting) =>
-      clusterFailuresAsDefects(
-        method(
-          input,
-          ...(reporting === undefined
-            ? []
-            : [{ onProgress: reporting.progress }])
-        )
+    return (input, reporting) => {
+      const answer = method(
+        input,
+        ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }])
       );
+
+      if (!Effect.isEffect(answer)) {
+        return Stream.catchIf(answer, isClusterFailure, (failure) =>
+          Stream.fail(
+            unavailable(action, input)(`could not be reached (${failure._tag})`)
+          )
+        );
+      }
+
+      return action.progress === undefined
+        ? bounded(action, input, answer)
+        : unreached(action, input, answer);
+    };
   };
 
   const runOf = (event: Event.Any, reach: Reach): Run => {
@@ -754,8 +804,8 @@ export const reaching = <
       input: ErasedValue,
       sent: (held: WebhookHolder) => Effect.Effect<A, unknown, unknown>
     ) =>
-      clusterFailuresAsDefects(
-        Effect.flatMap(reach(event, input), (call) => sent(webhookCalls(call)))
+      Effect.flatMap(reach(event, input), (call) =>
+        bounded(event, input, sent(webhookCalls(call)))
       );
 
     return {
@@ -773,8 +823,10 @@ export const reaching = <
           }
         : undefined,
       poll: (input, cursor, { maxEvents }) =>
-        clusterFailuresAsDefects(
-          Effect.flatMap(reached(input), ([call, json]) =>
+        Effect.flatMap(reached(input), ([call, json]) =>
+          bounded(
+            event,
+            input,
             poll(call)({
               input: json,
               cursor,
@@ -783,12 +835,18 @@ export const reaching = <
           )
         ),
       stream: (input, cursor) =>
-        clusterFailuresAsDefects(
-          Stream.unwrap(
-            Effect.map(reached(input), ([call, json]) =>
-              polling(watched(call)(json), isTransient)(cursor)
-            )
-          )
+        Stream.unwrap(
+          Effect.map(reached(input), ([call, json]) => {
+            const transport = watched(call)(json);
+
+            return polling(
+              {
+                poll: (from, watch) =>
+                  bounded(event, input, transport.poll(from, watch)),
+              },
+              isTransient
+            )(cursor);
+          })
         ),
     };
   };

@@ -1,4 +1,3 @@
-import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
 import * as CloudflareDurableObjects from "@effect/platform-cloudflare/CloudflareDurableObjects";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
@@ -304,9 +303,7 @@ const keeping = ActionEntity.layer(
   }
 ).pipe(Layer.provide([Authentication.layer(Unkept, alice), Event.layerMemory]));
 
-const entitySql = Layer.effect(SqlClient.SqlClient)(
-  CloudflareCluster.DurableObjectSqlClient.orDie
-);
+const entitySql = Layer.effect(SqlClient.SqlClient)(ActionCluster.Sql.orDie);
 
 class Bumps extends Context.Service<Bumps, { count: number }>()(
   "tests/Bumps"
@@ -484,9 +481,7 @@ const application = (env: Cloudflare.Env) =>
     )
   );
 
-export const initialize = CloudflareDurableObjects.setInitializer(
-  ActionCluster.initializer(application)
-);
+export const initialize = ActionClusterEntity.register(application);
 
 const started = { invoke: 0, hold: 0, acknowledge: 0 };
 

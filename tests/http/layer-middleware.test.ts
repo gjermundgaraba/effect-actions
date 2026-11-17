@@ -247,15 +247,15 @@ describe("an HTTP layer's middleware", () => {
     expect(counted).toStrictEqual(["default:alice", "default:alice"]);
   });
 
-  class Unavailable extends Schema.TaggedError<
-    Unavailable,
+  class Offline extends Schema.TaggedError<
+    Offline,
     { readonly brand: unique symbol }
-  >()("Unavailable", { message: Schema.String }, { httpApiStatus: 503 }) {}
+  >()("Offline", { message: Schema.String }, { httpApiStatus: 503 }) {}
 
   class MaskEveryFailureAsUnavailable extends HttpApiMiddleware.Service<MaskEveryFailureAsUnavailable>()(
     "layer-middleware/Mask",
     {
-      error: Unavailable,
+      error: Offline,
     }
   ) {}
 
@@ -306,11 +306,11 @@ describe("an HTTP layer's middleware", () => {
 
     const Masking = ActionHttp.make([Edit], {
       authentication: Login,
-      error: [Unavailable],
+      error: [Offline],
     });
 
     const mask = Layer.succeed(MaskEveryFailureAsUnavailable, (route) =>
-      Effect.mapError(route, () => new Unavailable({ message: "Try later." }))
+      Effect.mapError(route, () => new Offline({ message: "Try later." }))
     );
 
     const masking = serve(
@@ -328,8 +328,8 @@ describe("an HTTP layer's middleware", () => {
       masked.headers.get("www-authenticate"),
     ]).toStrictEqual([503, null]);
     expect(
-      Schema.decodeUnknownSync(Unavailable)(await masked.json())
-    ).toStrictEqual(new Unavailable({ message: "Try later." }));
+      Schema.decodeUnknownSync(Offline)(await masked.json())
+    ).toStrictEqual(new Offline({ message: "Try later." }));
 
     const withoutLayerMiddleware = serve(
       ActionHttp.layer(Editing, editing).pipe(Layer.provide(verify))

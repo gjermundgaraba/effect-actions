@@ -48,11 +48,11 @@ export default ActionCluster.handler(initialize, {
 
 ## Boot once per isolate
 
-Every object of the four classes, and the Worker's handler, waits for the one initializer `CloudflareDurableObjects.setInitializer` registers. Register exactly one, from the Worker's module: `ActionCluster.initializer(application)`, which builds the application, the entity layers and the Worker's routes with `ActionCluster.layer` beneath them, over `HttpRouter.layer`, and keeps the first runtime to finish for the isolate, leaving a later one alive beside it. A build still pending after 15 seconds is abandoned and another started, and the entities a stalled build registered refuse its replacement's, so they run in the stalled build's services, or in none if it fails, and nothing slow, such as a migration or a remote fetch, builds above `ActionCluster.layer`, as `quickOnceTheClusterIsBuilt` names: run it before, or in a request. Its JSDoc holds the rules.
+Every object of the four classes, and the Worker's handler, waits for the one initializer the isolate registers. Register exactly one, from the Worker's module: `ActionClusterEntity.register(application)`, which registers `ActionCluster.initializer(application)` with `CloudflareDurableObjects.setInitializer` and returns the `initialize` that `handler` and `ActionClusterEntity.make` take; it is `ActionClusterEntity`'s, since `setInitializer`'s module loads only in a Worker, where `ActionCluster` loads in Node too. The initializer builds the application, the entity layers and the Worker's routes with `ActionCluster.layer` beneath them, over `HttpRouter.layer`, and keeps the first runtime to finish for the isolate, leaving a later one alive beside it. A build still pending after 15 seconds is abandoned and another started, and the entities a stalled build registered refuse its replacement's, so they run in the stalled build's services, or in none if it fails, and nothing slow, such as a migration or a remote fetch, builds above `ActionCluster.layer`, as `quickOnceTheClusterIsBuilt` names: run it before, or in a request. Their JSDoc holds the rules.
 
 ```ts example=chat-rooms/src/application.ts
-import * as CloudflareDurableObjects from "@effect/platform-cloudflare/CloudflareDurableObjects";
 import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/ActionCluster";
+import * as ActionClusterEntity from "@gjermundgaraba/effect-actions-cloudflare/ActionClusterEntity";
 import { Layer } from "effect";
 import { HttpServer } from "effect/http";
 
@@ -77,18 +77,20 @@ const application = (env: Cloudflare.Env) =>
     )
   );
 
-export const initialize = CloudflareDurableObjects.setInitializer(
-  ActionCluster.initializer(application)
-);
+export const initialize = ActionClusterEntity.register(application);
 ```
 
 ## Serve the entities from the Worker
 
-The Worker serves every entity's actions and events itself, `ActionHttp.layer(RoomHttp, ActionEntity.reaching(Room))`, each call sent to the object its input's key names, and one MCP endpoint for all of them, `requestScoped`, in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts). Each entity id builds its own stores as it activates, in `ActionEntity.layer`'s `services`: there, `CloudflareCluster.DurableObjectSqlClient` is the object's own database, which `Stored.layerEvents` and the example's message store read; built outside an activation, it dies. A room reads its name from `Entity.CurrentAddress` the same way.
+The Worker serves every entity's actions and events itself, `ActionHttp.layer(RoomHttp, ActionEntity.reaching(Room))`, each call sent to the object its input's key names, and one MCP endpoint for all of them, `requestScoped`, in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts). Each entity id builds its own stores as it activates, in `ActionEntity.layer`'s `services`: there, `ActionCluster.Sql` is the object's own database, `@effect/platform-cloudflare`'s `DurableObjectSqlClient`, which `Stored.layerEvents` and the example's message store read through [`chat-rooms/src/platform/object-sql.ts`](../examples/chat-rooms/src/platform/object-sql.ts); built outside an activation, it dies. `ActionClusterEntity.register` and `ActionCluster.Sql` wrap the runtime's experimental APIs, so an application needs no lint exception for them. A room reads its name from `Entity.CurrentAddress` the same way.
+
+## Answer a call made through an entity's client
+
+A Worker route that calls an entity's client itself, `Entity.client` or `ActionEntity.client`, outside `ActionEntity.reaching`, answers a failed call's cause with `ActionCluster.failureResponse(cause)`: a 503 with `Retry-After: 1` where the entity could not be reached, a 499 where the request's client went away, and otherwise a 500, the cause logged. Its JSDoc holds the rules.
 
 ## Read the object's own state
 
-An entity that needs more of its Durable Object than its database, such as a library taking the object's `storage`, or `waitUntil` to keep the object alive for work that outlives the call that started it, reads `ActionCluster.ObjectState.orDie`: the object's `id`, `storage`, `waitUntil` and `abort`, in its build, its `services`, a handler or a fiber either forks, on an object of `ActionClusterEntity.make`'s class or `ActionClusterEntity.ClusterEntity`, which record it as the object is made. Two traps are the runtime's, and its JSDoc holds them with the rest: a transaction opened on `storage` directly skips the gate the runtime's mailbox writes wait on, so another call's reply can be lost to its rollback, where `DurableObjectSqlClient`'s `withTransaction` takes that gate; and the runtime owns the alarm, so `storage.setAlarm` replaces what it scheduled.
+An entity that needs more of its Durable Object than its database, such as a library taking the object's `storage`, or `waitUntil` to keep the object alive for work that outlives the call that started it, reads `ActionCluster.ObjectState.orDie`: the object's `id`, `storage`, `waitUntil` and `abort`, in its build, its `services`, a handler or a fiber either forks, on an object of `ActionClusterEntity.make`'s class or `ActionClusterEntity.ClusterEntity`, which record it as the object is made. Two traps are the runtime's, and its JSDoc holds them with the rest: a transaction opened on `storage` directly skips the gate the runtime's mailbox writes wait on, so another call's reply can be lost to its rollback, where `ActionCluster.Sql`'s `withTransaction` takes that gate; and the runtime owns the alarm, so `storage.setAlarm` replaces what it scheduled.
 
 ## Deliver a room's events by webhook
 
