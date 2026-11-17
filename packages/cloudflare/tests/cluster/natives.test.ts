@@ -1,3 +1,4 @@
+import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
 import { describe, expect, it } from "@effect/vitest";
 import { env } from "cloudflare:workers";
 import { Effect, Fiber } from "effect";
@@ -10,6 +11,30 @@ const tags = Effect.map(received, (all) => all.map(({ tag }) => tag));
 const receivedTag = (tag: string) => gathered(tags, (all) => all.includes(tag));
 
 describe("ActionEntity.layer's native rpcs on workerd", () => {
+  it.live(
+    "read ActionCluster.ObjectState, the object's own state, in the build and per call, its waitUntil holding work past the answer",
+    () =>
+      Effect.gen(function* () {
+        const context = yield* Effect.promise(
+          async () => await initialize(env)
+        );
+
+        const seers = yield* Effect.provideContext(Seer.client, context);
+
+        yield* received;
+
+        const state = yield* seers("state-a").state();
+        const waited = yield* receivedTag("waited");
+
+        expect(state).toStrictEqual({
+          name: CloudflareCluster.encodeName("Seer", "state-a"),
+          built: true,
+        });
+        expect(waited).toContain("waited");
+      }),
+    { timeout: 30_000 }
+  );
+
   it.live(
     "build services per entity id for their handlers, and run a handler answering through Rpc.fork beside the entity's other calls",
     () =>

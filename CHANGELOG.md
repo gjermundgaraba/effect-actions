@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**`ActionCluster.layer` gives each entity's build a `Stored.ChangeListener`, and `ActionClusterEntity.make`'s class asks its parked polls again as its events change.** **Reversed: a parked poll was asked again only as a handler ended.** A socket's parked polls were asked again once `Stored.changeSignal` moved, read only as each handler the object ran ended, so work a handler forked into the entity's scope, which appended or `notify`d after the call answered, woke none until the page sent its poll again, 4 minutes later; now the host also asks them again as `Stored.layerEvents` makes each change in the object, by a handler or by work outliving it, and still as each handler ends. **Cost:** a post whose changes are spread across awaits may ask a parked poll that found nothing before its last change once more, one more stub call; work that outlives its call costs P calls as it changes, where it cost none.
+
+- Migrate: nothing changes for an application on `ActionCluster.layer` and `ActionClusterEntity.make`'s class; drop any tell an entity sent itself after a `notify` only to wake parked polls. A test building `Stored.layerEvents` with its own `Stored.ChangeListener` provides it as a layer of `Stored.ChangeListener`.
+
+### Other changes
+
+- New `ActionCluster.ObjectState` in `@gjermundgaraba/effect-actions-cloudflare`, the Durable Object state of the entity object running the effect that reads it: its `id`, `storage`, `waitUntil` and `abort`, read with `ActionCluster.ObjectState.orDie` in an entity's build, its `services`, a handler or a fiber either forks, where `CloudflareCluster.DurableObjectSqlClient` gave the object's database alone. It needs the object's class to record its state: `ActionClusterEntity.make`'s class does, and the new `ActionClusterEntity.ClusterEntity`, Effect's class recording it, is the one a Worker serving no sockets exports as `ClusterEntity`, in place of Effect's own, on which `orDie` dies naming the class to export. A transaction opened on `storage` directly skips the gate the runtime's mailbox writes wait on, so another call's reply written meanwhile is lost to its rollback: open one through `DurableObjectSqlClient`'s `withTransaction`. The runtime still owns the object's alarm, so `storage.setAlarm` replaces what it scheduled. Guide: `docs/ActionCluster.md` in the package.
+- New `Stored.ChangeListener`, a `Context.Reference` `Stored.layerEvents` reads as it builds and calls in the writer's fiber at each change its change signal counts, each append and each `notify`, inside the transaction that wrote it: a host serving the database's events from outside learns of a change as it is made. By default it does nothing.
+
 ## 0.32.0
 
 The `effect` peer is now `~4.1.4`.
@@ -25,7 +38,7 @@ The `effect` peer is now `~4.1.4`.
 - **Reversed: a socket whose attachment the object could not read was served.** `layerWebSocket` answered each message on such a socket under that message's own headers alone; `ActionClusterEntity` closes it with 1012, as after a deploy that changed the attachment, and the page's client connects again and polls from its cursor.
 - **Reversed: a task ran until it succeeded.** `tasks` retried a failed run on the object's alarm until it succeeded; a cluster tell is processed once its handler ends, a failure included, and replayed only after the object crashed mid-run, at least once and in no set order, so a handler whose work may fail retries it itself or leaves it to a later tell.
 - **Cost: every persisted tell leaves its row.** A processed tell stays in its object's `cluster_messages`, which Effect does not prune.
-- **Reversed: an object read its raw state.** `State` gave a handler the object's `DurableObjectState`, its `storage`, KV and alarm API included, and its `waitUntil`; an entity reaches its object's database alone, through `CloudflareCluster.DurableObjectSqlClient`, and nothing replaces the raw storage or `waitUntil`.
+- **Reversed: an object read its raw state.** `State` gave a handler the object's `DurableObjectState`, its `storage`, KV and alarm API included, and its `waitUntil`; an entity reaches its object's database through `CloudflareCluster.DurableObjectSqlClient`.
 - **Reversed: an object owned its alarm.** `ActionDurableObject.Alarm` let an application set its object's alarm; the runtime now owns every entity object's alarm, for scheduled tells, replays and `Entity.keepAlive`, and an application sets none.
 - **Reversed: an object's own API took structured clones.** A call between entities, as `DurableObjectClient.make`'s over a stub was, now travels as JSON through its rpc's schemas: a value no schema encodes, such as a `Map` held as is, no longer crosses.
 - **Reversed: an object served MCP itself, streaming its events.** The Worker serves MCP for every entity, and an event is followed there with `events/poll`, or a protected one by webhook, held by its entity.

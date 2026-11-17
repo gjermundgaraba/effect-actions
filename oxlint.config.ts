@@ -98,9 +98,9 @@ const lint: ReturnType<typeof config> = config({
       files: [
         "packages/cloudflare/examples/chat-rooms/src/{application,platform/object-sql}.ts",
         "packages/cloudflare/examples/chat-rooms/test/{support,worker,worker.test}.ts",
-        "packages/cloudflare/src/cluster/ActionCluster.ts",
+        "packages/cloudflare/src/cluster/{ActionCluster,objects}.ts",
         "packages/cloudflare/src/host/ActionClusterEntity.ts",
-        "packages/cloudflare/tests/{worker,cluster/{eviction,handler,redaction}.test,support/socket}.ts",
+        "packages/cloudflare/tests/{worker,cluster/{eviction,handler,natives,redaction}.test,support/socket}.ts",
         "src/webhook/{address,subscriptions,Webhook}.ts",
         "examples/{build-events,kitchen-sink}/src/server.ts",
         "examples/build-events/test/support/memory.ts",
@@ -315,9 +315,10 @@ const lint: ReturnType<typeof config> = config({
                   ...anyRelativeImport,
                   "!./*.js",
                   "!../[a-z]*/[A-Z]*.js",
+                  "!../cluster/objects.js",
                 ],
                 message:
-                  "A relative import is ./<file>.js or another domain's public ../<domain>/<Module>.js; the core is imported by its package name.",
+                  "A relative import is ./<file>.js, another domain's public ../<domain>/<Module>.js, or the shared private ../cluster/objects.js; the core is imported by its package name.",
               },
             ],
           },

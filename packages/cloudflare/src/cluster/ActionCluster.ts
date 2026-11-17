@@ -1,17 +1,21 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
 import type * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
+import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import {
   Context,
   Effect,
   Function,
   Layer,
   ManagedRuntime,
+  Option,
   Stream,
 } from "effect";
 import type { Scope } from "effect";
 import { ClusterSchema, Sharding } from "effect/cluster";
 import { Headers, HttpEffect, HttpRouter } from "effect/http";
 import type { HttpServerRequest } from "effect/http";
+
+import { changedIn, stateOf, storageHere } from "./objects.js";
 
 type Answer =
   | Effect.Effect<unknown, unknown, unknown>
@@ -38,6 +42,7 @@ const intact = (answer: Answer) =>
  * - `CloudflareCluster.layer`'s own clients send `authorization`, `cookie`, `set-cookie` and `x-api-key` as the text `<redacted>`, so an entity authenticating from its envelope refuses every protected call with `Unauthenticated`: this layer is the fix until Effect sends them intact.
  * - A persisted rpc's call, one whose rpc is annotated `ClusterSchema.Persisted`, as `CloudflareCluster.layer` reads it, is sent as `CloudflareCluster.layer` sends it, redacted, since `cluster_messages` keeps its envelope: its handler receives `<redacted>`, and a protected one is refused with `Unauthenticated`, so authenticate nothing from a persisted tell's headers.
  * - Redaction is off for a volatile call alone, its send and its wait for the answer, in the caller's fiber: the caller's logs before and after it, and the entity's own, still redact those headers.
+ * - Each entity's build runs with `Stored.ChangeListener` telling the object's socket host of each change `Stored.layerEvents` makes there, so a parked poll is asked again as its events change; on Effect's own `ClusterEntity` class, which records no state, the listener does nothing.
  */
 export const layer = (
   options: CloudflareCluster.LayerOptions
@@ -46,6 +51,18 @@ export const layer = (
     Effect.map(Effect.service(Sharding.Sharding), (sharding) =>
       Sharding.Sharding.of({
         ...sharding,
+        registerEntity: (entity, build, registerOptions) =>
+          sharding.registerEntity(
+            entity,
+            Effect.flatMap(storageHere, (storage) =>
+              storage === undefined
+                ? build
+                : Effect.provideService(build, Stored.ChangeListener, () => {
+                    changedIn(storage);
+                  })
+            ),
+            registerOptions
+          ),
         makeClient: (entity) =>
           Effect.map(
             sharding.makeClient(entity),
@@ -82,6 +99,56 @@ export const layer = (
       })
     )
   ).pipe(Layer.provideMerge(CloudflareCluster.layer(options)));
+
+/**
+ * The Durable Object state of the entity object running the effect that reads it: its `id`, whose
+ * `name` is `CloudflareCluster.encodeName(type, id)`, its `storage`, `waitUntil`, which keeps the
+ * object alive until a promise settles, such as work forked past the call that started it, and
+ * `abort`, which resets the object. Read it with `ObjectState.orDie`, in an entity's build, its
+ * `services`, a handler or a fiber either forks, on an object whose class is
+ * `ActionClusterEntity.make`'s or `ActionClusterEntity.ClusterEntity`, which record it; a test
+ * provides the service itself. Guide: `docs/ActionCluster.md` in this package.
+ *
+ * **Gotchas**
+ *
+ * - On an object of Effect's own `ClusterEntity` class, which records no state, `orDie` dies naming the class to export: export `ActionClusterEntity.ClusterEntity`, or `make`'s class, as `ClusterEntity` from the Worker's module.
+ * - `storage.transaction()` and `transactionSync()` called directly skip the gate the runtime's mailbox writes wait on, so another call's reply written while yours is open is lost to your rollback: open a transaction through `CloudflareCluster.DurableObjectSqlClient`'s `withTransaction`, which takes that gate, and await no timer or I/O in it, as the input gate it closes never lets them resume.
+ * - The runtime owns the object's alarm, for scheduled tells, replays and `Entity.keepAlive`: `storage.setAlarm` or `deleteAlarm` replaces its alarm and loses what it scheduled, and the class's `alarm` runs the runtime's; schedule work with a persisted tell carrying `DeliverAt` instead.
+ * - Tables whose names start with `cluster_` are the runtime's mailbox: write none, and read them only as its tests do.
+ * - `abort` ends every call under way on the object and evicts it; the next call builds it again, and the runtime replays its unprocessed persisted messages.
+ */
+export class ObjectState extends Context.Service<
+  ObjectState,
+  Pick<DurableObjectState, "id" | "storage" | "waitUntil" | "abort">
+>()("@gjermundgaraba/effect-actions-cloudflare/ActionCluster/ObjectState") {
+  /** The state of the entity object running this, provided or recorded by its class, or a defect saying why there is none. */
+  static readonly orDie: Effect.Effect<ObjectState["Service"]> = Effect.flatMap(
+    Effect.serviceOption(ObjectState),
+    Option.match({
+      onSome: Effect.succeed,
+      onNone: () =>
+        Effect.flatMap(storageHere, (storage) => {
+          if (storage === undefined) {
+            return Effect.die(
+              new Error(
+                "ActionCluster.ObjectState is read outside an entity's Durable Object: read it in an entity's build, services or handlers, or provide ObjectState in a test"
+              )
+            );
+          }
+
+          const state = stateOf(storage);
+
+          return state === undefined
+            ? Effect.die(
+                new Error(
+                  "ActionCluster.ObjectState found no state recorded for this object: export ActionClusterEntity.ClusterEntity, or ActionClusterEntity.make's class, as ClusterEntity from the Worker's module, in place of Effect's own"
+                )
+              )
+            : Effect.succeed(state);
+        }),
+    })
+  );
+}
 
 /**
  * The function `CloudflareDurableObjects.setInitializer` takes: it builds `application(env)`, with

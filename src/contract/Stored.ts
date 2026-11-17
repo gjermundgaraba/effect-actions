@@ -1,4 +1,4 @@
-import { Duration, Effect, Layer, Option, Schema } from "effect";
+import { Context, Duration, Effect, Layer, Option, Schema } from "effect";
 import { Persistence } from "effect/persistence";
 import { SqlClient } from "effect/sql";
 
@@ -13,6 +13,24 @@ import { Events, makeEvents } from "./hub.js";
 import { Idempotency, Kept, keptFor } from "./idempotency.js";
 
 /**
+ * What `layerEvents` calls in the fiber that made each change its change signal counts, each
+ * append to a log, published or emitted, and each `notify`, once the change is written: a host
+ * serving the database's events from outside `Events`, as the Cloudflare package's socket host
+ * does, learns of a change as it is made, by work that outlived the call that started it too, not
+ * only when a handler ends. `layerEvents` reads it as it builds; by default it does nothing, and
+ * the Cloudflare package's `ActionCluster.layer` provides one to each entity's build.
+ *
+ * **Gotchas**
+ *
+ * - It is called inside the transaction that wrote the change, before that commits: a listener reading the database on the same connection sees the change uncommitted, and one a transaction rolls back has called it all the same.
+ * - It runs synchronously in the writer's fiber, the write waiting on it: hand any work to another fiber, and throw nothing, as a throw is the write's defect.
+ */
+export const ChangeListener = Context.Reference<() => void>(
+  "effect-actions/Stored/ChangeListener",
+  { defaultValue: () => () => undefined }
+);
+
+/**
  * An `Events` kept in tables through the `SqlClient` it is built with, created as it builds:
  * each log source's occurrences in `effect_actions_event_log`, by event name and sequence number,
  * with its key and the occurrence as JSON, and its position in `effect_actions_event_position`;
@@ -22,7 +40,7 @@ import { Idempotency, Kept, keptFor } from "./idempotency.js";
  * occurrence past it within the log's bounds, `maxAge` (10 minutes by default) and `maxEvents`.
  * Its change signal, which `changeSignal` reads, moves at each `notify` and each append to a
  * log, published or emitted, and at no read or restart: a host reads it to learn whether a poll
- * could answer anything new.
+ * could answer anything new, and `ChangeListener`, read as it builds, is called at each move.
  *
  * **Gotchas**
  *
@@ -40,8 +58,15 @@ export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
 
       yield* createLogTables(sql);
 
-      const revisions = yield* sqlRevisions(sql);
+      const counted = yield* sqlRevisions(sql);
+      const changed = yield* ChangeListener;
       const named = new Map<string, Event.Any>();
+
+      const revisions = {
+        ...counted,
+        bump: (names: readonly string[]) =>
+          Effect.tap(counted.bump(names), () => Effect.sync(changed)),
+      };
 
       return yield* makeEvents({
         log: (event) => {
@@ -55,7 +80,7 @@ export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
 
           named.set(event.name, event);
 
-          return sqlStorage(
+          const storage = sqlStorage(
             sql,
             event.name,
             Schema.fromJsonString(
@@ -68,6 +93,14 @@ export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
               )
             )
           );
+
+          return {
+            ...storage,
+            put: (position, entry) =>
+              Effect.tap(storage.put(position, entry), () =>
+                entry === undefined ? Effect.void : Effect.sync(changed)
+              ),
+          };
         },
         revisions,
       });
@@ -78,8 +111,9 @@ export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
  * The SQL query reading `layerEvents`' change signal from its database, one row whose `signal`
  * column is the sum of `effect_actions_event_revision`'s counts and of
  * `effect_actions_event_position`'s `last` sequence numbers: it moves at each `notify` and each
- * append to a log, and at no read or restart, so a host that runs it after each handler, as the
- * Cloudflare package's socket host does, learns whether a parked poll could answer anything new.
+ * append to a log, and at no read or restart, so a host that runs it as `ChangeListener` is
+ * called and after each handler, as the Cloudflare package's socket host does, learns whether a
+ * parked poll could answer anything new.
  *
  * **Gotchas**
  *

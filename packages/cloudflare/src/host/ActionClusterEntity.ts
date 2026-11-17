@@ -1,5 +1,5 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
-import { ClusterEntity } from "@effect/platform-cloudflare/CloudflareDurableObjects";
+import * as CloudflareDurableObjects from "@effect/platform-cloudflare/CloudflareDurableObjects";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
@@ -7,6 +7,7 @@ import { Effect, Predicate } from "effect";
 import type { Context, Schema, Stream } from "effect";
 import type { Sharding } from "effect/cluster";
 
+import { hold, listen } from "../cluster/objects.js";
 import { pingPong, replyToClose } from "./frames.js";
 import { makeSockets } from "./sockets.js";
 import type { Served } from "./sockets.js";
@@ -210,6 +211,18 @@ const hostOf = (
 };
 
 /**
+ * A Durable Object class to export from the Worker as `ClusterEntity`, in place of Effect's own,
+ * for a Worker serving no sockets: Effect's class, recording the object's state as it is made, so
+ * the object's entities read it through `ActionCluster.ObjectState`. `make`'s class extends it.
+ */
+export class ClusterEntity extends CloudflareDurableObjects.ClusterEntity {
+  constructor(ctx: DurableObjectState, env: unknown) {
+    super(ctx, env);
+    hold(ctx);
+  }
+}
+
+/**
  * The Durable Object `make`'s class builds: Effect's own `ClusterEntity`, with the WebSocket
  * handlers serving `sockets`. Exported as a type alone, to name the class in a Worker's
  * declarations; a subclass of `make`'s class overrides a WebSocket handler by calling `super`,
@@ -244,6 +257,9 @@ class Host<Env> extends ClusterEntity {
       };
 
       this.#host = host;
+      listen(ctx, () => {
+        setTimeout(host.settled, 0);
+      });
       host.started();
     });
   }
@@ -281,8 +297,8 @@ class Host<Env> extends ClusterEntity {
  *
  * **Gotchas**
  *
- * - A watch's poll that finds nothing new, on a page `notified`, is parked in the socket's attachment and asked again once `Stored.layerEvents`' change signal moved, read as each handler the object runs ends, whether a call, a tell or an alarm ran it: an entity whose events are not on `Stored.layerEvents`, and a check source not `notified`, have their polls answered at once, their watches polling at `nextPoll`, each poll a stub call.
- * - A post a socket watches, by a handler that sends no calls or tells, costs 1 + P stub calls, `invoke` each: the post, and one for each of the P polls parked on that object, sent as it settles; the page's client polls again `nextPoll` later, and that poll is parked with no call when nothing changed meanwhile and the last poll's call was under 30 seconds earlier, so a source whose `nextPoll` is 30 seconds or more costs one call a page each `nextPoll`; the signal is one for all the object's events, so any handler appending to any of its logs, or `notify`ing any of its sources, asks every parked poll again, whatever event it watches.
+ * - A watch's poll that finds nothing new, on a page `notified`, is parked in the socket's attachment and asked again once `Stored.layerEvents`' change signal moved, read as `Stored.layerEvents` appends or `notify`s in the object, by a handler or by work it forked that outlived its call, and as each handler the object runs ends, whether a call, a tell or an alarm ran it: an entity whose events are not on `Stored.layerEvents`, and a check source not `notified`, have their polls answered at once, their watches polling at `nextPoll`, each poll a stub call.
+ * - A post a socket watches, by a handler that sends no calls or tells, costs 1 + P stub calls, `invoke` each: the post, and one for each of the P polls parked on that object, sent as its first append or `notify` is made, a later change in the same post asking again only the polls that answered nothing; the page's client polls again `nextPoll` later, and that poll is parked with no call when nothing changed meanwhile and the last poll's call was under 30 seconds earlier, so a source whose `nextPoll` is 30 seconds or more costs one call a page each `nextPoll`; the signal is one for all the object's events, so any handler appending to any of its logs, or `notify`ing any of its sources, asks every parked poll again, whatever event it watches.
  * - A change a `notified` check source reads from an upstream, which no handler `notify`s, moves no signal at all, so a parked poll answers it only when its client sends it again, `ActionRpc.pollResentAfter` after it was sent: `notify` the source from a handler, or leave it not `notified`, to answer it at `nextPoll`.
  * - A source's subscription hook is held by the entity's activation until its `lease`, 5 minutes by default, after the last poll the host sent the entity, on a timer that keeps the object awake, so the object of a page watching a hooked source does not hibernate until the hook lapses: the host sends a page's poll at most 4 minutes 30 seconds after its last, or `nextPoll` after its last answer when that is longer, so a `lease` under 4 minutes 30 seconds may lapse while a poll is parked, and one not longer than its `nextPoll`, as the default is at a `nextPoll` of 5 minutes, may lapse after each answered page; a lapsed hook is set up again by the next poll the host sends the entity.
  * - Only the binding's actions and event types are forwarded: a native rpc, which authenticates nothing, and a streaming action, whose frames would hold the object awake, each fail the call with a defect naming it.

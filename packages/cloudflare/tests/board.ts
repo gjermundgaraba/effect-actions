@@ -68,7 +68,25 @@ export const Later = Action.make("later", {
   caller: Action.Anyone,
 });
 
-const contracts = [Pin, Later, Pinned, Logged, Hooked, Leased, Polled] as const;
+export const Soon = Action.make("soon", {
+  description:
+    "Pin a note a second after the call answered, from work forked into the board's activation.",
+  input: { ...onBoard, n: Schema.Int },
+  success: Schema.Null,
+  readOnly: false,
+  caller: Action.Anyone,
+});
+
+const contracts = [
+  Pin,
+  Later,
+  Soon,
+  Pinned,
+  Logged,
+  Hooked,
+  Leased,
+  Polled,
+] as const;
 
 export const BoardRpc = ActionRpc.make(contracts);
 
@@ -123,14 +141,20 @@ const pinned = Effect.gen(function* () {
 });
 
 const pinning = Action.implement(
-  [Pin, Later],
+  [Pin, Later, Soon],
   Effect.gen(function* () {
     const pin = yield* pinned;
     const { entityId } = yield* Entity.CurrentAddress;
     const boards = yield* Board.client;
+    const activation = yield* Effect.scope;
 
     return {
       pin: ({ n }) => Effect.as(pin(n), null),
+      soon: ({ n }) =>
+        Effect.as(
+          Effect.forkIn(Effect.delay(pin(n), "1 second"), activation),
+          null
+        ),
       later: ({ n, at }) =>
         Effect.as(
           Effect.orDie(

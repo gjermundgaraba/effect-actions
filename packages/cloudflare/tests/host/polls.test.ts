@@ -298,6 +298,28 @@ describe("ActionClusterEntity's polls", () => {
   );
 
   it.live(
+    "asks a parked poll again when work a handler forked past its call pins, before the page sends the poll again",
+    () =>
+      Effect.gen(function* () {
+        const board = "forked";
+        const http = yield* boards;
+        const socket = yield* opened("Board", board);
+
+        const pins = yield* following(
+          (yield* clientOver(BoardRpc, socket)).watch(Pinned, { board })
+        );
+
+        yield* parkedIn(board, 1);
+        yield* http.soon({ board, n: 7 });
+
+        expect(
+          yield* notes(pins, 1).pipe(Effect.timeout("10 seconds"))
+        ).toStrictEqual([{ n: 7 }]);
+      }).pipe(Effect.scoped, Effect.provide(throughWorker)),
+    { timeout: 60_000 }
+  );
+
+  it.live(
     "never answers a parked poll the page interrupted, and answers the poll sent after it once the change signal moves",
     () =>
       Effect.gen(function* () {

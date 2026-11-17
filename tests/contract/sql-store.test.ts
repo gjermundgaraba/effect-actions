@@ -255,11 +255,19 @@ const memorySystem = () => {
   );
 };
 
-const sqlSystemOn = (client: Context.Context<SqlClient.SqlClient>) =>
+const sqlSystemOn = (
+  client: Context.Context<SqlClient.SqlClient>,
+  changed: () => void = () => undefined
+) =>
   restartable(
     Effect.flatMap(
       Layer.build(
-        Stored.layerEvents.pipe(Layer.provide(Layer.succeedContext(client)))
+        Stored.layerEvents.pipe(
+          Layer.provide([
+            Layer.succeedContext(client),
+            Layer.succeed(Stored.ChangeListener)(changed),
+          ])
+        )
       ),
       (built) => opened(Context.get(built, Events))
     )
@@ -367,26 +375,38 @@ const gateOf = (sql: SqlClient.SqlClient) =>
 
 describe("Stored.layerEvents' change signal", () => {
   it.effect.prop(
-    "moves the sum of the revision counts and the log positions' last sequence numbers at each notify and publish, and at no read, revision or restart",
+    "moves the sum of the revision counts and the log positions' last sequence numbers at each notify and publish, and at no read, revision or restart, calling ChangeListener once at each move",
     { steps: Steps },
     ({ steps }) =>
       Effect.gen(function* () {
         const client = yield* Layer.build(sqliteAt(":memory:"));
         const sql = Context.get(client, SqlClient.SqlClient);
-        const system = yield* sqlSystemOn(client);
+        let calls = 0;
+
+        const system = yield* sqlSystemOn(client, () => {
+          calls += 1;
+        });
+
         let before = yield* gateOf(sql);
 
         for (const [index, { command }] of steps.entries()) {
+          const called = calls;
+
           yield* system(command, index);
 
           const after = yield* gateOf(sql);
 
+          const changes =
+            command._tag === "Publish" || command._tag === "Notify";
+
           expect({
             command: command._tag,
             moved: after !== before,
+            calls: calls - called,
           }).toStrictEqual({
             command: command._tag,
-            moved: command._tag === "Publish" || command._tag === "Notify",
+            moved: changes,
+            calls: changes ? 1 : 0,
           });
 
           before = after;

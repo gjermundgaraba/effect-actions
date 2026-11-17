@@ -136,6 +136,12 @@ export const SeerTasks = RpcGroup.make(
   ),
   Rpc.make("mark", {
     payload: { id: Schema.String, uninterruptible: Schema.Boolean },
+  }),
+  Rpc.make("state", {
+    success: Schema.Struct({
+      name: Schema.NullOr(Schema.String),
+      built: Schema.Boolean,
+    }),
   })
 );
 
@@ -323,9 +329,23 @@ const crashing = Action.implement(
 );
 
 const seerTasks = Effect.map(
-  Bumps,
-  (bumps) =>
+  Effect.all([Bumps, ActionCluster.ObjectState.orDie]),
+  ([bumps, built]) =>
     ({
+      state: () =>
+        Effect.map(ActionCluster.ObjectState.orDie, (state) => {
+          state.waitUntil(
+            (async () => {
+              await scheduler.wait(300);
+              received.push({ tag: "waited", authorization: null });
+            })()
+          );
+
+          return {
+            name: state.id.name ?? null,
+            built: state === built && state.storage === built.storage,
+          };
+        }),
       bump: () => Effect.sync(() => (bumps.count += 1)),
       hold: () =>
         Rpc.fork(
