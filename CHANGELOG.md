@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.32.0
 
 The `effect` peer is now `~4.1.4`.
 
