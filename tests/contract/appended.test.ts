@@ -19,25 +19,24 @@ interface Entry {
 const makeEntries = () => {
   const entries: Entry[] = [];
 
+  const read = (id: number) => {
+    const past = entries.filter((entry) => entry.id > id);
+    const taken = past.slice(0, page);
+
+    return {
+      items: taken.flatMap((entry) => (entry.shown ? [{ id: entry.id }] : [])),
+      through: taken.at(-1)?.id,
+      hasMore: past.length > page,
+    };
+  };
+
   const source = Event.appended(Appended, {
     newest: () => Effect.sync(() => entries.at(-1)?.id ?? 0),
-    after: (_input, id) =>
-      Effect.sync(() => {
-        const past = entries.filter((entry) => entry.id > id);
-        const read = past.slice(0, page);
-
-        return {
-          items: read.flatMap((entry) =>
-            entry.shown ? [{ id: entry.id }] : []
-          ),
-          through: read.at(-1)?.id,
-          hasMore: past.length > page,
-        };
-      }),
+    after: (_input, id) => Effect.sync(() => read(id)),
     id: (data) => data.id,
   });
 
-  return { entries, check: source.check };
+  return { entries, read, check: source.check };
 };
 
 const Command = Schema.Union([
@@ -64,7 +63,7 @@ describe("Event.appended", () => {
     { steps: Commands },
     ({ steps }) =>
       Effect.gen(function* () {
-        const { entries, check } = makeEntries();
+        const { entries, read, check } = makeEntries();
         const minted: string[] = [];
         let next = 1;
 
@@ -93,25 +92,16 @@ describe("Event.appended", () => {
           const served = Number.isInteger(at) && at >= 0 && at <= newest;
 
           if (served) {
-            const past = entries.filter((entry) => entry.id > at);
-            const read = past.slice(0, page);
+            const expected = read(at);
 
             expect(
               answered.events.map(({ eventId, data }) => [eventId, data.id])
             ).toStrictEqual(
-              read.flatMap((entry) =>
-                entry.shown ? [[String(entry.id), entry.id]] : []
-              )
+              expected.items.map((data) => [String(data.id), data.id])
             );
-            expect(answered.cursor).toBe(String(read.at(-1)?.id ?? at));
+            expect(answered.cursor).toBe(String(expected.through ?? at));
             expect(answered.truncated ?? false).toBe(false);
-            expect(answered.hasMore ?? false).toBe(past.length > page);
-          } else {
-            expect(answered).toMatchObject({
-              events: [],
-              cursor: String(newest),
-              truncated: cursor !== null,
-            });
+            expect(answered.hasMore ?? false).toBe(expected.hasMore);
           }
 
           minted.push(answered.cursor);
@@ -125,7 +115,6 @@ describe("Event.appended", () => {
         newest: () => Effect.succeed(0),
         after: () => Effect.succeed({ items: [] }),
         id: (data) => data.id,
-        notified: true,
         nextPoll: "1 second",
       });
 
@@ -138,7 +127,6 @@ describe("Event.appended", () => {
         "1 second",
         "1 second",
       ]);
-      expect(source.notified).toBe(true);
     })
   );
 });

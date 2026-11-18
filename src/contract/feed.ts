@@ -247,36 +247,21 @@ const checkRun = (
   };
 };
 
-const unencodedDigest = "";
-
-const digestDotRevision = (cursor: string | null) => {
-  const separator = cursor?.indexOf(".") ?? -1;
-
-  return cursor === null || separator < 0
-    ? undefined
-    : {
-        digest: cursor.slice(0, separator),
-        revision: cursor.slice(separator + 1),
-      };
-};
-
 const currentRun = (
   event: Event.Any,
   source: Event.Current<Event.Any, unknown>,
   checking: Checking
 ): Run => {
-  const encodeInput = Schema.encodeUnknownEffect(
-    Schema.toCodecJson(event.input)
-  );
-
   const encodeData = Schema.encodeUnknownEffect(
     Schema.toCodecJson(event.payload)
   );
 
   const digestOf = (input: ErasedValue, data: ErasedValue) =>
-    Effect.all([encodeInput(input), encodeData(data)]).pipe(
-      Effect.flatMap((sent) => sha256Hex(canonical(sent))),
-      Effect.orElseSucceed(() => unencodedDigest)
+    Effect.flatMap(canonicalInput(event.input, input), (sent) =>
+      encodeData(data).pipe(
+        Effect.flatMap((json) => sha256Hex(`${sent}\u0000${canonical(json)}`)),
+        Effect.orElseSucceed(() => "")
+      )
     );
 
   return checkRun(
@@ -287,14 +272,13 @@ const currentRun = (
       check: (input, cursor) =>
         Effect.gen(function* () {
           const at = yield* checking.revision(yield* keyOf(source, input));
-          const seen = digestDotRevision(cursor);
 
-          if (seen?.revision === at) {
-            return {
-              cursor: `${seen.digest}.${at}`,
-              events: [],
-              nextPoll: source.nextPoll,
-            };
+          const { digest: seen, revision } =
+            cursor?.match(/^(?<digest>[0-9a-f]*)\.(?<revision>.*)$/su)
+              ?.groups ?? {};
+
+          if (cursor !== null && revision === at) {
+            return { cursor, events: [], nextPoll: source.nextPoll };
           }
 
           const data = yield* source.current(input);
@@ -303,7 +287,7 @@ const currentRun = (
 
           return {
             cursor: next,
-            events: digest === seen?.digest ? [] : [{ eventId: next, data }],
+            events: digest === seen ? [] : [{ eventId: next, data }],
             nextPoll: source.nextPoll,
           };
         }),

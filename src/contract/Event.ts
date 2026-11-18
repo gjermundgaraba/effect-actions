@@ -246,10 +246,8 @@ export interface Appended<E extends Any> {
 }
 
 /** What `appended` needs to page a store appending entries under increasing integer ids. */
-export interface AppendedOptions<E extends Any, R = never> extends Hooked<
-  E,
-  R
-> {
+export interface AppendedOptions<E extends Any, R = never>
+  extends Hooked<E, R>, Pick<Check<E, R>, "notified"> {
   /** The id of the newest entry, `0` while there is none, run as the subscriber. */
   readonly newest: (
     input: E["input"]["Type"]
@@ -261,8 +259,6 @@ export interface AppendedOptions<E extends Any, R = never> extends Hooked<
   ) => Effect.Effect<Appended<E>, Refusal, R>;
   /** The id of the entry an occurrence's data was read from: its `eventId`, and a cursor. */
   readonly id: (data: E["payload"]["Type"]) => number;
-  /** As `Check`'s `notified`. */
-  readonly notified?: boolean | undefined;
   /** Each page's `nextPoll`; defaults to 5 seconds. */
   readonly nextPoll?: Duration.Input | undefined;
 }
