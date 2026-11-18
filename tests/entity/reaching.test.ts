@@ -152,6 +152,34 @@ describe("ActionEntity.reaching on a TestRunner", () => {
   );
 
   it.live(
+    "serves a binding holding some of the entity's actions and none of its event types, with no selection",
+    () =>
+      Effect.gen(function* () {
+        const ReadHttp = ActionHttp.make([Read]);
+
+        const answers = yield* Effect.provide(
+          Effect.gen(function* () {
+            const http = yield* ActionHttp.client(ReadHttp);
+            const read = yield* http.read({ room: "a" });
+
+            const event = yield* HttpClient.execute(
+              HttpClientRequest.post("/api/events/room.posted").pipe(
+                HttpClientRequest.bodyJsonUnsafe({ input: { room: "a" } })
+              )
+            );
+
+            return [read, event.status] as const;
+          }),
+          Testing.layer(ActionHttp.layer(ReadHttp, reached)).pipe(
+            Layer.provideMerge(entities(makeRooms()))
+          )
+        );
+
+        expect(answers).toStrictEqual([{ entity: "a", texts: [] }, 404]);
+      }).pipe(Effect.scoped)
+  );
+
+  it.live(
     "passes a declared error and a streaming action's progress back through two hops",
     () =>
       Effect.gen(function* () {

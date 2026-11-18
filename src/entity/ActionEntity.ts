@@ -7,7 +7,7 @@ import {
   Schema,
   Stream,
 } from "effect";
-import type { Scope } from "effect";
+import type { Context, Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
 import type { Headers, HttpServerRequest } from "effect/http";
@@ -97,6 +97,41 @@ export interface Entity<
 > extends Cluster.Entity<Type, ErasedRpc | N> {
   readonly binding: B;
   readonly key: Key<B>;
+  /**
+   * The handlers of the entity's native rpcs, as `layer`'s `rpcs` takes them, typed from `make`'s
+   * `rpcs`: Effect's `Entity.of`, for handlers written apart from `layer`.
+   */
+  readonly of: <Handlers extends Cluster.HandlersFrom<N>>(
+    handlers: Handlers
+  ) => Handlers;
+  /** Effect's `Entity.annotate`, keeping the entity's binding and key. */
+  readonly annotate: <I, S>(
+    key: Context.Key<I, S>,
+    value: S
+  ) => Entity<Type, B, N>;
+  /** Effect's `Entity.annotateMerge`, keeping the entity's binding and key. */
+  readonly annotateMerge: <S>(
+    annotations: Context.Context<S>
+  ) => Entity<Type, B, N>;
+  /**
+   * Effect's `Entity.annotateRpcs`, annotating the entity's native rpcs alone and keeping its
+   * binding and key.
+   *
+   * **Gotchas**
+   *
+   * - The rpcs of the binding's actions, event types and webhook subscriptions keep their own annotations, volatile: `ClusterSchema.Persisted` here persists the natives, never a caller's credential-bearing envelope.
+   */
+  readonly annotateRpcs: <I, S>(
+    key: Context.Key<I, S>,
+    value: S
+  ) => Entity<Type, B, N>;
+  /**
+   * Effect's `Entity.annotateRpcsMerge`, annotating the entity's native rpcs alone, as
+   * `annotateRpcs` does, and keeping its binding and key.
+   */
+  readonly annotateRpcsMerge: <S>(
+    annotations: Context.Context<S>
+  ) => Entity<Type, B, N>;
 }
 
 /**
@@ -133,6 +168,41 @@ const libraryRpcsOf = (binding: ActionRpc.Any) =>
   erasedOf(binding.actions, binding.events, "ActionEntity.layer")
     .merge(webhookRpcsOf(binding.events))
     .add(WakeRpc);
+
+const entityOf = <
+  Type extends string,
+  B extends ActionRpc.Any,
+  N extends Rpc.Any,
+>(
+  type: Type,
+  binding: B,
+  key: Key<B>,
+  library: ReturnType<typeof libraryRpcsOf>,
+  natives: RpcGroup.RpcGroup<Rpc.AnyWithProps>
+): Entity<Type, B, N> => {
+  const rebuilt = (
+    annotated: typeof library,
+    annotatedNatives: typeof natives
+  ) => entityOf<Type, B, N>(type, binding, key, annotated, annotatedNatives);
+
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const protocol = library.merge(natives) as RpcGroup.RpcGroup<ErasedRpc | N>;
+
+  return Object.assign(Cluster.fromRpcGroup(type, protocol), {
+    binding,
+    key,
+    of: <Handlers extends Cluster.HandlersFrom<N>>(handlers: Handlers) =>
+      handlers,
+    annotate: <I, S>(tag: Context.Key<I, S>, value: S) =>
+      rebuilt(library.annotate(tag, value), natives),
+    annotateMerge: <S>(annotations: Context.Context<S>) =>
+      rebuilt(library.annotateMerge(annotations), natives),
+    annotateRpcs: <I, S>(tag: Context.Key<I, S>, value: S) =>
+      rebuilt(library, natives.annotateRpcs(tag, value)),
+    annotateRpcsMerge: <S>(annotations: Context.Context<S>) =>
+      rebuilt(library, natives.annotateRpcsMerge(annotations)),
+  });
+};
 
 /** `make`'s options. */
 export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
@@ -175,7 +245,6 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
  * - The rpcs of its actions, event types and webhook subscriptions are volatile, as `ClusterSchema.Persisted` defaults, and its wake alone is persisted: annotated persisted, each envelope, its caller's headers and credential included, would be stored and replayed with them, on Effect's SQL runners until a `MessageRetention` layer deletes it, and on the Cloudflare runtime, which never prunes `cluster_messages`, for good, its credential headers redacted. `rpcs`' natives are persisted as their own annotations say.
  * - A binding with native rpcs throws: give the entity's own rpcs to `make`'s `rpcs`.
  * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers, and returning a `Stream` of the elements of an `Action.Stream` answer; it holds a slot of the entity's `concurrency`, by default its only one, until its stream ends, but on the Cloudflare runtime, which frees the slot while a frame waits for its client's acknowledgement.
- * - `annotate` and its kin return a plain `Entity`, without `binding` and `key`, which `layer` and `client` do not take.
  */
 export const make = <
   const Type extends string,
@@ -211,13 +280,13 @@ export const make = <
     );
   }
 
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const protocol = erased.merge(rpcs) as RpcGroup.RpcGroup<ErasedRpc | N>;
-
-  return Object.assign(Cluster.fromRpcGroup(type, protocol), {
+  return entityOf<Type, B, N>(
+    type,
     binding,
-    key: options.key,
-  });
+    options.key,
+    erased,
+    nativeOf(rpcs)
+  );
 };
 
 /**
@@ -263,7 +332,8 @@ export interface LayerOptions<
   /**
    * The handlers of `make`'s `rpcs`, as `Entity.toLayer` takes them: an `Entity.HandlersFrom` of
    * those rpcs, or an Effect building one as each entity id activates, after `services`, whose
-   * output it and the handlers' answers read. Each handler receives Effect's own `Entity.Request`,
+   * output it and the handlers' answers read, either typed from those rpcs where written here, or
+   * by the entity's `of` where written apart. Each handler receives Effect's own `Entity.Request`,
    * its `payload`, `headers` and `requestId`, and may answer through `Rpc.fork` or
    * `Rpc.uninterruptible`.
    *
@@ -283,14 +353,22 @@ type NativeLayerOptions<N extends Rpc.Any, ROut, RIn, Handlers, RX> = [
 ] extends [never]
   ? [options?: LayerOptions<ROut, RIn>]
   : [
-      options: LayerOptions<ROut, RIn, Handlers, RX> & {
+      options: Omit<LayerOptions<ROut, RIn>, "rpcs"> & {
         readonly rpcs: Handlers | Effect.Effect<Handlers, never, RX>;
       },
     ];
 
-type Activation =
+/**
+ * What an entity's activation provides to `layer`'s `services`, its implementations' builders and
+ * its native rpcs' handlers without requiring it of the layer: the entity's
+ * `Entity.CurrentAddress`, its runner's `Entity.CurrentRunnerAddress`, the cluster's `Sharding`
+ * and the activation's `Scope`, closed as the entity stops. A layer an application builds for
+ * `services` apart from `layer` reads it as `Layer.Layer<ROut, E, ActionEntity.Activation | …>`.
+ */
+export type Activation =
   | Cluster.CurrentAddress
   | Cluster.CurrentRunnerAddress
+  | Sharding.Sharding
   | Scope.Scope;
 
 type PerCall<
@@ -390,9 +468,9 @@ export function layer<
   const B extends ActionRpc.Any,
   N extends Rpc.Any,
   const Apps extends Served,
+  Handlers extends Cluster.HandlersFrom<N>,
   ROut = never,
   RIn = never,
-  Handlers extends Cluster.HandlersFrom<N> = never,
   RX = never,
 >(
   entity: Entity<Type, B, N>,

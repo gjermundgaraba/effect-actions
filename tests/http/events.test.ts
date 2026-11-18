@@ -704,6 +704,26 @@ describe("HTTP events", () => {
     ).not.toThrow();
   });
 
+  it("refuses event implementations alone on a binding of no event type, and leaves them out beside a bound action", () => {
+    const Ping = Action.make("ping", {
+      description: "Ping",
+      readOnly: true,
+      caller: Action.Anyone,
+      success: Schema.String,
+    });
+
+    const ping = Action.implement(Ping, () => Effect.succeed("pong"));
+    const ActionsAlone = ActionHttp.make([Ping]);
+
+    expect(() => ActionHttp.layer(ActionsAlone, [changes])).toThrow(
+      "No event of these implementations is in this HTTP binding: user.changed"
+    );
+    expect(() => ActionHttp.layer(ActionsAlone, [ping, changes])).not.toThrow();
+    expect(() =>
+      ActionHttp.layer(Public, [ping, makeMessages().implementation])
+    ).not.toThrow();
+  });
+
   it("refuses a listed event type its binding lacks", () => {
     expect(() =>
       ActionHttp.layer(Public, [makeMessages().implementation, changes], {

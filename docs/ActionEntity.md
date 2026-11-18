@@ -28,7 +28,7 @@ An entity may also serve native rpcs of its own, given to `make` as `rpcs`: tell
 
 Each entity id builds the implementations itself, when the cluster first sends it a message, and shares no build with `Action.layer` provided above it. State an implementation's builder holds belongs to that one entity, and a builder may read `Entity.CurrentAddress` for the id it serves. A service provided to the layer is built once per runner and shared by every entity id on it.
 
-What each entity id must build for itself, such as a store over its own database or `Event.Events` kept there by `Stored.layerEvents`, goes in the layer's `services` option: each entity id builds it as it activates, before its implementations' builders, which read it. The handlers of `make`'s native rpcs go in the layer's `rpcs` option, as Effect's `Entity.toLayer` takes them: each receives Effect's own `Entity.Request`, and an Effect building them runs after `services`, whose output it reads.
+What each entity id must build for itself, such as a store over its own database or `Event.Events` kept there by `Stored.layerEvents`, goes in the layer's `services` option: each entity id builds it as it activates, before its implementations' builders, which read it. The handlers of `make`'s native rpcs go in the layer's `rpcs` option, as Effect's `Entity.toLayer` takes them: each receives Effect's own `Entity.Request`, typed from `make`'s `rpcs` whether written inline or returned by an Effect, which runs after `services`, whose output it reads. Handlers written apart from `layer` are typed by the entity's `of`, `Room.of({ expire: ({ payload }) => … })`, as Effect's `Entity.of`. A layer of its own given to `services` reads what each activation provides as `ActionEntity.Activation`.
 
 A handler, an authorizer or an event source reads per call only its caller and what `services` built; the rules, and what a defect does, are on `ActionEntity.layer`.
 
@@ -70,7 +70,7 @@ A protected action authenticates each call from the headers its envelope carries
 
 ## Reach it from any surface
 
-`ActionEntity.reaching(entity)` returns implementations of the entity's actions and event types that any surface serves beside its own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, given a binding of the same contracts: each call goes through `Entity.client` to the entity its input's key names, with the caller's headers `ActionEntity.forwardedHeaders` keeps, so one HTTP or MCP endpoint serves every room. The example's `routes` above serve every cart that way.
+`ActionEntity.reaching(entity)` returns implementations of the entity's actions and event types that any surface serves beside its own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, given a binding of the same contracts or some of them, such as an HTTP binding of its actions alone: each call goes through `Entity.client` to the entity its input's key names, with the caller's headers `ActionEntity.forwardedHeaders` keeps, so one HTTP or MCP endpoint serves every room. The example's `routes` above serve every cart that way.
 
 The surface authenticates a protected call with its own binding's descriptor and the entity authenticates it again, so provide the authentication provider to both.
 

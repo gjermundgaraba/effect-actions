@@ -38,7 +38,6 @@ export const selectFrom = (
 
 const servedBy = <App, C extends Pick<Action.Any, "name">>(
   kind: ContractKind<App, C>,
-  what: string,
   bound: readonly C[],
   apps: readonly App[],
   listed: readonly C[] | undefined
@@ -49,30 +48,40 @@ const servedBy = <App, C extends Pick<Action.Any, "name">>(
     assertHeld(notHeld.byBinding, listed, bound);
   }
 
-  const held = apps.flatMap(holds);
-
-  if (
-    listed === undefined &&
-    apps.length > 0 &&
-    !held.some((contract) => bound.includes(contract))
-  ) {
-    const names = new Set(bound.map(({ name }) => name));
-
-    throw new Error(
-      `No ${noun} of these implementations is in this ${what}: ${markingOthers(held, names) || "none"} (pass an implementation of a bound ${noun}, or bind one of these)`
-    );
-  }
+  const held = new Set(apps.flatMap(holds));
 
   const served = select(
     kind,
     apps,
-    listed ?? bound.filter((contract) => held.includes(contract))
+    listed ?? bound.filter((contract) => held.has(contract))
   );
 
   assertOnce(`served ${noun}`, served.flatMap(holds), heldOnce);
 
   return served;
 };
+
+const assertBound = <App, C extends Pick<Action.Any, "name">>(
+  { noun, holds }: ContractKind<App, C>,
+  what: string,
+  bound: readonly C[],
+  apps: readonly App[]
+): void => {
+  const held = apps.flatMap(holds);
+
+  if (apps.length > 0 && !held.some((contract) => bound.includes(contract))) {
+    const names = new Set(bound.map(({ name }) => name));
+
+    throw new Error(
+      `No ${noun} of these implementations is in this ${what}: ${markingOthers(held, names) || "none"} (pass an implementation of a bound ${noun}, or bind one of these)`
+    );
+  }
+};
+
+const besideServed = (
+  bound: readonly unknown[],
+  otherServed: readonly unknown[]
+): boolean => bound.length === 0 && otherServed.length > 0;
 
 export const servingOf = <D extends Proving>(
   what: string,
@@ -88,24 +97,32 @@ export const servingOf = <D extends Proving>(
   }
 ) => {
   const listed = selection(options.actions);
+  const implementations = toList(served);
+  const eventImplementations = eventsOf(served);
 
   const apps = servedBy(
     actionKind,
-    what,
     binding.actions,
-    toList(served),
+    implementations,
     listed.actions
   );
 
-  const actions = apps.flatMap((app) => app.actions);
-
   const events = servedBy(
     eventKind,
-    what,
     binding.events,
-    eventsOf(served),
+    eventImplementations,
     listed.events
   );
+
+  if (listed.actions === undefined && !besideServed(binding.actions, events)) {
+    assertBound(actionKind, what, binding.actions, implementations);
+  }
+
+  if (listed.events === undefined && !besideServed(binding.events, apps)) {
+    assertBound(eventKind, what, binding.events, eventImplementations);
+  }
+
+  const actions = apps.flatMap((app) => app.actions);
 
   const eventTypes = events.flatMap((app) => app.events);
 

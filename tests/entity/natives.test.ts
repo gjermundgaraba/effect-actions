@@ -14,6 +14,7 @@ import {
   ClusterError,
   ClusterSchema,
   Entity,
+  EntityId,
   Sharding,
   ShardingConfig,
   TestRunner,
@@ -421,6 +422,48 @@ describe("ActionEntity's native rpcs and services", () => {
       "effect-actions/wake": true,
     });
   });
+
+  it.effect(
+    "keeps its binding and key through annotate and its kin, annotating rpcs on its natives alone",
+    () =>
+      Effect.gen(function* () {
+        const Annotated = Counter.annotate(ClusterSchema.ShardGroup, () => "x")
+          .annotateMerge(
+            Context.make(ClusterSchema.ClientTracingEnabled, false)
+          )
+          .annotateRpcs(ClusterSchema.Persisted, true)
+          .annotateRpcsMerge(Context.make(ClusterSchema.Uninterruptible, true));
+
+        const annotated = (tag: string) =>
+          [ClusterSchema.Persisted, ClusterSchema.Uninterruptible].map((key) =>
+            Context.get(Annotated.protocol.requests.get(tag)!.annotations, key)
+          );
+
+        expect([Annotated.binding, Annotated.key]).toStrictEqual([
+          Counter.binding,
+          Counter.key,
+        ]);
+        expect(Annotated.getShardGroup(EntityId.make("c"))).toBe("x");
+        expect(
+          Context.get(
+            Annotated.protocol.annotations,
+            ClusterSchema.ClientTracingEnabled
+          )
+        ).toBe(false);
+        expect(annotated("bump")).toStrictEqual([true, true]);
+        expect(annotated("peek")).toStrictEqual([false, false]);
+        expect(annotated("effect-actions/wake")).toStrictEqual([true, false]);
+
+        const makeClient = yield* Entity.makeTestClient(
+          Annotated,
+          ActionEntity.layer(Annotated, peek, { services, rpcs })
+        );
+
+        const counter = yield* makeClient("c");
+
+        expect(yield* counter.bump()).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide([ShardingConfig.layer(), signIn]))
+  );
 
   it.effect("serves its native rpcs to Entity.makeTestClient", () =>
     Effect.gen(function* () {

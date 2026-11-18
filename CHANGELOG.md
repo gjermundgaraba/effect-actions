@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**`ActionEntity.Entity`'s `annotate`, `annotateMerge`, `annotateRpcs` and `annotateRpcsMerge` return an `ActionEntity.Entity`, keeping its binding and key, and `annotateRpcs` and `annotateRpcsMerge` annotate its native rpcs alone.** **Reversed: they were Effect's own and returned a plain `Entity`, which `layer` and `client` did not take, and `annotateRpcs` annotated every rpc of the entity.** The rpcs of the binding's actions, event types and webhook subscriptions now keep their own annotations, so `annotateRpcs(ClusterSchema.Persisted, true)` persists the natives and never a caller's credential-bearing envelope; `annotate` and `annotateMerge`, such as a `ClusterSchema.ShardGroup`, annotate the whole entity as before.
+
+- Migrate: annotate an action's rpc nowhere: its persistence is the library's. Annotate a native rpc on `make`'s `rpcs` or with `annotateRpcs`, as before.
+
+### Other changes
+
+- `ActionEntity.layer`'s `rpcs` types its handlers from `make`'s `rpcs`, whether an object or an Effect building one, `rpcs: Effect.gen(function* () { … return { expire: ({ payload }) => … } })`, so an Effect needs no `Entity.HandlersFrom<RpcGroup.Rpcs<…>>` annotation, where its handlers' payloads were implicit `any`. An entity's `of` takes its native rpcs' handlers alone, `Room.of({ expire: … })`, as Effect's `Entity.of`, where its library rpcs' `string` tags made every handler a type error.
+- `ActionHttp.layer` and `ActionRpc.layer` leave out implementations of a kind of contract the binding binds none of beside a kind they serve, so `ActionHttp.layer(AgentHttp, ActionEntity.reaching(Agent))` serves an HTTP binding of the entity's actions alone without `{ actions }`, where it threw `No event of these implementations is in this HTTP binding`. Implementations holding none of the binding's actions, or none of its event types where it binds some, are still refused.
+- New `ActionEntity.Activation`, what an entity's activation provides to `layer`'s `services`, builders and native handlers: `Entity.CurrentAddress`, `Entity.CurrentRunnerAddress`, `Sharding` and the activation's `Scope`, for a `services` layer an application types apart, `Layer.Layer<Store, never, ActionEntity.Activation | SqlClient>`.
+
 ## 0.35.0
 
 ### Breaking changes
