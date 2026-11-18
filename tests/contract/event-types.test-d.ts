@@ -139,3 +139,25 @@ export const surfacesServingNoEventsRefuseThem = () => {
   // @ts-expect-error -- A toolkit serves no events.
   ActionToolkit.make([userActions, ticks]);
 };
+
+class Room extends Context.Service<Room, string>()("test/Room") {}
+
+export const appendedRequiresEachCallbacksServices = () => {
+  const source = Event.appended(Ticked, {
+    newest: () => Effect.as(Feed, 0),
+    after: () => Effect.as(Tenant, { items: [] }),
+    id: () => 0,
+    key: () => Room,
+  });
+
+  expectTypeOf(source).toEqualTypeOf<
+    Event.Check<typeof Ticked, Feed | Tenant | Room>
+  >();
+
+  Event.appended(Ticked, {
+    newest: () => Effect.succeed(0),
+    after: () => Effect.succeed({ items: [] }),
+    // @ts-expect-error -- An entry's id is a number.
+    id: () => "0",
+  });
+};

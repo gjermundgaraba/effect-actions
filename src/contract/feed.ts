@@ -3,10 +3,10 @@ import {
   DateTime,
   Duration,
   Effect,
+  Exit,
   Layer,
   Option,
   Predicate,
-  Schema,
   Stream,
 } from "effect";
 import type { Context } from "effect";
@@ -116,6 +116,8 @@ export type Running<E = unknown, R = unknown> = ReadonlyArray<
 
 export const defaultNextPoll = Duration.seconds(5);
 
+const shortestNextPoll = Duration.seconds(1);
+
 const longestNextPoll = Duration.minutes(5);
 
 const logPageSize = 100;
@@ -194,9 +196,9 @@ const answeredPage = ({
     cursor: answered.cursor,
     truncated: answered.truncated === true,
     hasMore: answered.hasMore === true,
-    nextPoll: Duration.min(
+    nextPoll: Duration.clamp(
       Duration.fromInputUnsafe(answered.nextPoll ?? defaultNextPoll),
-      longestNextPoll
+      { minimum: shortestNextPoll, maximum: longestNextPoll }
     ),
   });
 
@@ -252,17 +254,7 @@ const currentRun = (
   source: Event.Current<Event.Any, unknown>,
   checking: Checking
 ): Run => {
-  const encodeData = Schema.encodeUnknownEffect(
-    Schema.toCodecJson(event.payload)
-  );
-
-  const digestOf = (input: ErasedValue, data: ErasedValue) =>
-    Effect.flatMap(canonicalInput(event.input, input), (sent) =>
-      encodeData(data).pipe(
-        Effect.flatMap((json) => sha256Hex(`${sent}\u0000${canonical(json)}`)),
-        Effect.orElseSucceed(() => "")
-      )
-    );
+  const sent = jsonRoundTrip(event.payload);
 
   return checkRun(
     event,
@@ -271,7 +263,8 @@ const currentRun = (
       notified: true,
       check: (input, cursor) =>
         Effect.gen(function* () {
-          const at = yield* checking.revision(yield* keyOf(source, input));
+          const key = yield* keyOf(source, input);
+          const at = yield* checking.revision(key);
 
           const { digest: seen, revision } =
             cursor?.match(/^(?<digest>[0-9a-f]*)\.(?<revision>.*)$/su)
@@ -282,12 +275,33 @@ const currentRun = (
           }
 
           const data = yield* source.current(input);
-          const digest = yield* digestOf(input, data);
+          const snapshot = yield* Effect.exit(sent(data));
+
+          const digest = Exit.isSuccess(snapshot)
+            ? yield* sha256Hex(
+                canonical([
+                  yield* canonicalInput(event.input, input),
+                  key ?? null,
+                  snapshot.value.json,
+                ])
+              )
+            : "";
+
           const next = `${digest}.${at}`;
 
           return {
             cursor: next,
-            events: digest === seen ? [] : [{ eventId: next, data }],
+            events:
+              digest === seen
+                ? []
+                : [
+                    {
+                      eventId: next,
+                      data: Exit.isSuccess(snapshot)
+                        ? snapshot.value.value
+                        : data,
+                    },
+                  ],
             nextPoll: source.nextPoll,
           };
         }),

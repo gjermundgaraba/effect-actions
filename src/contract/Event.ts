@@ -246,29 +246,40 @@ export interface Appended<E extends Any> {
 }
 
 /** What `appended` needs to page a store appending entries under increasing integer ids. */
-export interface AppendedOptions<E extends Any, R = never>
-  extends Hooked<E, R>, Pick<Check<E, R>, "notified"> {
+export interface AppendedOptions<
+  E extends Any,
+  RN = never,
+  RA = never,
+  RK = never,
+  RS = never,
+> extends Pick<Check<E>, "notified" | "lease"> {
   /** The id of the newest entry, `0` while there is none, run as the subscriber. */
   readonly newest: (
     input: E["input"]["Type"]
-  ) => Effect.Effect<number, Refusal, R>;
+  ) => Effect.Effect<number, Refusal, RN>;
   /** The entries after `id`, oldest first, as many as one read takes, run as the subscriber. */
   readonly after: (
     input: E["input"]["Type"],
     id: number
-  ) => Effect.Effect<Appended<E>, Refusal, R>;
+  ) => Effect.Effect<Appended<E>, Refusal, RA>;
   /** The id of the entry an occurrence's data was read from: its `eventId`, and a cursor. */
   readonly id: (data: E["payload"]["Type"]) => number;
   /** Each page's `nextPoll`; defaults to 5 seconds. */
   readonly nextPoll?: Duration.Input | undefined;
+  readonly key?: Hooked<E, RK>["key"];
+  readonly subscription?: Hooked<E, RS>["subscription"];
 }
 
-const appendedId = Schema.decodeUnknownOption(
-  Schema.NumberFromString.check(
-    Schema.isInt(),
-    Schema.isGreaterThanOrEqualTo(0)
-  )
-);
+const appendedId = (cursor: string | null): Option.Option<number> => {
+  const id = Number(cursor);
+
+  return cursor !== null &&
+    Number.isSafeInteger(id) &&
+    id >= 0 &&
+    String(id) === cursor
+    ? Option.some(id)
+    : Option.none();
+};
 
 /**
  * A check source for a store that appends entries under increasing integer ids, such as a table's
@@ -278,14 +289,20 @@ const appendedId = Schema.decodeUnknownOption(
  *
  * **Gotchas**
  *
- * - A cursor that is no id up to `newest`'s, such as another store's or one past a store emptied since, is answered with `truncated: true` and the newest id: the subscriber goes on from there.
+ * - A cursor that is not an id up to `newest`'s as the check spells one, digits without a sign, exponent or leading zero, such as another store's or one past a store emptied since, is answered with `truncated: true` and the newest id: the subscriber goes on from there.
  * - A store deleting its oldest entries sends no gap for those a subscriber resuming before them missed: a cursor is stale only past `newest`.
  * - Ids that start again, as a store kept in memory restarts them, make an old cursor read entries it never saw as the ones after it: such a store's cursor carries its epoch in a `check` of its own.
  */
-export const appended = <E extends Any, R = never>(
+export const appended = <
+  E extends Any,
+  RN = never,
+  RA = never,
+  RK = never,
+  RS = never,
+>(
   _event: E,
-  { newest, after, id, nextPoll, ...source }: AppendedOptions<E, R>
-): Check<E, R> => ({
+  { newest, after, id, nextPoll, ...source }: AppendedOptions<E, RN, RA, RK, RS>
+): Check<E, RN | RA | RK | RS> => ({
   ...source,
   check: (input, cursor) =>
     Effect.gen(function* () {
@@ -299,6 +316,10 @@ export const appended = <E extends Any, R = never>(
           truncated: cursor !== null,
           nextPoll,
         };
+      }
+
+      if (from.value === last) {
+        return { events: [], cursor: String(last), nextPoll };
       }
 
       const read = yield* after(input, from.value);
@@ -320,14 +341,15 @@ export const appended = <E extends Any, R = never>(
  * send whole: a subscriber receives the value as it is first, then again after each
  * `Events.notify` that reaches it and changes it, never a change it missed one by one. The
  * library keeps a revision per key, which each such notify moves; the revision and a digest of
- * the subscription's input and the value sent make the cursor and each occurrence's id. Its streams and webhook deliveries
- * read it again only when notified, on no timer, so an idle Cloudflare Durable Object holding
- * them hibernates; a polling client polls at `nextPoll`.
+ * the subscription's input, its key and the value sent make the cursor and each occurrence's id.
+ * Its streams and webhook deliveries read it again only when notified, on no timer, so an idle
+ * Cloudflare Durable Object holding them hibernates; a polling client polls at `nextPoll`.
  *
  * **Gotchas**
  *
- * - A notify reads the value again for each subscriber it reaches, though a value equal to the one its cursor saw, for the same input, is not sent: notify after a write that may change it, not on a timer.
+ * - A notify reads the value again for each subscriber it reaches, though a value equal to the one its cursor saw, for the same input and key, is not sent: notify after a write that may change it, not on a timer.
  * - The revision is read before `current`, so a value written between them is read again at the next read, never missed: write the value, then notify.
+ * - A cursor is its subscription's own: one taken to another input of the same key, at a revision it already holds, is answered with nothing until the next notify.
  */
 export interface Current<E extends Any, R = never> extends Hooked<E, R> {
   /** The value as it is, as the subscriber's `input` selects it, run as the subscriber. */

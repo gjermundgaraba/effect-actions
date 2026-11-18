@@ -46,7 +46,15 @@ const Command = Schema.Union([
   }),
   Schema.TaggedStruct("Read", {
     from: Schema.Union([
-      Schema.Literals(["start", "foreign", "ahead", "negative"]),
+      Schema.Literals([
+        "start",
+        "foreign",
+        "ahead",
+        "negative",
+        "empty",
+        "exponent",
+        "padded",
+      ]),
       Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 30 })),
     ]),
   }),
@@ -82,14 +90,18 @@ describe("Event.appended", () => {
             Match.when("foreign", () => "another:0"),
             Match.when("ahead", () => String(newest + 1)),
             Match.when("negative", () => "-1"),
+            Match.when("empty", () => ""),
+            Match.when("exponent", () => "1e-9999"),
+            Match.when("padded", () => `0${newest}`),
             Match.orElse(
               (index) => minted[index % Math.max(minted.length, 1)] ?? null
             )
           );
 
           const answered = yield* check({}, cursor);
-          const at = cursor === null ? Number.NaN : Number(cursor);
-          const served = Number.isInteger(at) && at >= 0 && at <= newest;
+          const spelled = /^(?:0|[1-9][0-9]*)$/u.test(cursor ?? "");
+          const at = spelled ? Number(cursor) : Number.NaN;
+          const served = spelled && at <= newest;
 
           if (served) {
             const expected = read(at);
@@ -102,6 +114,12 @@ describe("Event.appended", () => {
             expect(answered.cursor).toBe(String(expected.through ?? at));
             expect(answered.truncated ?? false).toBe(false);
             expect(answered.hasMore ?? false).toBe(expected.hasMore);
+          } else {
+            expect(answered).toMatchObject({
+              events: [],
+              cursor: String(newest),
+              truncated: cursor !== null,
+            });
           }
 
           minted.push(answered.cursor);
