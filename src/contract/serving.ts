@@ -65,23 +65,22 @@ const assertBound = <App, C extends Pick<Action.Any, "name">>(
   { noun, holds }: ContractKind<App, C>,
   what: string,
   bound: readonly C[],
-  apps: readonly App[]
+  apps: readonly App[],
+  served: readonly App[],
+  otherServed: readonly unknown[]
 ): void => {
-  const held = apps.flatMap(holds);
-
-  if (apps.length > 0 && !held.some((contract) => bound.includes(contract))) {
+  if (
+    served.length === 0 &&
+    apps.length > 0 &&
+    (bound.length > 0 || otherServed.length === 0)
+  ) {
     const names = new Set(bound.map(({ name }) => name));
 
     throw new Error(
-      `No ${noun} of these implementations is in this ${what}: ${markingOthers(held, names) || "none"} (pass an implementation of a bound ${noun}, or bind one of these)`
+      `No ${noun} of these implementations is in this ${what}: ${markingOthers(apps.flatMap(holds), names) || "none"} (pass an implementation of a bound ${noun}, or bind one of these)`
     );
   }
 };
-
-const besideServed = (
-  bound: readonly unknown[],
-  otherServed: readonly unknown[]
-): boolean => bound.length === 0 && otherServed.length > 0;
 
 export const servingOf = <D extends Proving>(
   what: string,
@@ -114,12 +113,26 @@ export const servingOf = <D extends Proving>(
     listed.events
   );
 
-  if (listed.actions === undefined && !besideServed(binding.actions, events)) {
-    assertBound(actionKind, what, binding.actions, implementations);
+  if (listed.actions === undefined) {
+    assertBound(
+      actionKind,
+      what,
+      binding.actions,
+      implementations,
+      apps,
+      events
+    );
   }
 
-  if (listed.events === undefined && !besideServed(binding.events, apps)) {
-    assertBound(eventKind, what, binding.events, eventImplementations);
+  if (listed.events === undefined) {
+    assertBound(
+      eventKind,
+      what,
+      binding.events,
+      eventImplementations,
+      events,
+      apps
+    );
   }
 
   const actions = apps.flatMap((app) => app.actions);

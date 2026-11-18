@@ -180,10 +180,8 @@ const entityOf = <
   library: ReturnType<typeof libraryRpcsOf>,
   natives: RpcGroup.RpcGroup<Rpc.AnyWithProps>
 ): Entity<Type, B, N> => {
-  const rebuilt = (
-    annotated: typeof library,
-    annotatedNatives: typeof natives
-  ) => entityOf<Type, B, N>(type, binding, key, annotated, annotatedNatives);
+  const rebuilt = (annotated: typeof natives) =>
+    entityOf<Type, B, N>(type, binding, key, library, annotated);
 
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const protocol = library.merge(natives) as RpcGroup.RpcGroup<ErasedRpc | N>;
@@ -194,13 +192,13 @@ const entityOf = <
     of: <Handlers extends Cluster.HandlersFrom<N>>(handlers: Handlers) =>
       handlers,
     annotate: <I, S>(tag: Context.Key<I, S>, value: S) =>
-      rebuilt(library.annotate(tag, value), natives),
+      rebuilt(natives.annotate(tag, value)),
     annotateMerge: <S>(annotations: Context.Context<S>) =>
-      rebuilt(library.annotateMerge(annotations), natives),
+      rebuilt(natives.annotateMerge(annotations)),
     annotateRpcs: <I, S>(tag: Context.Key<I, S>, value: S) =>
-      rebuilt(library, natives.annotateRpcs(tag, value)),
+      rebuilt(natives.annotateRpcs(tag, value)),
     annotateRpcsMerge: <S>(annotations: Context.Context<S>) =>
-      rebuilt(library, natives.annotateRpcsMerge(annotations)),
+      rebuilt(natives.annotateRpcsMerge(annotations)),
   });
 };
 
@@ -353,22 +351,25 @@ type NativeLayerOptions<N extends Rpc.Any, ROut, RIn, Handlers, RX> = [
 ] extends [never]
   ? [options?: LayerOptions<ROut, RIn>]
   : [
-      options: Omit<LayerOptions<ROut, RIn>, "rpcs"> & {
+      options: LayerOptions<ROut, RIn, Handlers, RX> & {
         readonly rpcs: Handlers | Effect.Effect<Handlers, never, RX>;
       },
     ];
 
 /**
  * What an entity's activation provides to `layer`'s `services`, its implementations' builders and
- * its native rpcs' handlers without requiring it of the layer: the entity's
- * `Entity.CurrentAddress`, its runner's `Entity.CurrentRunnerAddress`, the cluster's `Sharding`
- * and the activation's `Scope`, closed as the entity stops. A layer an application builds for
- * `services` apart from `layer` reads it as `Layer.Layer<ROut, E, ActionEntity.Activation | …>`.
+ * the Effect building its native rpcs' handlers, without requiring it of the layer: the entity's
+ * `Entity.CurrentAddress`, its runner's `Entity.CurrentRunnerAddress` and the activation's
+ * `Scope`, closed as the entity stops. A layer an application builds for `services` apart from
+ * `layer` reads it as `Layer.Layer<ROut, E, ActionEntity.Activation | …>`.
+ *
+ * **Gotchas**
+ *
+ * - A handler's `Scope`, a native one's or an action's, is its call's, closed as the call ends: acquire what lives as long as the activation in `services` or a builder.
  */
 export type Activation =
   | Cluster.CurrentAddress
   | Cluster.CurrentRunnerAddress
-  | Sharding.Sharding
   | Scope.Scope;
 
 type PerCall<

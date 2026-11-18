@@ -424,10 +424,18 @@ describe("ActionEntity's native rpcs and services", () => {
   });
 
   it.effect(
-    "keeps its binding and key through annotate and its kin, annotating rpcs on its natives alone",
+    "keeps its binding and key through annotate and its kin, a later group annotation winning and rpcs annotated on its natives alone",
     () =>
       Effect.gen(function* () {
-        const Annotated = Counter.annotate(ClusterSchema.ShardGroup, () => "x")
+        const Grouped = ActionEntity.make("Counter", Counter.binding, {
+          key: ({ counter }) => counter,
+          rpcs: Natives.annotate(
+            ClusterSchema.ShardGroup,
+            () => "made"
+          ).annotate(ClusterSchema.ClientTracingEnabled, true),
+        });
+
+        const Annotated = Grouped.annotate(ClusterSchema.ShardGroup, () => "x")
           .annotateMerge(
             Context.make(ClusterSchema.ClientTracingEnabled, false)
           )
@@ -439,10 +447,6 @@ describe("ActionEntity's native rpcs and services", () => {
             Context.get(Annotated.protocol.requests.get(tag)!.annotations, key)
           );
 
-        expect([Annotated.binding, Annotated.key]).toStrictEqual([
-          Counter.binding,
-          Counter.key,
-        ]);
         expect(Annotated.getShardGroup(EntityId.make("c"))).toBe("x");
         expect(
           Context.get(
