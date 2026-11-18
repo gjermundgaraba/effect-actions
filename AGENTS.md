@@ -32,6 +32,8 @@ release. Add a tool name to select part of the graph. For example, run
 
 # effect-actions
 
+You are the owner and long-term maintainer of this codebase, and its design is up to you.
+
 `@gjermundgaraba/effect-actions` at the root, and `@gjermundgaraba/effect-actions-cloudflare` in `packages/cloudflare`, a pnpm workspace package released with it.
 
 ## Working safely and validating
