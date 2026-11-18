@@ -66,7 +66,7 @@ A protected action authenticates each call from the headers its envelope carries
 
 ## Call it
 
-`ActionEntity.client(entity)` is Effect's `Entity.client` with one typed method per action, each call sent to the entity its input's key names: `(yield* ActionEntity.client(Room)).postMessage({ room: "lobby", text })`. Send credentials by setting headers with `RpcClient.withHeaders` around a call. The entity's native rpcs stay on Effect's own client, `(yield* Room.client)("lobby")`. What a call fails with is `ActionEntity.MethodError`, and the transport rules are on `ActionEntity.client`.
+`ActionEntity.client(entity)` is Effect's `Entity.client` with one typed method per action, each call sent to the entity its input's key names: `(yield* ActionEntity.client(Room)).postMessage({ room: "lobby", text })`. Send credentials by setting headers with `RpcClient.withHeaders` around a call. The entity's native rpcs are on `ActionEntity.nativeClient(entity)`, Effect's own client for an entity id, `(yield* ActionEntity.nativeClient(Room))("lobby").expire()`. A call through either that the entity could not be reached for, or that did not answer within `client(entity, { timeout })`, 20 seconds by default, fails with the built-in `Action.Unavailable`, as through `reaching` below. What a call fails with is `ActionEntity.MethodError`, and the transport rules are on `ActionEntity.client`.
 
 ## Reach it from any surface
 
@@ -74,7 +74,7 @@ A protected action authenticates each call from the headers its envelope carries
 
 The surface authenticates a protected call with its own binding's descriptor and the entity authenticates it again, so provide the authentication provider to both.
 
-A call the entity could not be reached for, or that did not answer within `reaching(entity, { timeout })`, 20 seconds by default, fails with the built-in `Action.Unavailable`, a 503 with `Retry-After` over HTTP, whose message says the entity may still run it. The deadline bounds each call and each poll, never a stream or a watch; its rules are on `ActionEntity.ReachingOptions`.
+A call the entity could not be reached for, or that did not answer within `reaching(entity, { timeout })`, 20 seconds by default, fails with the built-in `Action.Unavailable`, a 503 with `Retry-After` over HTTP, whose message says the entity may still run it. The deadline bounds each call and each poll, never a stream or a watch; its rules are on `ActionEntity.EntityCallOptions`, the options `client` and `nativeClient` take too.
 
 An event is followed through the entity's poll rpc, so no watcher holds an entity open; a stream polls it from the surface. What crosses the two hops, and what does not, is on `ActionEntity.reaching`.
 

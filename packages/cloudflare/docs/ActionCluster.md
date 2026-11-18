@@ -86,7 +86,7 @@ The Worker serves every entity's actions and events itself, `ActionHttp.layer(Ro
 
 ## Answer a call made through an entity's client
 
-A Worker route that calls an entity's client itself, `Entity.client` or `ActionEntity.client`, outside `ActionEntity.reaching`, answers a failed call's cause with `ActionCluster.failureResponse(cause)`: a 503 with `Retry-After: 1` where the entity could not be reached, a 499 where the request's client went away, and otherwise a 500, the cause logged. Its JSDoc holds the rules.
+A Worker route that calls an entity's client itself, `Entity.client`, `ActionEntity.client` or `ActionEntity.nativeClient`, outside `ActionEntity.reaching`, answers a failed call's cause with `ActionCluster.failureResponse(cause)`: a 503 with `Retry-After: 1` where the entity could not be reached or did not answer in time, a 499 where the request's client went away, and otherwise a 500, the cause logged. Its JSDoc holds the rules.
 
 ## Read the object's own state
 

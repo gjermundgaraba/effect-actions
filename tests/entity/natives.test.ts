@@ -1,8 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Schema } from "effect";
 import {
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Queue,
+  Schema,
+  Stream,
+} from "effect";
+import {
+  ClusterError,
   ClusterSchema,
   Entity,
+  Sharding,
   ShardingConfig,
   TestRunner,
 } from "effect/cluster";
@@ -39,7 +51,9 @@ const Mark = Rpc.make("mark", {
   payload: { uninterruptible: Schema.Boolean },
 });
 
-const Natives = RpcGroup.make(Bump, Inspect, Hold, Count, Mark);
+const Ticks = Rpc.make("ticks", { success: Schema.Int, stream: true });
+
+const Natives = RpcGroup.make(Bump, Inspect, Hold, Count, Mark, Ticks);
 
 const Peek = Action.make("peek", {
   description: "Read the counter's tally.",
@@ -115,6 +129,7 @@ const rpcs = Effect.map(
 
         return uninterruptible ? Rpc.uninterruptible(work) : work;
       },
+      ticks: () => Stream.make(1, 2, 3),
     }) satisfies Entity.HandlersFrom<RpcGroup.Rpcs<typeof Natives>>
 );
 
@@ -136,6 +151,32 @@ const counters = ActionEntity.layer(Counter, peek, { services, rpcs }).pipe(
 );
 
 const signedIn = RpcClient.withHeaders({ authorization: "Bearer alice" });
+
+const failedTicks = Stream.fail(
+  new ClusterError.PersistenceError({ cause: new Error("storage down") })
+);
+
+const unreachableTicks = Layer.effect(
+  Sharding.Sharding,
+  Effect.map(Sharding.Sharding, (sharding) =>
+    Sharding.Sharding.of({
+      ...sharding,
+      makeClient: (entity) =>
+        Effect.map(
+          sharding.makeClient(entity),
+          (clientFor) => (entityId: string) =>
+            new Proxy(clientFor(entityId), {
+              get:
+                () =>
+                (_payload: unknown, options?: { readonly asQueue?: boolean }) =>
+                  options?.asQueue === true
+                    ? Stream.toQueue(failedTicks, { capacity: 16 })
+                    : failedTicks,
+            })
+        ),
+    })
+  )
+);
 
 describe("ActionEntity's native rpcs and services", () => {
   it.live(
@@ -214,6 +255,82 @@ describe("ActionEntity's native rpcs and services", () => {
         yield* Deferred.succeed(gates.released, undefined);
         yield* Fiber.join(holding);
       }).pipe(Effect.scoped, Effect.provide(counters))
+  );
+
+  it.live(
+    "calls native rpcs through nativeClient as through Effect's client, headers included, and answers one past its timeout with Action.Unavailable",
+    () =>
+      Effect.gen(function* () {
+        const natives = yield* ActionEntity.nativeClient(Counter, {
+          timeout: "200 millis",
+        });
+
+        const sent = { authorization: "Bearer alice" };
+
+        gates.held = yield* Deferred.make<undefined>();
+        gates.released = yield* Deferred.make<undefined>();
+
+        expect(yield* natives("n").bump()).toBe(1);
+        yield* natives("n").bump(undefined, { discard: true });
+        expect(yield* natives("n").count()).toBe(2);
+
+        expect(
+          (yield* natives("n")
+            .inspect({ note: "sent" })
+            .pipe(RpcClient.withHeaders(sent))).headers
+        ).toStrictEqual(sent);
+
+        const late = yield* Effect.flip(natives("n").hold());
+
+        expect(late).toBeInstanceOf(Action.Unavailable);
+        expect(late.message).toBe(
+          "hold: the entity Counter/n did not answer within 200ms; the call's outcome is unknown, as the entity may still run it"
+        );
+
+        yield* Deferred.succeed(gates.released, undefined);
+      }).pipe(Effect.scoped, Effect.provide(counters))
+  );
+
+  it.live(
+    "gives nativeClient the entity's own rpcs alone, none of its actions, polls or wake",
+    () =>
+      Effect.gen(function* () {
+        const natives = yield* ActionEntity.nativeClient(Counter);
+
+        expect(Object.keys(natives("k")).toSorted()).toStrictEqual([
+          "bump",
+          "count",
+          "hold",
+          "inspect",
+          "mark",
+          "ticks",
+        ]);
+        expect(yield* Stream.runCollect(natives("k").ticks())).toStrictEqual([
+          1, 2, 3,
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(counters))
+  );
+
+  it.live(
+    "ends a native stream, and a take from its queue, with Action.Unavailable where the entity could not be reached",
+    () =>
+      Effect.gen(function* () {
+        const natives = yield* ActionEntity.nativeClient(Counter);
+
+        const streamed = yield* Effect.flip(
+          Stream.runDrain(natives("q").ticks())
+        );
+
+        const queue = yield* natives("q").ticks(undefined, { asQueue: true });
+        const taken = yield* Effect.flip(Queue.take(queue));
+
+        expect(streamed).toBeInstanceOf(Action.Unavailable);
+        expect(taken).toBeInstanceOf(Action.Unavailable);
+        expect(taken).toStrictEqual(streamed);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(unreachableTicks.pipe(Layer.provide(counters)))
+      )
   );
 
   it.live(

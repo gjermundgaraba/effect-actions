@@ -1,4 +1,5 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import {
@@ -319,18 +320,22 @@ export const handler = <Env>(
 
 const clientClosedRequest = 499;
 
+const isUnreached = (error: unknown) =>
+  Action.isUnavailable(error) || ActionEntity.isClusterFailure(error);
+
 /**
  * The web `Response` for a call a Worker made through an entity's client itself, outside any
- * surface, as `Entity.client` or `ActionEntity.client`, that failed with `cause`: a 503 with
- * `Retry-After: 1` where `ActionEntity.isClusterFailure` matches the squashed error, as the
- * entity could not be reached; a 499 where the cause holds only interrupts, as the request's
- * client went away; otherwise a 500, after logging the cause with `Effect.logError`. None has a
- * body. Guide: `docs/ActionCluster.md` in this package.
+ * surface, `Entity.client`, `ActionEntity.client` or `ActionEntity.nativeClient`, that failed with
+ * `cause`. The entity was not reached, or did not answer in time, where the cause fails with
+ * `Action.Unavailable` or a cluster failure `ActionEntity.isClusterFailure` matches, and no
+ * defect: a 503 with `Retry-After: 1`. The request's client went away where the cause holds only
+ * interrupts: a 499. Anything else is a 500, after logging the cause with `Effect.logError`.
+ * None has a body. Guide: `docs/ActionCluster.md` in this package.
  *
  * **Gotchas**
  *
  * - A 503 tells the client to try again, though the entity may have run the call: send again only a call safe to repeat.
- * - A declared error of the call, which the Worker answers itself, is a 500 here, logged: catch it first.
+ * - A declared error of the call but `Unavailable`, which the Worker answers itself, is a 500 here, logged: catch it first.
  */
 export const failureResponse = <E>(
   cause: Cause.Cause<E>
@@ -339,7 +344,7 @@ export const failureResponse = <E>(
     return Effect.succeed(new Response(null, { status: clientClosedRequest }));
   }
 
-  return ActionEntity.isClusterFailure(Cause.squash(cause))
+  return !Cause.hasDies(cause) && isUnreached(Cause.squash(cause))
     ? Effect.succeed(
         new Response(null, { status: 503, headers: { "retry-after": "1" } })
       )

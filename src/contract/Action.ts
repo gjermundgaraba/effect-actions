@@ -121,6 +121,7 @@ export {
   Refusal,
   Unauthenticated,
   Unavailable,
+  isUnavailable,
 } from "./errors.js";
 
 export { Image } from "./media.js";

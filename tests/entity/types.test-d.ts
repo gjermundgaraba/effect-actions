@@ -2,7 +2,7 @@ import { expectTypeOf } from "@effect/vitest";
 import { Context, Effect, Layer, Redacted, Schema } from "effect";
 import type { Stream } from "effect";
 import { Entity } from "effect/cluster";
-import type { ClusterError, Sharding } from "effect/cluster";
+import type { Sharding } from "effect/cluster";
 import { HttpServerRequest } from "effect/http";
 import { Rpc as NativeRpc, RpcGroup } from "effect/rpc";
 
@@ -212,22 +212,41 @@ type RoomClient = ActionEntity.Client<typeof Rpc>;
 
 expectTypeOf<Effect.Success<typeof clientOf>>().toEqualTypeOf<RoomClient>();
 
-type Reached =
-  | ClusterError.MailboxFull
-  | ClusterError.AlreadyProcessingMessage
-  | ClusterError.PersistenceError
-  | ClusterError.EntityNotAssignedToRunner;
-
 expectTypeOf<ReturnType<RoomClient["get"]>>().toEqualTypeOf<
-  Effect.Effect<string, Missing | Action.BuiltIn | Reached>
+  Effect.Effect<string, Missing | Action.BuiltIn>
 >();
+
+const Pinged = ActionEntity.make("Pinged", Rpc, {
+  key: byRoom,
+  rpcs: RpcGroup.make(
+    NativeRpc.make("ping", { success: Schema.Int, error: Missing })
+  ),
+});
+
+const nativesOf = ActionEntity.nativeClient(Pinged, { timeout: "5 seconds" });
+
+expectTypeOf<
+  Effect.Services<typeof nativesOf>
+>().toEqualTypeOf<Sharding.Sharding>();
+
+declare const natives: Effect.Success<typeof nativesOf>;
+
+expectTypeOf(natives("a").ping()).toEqualTypeOf<
+  Effect.Effect<number, Missing | Action.Unavailable>
+>();
+
+expectTypeOf(natives("a").ping(undefined, { discard: true })).toEqualTypeOf<
+  Effect.Effect<void, Action.Unavailable>
+>();
+
+expectTypeOf(natives("a")).not.toHaveProperty("get");
 
 declare const room: RoomClient;
 
 expectTypeOf(room.watch(Changed, { room: "a" })).toEqualTypeOf<
   Stream.Stream<
     Event.Received<typeof Changed>,
-    Event.SubscriptionError | Action.BuiltIn | Reached
+    Event.SubscriptionError | Action.BuiltIn
   >
 >();
 

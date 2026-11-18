@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Breaking changes
+
+**`ActionEntity.client(entity, options?)` answers an entity it could not reach, and a call past its deadline, with `Action.Unavailable`, as `ActionEntity.reaching` does.** **Reversed: its methods failed with the cluster's own errors and had no deadline.** What `Entity.client` fails with, `MailboxFull`, `PersistenceError`, `AlreadyProcessingMessage` or `EntityNotAssignedToRunner`, was a call's typed failure, in `ActionEntity.MethodError` and `WatchError`, and a call to an entity no runner is assigned waited without end; now each fails with `Action.Unavailable`, as does a call or a poll unanswered within `options.timeout`, 20 seconds by default, its message naming the rpc and the entity and saying the outcome is unknown. `MethodError` and `WatchError` no longer hold the four. The deadline bounds each call and each poll alone, never a watch, and a streaming action has none. A watch now asks the entity again after any of the four, where it ended on `AlreadyProcessingMessage` and `EntityNotAssignedToRunner`.
+
+- Migrate: drop a wrapper mapping `ActionEntity.isClusterFailure` or a timeout to an error of your own around calls through `ActionEntity.client`, and match `Unavailable` where you matched the four; give `client(entity, { timeout })` where a call legitimately runs longer than 20 seconds. Effect's own `Entity.client` is unchanged.
+
+**`ActionEntity.ReachingOptions` is renamed `ActionEntity.EntityCallOptions`**, as `client` and `nativeClient` take it too, beside `reaching`; its one field, `timeout`, is unchanged.
+
+- Migrate: replace `ActionEntity.ReachingOptions` with `ActionEntity.EntityCallOptions`.
+
+### Other changes
+
+- New `Action.isUnavailable`, whether a value is the built-in `Action.Unavailable`, for a caller that answers it apart, `Effect.catchIf(call, Action.isUnavailable, retryLater)`, in place of `Schema.is(Action.Unavailable)`.
+- New `ActionEntity.nativeClient(entity, options?)`, the client of an entity's native rpcs, `make`'s `rpcs`, for an entity id: Effect's own client, `(yield* ActionEntity.nativeClient(Room))("lobby").expire()`, each call answering as `client`'s, `Action.Unavailable` in place of the cluster's errors and past `options.timeout`, a stream rpc's call without a deadline, its stream and its `asQueue` queue ending with `Unavailable` where the entity could not be reached. `ActionEntity.NativeClient` is its type.
+- `ActionCluster.failureResponse` in `@gjermundgaraba/effect-actions-cloudflare` answers `Action.Unavailable` with a 503 and `Retry-After: 1`, as it answers a cluster failure, where it was a 500, so a Worker route calling `ActionEntity.client` or `nativeClient` itself answers an unreached entity as before. A cause that also holds a defect, such as a finalizer that died, is now a logged 500, where a cluster failure beside it made it an unlogged 503.
+- An `Action.Unavailable` that `ActionEntity.reaching` answers for a poll names the poll's rpc, `<event>/poll`, and a webhook subscribe's or unsubscribe's `<event>/subscribe` or `<event>/unsubscribe`, where it named the event, and `reaching`'s deadline bounds the wait for the entity's answer alone, no longer encoding the input or decoding the answer in the caller's process.
+
 ## 0.34.0
 
 ### Breaking changes

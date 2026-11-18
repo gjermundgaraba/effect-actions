@@ -151,6 +151,12 @@ export class Unavailable extends Schema.TaggedError<
   declare private readonly "~declared in the action's error, or built in": unknown;
 }
 
+/**
+ * Whether a value is `Unavailable`, the built-in error a caller may try again later, such as one
+ * `ActionEntity.client` failed with: `Effect.catchIf(call, Action.isUnavailable, retryLater)`.
+ */
+export const isUnavailable = Schema.is(Unavailable);
+
 const refusals = [Unauthenticated, Forbidden] as const;
 
 /**

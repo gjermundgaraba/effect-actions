@@ -1,4 +1,12 @@
-import { Duration, Effect, Layer, Predicate, Schema, Stream } from "effect";
+import {
+  Duration,
+  Effect,
+  Function,
+  Layer,
+  Predicate,
+  Schema,
+  Stream,
+} from "effect";
 import type { Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
@@ -55,7 +63,7 @@ import {
   webhookCallsOf,
   webhookRpcsOf,
 } from "../rpc/erased.js";
-import type { ErasedCall, InputCheck, Reach } from "../rpc/erased.js";
+import type { InputCheck, Reach } from "../rpc/erased.js";
 import { forwarded } from "./forwarded.js";
 import { makeWake, wakeTag, WakeRpc } from "./wakes.js";
 
@@ -121,6 +129,11 @@ type WithoutNatives<B extends ActionRpc.Any> = [
       readonly "An entity's binding holds no native rpcs: give them to ActionEntity.make's rpcs": never;
     };
 
+const libraryRpcsOf = (binding: ActionRpc.Any) =>
+  erasedOf(binding.actions, binding.events, "ActionEntity.layer")
+    .merge(webhookRpcsOf(binding.events))
+    .add(WakeRpc);
+
 /** `make`'s options. */
 export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
   /**
@@ -182,9 +195,7 @@ export const make = <
     );
   }
 
-  const erased = erasedOf(binding.actions, binding.events, "ActionEntity.layer")
-    .merge(webhookRpcsOf(binding.events))
-    .add(WakeRpc);
+  const erased = libraryRpcsOf(binding);
 
   const rpcs = options.rpcs ?? RpcGroup.make();
 
@@ -516,40 +527,32 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
   );
 }
 
-const Transients = Schema.Union([
+const ClusterFailures = Schema.Union([
   ClusterError.MailboxFull,
   ClusterError.PersistenceError,
-]);
-
-const ClusterFailures = Schema.Union([
-  ...Transients.members,
   ClusterError.AlreadyProcessingMessage,
   ClusterError.EntityNotAssignedToRunner,
 ]);
 
-type ClusterFailure = typeof ClusterFailures.Type;
-
 /**
  * Whether a failure is one of those Effect's entity client fails with when the entity could not
  * be reached, `MailboxFull`, `PersistenceError`, `AlreadyProcessingMessage` and
- * `EntityNotAssignedToRunner`, which `client`'s `MethodError` holds and `reaching` answers as
+ * `EntityNotAssignedToRunner`, which `client`, `nativeClient` and `reaching` answer as
  * `Action.Unavailable`: a server forwarding calls into an entity, as the Cloudflare package's
- * socket host does, makes them a defect, and a Worker calling `client` itself answers them, as
- * the Cloudflare package's `ActionCluster.failureResponse` does, with a 503.
+ * socket host does, makes them a defect, and a Worker calling Effect's `Entity.client` itself
+ * answers them, as the Cloudflare package's `ActionCluster.failureResponse` does, with a 503.
  */
 export const isClusterFailure = Schema.is(ClusterFailures);
 
-const isTransient = Schema.is(Transients);
-
 /**
  * What one call of an action `A` fails with, beside the binding's errors `E`: its declared and
- * built-in errors, and what Effect's entity client fails with when the entity could not be
- * reached. An answer that does not decode is a defect.
+ * built-in errors, `Action.Unavailable` among them where the entity could not be reached or did
+ * not answer in time. An answer that does not decode is a defect.
  */
 export type MethodError<
   A extends Action.Any,
   E extends Action.Errors[number] = never,
-> = A["error"][number]["Type"] | E["Type"] | BuiltIns["Type"] | ClusterFailure;
+> = A["error"][number]["Type"] | E["Type"] | BuiltIns["Type"];
 
 type Method<A extends Action.Any, E extends Action.Errors[number]> = Call<
   A,
@@ -558,15 +561,14 @@ type Method<A extends Action.Any, E extends Action.Errors[number]> = Call<
 
 /**
  * What a watch of `W` over the binding `B` may fail with: a refusal, `InvalidInput`, the
- * binding's errors, an `Event.SubscriptionError` (`NotServed` for an event the entity does not
- * serve), or what Effect's entity client fails with that no retry outlasts.
+ * binding's errors or an `Event.SubscriptionError` (`NotServed` for an event the entity does not
+ * serve).
  */
 export type WatchError<W extends Event.Any, B extends ActionRpc.Any> =
   | Event.SubscriptionError
   | BuiltIns["Type"]
   | B["error"][number]["Type"]
-  | VerifierError<W, B["authentication"]>["Type"]
-  | ClusterFailure;
+  | VerifierError<W, B["authentication"]>["Type"];
 
 type Watching<B extends ActionRpc.Any> = [B["events"][number]] extends [never]
   ? unknown
@@ -589,27 +591,97 @@ export type Client<B extends ActionRpc.Any> = {
   >;
 } & Watching<B>;
 
-const entityCallOf = (
-  rpcs: ReturnType<Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>>,
-  headers: Headers.Headers | undefined
-): ErasedCall =>
-  erasedCallOf((tag, payload) => {
-    const method = rpcs[tag];
+/** `client`'s, `nativeClient`'s and `reaching`'s options. */
+export interface EntityCallOptions {
+  /**
+   * How long one call to the entity waits for its answer before failing with
+   * `Action.Unavailable`: an action's call, a native rpc's, a poll, and a webhook subscribe or
+   * unsubscribe. 20 seconds by default.
+   *
+   * **Gotchas**
+   *
+   * - It bounds the wait for the entity's answer alone, as the `Unavailable` it fails with says the entity did not answer: encoding the input and decoding the answer, in the caller's process, run outside it.
+   * - It bounds each call and each poll alone: a stream following an event, HTTP's `text/event-stream`, an RPC subscription or a watch, outlives it, each of its polls bounded by it.
+   * - A streaming rpc, a streaming action's, one declaring `progress` or answering `Action.Stream`, or a native one's, its `asQueue` call's included, has no deadline, as it may answer for longer: bound it with the host's request timeout.
+   * - The call is interrupted at the deadline, and the entity may have run part of it or all of it: the answer is `Unavailable`, the outcome unknown.
+   */
+  readonly timeout?: Duration.Input | undefined;
+}
 
-    return method === undefined
-      ? Effect.die(new Error(`ActionEntity: no rpc ${tag}`))
-      : method(payload, headers === undefined ? undefined : { headers });
-  });
+const defaultTimeout = Duration.seconds(20);
+
+type EntityRpcs = ReturnType<
+  Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>
+>;
+
+type CallOptions = Parameters<EntityRpcs[string]>[1];
+
+interface QueueOptions {
+  readonly asQueue?: boolean | undefined;
+  readonly streamBufferSize?: number | undefined;
+}
+
+const sendingWithin = (type: string, options: EntityCallOptions) => {
+  const timeout = Duration.fromInputUnsafe(options.timeout ?? defaultTimeout);
+
+  return (entityId: string, rpcs: EntityRpcs) => {
+    const unavailable = (tag: string, outcome: string) =>
+      new Action.Unavailable({
+        message: `${tag}: the entity ${type}/${entityId} ${outcome}; the call's outcome is unknown, as the entity may still run it`,
+      });
+
+    const unreached =
+      (tag: string) =>
+      ({ _tag }: typeof ClusterFailures.Type) =>
+        unavailable(tag, `could not be reached (${_tag})`);
+
+    return (tag: string, payload: unknown, callOptions?: CallOptions) => {
+      const method = rpcs[tag];
+
+      if (method === undefined) {
+        return Effect.die(new Error(`ActionEntity: no rpc ${tag}`));
+      }
+
+      const answer:
+        | Effect.Effect<Schema.Json, unknown>
+        | Stream.Stream<Schema.Json, unknown> = method(payload, {
+        ...callOptions,
+        asQueue: false,
+      });
+
+      return Effect.isEffect(answer)
+        ? Effect.catchIf(answer, isClusterFailure, (failure) =>
+            Effect.fail(unreached(tag)(failure))
+          ).pipe(
+            Effect.timeoutOrElse({
+              duration: timeout,
+              orElse: () =>
+                Effect.fail(
+                  unavailable(
+                    tag,
+                    `did not answer within ${Duration.format(timeout)}`
+                  )
+                ),
+            })
+          )
+        : Stream.catchIf(answer, isClusterFailure, (failure) =>
+            Stream.fail(unreached(tag)(failure))
+          );
+    };
+  };
+};
 
 const reachOf =
   <Type extends string, B extends ActionRpc.Any, N extends Rpc.Any>(
     entity: Entity<Type, B, N>,
-    headers: Effect.Effect<Headers.Headers | undefined>
+    headers: Effect.Effect<Headers.Headers | undefined>,
+    options: EntityCallOptions
   ) =>
   (
     clientFor: Effect.Success<Cluster.Entity<string, ErasedRpc>["client"]>
   ): Reach => {
     const named = namedBy(entity.key);
+    const sending = sendingWithin(entity.type, options);
 
     return (contract, input) => {
       const entityId = named(input);
@@ -620,35 +692,51 @@ const reachOf =
               message: `The input of ${contract.name} names no entity of ${entity.type}`,
             })
           )
-        : Effect.map(headers, (sent) =>
-            entityCallOf(clientFor(entityId), sent)
-          );
+        : Effect.map(headers, (sent) => {
+            const send = sending(entityId, clientFor(entityId));
+
+            return erasedCallOf((tag, payload) =>
+              send(
+                tag,
+                payload,
+                sent === undefined ? undefined : { headers: sent }
+              )
+            );
+          });
     };
   };
 
 /**
  * The client of `entity` over Effect's own `Entity.client`: one method per action taking its
  * input, `rooms.postMessage({ room: "lobby", text })`, and `watch(event, input, options)`, which
- * polls the event's rpc, each call and watch sent to the entity its input's key names. Requires
- * `Sharding`, as `Entity.client` does: `TestRunner.layer` in a test. The entity's native rpcs are
- * Effect's own client's methods: `(yield* Room.client)("lobby").expire()`.
+ * polls the event's rpc, each call and watch sent to the entity its input's key names. A call
+ * the entity could not be reached for, or that did not answer within `options.timeout`, 20
+ * seconds by default, fails with the built-in `Action.Unavailable`, as through `reaching`.
+ * Requires `Sharding`, as `Entity.client` does: `TestRunner.layer` in a test. The entity's native
+ * rpcs are `nativeClient`'s methods.
  *
  * **Gotchas**
  *
  * - An input whose key names no entity, such as one missing the key's field, fails with `Forbidden`, sending nothing.
  * - Headers set with `RpcClient.withHeaders` around a call go with its envelope, which is how a protected call sends its credential; a call without them fails `Unauthenticated`.
- * - A watch polls, its only `mode` `"poll"`, at the page's `nextPollMs`, its polls holding the subscription hook of the caller's principal in the entity until its source's `lease` lapses after the last, whichever watch sent it.
- * - A watch asks the entity again after `MailboxFull`, `PersistenceError` or `Action.Unavailable`, from where it reached, a second later and doubling to 30 seconds; another declared error, a refusal included, ends it.
+ * - What `Entity.client` fails with, `MailboxFull`, `AlreadyProcessingMessage`, `PersistenceError` or `EntityNotAssignedToRunner`, is the call's `Action.Unavailable`, its message naming that failure and saying the outcome is unknown, as the entity may still run the call.
+ * - A watch polls, its only `mode` `"poll"`, at the page's `nextPollMs`, each poll bounded by `timeout`, its polls holding the subscription hook of the caller's principal in the entity until its source's `lease` lapses after the last, whichever watch sent it.
+ * - A watch asks the entity again after `Action.Unavailable`, from where it reached, a second later and doubling to 30 seconds; another declared error, a refusal included, ends it.
  */
 export const client = <
   const Type extends string,
   const B extends ActionRpc.Any,
   N extends Rpc.Any = never,
 >(
-  entity: Entity<Type, B, N>
+  entity: Entity<Type, B, N>,
+  options: EntityCallOptions = {}
 ): Effect.Effect<Client<B>, never, Sharding.Sharding> => {
-  const methods = methodsOf(entity.binding, polledTransport(isTransient));
-  const reach = reachOf(entity, Effect.undefined);
+  const methods = methodsOf(
+    entity.binding,
+    polledTransport(Function.constFalse)
+  );
+
+  const reach = reachOf(entity, Effect.undefined, options);
 
   return Effect.map(
     entity.client,
@@ -658,27 +746,75 @@ export const client = <
   );
 };
 
+/**
+ * Effect's own client of an entity's native rpcs `N`, `make`'s `rpcs`, its methods keyed by rpc
+ * tag, each failing with its rpc's errors and `Action.Unavailable` in place of what Effect's
+ * entity client fails with.
+ */
+export type NativeClient<N extends Rpc.Any> = RpcClient.RpcClient.From<
+  N,
+  Action.Unavailable
+>;
+
+/**
+ * The client of `entity`'s native rpcs, `make`'s `rpcs`, over Effect's own `Entity.client`, for
+ * the entity id it is given: `(yield* ActionEntity.nativeClient(Room))("lobby").expire()`. Each
+ * call answers as `client`'s do: one the entity could not be reached for, or that did not answer
+ * within `options.timeout`, 20 seconds by default, fails with `Action.Unavailable`. Requires
+ * `Sharding`, as `Entity.client` does.
+ *
+ * **Gotchas**
+ *
+ * - A tell, a call with `discard: true`, is bounded too: it fails with `Unavailable` where the entity's mailbox did not take it within `timeout`.
+ * - A stream rpc's call has no deadline, and a cluster failure ends its stream with `Unavailable`; a call with `asQueue: true` makes its queue from that stream, buffering `streamBufferSize` elements, 16 by default, so a take fails with `Unavailable` too.
+ * - Effect's own `entity.client` still fails with the cluster's errors, and waits without end on an entity no runner is assigned: call it only where that is wanted.
+ */
+export function nativeClient<
+  const Type extends string,
+  const B extends ActionRpc.Any,
+  N extends Rpc.Any,
+>(
+  entity: Entity<Type, B, N>,
+  options?: EntityCallOptions
+): Effect.Effect<
+  (entityId: string) => NativeClient<N>,
+  never,
+  Sharding.Sharding
+>;
+export function nativeClient(
+  entity: Entity<string, ActionRpc.Any, Rpc.AnyWithProps>,
+  options: EntityCallOptions = {}
+): Effect.Effect<(entityId: string) => object, never, Sharding.Sharding> {
+  const sending = sendingWithin(entity.type, options);
+  const library = libraryRpcsOf(entity.binding).requests;
+
+  const tags = [...entity.protocol.requests.keys()].filter(
+    (tag) => !library.has(tag)
+  );
+
+  return Effect.map(entity.client, (clientFor) => (entityId) => {
+    const send = sending(entityId, clientFor(entityId));
+
+    return Object.fromEntries(
+      tags.map((tag) => [
+        tag,
+        (payload: unknown, callOptions?: CallOptions & QueueOptions) => {
+          const answer = send(tag, payload, callOptions);
+
+          return Stream.isStream(answer) && callOptions?.asQueue === true
+            ? Stream.toQueue(answer, {
+                capacity: callOptions.streamBufferSize ?? 16,
+              })
+            : answer;
+        },
+      ])
+    );
+  });
+}
+
 type Nothing<C extends Action.Any | Event.Any> = {
   readonly [K in C["name"]]: never;
 };
-
-/** `reaching`'s options. */
-export interface ReachingOptions {
-  /**
-   * How long one call to the entity waits for its answer before failing with
-   * `Action.Unavailable`: an action's call, a poll, and a webhook subscribe or unsubscribe.
-   * 20 seconds by default.
-   *
-   * **Gotchas**
-   *
-   * - It bounds each call and each poll alone: a stream following an event, HTTP's `text/event-stream`, an RPC subscription or a watch, outlives it, each of its polls bounded by it.
-   * - A streaming action, one declaring `progress` or answering `Action.Stream`, has no deadline, as it may answer for longer: bound it with the host's request timeout.
-   * - The call is interrupted at the deadline, and the entity may have run part of it or all of it: the answer is `Unavailable`, the outcome unknown.
-   */
-  readonly timeout?: Duration.Input | undefined;
-}
-
-const defaultTimeout = Duration.seconds(20);
 
 /**
  * The implementations of `entity`'s actions and event types that any surface serves beside its
@@ -711,7 +847,7 @@ export const reaching = <
   N extends Rpc.Any = never,
 >(
   entity: Entity<Type, B, N>,
-  options: ReachingOptions = {}
+  options: EntityCallOptions = {}
 ): ReadonlyArray<
   | Implementation<
       B["actions"][number],
@@ -727,43 +863,11 @@ export const reaching = <
     >
 > => {
   const { binding } = entity;
-  const reaches = Effect.map(entity.client, reachOf(entity, forwarded));
-  const named = namedBy(entity.key);
-  const timeout = Duration.fromInputUnsafe(options.timeout ?? defaultTimeout);
 
-  const unavailable =
-    (contract: { readonly name: string }, input: ErasedValue) =>
-    (outcome: string) =>
-      new Action.Unavailable({
-        message: `${contract.name}: the entity ${entity.type}/${named(input) ?? "none"} ${outcome}; the call's outcome is unknown, as the entity may still run it`,
-      });
-
-  const unreached = <A, E, R>(
-    contract: { readonly name: string },
-    input: ErasedValue,
-    answer: Effect.Effect<A, E, R>
-  ) =>
-    Effect.catchIf(answer, isClusterFailure, (failure) =>
-      Effect.fail(
-        unavailable(contract, input)(`could not be reached (${failure._tag})`)
-      )
-    );
-
-  const bounded = <A, E, R>(
-    contract: { readonly name: string },
-    input: ErasedValue,
-    answer: Effect.Effect<A, E, R>
-  ) =>
-    Effect.timeoutOrElse(unreached(contract, input, answer), {
-      duration: timeout,
-      orElse: () =>
-        Effect.fail(
-          unavailable(
-            contract,
-            input
-          )(`did not answer within ${Duration.format(timeout)}`)
-        ),
-    });
+  const reaches = Effect.map(
+    entity.client,
+    reachOf(entity, forwarded, options)
+  );
 
   const handlerOf = (
     action: Action.Any,
@@ -771,24 +875,11 @@ export const reaching = <
   ): WrittenHandler<unknown> => {
     const method = actionMethodOf(action, binding)(reach);
 
-    return (input, reporting) => {
-      const answer = method(
+    return (input, reporting) =>
+      method(
         input,
         ...(reporting === undefined ? [] : [{ onProgress: reporting.progress }])
       );
-
-      if (!Effect.isEffect(answer)) {
-        return Stream.catchIf(answer, isClusterFailure, (failure) =>
-          Stream.fail(
-            unavailable(action, input)(`could not be reached (${failure._tag})`)
-          )
-        );
-      }
-
-      return action.progress === undefined
-        ? bounded(action, input, answer)
-        : unreached(action, input, answer);
-    };
   };
 
   const runOf = (event: Event.Any, reach: Reach): Run => {
@@ -804,9 +895,7 @@ export const reaching = <
       input: ErasedValue,
       sent: (held: WebhookHolder) => Effect.Effect<A, unknown, unknown>
     ) =>
-      Effect.flatMap(reach(event, input), (call) =>
-        bounded(event, input, sent(webhookCalls(call)))
-      );
+      Effect.flatMap(reach(event, input), (call) => sent(webhookCalls(call)));
 
     return {
       polls: true,
@@ -824,28 +913,18 @@ export const reaching = <
         : undefined,
       poll: (input, cursor, { maxEvents }) =>
         Effect.flatMap(reached(input), ([call, json]) =>
-          bounded(
-            event,
-            input,
-            poll(call)({
-              input: json,
-              cursor,
-              ...(maxEvents === undefined ? {} : { maxEvents }),
-            })
-          )
+          poll(call)({
+            input: json,
+            cursor,
+            ...(maxEvents === undefined ? {} : { maxEvents }),
+          })
         ),
       stream: (input, cursor) =>
         Stream.unwrap(
           Effect.map(reached(input), ([call, json]) => {
             const transport = watched(call)(json);
 
-            return polling(
-              {
-                poll: (from, watch) =>
-                  bounded(event, input, transport.poll(from, watch)),
-              },
-              isTransient
-            )(cursor);
+            return polling(transport, Function.constFalse)(cursor);
           })
         ),
     };

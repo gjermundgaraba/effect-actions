@@ -686,8 +686,10 @@ describe("ActionEntity.reaching's cluster failures", () => {
 
       return Effect.gen(function* () {
         const inProcess = yield* Action.client(reached);
+        const direct = yield* ActionEntity.client(Room);
 
         const failed = yield* Effect.flip(inProcess.read({ room: "a" }));
+        const directly = yield* Effect.flip(direct.read({ room: "a" }));
 
         const mcp = yield* ActionMcp.client([Read], {
           transformClient: bearer("alice"),
@@ -712,6 +714,7 @@ describe("ActionEntity.reaching's cluster failures", () => {
           message: failed.message,
         });
         expect(overMcp).toStrictEqual(failed);
+        expect(directly).toStrictEqual(failed);
         expect(rooms.ran.read).toBe(0);
       }).pipe(
         Effect.scoped,
@@ -774,8 +777,16 @@ describe("ActionEntity.reaching's timeout", () => {
       return Effect.gen(function* () {
         const inProcess = yield* Action.client(hurried);
 
+        const direct = yield* ActionEntity.client(Napper, {
+          timeout: "200 millis",
+        });
+
         const quick = yield* inProcess.nap({ room: "a", ms: 0 });
         const late = yield* Effect.flip(inProcess.nap({ room: "a", ms: 5000 }));
+
+        const lateDirectly = yield* Effect.flip(
+          direct.nap({ room: "c", ms: 5000 })
+        );
 
         const answered = yield* call(
           "nap",
@@ -789,6 +800,10 @@ describe("ActionEntity.reaching's timeout", () => {
           "the entity Napper/a did not answer within"
         );
         expect(late.message).toContain("the call's outcome is unknown");
+        expect(lateDirectly).toBeInstanceOf(Action.Unavailable);
+        expect(lateDirectly.message).toBe(
+          "nap: the entity Napper/c did not answer within 200ms; the call's outcome is unknown, as the entity may still run it"
+        );
         expect(answered.status).toBe(503);
         expect(answered.headers["retry-after"]).toBe("1");
         expect(yield* answered.json).toMatchObject({ _tag: "Unavailable" });

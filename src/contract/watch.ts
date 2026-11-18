@@ -11,7 +11,7 @@ import {
 } from "effect";
 
 import { CallbackUrl } from "./callback.js";
-import { Unavailable } from "./errors.js";
+import { isUnavailable } from "./errors.js";
 import * as Event from "./Event.js";
 import { Checked, Gap } from "./occurrence.js";
 import { paged } from "./pages.js";
@@ -68,9 +68,6 @@ const afterFailures = <E>(transient: (error: E) => boolean) =>
       )
     )
   );
-
-const isUnavailable: Predicate.Refinement<unknown, Unavailable> =
-  Schema.is(Unavailable);
 
 const isSubscriptionError: Predicate.Refinement<
   unknown,

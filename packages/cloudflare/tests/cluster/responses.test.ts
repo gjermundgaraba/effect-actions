@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/ActionCluster";
+import * as Action from "@gjermundgaraba/effect-actions/Action";
 import { Cause, Effect, Logger } from "effect";
 import { ClusterError } from "effect/cluster";
 
@@ -26,7 +27,7 @@ const answered = (cause: Cause.Cause<unknown>) =>
 
 describe("ActionCluster.failureResponse", () => {
   it.effect(
-    "answers a cluster failure 503 with Retry-After, interrupts alone 499, and anything else 500 after logging it",
+    "answers a cluster failure or Action.Unavailable 503 with Retry-After, interrupts alone 499, and anything else 500 after logging it",
     () =>
       Effect.gen(function* () {
         const unreached = Cause.fail(
@@ -40,6 +41,11 @@ describe("ActionCluster.failureResponse", () => {
           retryAfter: "1",
           logged: [],
         });
+        expect(
+          yield* answered(
+            Cause.fail(new Action.Unavailable({ message: "unreached" }))
+          )
+        ).toStrictEqual({ status: 503, retryAfter: "1", logged: [] });
         expect(yield* answered(Cause.interrupt())).toStrictEqual({
           status: 499,
           retryAfter: null,
@@ -53,6 +59,17 @@ describe("ActionCluster.failureResponse", () => {
         expect(
           (yield* answered(Cause.combine(unreached, Cause.interrupt()))).status
         ).toBe(503);
+
+        const unavailableAndDied = Cause.combine(
+          Cause.fail(new Action.Unavailable({ message: "unreached" })),
+          died
+        );
+
+        expect(yield* answered(unavailableAndDied)).toStrictEqual({
+          status: 500,
+          retryAfter: null,
+          logged: [["Error", unavailableAndDied]],
+        });
       })
   );
 });
