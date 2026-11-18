@@ -161,6 +161,8 @@ export const buildEvents = Event.implement(
 
 A subscriber holding a stream open is read again every 5 seconds. Where the application writes the store itself, it wakes them at once: after the write, `Event.Events`' `notify`, as [build-events/src/builds/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/builds/handlers.ts) does after each build finishes. A store another process writes is read at the next poll.
 
+Where the store appends entries under increasing integer ids that last as long as it does, such as a SQLite table's `INTEGER PRIMARY KEY`, `Event.appended` builds the check from the newest id and a read after an id, as the Cloudflare package's chat-rooms example does for its messages: the cursor is the last id read, and what a stale cursor answers is on `Event.appended`.
+
 - **Check what a subscriber may see where the data is read**, as an action's handler does: `authorize` decides whether it may subscribe at all, and receives the event type, not the subscription's input.
 
 ## Send a value whole
@@ -194,7 +196,7 @@ export const statusEvents = Event.implement(
 );
 ```
 
-[build-events/src/builds/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/builds/handlers.ts) notifies after each build with its pipeline as the key, so a build wakes only that pipeline's subscribers. What a notify without a change sends, and why a value written as it is read is not missed, is on `Event.Current`.
+[build-events/src/builds/handlers.ts](node_modules/@gjermundgaraba/effect-actions/examples/build-events/src/builds/handlers.ts) notifies after each build with its pipeline as the key, so a build wakes only that pipeline's subscribers. A notify that leaves the value as the subscriber saw it sends nothing. A polling client asks again at the source's `nextPoll`, 5 seconds by default, where a value changing faster is worth a quicker poll; why a value written as it is read is not missed is on `Event.Current`.
 
 ## Keep what nothing else keeps
 

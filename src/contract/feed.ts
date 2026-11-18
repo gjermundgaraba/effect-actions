@@ -6,13 +6,15 @@ import {
   Layer,
   Option,
   Predicate,
+  Schema,
   Stream,
 } from "effect";
 import type { Context } from "effect";
 
 import { jsonRoundTrip } from "./call.js";
 import { Anyone } from "./caller.js";
-import { canonicalInput } from "./canonical.js";
+import { canonical, canonicalInput } from "./canonical.js";
+import { sha256Hex } from "./digest.js";
 import { Unauthenticated } from "./errors.js";
 import type * as Event from "./Event.js";
 import { attachmentsOf, Events, reaches } from "./hub.js";
@@ -245,12 +247,39 @@ const checkRun = (
   };
 };
 
+const unencodedDigest = "";
+
+const digestDotRevision = (cursor: string | null) => {
+  const separator = cursor?.indexOf(".") ?? -1;
+
+  return cursor === null || separator < 0
+    ? undefined
+    : {
+        digest: cursor.slice(0, separator),
+        revision: cursor.slice(separator + 1),
+      };
+};
+
 const currentRun = (
   event: Event.Any,
   source: Event.Current<Event.Any, unknown>,
   checking: Checking
-): Run =>
-  checkRun(
+): Run => {
+  const encodeInput = Schema.encodeUnknownEffect(
+    Schema.toCodecJson(event.input)
+  );
+
+  const encodeData = Schema.encodeUnknownEffect(
+    Schema.toCodecJson(event.payload)
+  );
+
+  const digestOf = (input: ErasedValue, data: ErasedValue) =>
+    Effect.all([encodeInput(input), encodeData(data)]).pipe(
+      Effect.flatMap((sent) => sha256Hex(canonical(sent))),
+      Effect.orElseSucceed(() => unencodedDigest)
+    );
+
+  return checkRun(
     event,
     {
       key: source.key,
@@ -258,19 +287,30 @@ const currentRun = (
       check: (input, cursor) =>
         Effect.gen(function* () {
           const at = yield* checking.revision(yield* keyOf(source, input));
+          const seen = digestDotRevision(cursor);
 
-          if (cursor === at) {
-            return { cursor: at, events: [] };
+          if (seen?.revision === at) {
+            return {
+              cursor: `${seen.digest}.${at}`,
+              events: [],
+              nextPoll: source.nextPoll,
+            };
           }
 
+          const data = yield* source.current(input);
+          const digest = yield* digestOf(input, data);
+          const next = `${digest}.${at}`;
+
           return {
-            cursor: at,
-            events: [{ eventId: at, data: yield* source.current(input) }],
+            cursor: next,
+            events: digest === seen?.digest ? [] : [{ eventId: next, data }],
+            nextPoll: source.nextPoll,
           };
         }),
     },
     checking
   );
+};
 
 const logRun = (
   event: Event.Any,

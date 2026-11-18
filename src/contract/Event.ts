@@ -1,4 +1,12 @@
-import { Array as Arr, Data, Effect, Match, Predicate, Schema } from "effect";
+import {
+  Array as Arr,
+  Data,
+  Effect,
+  Match,
+  Option,
+  Predicate,
+  Schema,
+} from "effect";
 import type { DateTime, Duration, Scope, Stream } from "effect";
 
 import type * as Action from "./Action.js";
@@ -224,24 +232,118 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
   readonly current?: never;
 }
 
+/** What `appended` reads after a position: the entries past it, oldest first. */
+export interface Appended<E extends Any> {
+  /** The occurrences' data, oldest first: none where every entry read was skipped. */
+  readonly items: ReadonlyArray<E["payload"]["Type"]>;
+  /**
+   * The id of the last entry read, where it is not the last item's, as where entries read are
+   * skipped: the next read goes on after it.
+   */
+  readonly through?: number | undefined;
+  /** More entries are ready past `through`: the subscriber reads again without waiting. */
+  readonly hasMore?: boolean | undefined;
+}
+
+/** What `appended` needs to page a store appending entries under increasing integer ids. */
+export interface AppendedOptions<E extends Any, R = never> extends Hooked<
+  E,
+  R
+> {
+  /** The id of the newest entry, `0` while there is none, run as the subscriber. */
+  readonly newest: (
+    input: E["input"]["Type"]
+  ) => Effect.Effect<number, Refusal, R>;
+  /** The entries after `id`, oldest first, as many as one read takes, run as the subscriber. */
+  readonly after: (
+    input: E["input"]["Type"],
+    id: number
+  ) => Effect.Effect<Appended<E>, Refusal, R>;
+  /** The id of the entry an occurrence's data was read from: its `eventId`, and a cursor. */
+  readonly id: (data: E["payload"]["Type"]) => number;
+  /** As `Check`'s `notified`. */
+  readonly notified?: boolean | undefined;
+  /** Each page's `nextPoll`; defaults to 5 seconds. */
+  readonly nextPoll?: Duration.Input | undefined;
+}
+
+const appendedId = Schema.decodeUnknownOption(
+  Schema.NumberFromString.check(
+    Schema.isInt(),
+    Schema.isGreaterThanOrEqualTo(0)
+  )
+);
+
 /**
- * An event type whose occurrence is the whole value, such as a status or a list small enough to
- * send whole: a subscriber receives the value as it is first, then again after each
- * `Events.notify` that reaches it, never a change it missed one by one. The library keeps a
- * revision per key, which each such notify moves, as the cursor and each occurrence's id. Its
- * streams and webhook deliveries read it again only when notified, on no timer, so an idle
- * Cloudflare Durable Object holding them hibernates; a polling client polls every 5 seconds.
+ * A check source for a store that appends entries under increasing integer ids, such as a table's
+ * `INTEGER PRIMARY KEY`: its cursor is the id of the last entry a subscriber read, and an
+ * occurrence's `eventId` its entry's id. A new subscriber starts after the newest entry. `event`
+ * types the options alone, as `Event.appended(MessagePosted, { … })` in `implement`'s builder.
  *
  * **Gotchas**
  *
- * - A notify without a change sends the value again, under a new id: notify after a write that changed it.
- * - The revision is read before `current`, so a value written between them is sent again at the next read, never missed: write the value, then notify.
+ * - A cursor that is no id up to `newest`'s, such as another store's or one past a store emptied since, is answered with `truncated: true` and the newest id: the subscriber goes on from there.
+ * - A store deleting its oldest entries sends no gap for those a subscriber resuming before them missed: a cursor is stale only past `newest`.
+ * - Ids that start again, as a store kept in memory restarts them, make an old cursor read entries it never saw as the ones after it: such a store's cursor carries its epoch in a `check` of its own.
+ */
+export const appended = <E extends Any, R = never>(
+  _event: E,
+  { newest, after, id, nextPoll, ...source }: AppendedOptions<E, R>
+): Check<E, R> => ({
+  ...source,
+  check: (input, cursor) =>
+    Effect.gen(function* () {
+      const last = yield* newest(input);
+      const from = Option.filter(appendedId(cursor), (at) => at <= last);
+
+      if (Option.isNone(from)) {
+        return {
+          events: [],
+          cursor: String(last),
+          truncated: cursor !== null,
+          nextPoll,
+        };
+      }
+
+      const read = yield* after(input, from.value);
+      const lastItem = read.items.at(-1);
+
+      return {
+        events: read.items.map((data) => ({ eventId: String(id(data)), data })),
+        cursor: String(
+          read.through ?? (lastItem === undefined ? from.value : id(lastItem))
+        ),
+        hasMore: read.hasMore,
+        nextPoll,
+      };
+    }),
+});
+
+/**
+ * An event type whose occurrence is the whole value, such as a status or a list small enough to
+ * send whole: a subscriber receives the value as it is first, then again after each
+ * `Events.notify` that reaches it and changes it, never a change it missed one by one. The
+ * library keeps a revision per key, which each such notify moves; the revision and a digest of
+ * the subscription's input and the value sent make the cursor and each occurrence's id. Its streams and webhook deliveries
+ * read it again only when notified, on no timer, so an idle Cloudflare Durable Object holding
+ * them hibernates; a polling client polls at `nextPoll`.
+ *
+ * **Gotchas**
+ *
+ * - A notify reads the value again for each subscriber it reaches, though a value equal to the one its cursor saw, for the same input, is not sent: notify after a write that may change it, not on a timer.
+ * - The revision is read before `current`, so a value written between them is read again at the next read, never missed: write the value, then notify.
  */
 export interface Current<E extends Any, R = never> extends Hooked<E, R> {
   /** The value as it is, as the subscriber's `input` selects it, run as the subscriber. */
   readonly current: (
     input: E["input"]["Type"]
   ) => Effect.Effect<E["payload"]["Type"], Refusal, R>;
+  /**
+   * How long a polling client waits before it asks again, read in the bounds of `Page`'s
+   * `nextPoll`; defaults to 5 seconds. Streams and webhook deliveries never wait on it: they read
+   * when notified.
+   */
+  readonly nextPoll?: Duration.Input | undefined;
   readonly check?: never;
   readonly log?: never;
 }

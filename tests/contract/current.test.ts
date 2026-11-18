@@ -34,6 +34,7 @@ const makeStatuses = () => {
 const Polled = Schema.fromJsonString(
   Schema.Struct({
     cursor: Schema.String,
+    nextPollMs: Schema.Finite,
     events: Schema.Array(
       Schema.Struct({ eventId: Schema.String, data: Status.payload })
     ),
@@ -60,6 +61,7 @@ interface Minted {
   readonly cursor: string;
   readonly key: Key | undefined;
   readonly at: number;
+  readonly value: number;
 }
 
 const Command = Schema.Union([
@@ -80,7 +82,7 @@ const Commands = Schema.Array(Command).check(
 
 describe("Event current source", () => {
   it.effect.prop(
-    "answers a cursor behind the notifies reaching its key, or another key's, with the value as it is, under an id never given before, and its own cursor with nothing",
+    "answers a cursor of its key with the value as it is where a notify reaching the key moved it to a value the cursor did not see, under an id never given before, another key's cursor with the value, and anything else with nothing",
     { steps: Commands },
     ({ steps }) =>
       Effect.gen(function* () {
@@ -133,7 +135,10 @@ describe("Event current source", () => {
                 ? { cursor: null, current: false }
                 : {
                     cursor: held.cursor,
-                    current: held.key === key && held.at === reachedOf(key),
+                    current:
+                      held.key === key &&
+                      (held.at === reachedOf(key) ||
+                        held.value === (statuses.values.get(key) ?? 0)),
                   };
             })
           );
@@ -165,7 +170,12 @@ describe("Event current source", () => {
             expect(occurrence.eventId).toBe(page.cursor);
           }
 
-          minted.push({ cursor: page.cursor, key, at });
+          minted.push({
+            cursor: page.cursor,
+            key,
+            at,
+            value: statuses.values.get(key) ?? 0,
+          });
         }
       }).pipe(Effect.provide(Event.layerMemory))
   );
@@ -197,6 +207,67 @@ describe("Event current source", () => {
             item._tag === "Gap" ? "gap" : item.data.value
           )
         ).toStrictEqual([0, 1, 0]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "sends a watcher nothing for a notify that leaves its value as it was, nor for one setting it back to the value it has",
+    () =>
+      Effect.gen(function* () {
+        const statuses = makeStatuses();
+        const client = yield* Action.client(statuses.implementation);
+        const events = yield* Event.Events;
+
+        const watching = yield* client
+          .watch(Status, { key: "a" })
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+
+        yield* settle;
+        yield* events.notify(Status, { key: "a" });
+        yield* settle;
+        statuses.values.set("a", 1);
+        statuses.values.set("a", 0);
+        yield* events.notify(Status, { key: "a" });
+        yield* settle;
+        statuses.values.set("a", 2);
+        yield* events.notify(Status, { key: "a" });
+
+        const received = yield* Fiber.join(watching);
+
+        expect(
+          received.map((item) =>
+            item._tag === "Gap" ? "gap" : item.data.value
+          )
+        ).toStrictEqual([0, 2]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "answers a poll with the source's nextPoll, the value changed or not",
+    () =>
+      Effect.gen(function* () {
+        const served = Testing.layer(
+          ActionHttp.layer(
+            ActionHttp.make([Status]),
+            Event.implement(Status, {
+              current: () => Effect.succeed({ value: 0 }),
+              nextPoll: "1 second",
+            })
+          )
+        );
+
+        const first = yield* poll(undefined, null).pipe(Effect.provide(served));
+
+        const again = yield* poll(undefined, first.cursor).pipe(
+          Effect.provide(served)
+        );
+
+        expect([first, again].map((page) => page.events.length)).toStrictEqual([
+          1, 0,
+        ]);
+        expect([first.nextPollMs, again.nextPollMs]).toStrictEqual([
+          1000, 1000,
+        ]);
       }).pipe(Effect.provide(Event.layerMemory))
   );
 
