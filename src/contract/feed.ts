@@ -3,6 +3,7 @@ import {
   DateTime,
   Duration,
   Effect,
+  Exit,
   Layer,
   Option,
   Predicate,
@@ -12,7 +13,8 @@ import type { Context } from "effect";
 
 import { jsonRoundTrip } from "./call.js";
 import { Anyone } from "./caller.js";
-import { canonicalInput } from "./canonical.js";
+import { canonical, canonicalInput } from "./canonical.js";
+import { sha256Hex } from "./digest.js";
 import { Unauthenticated } from "./errors.js";
 import type * as Event from "./Event.js";
 import { attachmentsOf, Events, reaches } from "./hub.js";
@@ -114,6 +116,8 @@ export type Running<E = unknown, R = unknown> = ReadonlyArray<
 
 export const defaultNextPoll = Duration.seconds(5);
 
+const shortestNextPoll = Duration.seconds(1);
+
 const longestNextPoll = Duration.minutes(5);
 
 const logPageSize = 100;
@@ -192,9 +196,9 @@ const answeredPage = ({
     cursor: answered.cursor,
     truncated: answered.truncated === true,
     hasMore: answered.hasMore === true,
-    nextPoll: Duration.min(
+    nextPoll: Duration.clamp(
       Duration.fromInputUnsafe(answered.nextPoll ?? defaultNextPoll),
-      longestNextPoll
+      { minimum: shortestNextPoll, maximum: longestNextPoll }
     ),
   });
 
@@ -249,28 +253,62 @@ const currentRun = (
   event: Event.Any,
   source: Event.Current<Event.Any, unknown>,
   checking: Checking
-): Run =>
-  checkRun(
+): Run => {
+  const sent = jsonRoundTrip(event.payload);
+
+  return checkRun(
     event,
     {
       key: source.key,
       notified: true,
       check: (input, cursor) =>
         Effect.gen(function* () {
-          const at = yield* checking.revision(yield* keyOf(source, input));
+          const key = yield* keyOf(source, input);
+          const at = yield* checking.revision(key);
 
-          if (cursor === at) {
-            return { cursor: at, events: [] };
+          const { digest: seen, revision } =
+            cursor?.match(/^(?<digest>[0-9a-f]*)\.(?<revision>.*)$/su)
+              ?.groups ?? {};
+
+          if (cursor !== null && revision === at) {
+            return { cursor, events: [], nextPoll: source.nextPoll };
           }
 
+          const data = yield* source.current(input);
+          const snapshot = yield* Effect.exit(sent(data));
+
+          const digest = Exit.isSuccess(snapshot)
+            ? yield* sha256Hex(
+                canonical([
+                  yield* canonicalInput(event.input, input),
+                  key ?? null,
+                  snapshot.value.json,
+                ])
+              )
+            : "";
+
+          const next = `${digest}.${at}`;
+
           return {
-            cursor: at,
-            events: [{ eventId: at, data: yield* source.current(input) }],
+            cursor: next,
+            events:
+              digest === seen
+                ? []
+                : [
+                    {
+                      eventId: next,
+                      data: Exit.isSuccess(snapshot)
+                        ? snapshot.value.value
+                        : data,
+                    },
+                  ],
+            nextPoll: source.nextPoll,
           };
         }),
     },
     checking
   );
+};
 
 const logRun = (
   event: Event.Any,

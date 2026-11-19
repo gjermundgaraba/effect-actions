@@ -537,7 +537,8 @@ export const actionMethodOf = (
 
 export const methodsOf = (
   binding: ClientBinding,
-  transport: EventTransport
+  transport: EventTransport,
+  watchMode?: "stream" | "poll"
 ) => {
   const actions = binding.actions.map(
     (action) => [action.name, actionMethodOf(action, binding)] as const
@@ -573,13 +574,15 @@ export const methodsOf = (
         );
       }
 
+      const mode = watchOptions?.mode ?? watchMode;
+
       return Stream.unwrap(
         Effect.flatMap(sentInput(event, input), ({ json, value }) =>
           Effect.map(reach(event, value), (call) =>
-            watching(
-              feed(call)(json, watchOptions?.mode === "stream"),
-              watchOptions
-            )
+            watching(feed(call)(json, mode === "stream"), {
+              ...watchOptions,
+              mode,
+            })
           )
         )
       );

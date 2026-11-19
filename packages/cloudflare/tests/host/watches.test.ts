@@ -1,24 +1,28 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { runInDurableObject } from "cloudflare:test";
+import { exports } from "cloudflare:workers";
 import { Effect, Exit, Predicate, Queue, Scope, Stream } from "effect";
 
-import { BoardRpc, Pinned } from "../board.js";
+import { BoardRpc, Hooked, Logged, Pinned } from "../board.js";
 import {
   clientOver,
   connected,
   evict,
   heldIn,
   objectOf,
-  openHostOf,
   opened,
+  raw,
   reconnecting,
+  settledStubs,
   stubs,
+  until,
   watchingIn,
 } from "../support/socket.js";
 import { boards, following, notes } from "../support/watch.js";
 import { throughWorker } from "../support/worker.js";
 
-describe("ActionClusterEntity's watches", () => {
+describe("ActionWorker's socket watches", () => {
   it.live(
     "answers an entity's polls at once where its events are not on Stored.layerEvents, its watch polling at nextPoll",
     () =>
@@ -118,34 +122,140 @@ describe("ActionClusterEntity's watches", () => {
   );
 
   it.live(
-    "accepts an upgrade naming any version, or none, on a host made without protocol",
+    "accepts an upgrade naming any version, or none, on a socket made without protocol",
     () =>
       Effect.gen(function* () {
         const board = "open";
 
-        const upgraded = (version: string) =>
+        const upgraded = (query: string) =>
           Effect.promise(
             async () =>
-              await openHostOf("Board", board).fetch(
-                `https://object/${version}`,
-                {
-                  headers: { upgrade: "websocket" },
-                }
+              await exports.default.fetch(
+                `https://worker.example/sockets/Watcher/${board}${query}`,
+                { headers: { upgrade: "websocket" } }
               )
           );
 
-        const unversioned = yield* upgraded("");
         const versioned = yield* upgraded("?protocol=0");
-        const socket = yield* connected(unversioned);
 
-        yield* (yield* clientOver(BoardRpc, socket)).pin({ board, n: 3 });
+        versioned.webSocket?.accept();
+        versioned.webSocket?.close(1000);
+
+        const unversioned = yield* upgraded("");
+        const socket = yield* connected(unversioned);
+        const watcher = yield* clientOver(BoardRpc, socket);
+        const pins = yield* following(watcher.watch(Pinned, { board }));
+
+        yield* watchingIn("Watcher", board, 1);
+        yield* watcher.pin({ board, n: 3 });
 
         expect([unversioned.status, versioned.status]).toStrictEqual([
           101, 101,
         ]);
+        expect(yield* notes(pins, 1)).toStrictEqual([{ n: 3 }]);
         expect(socket.closed).toStrictEqual([]);
-        versioned.webSocket?.accept();
-        versioned.webSocket?.close(1000);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "serves a socket only the contracts its actions list, answering a call of another Unknown request tag",
+    () =>
+      Effect.gen(function* () {
+        const board = "selected";
+        const socket = yield* opened("Watcher", board);
+        const watcher = yield* clientOver(BoardRpc, socket);
+        const pins = yield* following(watcher.watch(Pinned, { board }));
+        const refused = yield* Effect.exit(watcher.soon({ board, n: 1 }));
+
+        const logged = yield* Effect.exit(
+          Stream.runHead(
+            watcher.watch(Logged, { board }, { mode: "poll" })
+          ).pipe(Effect.timeout("10 seconds"))
+        );
+
+        yield* watchingIn("Watcher", board, 1);
+        yield* watcher.pin({ board, n: 2 });
+
+        expect(String(refused)).toContain("Unknown request tag: soon");
+        expect(String(logged)).toContain('Event "board.logged" is not served');
+        expect(yield* notes(pins, 1)).toStrictEqual([{ n: 2 }]);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "answers a parked poll of an event its entity binds but its socket no longer lists Unknown request tag, calling no entity",
+    () =>
+      Effect.gen(function* () {
+        const board = "retired";
+        const { socket, received } = yield* raw("Watcher", board);
+
+        socket.send(
+          JSON.stringify({
+            _tag: "Request",
+            id: "first",
+            tag: "pin",
+            payload: { board, n: 1 },
+            headers: [],
+          })
+        );
+        yield* until(
+          () => received,
+          (messages) => messages.length > 0
+        );
+
+        yield* Effect.promise(async () => {
+          await runInDurableObject(objectOf("Watcher", board), (_, state) => {
+            for (const held of state.getWebSockets()) {
+              const attachment: unknown = held.deserializeAttachment();
+
+              if (Predicate.isObject(attachment)) {
+                held.serializeAttachment({
+                  ...attachment,
+                  parked: [
+                    {
+                      id: "retired",
+                      tag: ActionRpc.pollTag(Hooked.name),
+                      payload: { input: { board }, cursor: "0", watch: "w" },
+                      headers: [],
+                      gate: -1,
+                    },
+                  ],
+                });
+              }
+            }
+          });
+        });
+
+        const before = yield* settledStubs;
+
+        socket.send(
+          JSON.stringify({
+            _tag: "Request",
+            id: "second",
+            tag: "pin",
+            payload: { board, n: 2 },
+            headers: [],
+          })
+        );
+
+        const answers = yield* until(
+          () => received,
+          (messages) =>
+            messages.some((message) => message.includes('"retired"'))
+        );
+
+        expect(
+          answers.filter((message) => message.includes('"retired"'))
+        ).toHaveLength(1);
+        expect(
+          answers.find((message) => message.includes('"retired"'))
+        ).toContain(`Unknown request tag: ${ActionRpc.pollTag(Hooked.name)}`);
+        const after = yield* settledStubs;
+
+        expect(after.finished.invoke - before.finished.invoke).toBe(1);
+        expect((yield* heldIn("Watcher", board))[0]?.parked).toStrictEqual([]);
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
   );

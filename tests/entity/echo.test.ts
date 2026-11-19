@@ -5,13 +5,7 @@ import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Testing from "../../src/testing/Testing.js";
-import {
-  makeRooms,
-  onTestRunner,
-  Payload,
-  Room,
-  RoomRpc,
-} from "../support/rooms.js";
+import { makeRooms, onTestRunner, Payload, Room } from "../support/rooms.js";
 
 const rooms = makeRooms();
 
@@ -19,7 +13,7 @@ const overRpc = RpcClient.layerProtocolHttp({ url: "/rpc" }).pipe(
   Layer.provide(RpcSerialization.layerNdjson),
   Layer.provide(
     Testing.layer(
-      ActionRpc.layer(RoomRpc, rooms.echoing).pipe(
+      ActionRpc.layer(Room.binding, rooms.echoing).pipe(
         Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
         Layer.provide(RpcSerialization.layerNdjson)
       )
@@ -40,7 +34,7 @@ layer(Layer.mergeAll(onTestRunner(rooms), overRpc), {
     ([payload]) =>
       Effect.gen(function* () {
         const lobby = yield* ActionEntity.client(Room);
-        const rpc = yield* ActionRpc.client(RoomRpc);
+        const rpc = yield* ActionRpc.client(Room.binding);
 
         const input = { room: "lobby", payload };
 

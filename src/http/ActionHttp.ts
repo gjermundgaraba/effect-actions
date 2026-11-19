@@ -570,8 +570,11 @@ const jsonContentType = () =>
  * Serve the binding's actions and event types among `implementations` in one layer, or those its
  * `actions` lists, authenticating a protected action's request before decoding it, then running
  * its implementation's `authorize` before each handler. An implementation's actions the binding
- * leaves out have no route here, one holding none of those served is not built, and a non-empty
- * list holding none of the binding's actions is refused when `layer` is called. Several layers
+ * leaves out have no route here, and one holding none of those served is not built. Where the
+ * binding has no event types, implementations' event types are ignored, so
+ * `ActionEntity.reaching` serves a binding of the entity's actions alone, and the same holds for
+ * actions; otherwise implementations holding none of the binding's actions, or none of its event
+ * types, are refused when `layer` is called. Several layers
  * may serve one binding, each with its own `actions` and `middleware` covering its routes only.
  * The layer fails as the builders do, needs at startup what they need, and per request what the
  * authorization and handlers of the actions it serves need, until its `middleware` or middleware

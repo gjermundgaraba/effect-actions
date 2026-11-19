@@ -8,54 +8,43 @@ pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflar
 
 Its declarations name the Workers runtime's types: generate them with `wrangler types`, or install `@cloudflare/workers-types`, as a Worker project does.
 
-Declare an entity with the core's `ActionEntity`, keyed by its input:
+Declare an entity with the core's `ActionEntity`, from its actions and event types, keyed by its input:
 
 ```ts
-const Room = ActionEntity.make("Room", RoomRpc, {
+const Room = ActionEntity.make("Room", [...Messages, MessagePosted], {
+  authentication: Login,
   key: ({ room }) => room,
 });
 ```
 
-Run it on Durable Objects, under the cluster layer whose clients send a caller's credential intact, and serve it from the Worker:
+Make the Worker once, naming each entity with the layer serving it and the page's socket it accepts, and export what it returns: the four Durable Object classes, and its `fetch`, which judges each request's Host and Origin first, hands a page's upgrade to its room's object, and answers the rest with the routes, or a page with `fallback`:
 
 ```ts
-Layer.mergeAll(
-  ActionEntity.layer(Room, messages, { services: roomServices }),
-  ActionHttp.layer(RoomHttp, ActionEntity.reaching(Room))
-).pipe(
-  Layer.provideMerge(
-    ActionCluster.layer({
-      entities: [Room],
-      entityNamespace: env.CLUSTER_ENTITY,
-      workflowNamespace: env.CLUSTER_WORKFLOW,
-      queueNamespace: env.CLUSTER_QUEUE,
-      singletonNamespace: env.CLUSTER_SINGLETON,
-    })
-  )
-);
-```
-
-A page follows an entity's events over a WebSocket to the entity's own object, which the runtime keeps open while the object hibernates, through the class the Worker exports in place of Effect's `ClusterEntity`:
-
-```ts
-class ClusterEntity extends ActionClusterEntity.make({
-  initialize,
-  sockets: [Room],
-  protocol: { version: "1", code: 4000 },
-}) {}
-```
-
-The package owns the Worker's wiring: one initializer builds the application once per isolate, and the Worker's handler hands a page's upgrade to its room's object and serves every other request from the application's routes:
-
-```ts
-const initialize = ActionClusterEntity.register(application);
-
-ActionCluster.handler(initialize, {
-  sockets: {
-    entityNamespace: (env) => env.CLUSTER_ENTITY,
-    routes: [{ entity: Room, path: "/rooms/:id/rpc" }],
-  },
+const worker = ActionWorker.make<Env>({
+  entities: [
+    {
+      entity: Room,
+      layer: () =>
+        ActionEntity.layer(Room, messages, { services: roomServices }),
+      socket: {
+        path: "/rooms/:id/rpc",
+        actions: [MessagePosted],
+        protocol: { version: "1", code: 4000 },
+      },
+    },
+  ],
+  routes: () => ActionHttp.layer(RoomHttp, ActionEntity.reaching(Room)),
+  policy: (env) => RequestPolicy.make({ publicUrl: new URL(env.PUBLIC_URL) }),
+  fallback: (request) => page(request),
 });
+
+export const {
+  ClusterEntity,
+  ClusterWorkflow,
+  ClusterDurableQueue,
+  ClusterSingleton,
+} = worker;
+export default { fetch: worker.fetch };
 ```
 
 Its pages are in [docs/](docs/README.md), with an example, [chat-rooms](examples/chat-rooms/): a room per entity, a page's socket to its room, its posts by webhook, and a Worker in front serving JSON and MCP. In a project that installs it, both are in `node_modules/@gjermundgaraba/effect-actions-cloudflare/`.

@@ -14,6 +14,7 @@ import {
   ClusterError,
   ClusterSchema,
   Entity,
+  EntityId,
   Sharding,
   ShardingConfig,
   TestRunner,
@@ -23,7 +24,6 @@ import { Rpc, RpcClient, RpcGroup } from "effect/rpc";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
-import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { actors, CurrentActor } from "../support/app/authorization.js";
 import { Login } from "../support/app/binding.js";
 import { signIn } from "../support/rooms.js";
@@ -70,14 +70,11 @@ const Peeked = Event.make("peeked", {
   caller: CurrentActor,
 });
 
-const Counter = ActionEntity.make(
-  "Counter",
-  ActionRpc.make([Peek], { authentication: Login }),
-  {
-    key: ({ counter }) => counter,
-    rpcs: Natives,
-  }
-);
+const Counter = ActionEntity.make("Counter", [Peek], {
+  authentication: Login,
+  key: ({ counter }) => counter,
+  rpcs: Natives,
+});
 
 const builds = { services: 0 };
 
@@ -383,14 +380,11 @@ describe("ActionEntity's native rpcs and services", () => {
     "refuses a native rpc named %s, an rpc of the binding or the entity's wake, as the entity is made",
     (tag) => {
       expect(() =>
-        ActionEntity.make(
-          "Clash",
-          ActionRpc.make([Peek, Peeked], { authentication: Login }),
-          {
-            key: ({ counter }) => counter,
-            rpcs: RpcGroup.make(Rpc.make(tag)),
-          }
-        )
+        ActionEntity.make("Clash", [Peek, Peeked], {
+          authentication: Login,
+          key: ({ counter }) => counter,
+          rpcs: RpcGroup.make(Rpc.make(tag)),
+        })
       ).toThrow(
         `are named after an action, an event type, an event's poll, subscribe or unsubscribe, or the entity's wake`
       );
@@ -398,13 +392,10 @@ describe("ActionEntity's native rpcs and services", () => {
   );
 
   it("keeps its actions', event types' and webhook subscriptions' rpcs volatile and its wake persisted", () => {
-    const Peeking = ActionEntity.make(
-      "Peeking",
-      ActionRpc.make([Peek, Peeked], { authentication: Login }),
-      {
-        key: ({ counter }) => counter,
-      }
-    );
+    const Peeking = ActionEntity.make("Peeking", [Peek, Peeked], {
+      authentication: Login,
+      key: ({ counter }) => counter,
+    });
 
     const persisted = Object.fromEntries(
       [...Peeking.protocol.requests].map(([tag, rpc]) => [
@@ -421,6 +412,53 @@ describe("ActionEntity's native rpcs and services", () => {
       "effect-actions/wake": true,
     });
   });
+
+  it.effect(
+    "keeps its binding and key through annotate and its kin, a later group annotation winning and rpcs annotated on its natives alone",
+    () =>
+      Effect.gen(function* () {
+        const Grouped = ActionEntity.make("Counter", [Peek], {
+          authentication: Login,
+          key: ({ counter }) => counter,
+          rpcs: Natives.annotate(
+            ClusterSchema.ShardGroup,
+            () => "made"
+          ).annotate(ClusterSchema.ClientTracingEnabled, true),
+        });
+
+        const Annotated = Grouped.annotate(ClusterSchema.ShardGroup, () => "x")
+          .annotateMerge(
+            Context.make(ClusterSchema.ClientTracingEnabled, false)
+          )
+          .annotateRpcs(ClusterSchema.Persisted, true)
+          .annotateRpcsMerge(Context.make(ClusterSchema.Uninterruptible, true));
+
+        const annotated = (tag: string) =>
+          [ClusterSchema.Persisted, ClusterSchema.Uninterruptible].map((key) =>
+            Context.get(Annotated.protocol.requests.get(tag)!.annotations, key)
+          );
+
+        expect(Annotated.getShardGroup(EntityId.make("c"))).toBe("x");
+        expect(
+          Context.get(
+            Annotated.protocol.annotations,
+            ClusterSchema.ClientTracingEnabled
+          )
+        ).toBe(false);
+        expect(annotated("bump")).toStrictEqual([true, true]);
+        expect(annotated("peek")).toStrictEqual([false, false]);
+        expect(annotated("effect-actions/wake")).toStrictEqual([true, false]);
+
+        const makeClient = yield* Entity.makeTestClient(
+          Annotated,
+          ActionEntity.layer(Annotated, peek, { services, rpcs })
+        );
+
+        const counter = yield* makeClient("c");
+
+        expect(yield* counter.bump()).toBe(1);
+      }).pipe(Effect.scoped, Effect.provide([ShardingConfig.layer(), signIn]))
+  );
 
   it.effect("serves its native rpcs to Entity.makeTestClient", () =>
     Effect.gen(function* () {

@@ -14,7 +14,7 @@ import {
   received,
   throughWorker,
 } from "../support/worker.js";
-import { initialize, Seer, Seen } from "../worker.js";
+import { context, Seer, Seen } from "../worker.js";
 
 const storedRowsOf = (type: string, id: string) =>
   Effect.promise(
@@ -183,13 +183,11 @@ describe("ActionCluster.layer's entity clients", () => {
       Effect.gen(function* () {
         yield* logged;
 
-        const context = yield* Effect.promise(
-          async () => await initialize(env)
-        );
+        const built = yield* Effect.promise(async () => await context(env));
 
         const seer = yield* Effect.provideContext(
           ActionEntity.client(Seer),
-          context
+          built
         );
 
         const { headers } = yield* seer
@@ -214,11 +212,9 @@ describe("ActionCluster.layer's entity clients", () => {
       Effect.gen(function* () {
         yield* received;
 
-        const context = yield* Effect.promise(
-          async () => await initialize(env)
-        );
+        const built = yield* Effect.promise(async () => await context(env));
 
-        const seer = (yield* Effect.provideContext(Seer.client, context))(
+        const seer = (yield* Effect.provideContext(Seer.client, built))(
           "persisted"
         );
 

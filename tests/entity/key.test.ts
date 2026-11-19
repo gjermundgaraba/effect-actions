@@ -41,7 +41,7 @@ describe("ActionEntity's key check", () => {
   it.live(
     "checks the entity's own call alone: its handler calling another contract in process with an input naming another entity is answered",
     () => {
-      const Relayer = ActionEntity.make("Relayer", ActionRpc.make([Relay]), {
+      const Relayer = ActionEntity.make("Relayer", [Relay], {
         key: ({ room: named }) => named,
       });
 
@@ -92,11 +92,10 @@ describe("ActionEntity's key check", () => {
         caller: CurrentActor,
       });
 
-      const Guard = ActionEntity.make(
-        "Guard",
-        ActionRpc.make([Guarded, Moved], { authentication: Login }),
-        { key: ({ room: named }) => named }
-      );
+      const Guard = ActionEntity.make("Guard", [Guarded, Moved], {
+        authentication: Login,
+        key: ({ room: named }) => named,
+      });
 
       const authorized = () =>
         Effect.sync(() => {

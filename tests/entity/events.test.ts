@@ -21,7 +21,6 @@ import { PushedOf } from "../../src/contract/push.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionMcp from "../../src/mcp/ActionMcp.js";
-import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { DeclaredFailure } from "../../src/rpc/erased.js";
 import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
@@ -45,11 +44,10 @@ const Principal = Authentication.make("reaching.Principal", CurrentActor, {
 
 const signIn = Authentication.layer(Principal, verify);
 
-const Ticker = ActionEntity.make(
-  "Ticker",
-  ActionRpc.make([Ticked], { authentication: Principal }),
-  { key: ({ room }) => room }
-);
+const Ticker = ActionEntity.make("Ticker", [Ticked], {
+  authentication: Principal,
+  key: ({ room }) => room,
+});
 
 const TickerHttp = ActionHttp.make([Ticked], { authentication: Principal });
 

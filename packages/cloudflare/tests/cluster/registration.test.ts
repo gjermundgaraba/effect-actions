@@ -27,7 +27,7 @@ const whoami = (room: string) =>
     Effect.exit
   );
 
-describe("ActionCluster.initializer, a build stalled above ActionCluster.layer", () => {
+describe("ActionWorker.make's initializer, a build stalled above ActionCluster.layer", () => {
   it.live(
     "serves the entities the stalled build registered after it finishes behind its replacement",
     () =>

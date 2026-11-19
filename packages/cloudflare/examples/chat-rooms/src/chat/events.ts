@@ -1,53 +1,20 @@
 import * as Event from "@gjermundgaraba/effect-actions/Event";
-import { Effect, Option, Schema } from "effect";
+import { Effect } from "effect";
 
 import { authorize } from "./authorize.js";
 import { MessagePosted } from "./Chat.js";
 import { MessageStore } from "./store.js";
 
-const idOf = Schema.decodeUnknownOption(
-  Schema.NumberFromString.pipe(Schema.check(Schema.isInt()))
-);
-
-const nextPoll = "2 seconds";
-
 export const messageEvents = Event.implement(
   MessagePosted,
-  Effect.gen(function* () {
-    const store = yield* MessageStore;
-
-    return {
+  Effect.map(MessageStore, (store) =>
+    Event.appended(MessagePosted, {
+      newest: () => store.last,
+      after: (_input, id) => Effect.map(store.read(id), (items) => ({ items })),
+      id: (message) => message.id,
       notified: true,
-      check: (_input, cursor) =>
-        Effect.gen(function* () {
-          const last = yield* store.last;
-
-          const after = Option.filter(
-            idOf(cursor),
-            (id) => id >= 0 && id <= last
-          );
-
-          if (Option.isNone(after)) {
-            return {
-              cursor: String(last),
-              events: [],
-              truncated: cursor !== null,
-              nextPoll,
-            };
-          }
-
-          const messages = yield* store.read(after.value);
-
-          return {
-            cursor: String(messages.at(-1)?.id ?? after.value),
-            events: messages.map((data) => ({
-              eventId: String(data.id),
-              data,
-            })),
-            nextPoll,
-          };
-        }),
-    };
-  }),
+      nextPoll: "2 seconds",
+    })
+  ),
   { authorize }
 );

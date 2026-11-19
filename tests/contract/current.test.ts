@@ -34,6 +34,7 @@ const makeStatuses = () => {
 const Polled = Schema.fromJsonString(
   Schema.Struct({
     cursor: Schema.String,
+    nextPollMs: Schema.Finite,
     events: Schema.Array(
       Schema.Struct({ eventId: Schema.String, data: Status.payload })
     ),
@@ -60,6 +61,7 @@ interface Minted {
   readonly cursor: string;
   readonly key: Key | undefined;
   readonly at: number;
+  readonly value: number;
 }
 
 const Command = Schema.Union([
@@ -80,7 +82,7 @@ const Commands = Schema.Array(Command).check(
 
 describe("Event current source", () => {
   it.effect.prop(
-    "answers a cursor behind the notifies reaching its key, or another key's, with the value as it is, under an id never given before, and its own cursor with nothing",
+    "answers a cursor of its key with the value as it is where a notify reaching the key moved it to a value the cursor did not see, under an id never given before, another key's cursor with the value, and anything else with nothing",
     { steps: Commands },
     ({ steps }) =>
       Effect.gen(function* () {
@@ -133,7 +135,10 @@ describe("Event current source", () => {
                 ? { cursor: null, current: false }
                 : {
                     cursor: held.cursor,
-                    current: held.key === key && held.at === reachedOf(key),
+                    current:
+                      held.key === key &&
+                      (held.at === reachedOf(key) ||
+                        held.value === (statuses.values.get(key) ?? 0)),
                   };
             })
           );
@@ -165,7 +170,12 @@ describe("Event current source", () => {
             expect(occurrence.eventId).toBe(page.cursor);
           }
 
-          minted.push({ cursor: page.cursor, key, at });
+          minted.push({
+            cursor: page.cursor,
+            key,
+            at,
+            value: statuses.values.get(key) ?? 0,
+          });
         }
       }).pipe(Effect.provide(Event.layerMemory))
   );
@@ -197,6 +207,208 @@ describe("Event current source", () => {
             item._tag === "Gap" ? "gap" : item.data.value
           )
         ).toStrictEqual([0, 1, 0]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "sends a watcher nothing for a notify that leaves its value as it was, nor for one setting it back to the value it has",
+    () =>
+      Effect.gen(function* () {
+        const statuses = makeStatuses();
+        const client = yield* Action.client(statuses.implementation);
+        const events = yield* Event.Events;
+
+        const watching = yield* client
+          .watch(Status, { key: "a" })
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+
+        yield* settle;
+        yield* events.notify(Status, { key: "a" });
+        yield* settle;
+        statuses.values.set("a", 1);
+        statuses.values.set("a", 0);
+        yield* events.notify(Status, { key: "a" });
+        yield* settle;
+        statuses.values.set("a", 2);
+        yield* events.notify(Status, { key: "a" });
+
+        const received = yield* Fiber.join(watching);
+
+        expect(
+          received.map((item) =>
+            item._tag === "Gap" ? "gap" : item.data.value
+          )
+        ).toStrictEqual([0, 2]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "answers a poll with the source's nextPoll in a second to 5 minutes, the value changed or not",
+    () =>
+      Effect.gen(function* () {
+        for (const [nextPoll, advertised] of [
+          ["2 seconds", 2000],
+          ["10 millis", 1000],
+          ["1 hour", 300_000],
+        ] as const) {
+          const served = Testing.layer(
+            ActionHttp.layer(
+              ActionHttp.make([Status]),
+              Event.implement(Status, {
+                current: () => Effect.succeed({ value: 0 }),
+                nextPoll,
+              })
+            )
+          );
+
+          const first = yield* poll(undefined, null).pipe(
+            Effect.provide(served)
+          );
+
+          const again = yield* poll(undefined, first.cursor).pipe(
+            Effect.provide(served)
+          );
+
+          expect(
+            [first, again].map((page) => [page.events.length, page.nextPollMs])
+          ).toStrictEqual([
+            [1, advertised],
+            [0, advertised],
+          ]);
+        }
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "sends the value its cursor's digest saw, though the object read is changed while it is sent",
+    () =>
+      Effect.gen(function* () {
+        const events = yield* Event.Events;
+        let state = { value: 1 };
+        let changing = true;
+
+        const served = Testing.layer(
+          ActionHttp.layer(
+            ActionHttp.make([Status]),
+            Event.implement(Status, {
+              current: () =>
+                Effect.as(
+                  changing
+                    ? Effect.forkDetach(
+                        Effect.sync(() => {
+                          state.value = 2;
+                        })
+                      )
+                    : Effect.void,
+                  state
+                ),
+            })
+          )
+        );
+
+        const first = yield* poll(undefined, null).pipe(Effect.provide(served));
+        const [sent] = first.events.map(({ data }) => data.value);
+
+        changing = false;
+        state = { value: 1 };
+        yield* events.notify(Status);
+
+        const again = yield* poll(undefined, first.cursor).pipe(
+          Effect.provide(served)
+        );
+
+        expect(again.events.map(({ data }) => data.value)).toStrictEqual(
+          sent === 1 ? [] : [1]
+        );
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "answers a value that does not encode with a truncated page once, and a notify leaving it so with nothing",
+    () =>
+      Effect.gen(function* () {
+        const events = yield* Event.Events;
+
+        const served = Testing.layer(
+          ActionHttp.layer(
+            ActionHttp.make([Status]),
+            Event.implement(Status, {
+              current: () =>
+                Effect.succeed({
+                  get value(): number {
+                    throw new Error("unreadable");
+                  },
+                }),
+            })
+          )
+        );
+
+        const pollRaw = (cursor: string | null) =>
+          HttpClient.execute(
+            HttpClientRequest.post("/api/events/status.changed").pipe(
+              HttpClientRequest.bodyJsonUnsafe({ input: {}, cursor })
+            )
+          ).pipe(
+            Effect.flatMap((response) =>
+              Effect.map(response.json, (body) => ({
+                status: response.status,
+                body: Schema.decodeUnknownSync(
+                  Schema.Struct({
+                    cursor: Schema.String,
+                    truncated: Schema.Boolean,
+                    events: Schema.Array(Schema.Unknown),
+                  })
+                )(body),
+              }))
+            ),
+            Effect.orDie,
+            Effect.provide(served)
+          );
+
+        const first = yield* pollRaw(null);
+
+        yield* events.notify(Status);
+
+        const again = yield* pollRaw(first.body.cursor);
+
+        expect(
+          [first, again].map(({ status, body }) => [
+            status,
+            body.truncated,
+            body.events.length,
+          ])
+        ).toStrictEqual([
+          [200, true, 0],
+          [200, false, 0],
+        ]);
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
+    "sends the value to a subscriber whose key changed, the input and value unchanged",
+    () =>
+      Effect.gen(function* () {
+        let key = "a";
+
+        const served = Testing.layer(
+          ActionHttp.layer(
+            ActionHttp.make([Status]),
+            Event.implement(Status, {
+              current: () => Effect.succeed({ value: 0 }),
+              key: () => key,
+            })
+          )
+        );
+
+        const first = yield* poll(undefined, null).pipe(Effect.provide(served));
+
+        key = "b";
+
+        const again = yield* poll(undefined, first.cursor).pipe(
+          Effect.provide(served)
+        );
+
+        expect(again.events.map(({ data }) => data.value)).toStrictEqual([0]);
       }).pipe(Effect.provide(Event.layerMemory))
   );
 

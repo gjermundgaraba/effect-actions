@@ -152,6 +152,34 @@ describe("ActionEntity.reaching on a TestRunner", () => {
   );
 
   it.live(
+    "serves a binding holding some of the entity's actions and none of its event types, with no selection",
+    () =>
+      Effect.gen(function* () {
+        const ReadHttp = ActionHttp.make([Read]);
+
+        const answers = yield* Effect.provide(
+          Effect.gen(function* () {
+            const http = yield* ActionHttp.client(ReadHttp);
+            const read = yield* http.read({ room: "a" });
+
+            const event = yield* HttpClient.execute(
+              HttpClientRequest.post("/api/events/room.posted").pipe(
+                HttpClientRequest.bodyJsonUnsafe({ input: { room: "a" } })
+              )
+            );
+
+            return [read, event.status] as const;
+          }),
+          Testing.layer(ActionHttp.layer(ReadHttp, reached)).pipe(
+            Layer.provideMerge(entities(makeRooms()))
+          )
+        );
+
+        expect(answers).toStrictEqual([{ entity: "a", texts: [] }, 404]);
+      }).pipe(Effect.scoped)
+  );
+
+  it.live(
     "passes a declared error and a streaming action's progress back through two hops",
     () =>
       Effect.gen(function* () {
@@ -234,11 +262,10 @@ const Seen = Event.make("seen", {
   caller: CurrentActor,
 });
 
-const SeerRpc = ActionRpc.make([Whoami, Seen], { authentication: Login });
-
 const SeerHttp = ActionHttp.make([Whoami, Seen], { authentication: Login });
 
-const Seer = ActionEntity.make("Seer", SeerRpc, {
+const Seer = ActionEntity.make("Seer", [Whoami, Seen], {
+  authentication: Login,
   key: ({ room }) => room,
 });
 
@@ -287,7 +314,7 @@ const seerEdge = Testing.layer(
       authentication: Login,
       requestScoped: true,
     }),
-    ActionRpc.layer(SeerRpc, reachedSeer).pipe(
+    ActionRpc.layer(Seer.binding, reachedSeer).pipe(
       Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
       Layer.provide(RpcSerialization.layerNdjson)
     )
@@ -352,7 +379,7 @@ describe("ActionEntity.reaching's protected calls and watches", () => {
           transformClient: bearer("alice"),
         });
 
-        const rpc = yield* ActionRpc.client(SeerRpc);
+        const rpc = yield* ActionRpc.client(Seer.binding);
         const from = yield* seenFrom("a");
 
         const direct = yield* ActionEntity.client(Seer);
@@ -399,11 +426,10 @@ const Hooked = Event.make("hooked", {
   caller: CurrentActor,
 });
 
-const Hooks = ActionEntity.make(
-  "Hooks",
-  ActionRpc.make([Hooked], { authentication: Login }),
-  { key: ({ room }) => room }
-);
+const Hooks = ActionEntity.make("Hooks", [Hooked], {
+  authentication: Login,
+  key: ({ room }) => room,
+});
 
 describe("ActionEntity.reaching's polls", () => {
   it.live(
@@ -483,11 +509,9 @@ describe("ActionEntity.reaching's key", () => {
         caller: Action.Anyone,
       });
 
-      const Prober = ActionEntity.make(
-        "Prober",
-        ActionRpc.make([Probe, Probed]),
-        { key: () => owner.id }
-      );
+      const Prober = ActionEntity.make("Prober", [Probe, Probed], {
+        key: () => owner.id,
+      });
 
       const sourced = Event.implement(Probed, {
         check: () => Effect.succeed({ cursor: "0", events: [] }),
@@ -545,7 +569,7 @@ const Lines = Action.make("lines", {
   caller: Action.Anyone,
 });
 
-const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
+const Liner = ActionEntity.make("Liner", [Lines], {
   key: ({ room }) => room,
 });
 
@@ -747,9 +771,7 @@ const Nap = Action.make("nap", {
   caller: Action.Anyone,
 });
 
-const NapRpc = ActionRpc.make([Nap]);
-
-const Napper = ActionEntity.make("Napper", NapRpc, {
+const Napper = ActionEntity.make("Napper", [Nap], {
   key: ({ room }) => room,
 });
 

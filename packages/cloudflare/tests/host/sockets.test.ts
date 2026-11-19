@@ -25,7 +25,7 @@ const Read = Schema.Struct({
   headers: Schema.Record(Schema.String, Schema.String),
 });
 
-describe("ActionClusterEntity's sockets", () => {
+describe("ActionWorker's socket sockets", () => {
   it.live(
     "answers a check source's and a log source's parked polls after the object's eviction, with one stub call for the post, which sends no tells, and one for each parked poll",
     () =>
@@ -356,15 +356,71 @@ describe("ActionClusterEntity's sockets", () => {
     { timeout: 30_000 }
   );
 
+  it.live(
+    "closes a socket held across a deploy changing the version with 4000, its parked poll unanswered, and answers one the deploy kept",
+    () =>
+      Effect.forEach(
+        [
+          { served: "0", closed: [4000], pinned: [] },
+          { served: "1", closed: [], pinned: [{ n: 3 }] },
+          { served: undefined, closed: [4000], pinned: [] },
+        ],
+        ({ served, closed, pinned }) =>
+          Effect.gen(function* () {
+            const board = `deployed-${served ?? "unversioned"}`;
+            const http = yield* boards;
+            const socket = yield* opened("Board", board);
+
+            const pins = yield* following(
+              (yield* clientOver(BoardRpc, socket)).watch(Pinned, { board })
+            );
+
+            yield* watchingIn("Board", board, 1);
+            yield* Effect.promise(async () => {
+              await runInDurableObject(objectOf("Board", board), (_, state) => {
+                for (const held of state.getWebSockets()) {
+                  const attachment: unknown = held.deserializeAttachment();
+
+                  if (Predicate.isObject(attachment)) {
+                    const unversioned = Object.fromEntries(
+                      Object.entries(attachment).filter(
+                        ([key]) => key !== "version"
+                      )
+                    );
+
+                    held.serializeAttachment(
+                      served === undefined
+                        ? unversioned
+                        : { ...unversioned, version: served }
+                    );
+                  }
+                }
+              });
+            });
+            yield* evict("Board", board);
+            yield* http.pin({ board, n: 3 });
+            yield* Effect.sleep("3 seconds");
+
+            expect([
+              socket.closed.map(({ code }) => code),
+              served,
+            ]).toStrictEqual([closed, served]);
+            expect([yield* Queue.clear(pins), served]).toStrictEqual([
+              pinned,
+              served,
+            ]);
+          }).pipe(Effect.scoped)
+      ).pipe(Effect.provide(throughWorker)),
+    { timeout: 60_000 }
+  );
+
   it.effect(
-    "answers a request that is no upgrade 426, and an upgrade to an entity serving no sockets 404",
+    "answers a request handed to an object that is no upgrade 426, and an upgrade to an entity serving no sockets 404",
     () =>
       Effect.gen(function* () {
         const plain = yield* Effect.promise(
           async () =>
-            await exports.default.fetch(
-              "https://worker.example/sockets/Board/plain?protocol=1"
-            )
+            await objectOf("Board", "plain").fetch("https://object/?protocol=1")
         );
 
         const unserved = yield* Effect.promise(

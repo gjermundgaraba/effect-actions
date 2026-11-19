@@ -1,34 +1,36 @@
 # ActionEntity
 
-`ActionEntity` serves an [RPC binding](ActionRpc.md) as an Effect Cluster entity. An entity type is a kind of stateful object, such as a chat room, and an entity id names one of them, such as the room `lobby`. The cluster's `Sharding` runs each entity id in one place at a time, on whatever runtime provides it: a Node or SQL cluster, `TestRunner` in a test, or a host that runs one entity per object. Each call reaches the entity its input names, and that entity builds its own handlers.
+`ActionEntity` serves actions and event types as an Effect Cluster entity. An entity type is a kind of stateful object, such as a chat room, and an entity id names one of them, such as the room `lobby`. The cluster's `Sharding` runs each entity id in one place at a time, on whatever runtime provides it: a Node or SQL cluster, `TestRunner` in a test, or a host that runs one entity per object. Each call reaches the entity its input names, and that entity builds its own handlers.
 
 The example is [shopping-carts](../examples/shopping-carts/), carts on one process over SQLite; the Cloudflare package's chat-rooms runs the same model on Durable Objects. A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionEntity-failures.md](ActionEntity-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`.
 
 ## Define an entity
 
-Bind the actions and event types with `ActionRpc.make`, as for any RPC server ([ActionRpc.md](ActionRpc.md#bind-actions-to-rpcs)), then give `ActionEntity.make` the entity type's name, the binding, and a `key`, which reads the entity id from the input: one function of every input, such as `({ cart }) => cart`, so every contract of an entity names its entity in its input. A field one input lacks is a type error.
+Give `ActionEntity.make` the entity type's name, its contracts, actions and event types, and a `key`, which reads the entity id from the input: one function of every input, such as `({ cart }) => cart`, so every contract of an entity names its entity in its input. A field one input lacks is a type error. Protected contracts name their `authentication`, as `ActionRpc.make` takes it ([ActionRpc.md](ActionRpc.md#bind-actions-to-rpcs)); the entity builds that RPC binding itself, as `Cart.binding`, which a socket client calls.
 
 ```ts example=shopping-carts/src/entities.ts
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 
-import { CartRpc } from "./Rpc.js";
+import { Carts } from "./cart/Cart.js";
+import { Login } from "./identity/Identity.js";
 
-export const Cart = ActionEntity.make("Cart", CartRpc, {
+export const Cart = ActionEntity.make("Cart", Carts, {
+  authentication: Login,
   key: ({ cart }) => cart,
 });
 ```
 
 Each action is an rpc of the entity, named after it. Each event type is a unary rpc named `<event>/poll`, which answers the occurrences past a cursor, as an HTTP poll does, and `ActionRpc.layer` serves under the same name. The entity is Effect's own `Entity`, so `Entity.makeTestClient` and the rest of Effect's cluster functions take it. What its rpcs send, and why none of its actions' and event types' rpcs is persisted, is on `ActionEntity.make`.
 
-An entity may also serve native rpcs of its own, given to `make` as `rpcs`: tells the entity or another entity sends through Effect's `Entity.client`, such as a persisted one annotated `ClusterSchema.Persisted` that the entity sends itself to run later, at the time its payload's `DeliverAt` names. They authenticate nothing, so no surface serves them.
+A call another part of the application makes, such as a Worker's settings reading an agent's model, is an action the entity lists and no surface's binding does: `ActionEntity.client` calls it, typed, failing with `Action.Unavailable` where the entity is out of reach. `ActionEntity.reaching` implements it too, so a surface given those implementations names what it serves: an HTTP or RPC binding of the public contracts, and MCP's `actions`. An entity may also serve native rpcs of its own, given to `make` as `rpcs`: tells, such as a persisted one another entity sends through Effect's `Entity.client`. They authenticate nothing, so no surface serves them. An entity scheduling work of its own for later needs none: it wakes itself with `wakeAt`, below.
 
 ## Serve it
 
-`ActionEntity.layer(entity, implementations)` registers the entity with `Sharding`. The implementations are those of the binding's actions and event types, one or a list, as on every surface ([Action.md](Action.md#implement-actions)), and they must cover the whole binding. Provide the layer with what the implementations read at startup, the authentication provider of the binding's descriptor ([Authentication.md](Authentication.md#verify-credentials)), `Event.Events` when the binding has event types, and the cluster's `Sharding`.
+`ActionEntity.layer(entity, implementations)` registers the entity with `Sharding`. The implementations are those of the entity's actions and event types, one or a list, as on every surface ([Action.md](Action.md#implement-actions)), and they must cover every one. Provide the layer with what the implementations read at startup, the authentication provider of the entity's descriptor ([Authentication.md](Authentication.md#verify-credentials)), `Event.Events` when the entity has event types, and the cluster's `Sharding`.
 
 Each entity id builds the implementations itself, when the cluster first sends it a message, and shares no build with `Action.layer` provided above it. State an implementation's builder holds belongs to that one entity, and a builder may read `Entity.CurrentAddress` for the id it serves. A service provided to the layer is built once per runner and shared by every entity id on it.
 
-What each entity id must build for itself, such as a store over its own database or `Event.Events` kept there by `Stored.layerEvents`, goes in the layer's `services` option: each entity id builds it as it activates, before its implementations' builders, which read it. The handlers of `make`'s native rpcs go in the layer's `rpcs` option, as Effect's `Entity.toLayer` takes them: each receives Effect's own `Entity.Request`, and an Effect building them runs after `services`, whose output it reads.
+What each entity id must build for itself, such as a store over its own database or `Event.Events` kept there by `Stored.layerEvents`, goes in the layer's `services` option: each entity id builds it as it activates, before its implementations' builders, which read it. The handlers of `make`'s native rpcs go in the layer's `rpcs` option, as Effect's `Entity.toLayer` takes them: each receives Effect's own `Entity.Request`. The handlers may be an object or an Effect that builds one; the Effect runs after `services` and may read their output. Their types come from `make`'s `rpcs`. Handlers written outside `layer` get their types from the entity's `of`, `Room.of({ expire: ({ payload }) => … })`, as with Effect's `Entity.of`. A layer of its own given to `services` reads what each activation provides as `ActionEntity.Activation`.
 
 A handler, an authorizer or an event source reads per call only its caller and what `services` built; the rules, and what a defect does, are on `ActionEntity.layer`.
 
@@ -64,13 +66,19 @@ Its [server.ts](../examples/shopping-carts/src/server.ts) runs both on Effect's 
 
 A protected action authenticates each call from the headers its envelope carries, as an RPC message does. Then the input decodes, and an input whose key names another entity is refused with `Forbidden` before the implementation's `authorize` runs.
 
+## Wake it later
+
+An entity schedules work for later with `ActionEntity.wakeAt(at)`, read in its `services`, a builder or a handler: a persisted tell the entity sends itself, which succeeds once the runtime has stored it and fails with `Action.Unavailable` where it could not. When it is due, the layer's `onWake` runs with the time it was due, in whichever activation is current, built again where the entity had stopped, so the wake outlives eviction, a restart and a deploy.
+
+`onWake` is a check, as a Durable Object's alarm handler is: it does what is due by then and asks `wakeAt` for the next time. The rules are on `ActionEntity.wakeAt` and `ActionEntity.LayerOptions`' `onWake`.
+
 ## Call it
 
 `ActionEntity.client(entity)` is Effect's `Entity.client` with one typed method per action, each call sent to the entity its input's key names: `(yield* ActionEntity.client(Room)).postMessage({ room: "lobby", text })`. Send credentials by setting headers with `RpcClient.withHeaders` around a call. The entity's native rpcs are on `ActionEntity.nativeClient(entity)`, Effect's own client for an entity id, `(yield* ActionEntity.nativeClient(Room))("lobby").expire()`. A call through either that the entity could not be reached for, or that did not answer within `client(entity, { timeout })`, 20 seconds by default, fails with the built-in `Action.Unavailable`, as through `reaching` below. What a call fails with is `ActionEntity.MethodError`, and the transport rules are on `ActionEntity.client`.
 
 ## Reach it from any surface
 
-`ActionEntity.reaching(entity)` returns implementations of the entity's actions and event types that any surface serves beside its own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, given a binding of the same contracts: each call goes through `Entity.client` to the entity its input's key names, with the caller's headers `ActionEntity.forwardedHeaders` keeps, so one HTTP or MCP endpoint serves every room. The example's `routes` above serve every cart that way.
+`ActionEntity.reaching(entity)` returns implementations of the entity's actions and event types that any surface serves beside its own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, given a binding of the same contracts or some of them, such as an HTTP binding of its actions alone: each call goes through `Entity.client` to the entity its input's key names, with the caller's headers `ActionEntity.forwardedHeaders` keeps, so one HTTP or MCP endpoint serves every room. The example's `routes` above serve every cart that way.
 
 The surface authenticates a protected call with its own binding's descriptor and the entity authenticates it again, so provide the authentication provider to both.
 
@@ -78,7 +86,7 @@ A call the entity could not be reached for, or that did not answer within `reach
 
 An event is followed through the entity's poll rpc, so no watcher holds an entity open; a stream polls it from the surface. What crosses the two hops, and what does not, is on `ActionEntity.reaching`.
 
-A server outside the cluster that forwards a socket's calls into the entity, as the Cloudflare package's socket host does, forwards the rpcs of `ActionEntity.bindingRpcs(entity)` alone, never the entity's native rpcs, which authenticate nothing; its clients call them with `ActionRpc.client(binding)`, whose watch polls them.
+A server outside the cluster that forwards a socket's calls into the entity, as the Cloudflare package's socket host does, forwards those rpcs of `ActionEntity.bindingRpcs(entity)` its own binding lists, never the entity's internal actions or native rpcs, which authenticate nothing; its clients call them with `ActionRpc.client` of that binding, whose watch polls them.
 
 ## Watch an event
 

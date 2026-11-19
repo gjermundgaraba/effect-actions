@@ -13,6 +13,8 @@ import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { DeclaredFailure } from "../../src/rpc/erased.js";
+import { CurrentActor } from "../support/app/authorization.js";
+import { Login } from "../support/app/binding.js";
 import {
   makeRooms,
   Posted,
@@ -174,7 +176,7 @@ const Count = Action.make("count", {
   caller: Action.Anyone,
 });
 
-const Counter = ActionEntity.make("Counter", ActionRpc.make([Count]), {
+const Counter = ActionEntity.make("Counter", [Count], {
   key: ({ room }) => room,
 });
 
@@ -186,8 +188,32 @@ const Lines = Action.make("lines", {
   caller: Action.Anyone,
 });
 
-const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
+const Liner = ActionEntity.make("Liner", [Lines], {
   key: ({ room }) => room,
+});
+
+describe("ActionEntity.make", () => {
+  const Whoami = Action.make("whoami", {
+    description: "Answer the caller.",
+    input: { room: Schema.String },
+    success: Schema.String,
+    readOnly: true,
+    caller: CurrentActor,
+  });
+
+  it("binds its contracts and authentication as its binding, its actions and event types apart", () => {
+    const Keyed = ActionEntity.make("Keyed", [Whoami, Count, Posted], {
+      authentication: Login,
+      key: ({ room }) => room,
+    });
+
+    expect(Keyed.binding).toMatchObject({
+      actions: [Whoami, Count],
+      events: [Posted],
+      error: [],
+      authentication: Login,
+    });
+  });
 });
 
 describe("ActionEntity's stream answer", () => {
@@ -275,7 +301,7 @@ describe("ActionEntity's key", () => {
       const owner = { id: "lobby" };
       const unset: Owner = owner;
 
-      const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
+      const Prober = ActionEntity.make("Prober", [Probe], {
         key: () => owner.id,
       });
 
@@ -317,7 +343,7 @@ describe("ActionEntity.client's key", () => {
       const owner = { id: "lobby" };
       const unset: Owner = owner;
 
-      const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
+      const Prober = ActionEntity.make("Prober", [Probe], {
         key: () => owner.id,
       });
 
@@ -367,7 +393,7 @@ describe("ActionEntity.client's key", () => {
         caller: Action.Anyone,
       });
 
-      const Finder = ActionEntity.make("Finder", ActionRpc.make([Where]), {
+      const Finder = ActionEntity.make("Finder", [Where], {
         key: ({ room }) => room,
       });
 

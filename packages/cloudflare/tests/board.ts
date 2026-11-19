@@ -111,14 +111,14 @@ export const BoardTells = RpcGroup.make(
 
 const key = ({ board }: { readonly board: string }) => board;
 
-export const Board = ActionEntity.make("Board", BoardRpc, {
+export const Board = ActionEntity.make("Board", contracts, {
   key,
   rpcs: BoardTells,
 });
 
-export const Tally = ActionEntity.make("Tally", BoardRpc, { key });
+export const Tally = ActionEntity.make("Tally", contracts, { key });
 
-export const Unbound = ActionEntity.make("Unbound", BoardRpc, { key });
+export const Watcher = ActionEntity.make("Watcher", contracts, { key });
 
 const Rows = Schema.Array(Schema.Struct({ n: Schema.Int }));
 

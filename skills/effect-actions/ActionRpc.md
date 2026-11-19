@@ -169,7 +169,27 @@ export const openChat = Effect.gen(function* () {
 
 [live-rpc/src/client.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/client.ts) runs it from Node, and [live-rpc/src/page.ts](node_modules/@gjermundgaraba/effect-actions/examples/live-rpc/src/page.ts) wraps it in promises for a page that is not one Effect program. The client's traps are on `ActionRpc.client`.
 
-- **A server that closes a socket to refuse it.** Effect's socket client connects again after any close, backing off to every five seconds, for good. Give `RpcClient.layerProtocolSocket` the `retryPolicy` `ActionRpc.reconnectUntil(code)`, and a close with that code ends its calls instead.
+A page that holds one socket of its own builds the client with `ActionRpc.socketClient(Rpc, { url })`: one WebSocket for the client's `Scope`, JSON, reconnecting after a drop and stopping at a server's refusal. Its options, a constructor, `hooks`, `serialization` and `watchMode`, are on `ActionRpc.SocketClientOptions`:
+
+```ts example=kitchen-sink/src/browser.ts
+import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
+import { Effect } from "effect";
+
+import { Rpc } from "./Rpc.js";
+
+export const board = (url: string) =>
+  Effect.gen(function* () {
+    const tracker = yield* ActionRpc.socketClient(Rpc, { url });
+
+    const me = yield* tracker.whoAmI();
+    const { issues } = yield* tracker.listIssues({ status: "open", limit: 50 });
+
+    return { me, issues };
+  });
+
+export const open = async (url: string) =>
+  await Effect.runPromise(Effect.scoped(board(url)));
+```
 
 ## Serve and watch events
 

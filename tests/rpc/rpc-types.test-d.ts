@@ -12,7 +12,7 @@ import {
   RpcServer,
 } from "effect/rpc";
 import type { RpcClientError } from "effect/rpc";
-import type { SocketServer } from "effect/socket";
+import type { Socket, SocketServer } from "effect/socket";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
@@ -558,6 +558,25 @@ expectTypeOf<Layer.Services<typeof gatedWatchUnprovided>>().toEqualTypeOf<
 
 export const refusedSocket = RpcClient.layerProtocolSocket({
   retryPolicy: ActionRpc.reconnectUntil(4001),
+});
+
+const overSocket = ActionRpc.socketClient(Rpc, { url: "ws://localhost/rpc" });
+
+expectTypeOf<Effect.Services<typeof overSocket>>().toEqualTypeOf<Scope.Scope>();
+
+expectTypeOf<Effect.Success<typeof overSocket>>().toEqualTypeOf<
+  ActionRpc.Client<typeof Rpc>
+>();
+
+// @ts-expect-error -- a socket client connects to a url or a socket
+export const nowhere = ActionRpc.socketClient(Rpc, { watchMode: "poll" });
+
+declare const madeElsewhere: Socket.Socket;
+
+// @ts-expect-error -- a socket client connects to a url or a socket, not both
+export const both = ActionRpc.socketClient(Rpc, {
+  url: "ws://localhost/rpc",
+  socket: madeElsewhere,
 });
 
 const Where = Action.make("where", {

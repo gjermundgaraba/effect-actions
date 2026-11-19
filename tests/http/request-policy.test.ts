@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
+import {
+  HttpClientRequest,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 
 import * as RequestPolicy from "../../src/http/RequestPolicy.js";
 
@@ -10,11 +16,19 @@ const publicUrl = new URL("https://notes.example");
 
 const policy = RequestPolicy.make({ publicUrl, allowedOrigins: ["wtf://app"] });
 
+const requestOf = (target: string, host: string | undefined, origin?: string) =>
+  new Request(new URL(target, "https://request.example"), {
+    headers: {
+      ...(host === undefined ? {} : { host }),
+      ...(origin === undefined ? {} : { origin }),
+    },
+  });
+
 const allows = (
   target: string,
   host: string | undefined,
   origin?: string
-): boolean => policy.allows({ target, host, origin });
+): boolean => policy.allows(requestOf(target, host, origin));
 
 describe("the request policy", () => {
   it("the Host header must equal the public host, as sent", () => {
@@ -32,27 +46,12 @@ describe("the request policy", () => {
     });
 
     assert.equal(
-      local.allows({
-        target: "/",
-        host: "app.notes.localhost:5173",
-        origin: undefined,
-      }),
+      local.allows(requestOf("/", "app.notes.localhost:5173")),
       true
     );
+    assert.equal(local.allows(requestOf("/", "app.notes.localhost")), false);
     assert.equal(
-      local.allows({
-        target: "/",
-        host: "app.notes.localhost",
-        origin: undefined,
-      }),
-      false
-    );
-    assert.equal(
-      local.allows({
-        target: "/",
-        host: "app.notes.localhost:5174",
-        origin: undefined,
-      }),
+      local.allows(requestOf("/", "app.notes.localhost:5174")),
       false
     );
   });
@@ -81,6 +80,11 @@ describe("the request policy", () => {
 
   it("the one exempt path answers without either header, and matches exactly", () => {
     assert.equal(allows("/healthz", undefined), true);
+    assert.equal(policy.allows(new Request("https://notes.example/api")), true);
+    assert.equal(
+      policy.allows(new Request("https://other.example/api")),
+      false
+    );
     assert.equal(allows("/healthz?probe=1", undefined), true);
     assert.equal(allows("/healthz#fragment", undefined), true);
     assert.equal(allows("https://anything.example/healthz", undefined), true);
@@ -90,25 +94,40 @@ describe("the request policy", () => {
     assert.equal(allows("/", undefined), false);
   });
 
-  it("a malformed target is a path, never a parse failure", () => {
-    for (const target of [
-      "",
-      "//",
-      "://",
-      "http://",
-      "%%%",
-      "/a%2",
-      "\\\\evil",
-      "http://h",
-    ]) {
-      assert.doesNotThrow(() =>
-        policy.allows({ target, host: "notes.example", origin: undefined })
+  it.effect("a malformed target is a path, never a parse failure", () =>
+    Effect.gen(function* () {
+      const served = yield* HttpRouter.toHttpEffect(
+        HttpRouter.add("*", "/*", HttpServerResponse.text("ok")).pipe(
+          Layer.provide(policy.middleware.layer)
+        )
       );
-    }
 
-    assert.equal(allows("", "notes.example"), true);
-    assert.equal(allows("http://h", "notes.example"), true);
-  });
+      for (const target of [
+        "",
+        "//",
+        "://",
+        "http://",
+        "%%%",
+        "/a%2",
+        "\\\\evil",
+        "http://h",
+      ]) {
+        const response = yield* served.pipe(
+          Effect.provideService(
+            HttpServerRequest.HttpServerRequest,
+            HttpServerRequest.fromClientRequest(
+              HttpClientRequest.get(target, {
+                headers: { host: "notes.example" },
+              })
+            )
+          ),
+          Effect.orElseSucceed(() => undefined)
+        );
+
+        assert.notEqual(response?.status, 403, target);
+      }
+    }).pipe(Effect.scoped)
+  );
 
   it("the middleware refuses before any handler runs and lets exempt paths through", async () => {
     let handled = 0;

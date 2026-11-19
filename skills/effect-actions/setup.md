@@ -108,4 +108,4 @@ Import into the page only the contract files, the binding and a client module of
 
 - `Action`, `Event`, `ActionHttp`, `ActionRpc` and `Authentication` are the browser-safe modules: they use nothing of Node or a server platform.
 - Keep `Action.implement` and `Authentication.layer` out of every file the page imports: a bundler keeps such a call, and what its handlers or verifier import, even unused.
-- Those five modules import Effect through `effect`, `effect/http` and `effect/http-api` alone, and `ActionRpc` through `effect/rpc` too. A page loading Effect from an import map serves those, and `effect/socket` for a WebSocket client.
+- Those five modules import Effect through `effect`, `effect/http` and `effect/http-api` alone, and `ActionRpc` through `effect/rpc` and `effect/socket` too. A page loading Effect from an import map serves those.

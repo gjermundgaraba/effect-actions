@@ -24,7 +24,7 @@ const instancesOf = (board: string) =>
 const hooksOf = (board: string) =>
   hooks.filter((hook) => hook.endsWith(` ${board}`));
 
-describe("ActionClusterEntity's subscription hooks", () => {
+describe("ActionWorker's socket subscription hooks", () => {
   it.live(
     "keeps the object of a page watching a hooked source awake through 20 idle seconds, its hook held once",
     () =>

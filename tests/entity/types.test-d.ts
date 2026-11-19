@@ -1,5 +1,5 @@
 import { expectTypeOf } from "@effect/vitest";
-import { Context, Effect, Layer, Redacted, Schema } from "effect";
+import { Context, DateTime, Effect, Layer, Redacted, Schema } from "effect";
 import type { Stream } from "effect";
 import { Entity } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
@@ -59,27 +59,63 @@ const signIn = Authentication.layer(SignedIn, (token) =>
   Effect.succeed(Redacted.value(token))
 );
 
-const Rpc = ActionRpc.make([Get, Open, Changed], { authentication: SignedIn });
-
 const byRoom = ({ room }: { readonly room: string }) => room;
 
-const Room = ActionEntity.make("Room", Rpc, { key: byRoom });
+const Room = ActionEntity.make("Room", [Get, Open, Changed], {
+  authentication: SignedIn,
+  key: byRoom,
+});
 
-expectTypeOf(
-  ActionEntity.make("Room", Rpc, { key: ({ room }) => room }).key
-).toEqualTypeOf<ActionEntity.Key<typeof Rpc>>();
+expectTypeOf(Room.binding).toEqualTypeOf<
+  ActionRpc.Binding<
+    ReadonlyArray<typeof Get | typeof Open>,
+    [],
+    typeof SignedIn,
+    ReadonlyArray<typeof Changed>
+  >
+>();
 
-ActionEntity.make("Room", Rpc, {
-  // @ts-expect-error -- one key reads only a field every input of the binding declares.
+expectTypeOf(Room.key).toEqualTypeOf<ActionEntity.Key<typeof Room.binding>>();
+
+ActionEntity.make("Room", [Get, Open, Changed], {
+  authentication: SignedIn,
+  // @ts-expect-error -- one key reads only a field every input of the contracts declares.
   key: ({ id }: { readonly id: string }) => id,
 });
 
-ActionEntity.make(
-  "Room",
-  // @ts-expect-error -- an entity's binding holds no native rpcs.
-  ActionRpc.make([Open], { rpcs: RpcGroup.make(NativeRpc.make("ping")) }),
-  { key: byRoom }
-);
+ActionEntity.make("Room", [Get, Open, Changed], {
+  authentication: SignedIn,
+  key: byRoom,
+  // @ts-expect-error -- an entity runs no middleware, so it declares no errors of its own.
+  error: Missing,
+});
+
+// @ts-expect-error -- protected contracts name their authentication.
+ActionEntity.make("Room", [Get, Open, Changed], { key: byRoom });
+
+const OtherSignedIn = Authentication.make("entity-types.Other", Tenant, {
+  principal: (tenant) => tenant,
+});
+
+ActionEntity.make("Room", [Get, Open, Changed], {
+  // @ts-expect-error -- the descriptor is of the protected contracts' identity, never one of two.
+  authentication: OtherSignedIn as typeof SignedIn | typeof OtherSignedIn,
+  key: byRoom,
+});
+
+const widened: readonly Action.Any[] = [Get, Open];
+
+// @ts-expect-error -- a list that may hold a protected action names its authentication.
+ActionEntity.make("Widened", widened, { key: () => "x" });
+
+const options: ActionEntity.MakeOptions<
+  readonly [typeof Get, typeof Open, typeof Changed],
+  typeof SignedIn
+> = { authentication: SignedIn, key: byRoom };
+
+expectTypeOf(
+  ActionEntity.make("Named", [Get, Open, Changed], options).binding
+).toEqualTypeOf<typeof Room.binding>();
 
 const notes = Action.implement(
   [Get, Open],
@@ -160,6 +196,41 @@ ActionEntity.layer(
   { services: Layer.succeed(Rooms)(new Map()) }
 );
 
+const wakingLater = ActionEntity.wakeAt(DateTime.nowUnsafe());
+
+expectTypeOf<
+  Effect.Error<typeof wakingLater>
+>().toEqualTypeOf<Action.Unavailable>();
+
+expectTypeOf<
+  Effect.Services<typeof wakingLater>
+>().toExtend<ActionEntity.Activation>();
+
+const wakingPerCall = Action.implement(
+  [Get, Open],
+  {
+    get: () => Effect.as(wakingLater, ""),
+    open: () => Effect.succeed(""),
+  },
+  { authorize: () => Effect.void }
+);
+
+const servedWaking = ActionEntity.layer(Room, [wakingPerCall, changes], {
+  services: tenantPerEntity,
+  onWake: () =>
+    Effect.gen(function* () {
+      yield* Tenant;
+      yield* Rooms;
+    }),
+});
+
+expectTypeOf<
+  Exclude<
+    Layer.Services<typeof servedWaking>,
+    Event.Events | Layer.Success<typeof signIn> | Sharding.Sharding
+  >
+>().toEqualTypeOf<Rooms>();
+
 const authorizingPerCall = Action.implement(
   [Get, Open],
   { get: () => Effect.succeed(""), open: () => Effect.succeed("") },
@@ -208,7 +279,7 @@ expectTypeOf<
   Effect.Services<typeof clientOf>
 >().toEqualTypeOf<Sharding.Sharding>();
 
-type RoomClient = ActionEntity.Client<typeof Rpc>;
+type RoomClient = ActionEntity.Client<typeof Room.binding>;
 
 expectTypeOf<Effect.Success<typeof clientOf>>().toEqualTypeOf<RoomClient>();
 
@@ -216,7 +287,8 @@ expectTypeOf<ReturnType<RoomClient["get"]>>().toEqualTypeOf<
   Effect.Effect<string, Missing | Action.BuiltIn>
 >();
 
-const Pinged = ActionEntity.make("Pinged", Rpc, {
+const Pinged = ActionEntity.make("Pinged", [Get, Open, Changed], {
+  authentication: SignedIn,
   key: byRoom,
   rpcs: RpcGroup.make(
     NativeRpc.make("ping", { success: Schema.Int, error: Missing })
@@ -268,7 +340,7 @@ const reached = ActionEntity.reaching(Room);
 
 const overHttp = ActionHttp.layer(Http, reached);
 
-const overRpc = ActionRpc.layer(Rpc, reached);
+const overRpc = ActionRpc.layer(Room.binding, reached);
 
 const overMcp = ActionMcp.layerHttp(reached, {
   name: "rooms",

@@ -20,11 +20,11 @@ In a project that installs the package, copy this directory out of `node_modules
 
 Each trap below is shown in the code of the files it names.
 
-- **One initializer, registered with `ActionClusterEntity.register`, builds the whole application, and nothing slow builds after the cluster**: `quickOnceTheClusterIsBuilt` in `src/application.ts`, registered by `src/worker.ts`'s import.
+- **One `ActionWorker.make` names the room once and builds the whole application once per isolate, so nothing slow builds in the room's layer or the routes**: `src/worker.ts`.
 - **The room is the entity's id**, and only a room `DemoRoomName` lists is reached: `src/chat/Chat.ts`, `src/entities.ts`, `roomOfAddress` in `src/routes.ts`.
 - **The Worker serves every room, and each room builds its stores over its own database as it activates**: `services` in `src/routes.ts`.
 - **A post writes its message and wakes its followers in one transaction, and the table keeps one message per author and `request`**, so a post whose notification fails keeps nothing, and a page sending it again with its `request`, even after the room failed past its write, is answered with the first message, notifying nothing; the page sends it again only after a transport failure: `src/platform/sql-messages.ts`, `src/chat/handlers.ts`, `src/browser.ts`.
-- **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; a page built against other rpcs is refused, and stops: `src/browser.ts`, `src/worker.ts`, `src/Rpc.ts`.
+- **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; its socket serves the event alone, and a page built against other rpcs is refused, and stops: `src/browser.ts`, `src/Rpc.ts`, whose binding the socket's `actions` in `src/worker.ts` reads, and `protocol` there.
 - **A page watches over its socket, which lets the room hibernate**; a stream through the Worker, its JSON `watch` or MCP's `events/stream`, calls the room each `nextPoll`, 2 seconds, while it is open, so the room never hibernates: `followRoom` in `src/browser.ts`, `nextPoll` in `src/chat/events.ts`.
 - **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
 - **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for each retry wait, and a subscribed room hibernates while idle, as `MessagePosted` is `notified`, asked again only when a post notifies it: `roomWebhooks` in `src/routes.ts`, `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
@@ -45,15 +45,13 @@ src/
 │   ├── members.ts     the demo members
 │   └── verifier.ts    Authentication.layer: tokens to members, server only
 ├── platform/
-│   ├── object-sql.ts    the entity's own SQLite database, as SqlClient
 │   ├── sql-messages.ts  MessageStore over the entity's SQLite database
 │   └── webhook-delivery.ts  the table a room keeps its webhook subscriptions in, and fetch's client for their POSTs
 ├── Api.ts             the room's JSON binding
-├── Rpc.ts             the room's rpc binding, and the version a page's socket names
+├── Rpc.ts             what a page's socket serves, the event alone, and the version it names
 ├── entities.ts        Room, the entity
 ├── routes.ts          the entity's layer and services, and the Worker's routes
-├── application.ts     the initializer: the whole application, once per isolate
-├── worker.ts          entrypoint: the four classes, and the Worker's handler routing a room's socket
+├── worker.ts          entrypoint: ActionWorker.make, the four classes and the Worker's fetch, a room's socket
 ├── browser.ts         client module: a page's room over JSON and its socket
 └── env.d.ts           the bindings' types, as `wrangler types` writes them
 test/
@@ -66,15 +64,15 @@ test/
 
 - **An entity is built per wake.** The runtime evicts an idle object and builds the entity again for its next message, its `services` and builders included: anything in memory is gone, and `layerSqlMessages` creates its table if it is not there. The database stays.
 - **The room is an activation service, the caller is not.** An entity holds one room, so the authorizer yields `Room` once, as it is built. `CurrentMember` comes from authentication, per call.
-- **The initializer chooses everything.** `application.ts` gives the room its stores and its name, and the Worker its routes, all over `ActionCluster.layer`.
+- **The Worker chooses everything.** `worker.ts` gives the room its layer and socket, and the Worker its routes, all built over `ActionCluster.layer`.
 
 ## Where to look
 
 | To see | Read |
 | --- | --- |
 | The four classes, bindings and migration a cluster needs | `src/worker.ts`, `wrangler.jsonc` |
-| One initializer building the application once per isolate | `src/application.ts` |
-| An entity's stores over its own SQLite, built per activation | `src/routes.ts`, `src/platform/object-sql.ts`, `src/platform/sql-messages.ts` |
+| One Worker building the application once per isolate | `src/worker.ts` |
+| An entity's stores over its own SQLite, built per activation on `ActionCluster.layerObject` | `src/routes.ts`, `src/platform/sql-messages.ts` |
 | An authorizer that yields the entity's room once, when it is built | `src/chat/authorize.ts`, `src/routes.ts` |
 | A Worker serving every room's actions and event, each in the room it names | `src/routes.ts`, `test/worker.test.ts` |
 | One MCP endpoint for every room, its event polled | `src/routes.ts`, `test/worker.test.ts` |

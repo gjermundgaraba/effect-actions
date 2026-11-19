@@ -9,7 +9,7 @@ import {
   Predicate,
   Schema,
 } from "effect";
-import { Rpc, RpcMessage, RpcSchema, RpcSerialization } from "effect/rpc";
+import { Rpc, RpcMessage, RpcSerialization } from "effect/rpc";
 
 import { closeQuietly, died, encodeDefect, parser, send } from "./frames.js";
 
@@ -42,6 +42,9 @@ const Answered = Schema.Struct({
 
 const Attachment = Schema.Struct({
   name: Schema.String,
+  version: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null))
+  ),
   headers: Headers,
   calls: Schema.Array(RequestId),
   parked: Schema.Array(Parked),
@@ -113,10 +116,21 @@ const decodePoll = Schema.decodeUnknownOption(ActionRpc.Poll);
 
 const decodePage = Schema.decodeUnknownOption(ActionRpc.Page);
 
-/** One entity's binding, as a socket reaches it: its rpcs by tag, its polls, and a call into it. */
+/** The version a socket's upgrade must name, and the close refusing one naming another. */
+export interface Refusal {
+  readonly version: string;
+  readonly code: number;
+  readonly reason: string;
+}
+
+/**
+ * One entity's socket, as a page reaches it: the rpcs it serves by tag, its polls among them,
+ * its refusal, and a call into the entity.
+ */
 export interface Served {
   readonly rpcs: ReadonlyMap<string, Rpc.AnyWithProps>;
   readonly polls: ReadonlySet<string>;
+  readonly refusal: Refusal | undefined;
   readonly call: (
     tag: string,
     payload: Schema.Json,
@@ -182,9 +196,6 @@ const reply = (
 const untracked =
   "This socket's attachment, its upgrade's headers, its calls under way and its parked polls, would pass the runtime's 16 KiB: send fewer calls at once, or fewer or smaller headers";
 
-const streamed = (tag: string) =>
-  `${tag} is a streaming action, which a socket of ActionClusterEntity does not serve, since its frames would hold the object awake: call it over HTTP through ActionEntity.reaching`;
-
 const lostCalls =
   "This server lost the calls it was answering on this socket: connect again";
 
@@ -196,6 +207,18 @@ const lostSocket =
  * with `ActionRpc.pollResentAfter`, it bounds how long the entity goes without a page's poll.
  */
 export const uncalledWithin = Duration.seconds(30);
+
+const outdated = (socket: WebSocket, served: Served, held: Attachment) => {
+  const { refusal } = served;
+
+  if (refusal === undefined || held.version === refusal.version) {
+    return false;
+  }
+
+  closeQuietly(socket, refusal.code, refusal.reason);
+
+  return true;
+};
 
 /**
  * Answers sockets' frames from the entity each attachment names, parks the polls that find
@@ -257,7 +280,11 @@ export const makeSockets = (options: {
       const served =
         held === undefined ? undefined : options.servedBy(held.name);
 
-      if (held === undefined || served === undefined) {
+      if (
+        held === undefined ||
+        served === undefined ||
+        outdated(socket, served, held)
+      ) {
         return [];
       }
 
@@ -350,6 +377,10 @@ export const makeSockets = (options: {
     });
 
   const pass = Effect.gen(function* () {
+    if (options.sockets().length === 0) {
+      return;
+    }
+
     const read = yield* signal;
 
     if (Exit.isSuccess(read) && read.value === undefined) {
@@ -359,7 +390,11 @@ export const makeSockets = (options: {
     const exits = yield* Effect.forEach(
       due((entry) => Exit.isFailure(read) || entry.gate !== read.value),
       ({ socket, served, entry }) =>
-        tracked(socket, entry.id, polled(socket, served, entry)),
+        served.rpcs.has(entry.tag)
+          ? tracked(socket, entry.id, polled(socket, served, entry))
+          : Effect.exit(
+              Effect.as(reply(socket, served, entry, Exit.succeed(null)), false)
+            ),
       { concurrency: "unbounded" }
     );
 
@@ -436,12 +471,6 @@ export const makeSockets = (options: {
         return;
       }
 
-      if (RpcSchema.isStreamSchema(rpc.successSchema)) {
-        send(socket, died(id, streamed(tag)));
-
-        return;
-      }
-
       if (served.polls.has(tag) && (yield* parkedAgain(socket, request))) {
         return;
       }
@@ -475,9 +504,13 @@ export const makeSockets = (options: {
       const served =
         held === undefined ? undefined : options.servedBy(held.name);
 
-      if (served === undefined) {
+      if (held === undefined || served === undefined) {
         closeQuietly(socket, 1012, lostSocket);
 
+        return;
+      }
+
+      if (outdated(socket, served, held)) {
         return;
       }
 
@@ -542,11 +575,17 @@ export const makeSockets = (options: {
           discard: true,
         }
       ),
-    accept: (socket: WebSocket, name: string, headers: Headers) =>
+    accept: (
+      socket: WebSocket,
+      name: string,
+      version: string | null,
+      headers: Headers
+    ) =>
       kept(
         socket,
         Attachment.make({
           name,
+          version,
           headers,
           calls: [],
           parked: [],

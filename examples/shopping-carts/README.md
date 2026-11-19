@@ -38,7 +38,7 @@ src/
 ├── platform/
 │   ├── sql-carts.ts   CartStore over a SqlClient
 │   └── cluster.ts     SingleRunner, the cluster in one process over that SqlClient
-├── Api.ts, Rpc.ts     the HTTP binding, and the RPC binding the entity serves
+├── Api.ts             the HTTP binding
 ├── entities.ts        Cart, the entity: which cart each action's input names
 ├── routes.ts          the entity's layer, and the JSON routes reaching it
 └── server.ts          entrypoint: both, with CartStore over SQL, on SingleRunner and one SQLite file
