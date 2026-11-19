@@ -39,6 +39,13 @@ const makeEntries = () => {
   return { entries, read, check: source.check };
 };
 
+const answering = (read: Event.Appended<typeof Appended>) =>
+  Event.appended(Appended, {
+    newest: () => Effect.succeed(9),
+    after: () => Effect.succeed(read),
+    id: (data) => data.id,
+  });
+
 const Command = Schema.Union([
   Schema.TaggedStruct("Append", {
     skip: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 3 })),
@@ -124,6 +131,26 @@ describe("Event.appended", () => {
 
           minted.push(answered.cursor);
         }
+      })
+  );
+
+  it.effect(
+    "never answers hasMore on a read that moved the cursor nowhere, and never moves it back before an item it sent",
+    () =>
+      Effect.gen(function* () {
+        const stuck = yield* answering({ items: [], hasMore: true }).check(
+          {},
+          "4"
+        );
+
+        const behind = yield* answering({
+          items: [{ id: 6 }, { id: 7 }],
+          through: 5,
+          hasMore: true,
+        }).check({}, "4");
+
+        expect([stuck.cursor, stuck.hasMore]).toStrictEqual(["4", false]);
+        expect([behind.cursor, behind.hasMore]).toStrictEqual(["7", true]);
       })
   );
 

@@ -239,9 +239,17 @@ export interface Appended<E extends Any> {
   /**
    * The id of the last entry read, where it is not the last item's, as where entries read are
    * skipped: the next read goes on after it.
+   *
+   * **Gotchas**
+   *
+   * - One below the last item's id is read as the last item's, so no item is sent twice.
+   * - One past `newest` makes the next read answer `truncated: true` and the newest id, a gap the subscriber never had.
    */
   readonly through?: number | undefined;
-  /** More entries are ready past `through`: the subscriber reads again without waiting. */
+  /**
+   * More entries are ready past `through`: the subscriber reads again without waiting. Ignored on a
+   * read that moved the cursor nowhere, which would read the same entries again at once forever.
+   */
   readonly hasMore?: boolean | undefined;
 }
 
@@ -324,13 +332,13 @@ export const appended = <
 
       const read = yield* after(input, from.value);
       const lastItem = read.items.at(-1);
+      const reached = lastItem === undefined ? from.value : id(lastItem);
+      const through = Math.max(read.through ?? reached, reached);
 
       return {
         events: read.items.map((data) => ({ eventId: String(id(data)), data })),
-        cursor: String(
-          read.through ?? (lastItem === undefined ? from.value : id(lastItem))
-        ),
-        hasMore: read.hasMore,
+        cursor: String(through),
+        hasMore: read.hasMore === true && through > from.value,
         nextPoll,
       };
     }),
