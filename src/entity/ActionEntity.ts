@@ -360,7 +360,7 @@ export interface LayerOptions<
    *
    * - It is a check, not one reminder per `wakeAt`: it runs at the earliest time asked for, early for the later ones, which it asks for again, and may run again for a wake already handled, as a replay after a restart: do what is due by then and `wakeAt` the next time.
    * - The entity's webhook retry waits share its wake, so with a `Webhook.layer` in `services` it also runs when a delivery's retry is due.
-   * - It runs beside the entity's calls, outside its `concurrency`, as a webhook delivery holding the entity's only slot waits on the wake.
+   * - It runs beside the entity's calls, outside its `concurrency`, as a webhook delivery holding the entity's only slot waits on the wake, and two deliveries, such as a replay and a fresh wake, run it at once: a read, change and write of state it shares with a handler or with itself needs its own lock or transaction.
    * - Its failure or defect is reported to the `ErrorReporter`s the activation provides and logged, and that wake is done; interrupted as the entity stops, it runs again in the next activation.
    * - On the Cloudflare runtime, a call's defect that rebuilds the activation in place while it runs closes the services it reads beneath it, and that wake counts as handled, as `@effect/platform-cloudflare` 4.1.4 finalizes an activation without waiting for its tells: keep it a check the next `wakeAt` repeats, not the only record of work.
    */
