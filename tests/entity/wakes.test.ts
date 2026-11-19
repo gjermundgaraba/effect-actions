@@ -4,7 +4,10 @@ import type { Duration } from "effect";
 import {
   Context,
   DateTime,
+  Deferred,
   Effect,
+  ErrorReporter,
+  Exit,
   Fiber,
   Layer,
   Option,
@@ -19,6 +22,7 @@ import { SqlClient } from "effect/sql";
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
+import { Wake } from "../../src/contract/wake.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import { makeWake } from "../../src/entity/wakes.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
@@ -28,6 +32,7 @@ import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
 import { CurrentActor } from "../support/app/authorization.js";
 import { eventually } from "../support/live.js";
+import { recorder } from "../support/reporter.js";
 import { unaryOf } from "../support/rpc.js";
 import { Ticked } from "../support/ticked.js";
 import { challengeIn, Login, secretOf } from "../support/webhook.js";
@@ -495,7 +500,11 @@ describe("Webhook.layer with persist in an entity's services", () => {
 
 const Remind = Action.make("remind", {
   description: "Wake the alarm a while from now.",
-  input: { alarm: Schema.String, inMs: Schema.Int },
+  input: {
+    alarm: Schema.String,
+    inMs: Schema.Int,
+    rollBack: Schema.optional(Schema.Boolean),
+  },
   success: { at: Schema.Int },
   readOnly: false,
   caller: Action.Anyone,
@@ -505,16 +514,27 @@ const Alarm = ActionEntity.make("Alarm", ActionRpc.make([Remind]), {
   key: ({ alarm }) => alarm,
 });
 
-const reminding = Action.implement([Remind], {
-  remind: ({ inMs }) =>
-    Effect.gen(function* () {
-      const at = DateTime.add(yield* DateTime.now, { milliseconds: inMs });
+const reminding = Action.implement(
+  [Remind],
+  Effect.map(SqlClient.SqlClient, (sql) => ({
+    remind: ({ inMs, rollBack }) =>
+      Effect.gen(function* () {
+        const at = DateTime.add(yield* DateTime.now, { milliseconds: inMs });
+        const waking = ActionEntity.wakeAt(at);
 
-      yield* ActionEntity.wakeAt(at);
+        yield* rollBack === true
+          ? Effect.ignore(
+              sql.withTransaction(
+                Effect.andThen(waking, Effect.fail("rolled back"))
+              ),
+              { log: false }
+            )
+          : waking;
 
-      return { at: DateTime.toEpochMillis(at) };
-    }),
-});
+        return { at: DateTime.toEpochMillis(at) };
+      }),
+  }))
+);
 
 interface Woken {
   readonly at: number;
@@ -561,9 +581,11 @@ const makeAlarms = (maxIdleTime?: Duration.Input) => {
   return { seen, entities };
 };
 
-const remind = (alarm: string, inMs: number) =>
+const remind = (alarm: string, inMs: number, rollBack?: boolean) =>
   Effect.flatMap(ActionEntity.client(Alarm), (alarms) =>
-    alarms.remind({ alarm, inMs })
+    alarms.remind(
+      rollBack === undefined ? { alarm, inMs } : { alarm, inMs, rollBack }
+    )
   );
 
 describe("ActionEntity.wakeAt", () => {
@@ -648,9 +670,77 @@ describe("ActionEntity.wakeAt", () => {
   );
 });
 
+describe("ActionEntity.wakeAt in an entity", () => {
+  it.live(
+    "refuses a wake asked for inside a SQL transaction, so its rollback leaves nothing pending that a later wake would defer to",
+    () => {
+      const { entities } = makeAlarms();
+
+      return Effect.gen(function* () {
+        const refused = yield* Effect.exit(remind("a", 20_000, true));
+        const rolledBack = yield* pendingWakes;
+
+        yield* remind("a", 30_000);
+        const after = yield* pendingWakes;
+
+        expect(Exit.isFailure(refused)).toBe(true);
+        expect([rolledBack, after]).toStrictEqual([0, 1]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(entities.pipe(Layer.provideMerge(database)))
+      );
+    },
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "reports onWake's failure to the reporters the activation's services provide",
+    () => {
+      const reports: string[] = [];
+
+      const entities = ActionEntity.layer(Alarm, reminding, {
+        services: ErrorReporter.layer([recorder(reports)]),
+        onWake: () => Effect.fail("the wake failed"),
+      }).pipe(Layer.provideMerge(runner));
+
+      return Effect.gen(function* () {
+        yield* remind("a", 0);
+        yield* eventually(() => reports.length > 0, "15 seconds");
+
+        expect(reports.join("\n")).toContain("the wake failed");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(entities.pipe(Layer.provideMerge(database)))
+      );
+    },
+    { timeout: 30_000 }
+  );
+});
+
+const sending = Effect.fnUntraced(function* () {
+  const sent: number[] = [];
+  const stored = yield* Deferred.make<undefined>();
+  const acknowledged = yield* Deferred.make<undefined>();
+
+  const made = yield* makeWake(({ at }) =>
+    Effect.suspend(() => {
+      sent.push(at);
+
+      return sent.length === 1
+        ? Effect.andThen(
+            Deferred.succeed(stored, undefined),
+            Deferred.await(acknowledged)
+          )
+        : Effect.void;
+    })
+  );
+
+  return { ...made, sent, stored, acknowledged };
+});
+
 describe("An entity's wake in an activation", () => {
   it.effect(
-    "has a wait behind an earlier pending wake ask again once that one fires, and ends at a wake due no earlier, a stale one aside",
+    "stores a wait's own deadline before it waits, so an earlier wake firing hands it nothing, and ends at a wake due no earlier, a stale one aside",
     () =>
       Effect.gen(function* () {
         const sent: number[] = [];
@@ -667,26 +757,82 @@ describe("An entity's wake in an activation", () => {
 
         yield* Effect.yieldNow;
 
-        const behind = [...sent];
+        const stored = [...sent];
 
         yield* woke(1000);
-        yield* Effect.yieldNow;
-
-        const afterStale = [...sent];
-
         yield* woke(3000);
         yield* Effect.yieldNow;
 
-        const askedAgain = [...sent];
+        const afterEarlier = [...sent];
         const runningAfterEarlier = waiting.pollUnsafe() === undefined;
 
         yield* woke(5000);
         yield* Fiber.join(waiting);
 
-        expect(behind).toStrictEqual([3000]);
-        expect(afterStale).toStrictEqual([3000]);
-        expect(askedAgain).toStrictEqual([3000, 5000]);
+        expect(stored).toStrictEqual([3000, 5000]);
+        expect(afterEarlier).toStrictEqual([3000, 5000]);
         expect(runningAfterEarlier).toBe(true);
       })
+  );
+
+  it.effect(
+    "forgets a wake delivered before its send was acknowledged, so a later time is sent",
+    () =>
+      Effect.gen(function* () {
+        const { wake, woke, sent, stored, acknowledged } = yield* sending();
+
+        const first = yield* Effect.forkChild(wake.wakeAt(1000));
+
+        yield* Deferred.await(stored);
+
+        const delivered = yield* Effect.forkChild(woke(1000));
+
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(acknowledged, undefined);
+        yield* Fiber.join(first);
+        yield* Fiber.join(delivered);
+        yield* wake.wakeAt(61_000);
+
+        expect(sent).toStrictEqual([1000, 61_000]);
+      })
+  );
+
+  it.effect(
+    "records a wake whose send was interrupted after it was stored, so the same time is not sent twice",
+    () =>
+      Effect.gen(function* () {
+        const { wake, sent, stored, acknowledged } = yield* sending();
+
+        const first = yield* Effect.forkChild(wake.wakeAt(1000));
+
+        yield* Deferred.await(stored);
+
+        const interrupting = yield* Effect.forkChild(Fiber.interrupt(first));
+
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(acknowledged, undefined);
+        yield* Fiber.join(interrupting);
+        yield* wake.wakeAt(1000);
+
+        expect(sent).toStrictEqual([1000]);
+      })
+  );
+
+  it.effect("rounds a time between milliseconds up to the next one", () =>
+    Effect.gen(function* () {
+      const sent: number[] = [];
+
+      const { wake } = yield* makeWake(({ at }) =>
+        Effect.sync(() => {
+          sent.push(at);
+        })
+      );
+
+      yield* ActionEntity.wakeAt(
+        DateTime.addDuration(DateTime.makeUnsafe(1000), "500 micros")
+      ).pipe(Effect.provideService(Wake, wake));
+
+      expect(sent).toStrictEqual([1001]);
+    })
   );
 });

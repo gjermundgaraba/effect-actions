@@ -4,7 +4,6 @@ import {
   Deferred,
   Duration,
   Effect,
-  Exit,
   Schema,
   Semaphore,
 } from "effect";
@@ -31,9 +30,11 @@ export const WakeRpc = Rpc.make(wakeTag, { payload: WakeAt }).annotate(
 );
 
 /**
- * The entity's wake: `wakeAt` sends the persisted tell unless one this activation sent, due no
- * later, has not fired yet; `until` waits in the activation, asking again when an earlier wake
- * fires first; `woke` takes a delivery, which may be stale or replayed.
+ * The entity's wake. `wakeAt` sends the persisted tell unless one this activation stored, due no
+ * later, has not fired; `until` stores its own deadline, unless one at that time is pending, then
+ * waits for a wake due no earlier, so no earlier wake hands it over; `woke` takes a delivery,
+ * which may be stale or replayed. A send and its record hold the lock, uninterruptibly, and so
+ * does a delivery's bookkeeping, so a delivery racing its own send cannot leave a fired time pending.
  */
 export const makeWake = (
   send: (wake: WakeAt) => Effect.Effect<void, Action.Unavailable>
@@ -42,15 +43,18 @@ export const makeWake = (
     const clock = yield* Clock.Clock;
     const lock = yield* Semaphore.make(1);
     const pending = new Set<number>();
-    let fired = Deferred.makeUnsafe<number>();
+    let latest = -Infinity;
+    let fired = Deferred.makeUnsafe<undefined>();
 
-    const wakeAt = (at: number) =>
+    const stored = (at: number, covers: (sent: number) => boolean) =>
       lock.withPermit(
         Effect.suspend(() =>
-          [...pending].some((sent) => sent <= at)
+          [...pending].some(covers)
             ? Effect.void
-            : Effect.tap(send(new WakeAt({ at })), () =>
-                Effect.sync(() => pending.add(at))
+            : Effect.uninterruptible(
+                Effect.tap(send(new WakeAt({ at })), () =>
+                  Effect.sync(() => pending.add(at))
+                )
               )
         )
       );
@@ -60,34 +64,47 @@ export const makeWake = (
         Duration.millis(Math.max(at - clock.currentTimeMillisUnsafe(), 0))
       );
 
-    const until = (at: number): Effect.Effect<void> =>
-      Effect.suspend(() => {
-        const next = fired;
+    const due = (at: number): Effect.Effect<void> =>
+      Effect.suspend(() =>
+        latest >= at
+          ? Effect.void
+          : Effect.andThen(Deferred.await(fired), due(at))
+      );
 
-        return wakeAt(at).pipe(
-          Effect.matchCauseEffect({
-            onFailure: (cause) => Effect.andThen(reported(cause), slept(at)),
-            onSuccess: () =>
-              Effect.flatMap(Deferred.await(next), (woke) =>
-                woke >= at ? Effect.void : until(at)
-              ),
-          })
-        );
-      });
+    const until = (at: number) =>
+      stored(at, (sent) => sent === at).pipe(
+        Effect.matchCauseEffect({
+          onFailure: (cause) => Effect.andThen(reported(cause), slept(at)),
+          onSuccess: () => due(at),
+        })
+      );
 
     const woke = (at: number) =>
-      Effect.sync(() => {
-        for (const sent of pending) {
-          if (sent <= at) {
-            pending.delete(sent);
-          }
-        }
+      lock
+        .withPermit(
+          Effect.sync(() => {
+            for (const sent of pending) {
+              if (sent <= at) {
+                pending.delete(sent);
+              }
+            }
 
-        const done = fired;
+            latest = Math.max(latest, at);
 
-        fired = Deferred.makeUnsafe();
-        Deferred.doneUnsafe(done, Exit.succeed(at));
-      });
+            const done = fired;
 
-    return { wake: Wake.of({ wakeAt, until }), woke };
+            fired = Deferred.makeUnsafe();
+
+            return done;
+          })
+        )
+        .pipe(Effect.flatMap((done) => Deferred.succeed(done, undefined)));
+
+    return {
+      wake: Wake.of({
+        wakeAt: (at) => stored(at, (sent) => sent <= at),
+        until,
+      }),
+      woke,
+    };
   });

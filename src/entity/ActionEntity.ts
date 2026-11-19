@@ -1,20 +1,23 @@
 import {
   Cause,
+  Context,
   DateTime,
   Duration,
   Effect,
   Function,
   Layer,
+  Option,
   Predicate,
   Schema,
   Stream,
 } from "effect";
-import type { Context, Scope } from "effect";
+import type { Scope } from "effect";
 import { ClusterError, Entity as Cluster } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
 import type { Headers, HttpServerRequest } from "effect/http";
 import { Rpc, RpcGroup, RpcMessage } from "effect/rpc";
 import type { RpcClient } from "effect/rpc";
+import { SqlClient } from "effect/sql";
 
 import type {
   RemoteRequest,
@@ -358,7 +361,8 @@ export interface LayerOptions<
    * - It is a check, not one reminder per `wakeAt`: it runs at the earliest time asked for, early for the later ones, which it asks for again, and may run again for a wake already handled, as a replay after a restart: do what is due by then and `wakeAt` the next time.
    * - The entity's webhook retry waits share its wake, so with a `Webhook.layer` in `services` it also runs when a delivery's retry is due.
    * - It runs beside the entity's calls, outside its `concurrency`, as a webhook delivery holding the entity's only slot waits on the wake.
-   * - Its failure or defect is reported to Effect's `ErrorReporter` and logged, and that wake is done; interrupted as the entity stops, it runs again in the next activation.
+   * - Its failure or defect is reported to the `ErrorReporter`s the activation provides and logged, and that wake is done; interrupted as the entity stops, it runs again in the next activation.
+   * - On the Cloudflare runtime, a call's defect that rebuilds the activation in place while it runs closes the services it reads beneath it, and that wake counts as handled, as `@effect/platform-cloudflare` 4.1.4 finalizes an activation without waiting for its tells: keep it a check the next `wakeAt` repeats, not the only record of work.
    */
   readonly onWake?:
     | ((at: DateTime.Utc) => Effect.Effect<void, unknown, RW>)
@@ -405,11 +409,15 @@ export type Activation =
  * - The wake keeps the earliest time: a time no earlier than one this activation scheduled and has not seen fire sends nothing, as that wake's `onWake` asks for it again; a tell cannot be taken back, so a time moved later or dropped still fires.
  * - Each wake is a row of the runtime's messages, kept once processed, on Effect's SQL runners until a `MessageRetention` layer deletes it, and on the Cloudflare runtime for good.
  * - It holds nothing awake: work already running keeps its activation with `Entity.keepAlive` and its Durable Object event with `waitUntil`, beside the wake that resumes it later.
+ * - Asked for inside a transaction of the entity's or the runner's `SqlClient`, it dies, as the wake would be stored in that transaction and dropped by its rollback while the activation counted it pending: call it after the transaction commits.
+ * - A time between milliseconds is rounded up to the next one, as the runtime stores whole milliseconds.
  */
 export const wakeAt = (
   at: DateTime.DateTime
 ): Effect.Effect<void, Action.Unavailable, Wake> =>
-  Effect.flatMap(Wake, (wake) => wake.wakeAt(DateTime.toEpochMillis(at)));
+  Effect.flatMap(Wake, (wake) =>
+    wake.wakeAt(Math.ceil(DateTime.toEpochMillis(at)))
+  );
 
 type PerCall<
   B extends ActionRpc.Any,
@@ -570,24 +578,46 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
 
     const sharding = yield* Effect.context<Sharding.Sharding>();
 
-    const { wake, woke } = yield* makeWake((payload) =>
-      Effect.flatMap(entity.client, (clientFor) => {
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-        const self = clientFor(address.entityId) as RpcClient.RpcClient<
-          typeof WakeRpc,
-          typeof ClusterFailures.Type
-        >;
+    const outsideTransactions = Effect.gen(function* () {
+      const clients = [
+        yield* Effect.serviceOption(SqlClient.SqlClient),
+        Context.getOption(sharding, SqlClient.SqlClient),
+      ].flatMap(Option.toArray);
 
-        return self[wakeTag](payload, { discard: true });
-      }).pipe(
-        Effect.catchIf(isClusterFailure, ({ _tag }) =>
-          Effect.fail(
-            new Action.Unavailable({
-              message: `The wake of ${address.entityType}/${address.entityId} could not be scheduled (${_tag})`,
-            })
-          )
-        ),
-        Effect.provideContext(sharding)
+      for (const sql of clients) {
+        if (
+          Option.isSome(yield* Effect.serviceOption(sql.transactionService))
+        ) {
+          return yield* Effect.die(
+            new Error(
+              `ActionEntity.wakeAt: the wake of ${address.entityType}/${address.entityId} was asked for inside a SQL transaction, whose rollback would drop it unseen (call wakeAt after the transaction commits)`
+            )
+          );
+        }
+      }
+    });
+
+    const { wake, woke } = yield* makeWake((payload) =>
+      Effect.andThen(
+        outsideTransactions,
+        Effect.flatMap(entity.client, (clientFor) => {
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+          const self = clientFor(address.entityId) as RpcClient.RpcClient<
+            typeof WakeRpc,
+            typeof ClusterFailures.Type
+          >;
+
+          return self[wakeTag](payload, { discard: true });
+        }).pipe(
+          Effect.catchIf(isClusterFailure, ({ _tag }) =>
+            Effect.fail(
+              new Action.Unavailable({
+                message: `The wake of ${address.entityType}/${address.entityId} could not be scheduled (${_tag})`,
+              })
+            )
+          ),
+          Effect.provideContext(sharding)
+        )
       )
     );
 
@@ -632,10 +662,13 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
     const woken = (at: number) =>
       onWake === undefined
         ? Effect.void
-        : Effect.catchCauseIf(
-            Effect.provideContext(onWake(DateTime.makeUnsafe(at)), built),
-            (cause) => !Cause.hasInterruptsOnly(cause),
-            reported
+        : Effect.provideContext(
+            Effect.catchCauseIf(
+              onWake(DateTime.makeUnsafe(at)),
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              reported
+            ),
+            built
           );
 
     const answering =
