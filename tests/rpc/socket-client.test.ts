@@ -1,8 +1,13 @@
 import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Schema, Stream } from "effect";
 import { HttpRouter, HttpServer } from "effect/http";
-import { RpcMiddleware, RpcSerialization, RpcServer } from "effect/rpc";
+import {
+  RpcClientError,
+  RpcMiddleware,
+  RpcSerialization,
+  RpcServer,
+} from "effect/rpc";
 import { Socket } from "effect/socket";
 import { TestClock } from "effect/testing";
 
@@ -16,13 +21,17 @@ class Recorded extends RpcMiddleware.Service<Recorded>()(
 
 const Feed = ActionRpc.make([Posted]);
 
-const serving = (log: ReturnType<typeof makeMessages>, tags: string[]) =>
+const serving = (
+  log: ReturnType<typeof makeMessages>,
+  tags: string[],
+  serialization = RpcSerialization.layerJson
+) =>
   HttpRouter.serve(
     ActionRpc.layer(Feed, [log.implementation], {
       middleware: [Recorded],
     }).pipe(
       Layer.provide(RpcServer.layerProtocolWebsocket({ path: "/rpc" })),
-      Layer.provide(RpcSerialization.layerJson),
+      Layer.provide(serialization),
       Layer.provide(Event.layerMemory),
       Layer.provide(
         Layer.succeed(Recorded)((effect, { rpc }) =>
@@ -63,17 +72,11 @@ const closingWith = (code: number) => {
   return { socket, opened: () => opened };
 };
 
-const watchedUntilClosed = (
-  code: number,
-  reconnectUntil: readonly number[] = []
-) =>
+const watchedUntilClosed = (code: number) =>
   Effect.gen(function* () {
     const { socket, opened } = closingWith(code);
 
-    const client = yield* ActionRpc.socketClient(Feed, {
-      socket,
-      reconnectUntil,
-    });
+    const client = yield* ActionRpc.socketClient(Feed, { socket });
 
     const fiber = yield* Effect.forkChild(
       Stream.runDrain(client.watch(Posted, {}))
@@ -83,6 +86,8 @@ const watchedUntilClosed = (
 
     return { exit: fiber.pollUnsafe(), opened: opened() };
   }).pipe(Effect.scoped);
+
+const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 
 describe("ActionRpc.socketClient", () => {
   it.live(
@@ -137,33 +142,51 @@ describe("ActionRpc.socketClient", () => {
       })
   );
 
+  it.live("writes its messages with the serialization it is given", () =>
+    Effect.gen(function* () {
+      const log = makeMessages();
+
+      log.post("general", "one");
+
+      const received = yield* HttpServer.addressFormattedWith((address) =>
+        Effect.gen(function* () {
+          const client = yield* ActionRpc.socketClient(Feed, {
+            url: `${address.replace(/^http/u, "ws")}/rpc`,
+            serialization: RpcSerialization.ndjson,
+          });
+
+          return yield* client
+            .watch(Posted, {}, { cursor: "0" })
+            .pipe(Stream.take(1), Stream.runCollect);
+        }).pipe(Effect.scoped, Effect.timeout("5 seconds"))
+      ).pipe(Effect.provide(serving(log, [], RpcSerialization.layerNdjson)));
+
+      expect(texts(received)).toStrictEqual(["one"]);
+    })
+  );
+
   it.effect(
-    "stops at a close with an application code, its socket opened once",
+    "stops at a close with an application code, failing with that close, its socket opened once",
     () =>
       Effect.gen(function* () {
         const { exit, opened } = yield* watchedUntilClosed(4321);
 
-        expect(
-          exit !== undefined && Exit.isFailure(exit) && String(exit.cause)
-        ).toContain("4321");
+        const error =
+          exit !== undefined && Exit.isFailure(exit)
+            ? Cause.squash(exit.cause)
+            : undefined;
+
+        expect(isRpcClientError(error) && error.reason).toMatchObject({
+          _tag: "SocketCloseError",
+          code: 4321,
+        });
         expect(opened).toBe(1);
       })
   );
 
-  it.effect("stops at a close with a code of reconnectUntil", () =>
+  it.effect("connects again after a close with a code below 4000", () =>
     Effect.gen(function* () {
-      const { exit, opened } = yield* watchedUntilClosed(1008, [1008]);
-
-      expect(
-        exit !== undefined && Exit.isFailure(exit) && String(exit.cause)
-      ).toContain("1008");
-      expect(opened).toBe(1);
-    })
-  );
-
-  it.effect("connects again after a close with another code", () =>
-    Effect.gen(function* () {
-      const { exit, opened } = yield* watchedUntilClosed(1001, [1008]);
+      const { exit, opened } = yield* watchedUntilClosed(1001);
 
       expect(exit).toBeUndefined();
       expect(opened).toBeGreaterThan(1);

@@ -12,7 +12,7 @@ import {
   RpcServer,
 } from "effect/rpc";
 import type { RpcClientError } from "effect/rpc";
-import type { SocketServer } from "effect/socket";
+import type { Socket, SocketServer } from "effect/socket";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
@@ -570,6 +570,14 @@ expectTypeOf<Effect.Success<typeof overSocket>>().toEqualTypeOf<
 
 // @ts-expect-error -- a socket client connects to a url or a socket
 export const nowhere = ActionRpc.socketClient(Rpc, { watchMode: "poll" });
+
+declare const madeElsewhere: Socket.Socket;
+
+// @ts-expect-error -- a socket client connects to a url or a socket, not both
+export const both = ActionRpc.socketClient(Rpc, {
+  url: "ws://localhost/rpc",
+  socket: madeElsewhere,
+});
 
 const Where = Action.make("where", {
   description: "Answer the URL of the request the call runs with",

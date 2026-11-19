@@ -169,7 +169,7 @@ export const openChat = Effect.gen(function* () {
 
 [live-rpc/src/client.ts](../examples/live-rpc/src/client.ts) runs it from Node, and [live-rpc/src/page.ts](../examples/live-rpc/src/page.ts) wraps it in promises for a page that is not one Effect program. The client's traps are on `ActionRpc.client`.
 
-A page that holds one socket of its own builds the client with `ActionRpc.socketClient(Rpc, { url })`: one WebSocket for the client's `Scope`, JSON, reconnecting after a drop and stopping at a server's refusal. Its options, a constructor, `hooks`, `watchMode` and the close codes it stops at, are on `ActionRpc.SocketClientOptions`:
+A page that holds one socket of its own builds the client with `ActionRpc.socketClient(Rpc, { url })`: one WebSocket for the client's `Scope`, JSON, reconnecting after a drop and stopping at a server's refusal. Its options, a constructor, `hooks`, `serialization` and `watchMode`, are on `ActionRpc.SocketClientOptions`:
 
 ```ts example=kitchen-sink/src/browser.ts
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";

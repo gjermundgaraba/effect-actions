@@ -42,6 +42,7 @@ const Answered = Schema.Struct({
 
 const Attachment = Schema.Struct({
   name: Schema.String,
+  version: Schema.NullOr(Schema.String),
   headers: Headers,
   calls: Schema.Array(RequestId),
   parked: Schema.Array(Parked),
@@ -207,8 +208,25 @@ export const makeSockets = (options: {
   readonly now: () => number;
   readonly sockets: () => readonly WebSocket[];
   readonly waitUntil: (promise: Promise<unknown>) => void;
+  readonly refusal:
+    | {
+        readonly version: string;
+        readonly code: number;
+        readonly reason: string;
+      }
+    | undefined;
 }) => {
-  const { now } = options;
+  const { now, refusal } = options;
+
+  const outdated = (socket: WebSocket, held: Attachment) => {
+    if (refusal === undefined || held.version === refusal.version) {
+      return false;
+    }
+
+    closeQuietly(socket, refusal.code, refusal.reason);
+
+    return true;
+  };
 
   const signal = Effect.exit(Effect.sync(options.gate));
 
@@ -257,7 +275,11 @@ export const makeSockets = (options: {
       const served =
         held === undefined ? undefined : options.servedBy(held.name);
 
-      if (held === undefined || served === undefined) {
+      if (
+        held === undefined ||
+        served === undefined ||
+        outdated(socket, held)
+      ) {
         return [];
       }
 
@@ -475,9 +497,13 @@ export const makeSockets = (options: {
       const served =
         held === undefined ? undefined : options.servedBy(held.name);
 
-      if (served === undefined) {
+      if (held === undefined || served === undefined) {
         closeQuietly(socket, 1012, lostSocket);
 
+        return;
+      }
+
+      if (outdated(socket, held)) {
         return;
       }
 
@@ -542,11 +568,17 @@ export const makeSockets = (options: {
           discard: true,
         }
       ),
-    accept: (socket: WebSocket, name: string, headers: Headers) =>
+    accept: (
+      socket: WebSocket,
+      name: string,
+      version: string | null,
+      headers: Headers
+    ) =>
       kept(
         socket,
         Attachment.make({
           name,
+          version,
           headers,
           calls: [],
           parked: [],

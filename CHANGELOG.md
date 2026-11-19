@@ -16,6 +16,18 @@
 
 - Migrate: pass `state.database` where a library takes the storage, and drop the application's own bridge; a test providing `ObjectState` itself adds a `database`, such as `{ sql: storage.sql, transaction: (closure) => storage.transaction(closure) }` where nothing else writes.
 
+**`ActionRpc` imports `effect/socket`**, for `socketClient`, beside `effect`, `effect/http`, `effect/http-api` and `effect/rpc`, so a page loading Effect from an import map serves it even where it builds no socket client.
+
+- Migrate: add `effect/socket` to the page's import map.
+
+**`ActionClusterEntity.make`'s `protocol` holds for a socket the runtime kept across a deploy** in `@gjermundgaraba/effect-actions-cloudflare`: the version a socket's upgrade named is in its attachment, and one naming another than the deployed version is closed with `protocol.code` at its next message, or as the object next settles, its parked polls unanswered. **Reversed: only an upgrade was judged, so a page open across a deploy changing the rpcs went on calling the new server.**
+
+- Migrate: nothing in code. A socket accepted before, whose attachment holds no version, is judged as one whose upgrade named none: with `protocol` it is closed with `protocol.code` at its next message or as the object next settles, and its page's upgrade is then judged as any other; without `protocol` it is served as before.
+
+**`ActionRpc.ReconnectReason` is gone**: `reconnectUntil`'s schedule reads Effect's own `Socket.SocketError`, which `RpcClient.layerProtocolSocket`'s `retryPolicy` is given.
+
+- Migrate: name `Socket.SocketError` where you named `ActionRpc.ReconnectReason`.
+
 ### Other changes
 
 - `Event.Current` takes `nextPoll`, how long a polling client waits before it asks again, where a current source's pages always said 5 seconds: `{ current: () => liveNow, nextPoll: "1 second" }`. Its streams and webhook deliveries still read it when notified alone.
@@ -26,7 +38,7 @@
 - New `ActionCluster.layerObject` in `@gjermundgaraba/effect-actions-cloudflare`, an entity object's database for its `services`: `ActionCluster.Sql` as `SqlClient` and `Stored.layerEvents` over it, `Layer.provideMerge(ActionCluster.layerObject)`, where each application wrote `Layer.effect(SqlClient.SqlClient)(ActionCluster.Sql.orDie)` and provided `Stored.layerEvents` over it. chat-rooms' `object-sql.ts` is gone.
 - New `ActionEntity.Activation`, what an entity's activation provides to `layer`'s `services`, its builders and the Effect building its native handlers: `Entity.CurrentAddress`, `Entity.CurrentRunnerAddress`, the activation's `Scope` and the entity's wake, for a `services` layer an application types apart, `Layer.Layer<Store, never, ActionEntity.Activation | SqlClient>`.
 - New `ActionEntity.wakeAt(at)` and `ActionEntity.layer`'s `onWake`: an entity wakes itself later through its persisted wake, `wakeAt` succeeding once the runtime stored it, and `onWake(at)` running when it is due, in whichever activation is current, through eviction, a restart and a deploy. It replaces an application's own persisted rpc with a `DeliverAt` payload sent to itself: call `wakeAt` where it sent that tell, and move its handler to `onWake`, a check that does what is due and asks for the next time. A persisted tell ran inside the entity's `concurrency`, one at a time by default; `onWake` runs beside its calls and beside another delivery of itself, so a handler that read, changed and wrote state relying on that takes its own lock or transaction. The rules are on `wakeAt` and `onWake`.
-- New `ActionRpc.socketClient(binding, { url })`, `client` over one WebSocket it holds for its `Scope`, JSON-serialized, reconnecting after a drop and stopping at a close with an application code, 4000 to 4999, or one its `reconnectUntil` lists, the watches that close ends failing instead of retrying: it replaces an application's `RpcClient.layerProtocolSocket`, `Socket.layerWebSocket`, `RpcSerialization.layerJson`, `ConnectionHooks` and `Layer.build` under `ActionRpc.client`. It takes `webSocket`, a constructor, or `socket`, one made elsewhere, and `hooks`. chat-rooms' and kitchen-sink's pages use it. The rules are on `SocketClientOptions`.
+- New `ActionRpc.socketClient(binding, { url })`, `client` over one WebSocket it holds for its `Scope`, JSON-serialized, reconnecting after a drop and stopping at a close with an application code, 4000 to 4999, such as a server's refusal: it replaces an application's `RpcClient.layerProtocolSocket`, `Socket.layerWebSocket`, `RpcSerialization.layerJson`, `ConnectionHooks` and `Layer.build` under `ActionRpc.client`. It takes `webSocket`, a constructor, or `socket`, one made elsewhere, `hooks` and `serialization`. chat-rooms' and kitchen-sink's pages use it. The rules are on `socketClient` and `SocketClientOptions`.
 - `ActionRpc.client`'s `watchMode`, the `mode` of a watch that gives none: `watchMode: "poll"` polls from the first, as the Cloudflare package's socket host needs, without the round trip a watch otherwise spends finding out.
 
 ## 0.35.0

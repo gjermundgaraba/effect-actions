@@ -356,6 +356,56 @@ describe("ActionClusterEntity's sockets", () => {
     { timeout: 30_000 }
   );
 
+  it.live(
+    "closes a socket held across a deploy changing the version with 4000, its parked poll unanswered, and answers one the deploy kept",
+    () =>
+      Effect.forEach(
+        [
+          { served: "0", closed: [4000], pinned: [] },
+          { served: "1", closed: [], pinned: [{ n: 3 }] },
+        ],
+        ({ served, closed, pinned }) =>
+          Effect.gen(function* () {
+            const board = `deployed-${served}`;
+            const http = yield* boards;
+            const socket = yield* opened("Board", board);
+
+            const pins = yield* following(
+              (yield* clientOver(BoardRpc, socket)).watch(Pinned, { board })
+            );
+
+            yield* watchingIn("Board", board, 1);
+            yield* Effect.promise(async () => {
+              await runInDurableObject(objectOf("Board", board), (_, state) => {
+                for (const held of state.getWebSockets()) {
+                  const attachment: unknown = held.deserializeAttachment();
+
+                  if (Predicate.isObject(attachment)) {
+                    held.serializeAttachment({
+                      ...attachment,
+                      version: served,
+                    });
+                  }
+                }
+              });
+            });
+            yield* evict("Board", board);
+            yield* http.pin({ board, n: 3 });
+            yield* Effect.sleep("3 seconds");
+
+            expect([
+              socket.closed.map(({ code }) => code),
+              served,
+            ]).toStrictEqual([closed, served]);
+            expect([yield* Queue.clear(pins), served]).toStrictEqual([
+              pinned,
+              served,
+            ]);
+          }).pipe(Effect.scoped)
+      ).pipe(Effect.provide(throughWorker)),
+    { timeout: 60_000 }
+  );
+
   it.effect(
     "answers a request that is no upgrade 426, and an upgrade to an entity serving no sockets 404",
     () =>

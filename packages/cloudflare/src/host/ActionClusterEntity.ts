@@ -44,7 +44,15 @@ export interface Options<Env> {
   ) => PromiseLike<Context.Context<Sharding.Sharding>>;
   /** The entities whose objects accept sockets: an upgrade to an object of another entity type is answered 404. */
   readonly sockets: readonly ActionEntity.Any[];
-  /** The version a page's upgrade names, every other refused with a close; without it, every upgrade is accepted. */
+  /**
+   * The version a page's upgrade names, every other refused with a close; without it, every
+   * upgrade is accepted.
+   *
+   * **Gotchas**
+   *
+   * - A socket the runtime kept across a deploy changing `version` is closed with `code` at its next message, or as the object next settles, its parked polls unanswered: the version its upgrade named is in its attachment.
+   * - A socket accepted by a release before this one, whose attachment holds no version, is closed with 1012 at its next message, and its page's upgrade is then judged as any other.
+   */
   readonly protocol?:
     | {
         /** The version served, which a page names in its socket's URL as `?protocol=<version>`. */
@@ -178,6 +186,7 @@ const hostOf = (
     now: Date.now,
     sockets: () => ctx.getWebSockets(),
     waitUntil,
+    refusal,
   });
 
   return {
@@ -200,11 +209,9 @@ const hostOf = (
       }
 
       const { 0: client, 1: server } = new WebSocketPair();
+      const version = new URL(request.url).searchParams.get("protocol");
 
-      if (
-        refusal !== undefined &&
-        new URL(request.url).searchParams.get("protocol") !== refusal.version
-      ) {
+      if (refusal !== undefined && version !== refusal.version) {
         server.accept();
         server.close(refusal.code, refusal.reason);
 
@@ -215,6 +222,7 @@ const hostOf = (
         !sockets.accept(
           server,
           name,
+          version,
           Object.entries(ActionEntity.forwardedHeaders(request.headers))
         )
       ) {

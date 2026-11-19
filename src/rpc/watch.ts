@@ -28,6 +28,9 @@ const cutResponses = [
   "Received empty HTTP response",
 ];
 
+/** A WebSocket close code an application sends, 4000 to 4999, such as a server's refusal. */
+export const isApplicationCode = (code: number) => code >= 4000 && code <= 4999;
+
 export const isRpcTransient = Predicate.or(
   Cause.isTimeoutError,
   (error) =>
@@ -39,7 +42,7 @@ export const isRpcTransient = Predicate.or(
         "SocketOpenError",
         () => true
       ),
-      Match.tag("SocketCloseError", ({ code }) => code < 4000 || code > 4999),
+      Match.tag("SocketCloseError", ({ code }) => !isApplicationCode(code)),
       Match.tag(
         "HttpError",
         ({ cause }) => isAnsweredReason(cause) && isTransientReason(cause)
