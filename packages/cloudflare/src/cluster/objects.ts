@@ -7,7 +7,10 @@ export interface Recorded extends Pick<
   DurableObjectState,
   "id" | "storage" | "waitUntil" | "abort"
 > {
-  readonly transaction: <A>(closure: () => Promise<A>) => Promise<A>;
+  readonly database: {
+    readonly sql: SqlStorage;
+    readonly transaction: <A>(closure: () => Promise<A>) => Promise<A>;
+  };
 }
 
 interface Held {
@@ -70,8 +73,8 @@ export const objectHere: Effect.Effect<
 );
 
 /**
- * The state `hold` recorded for the object of `storage`, its transactions run through `sql`, the
- * same for every read in one handler build, or `undefined` where its class recorded none; a
+ * The state `hold` recorded for the object of `storage`, its `database`'s transactions run
+ * through `sql`, the same for every read in one handler build, or `undefined` where its class recorded none; a
  * rebuild in the same object, which makes a new client, records it anew.
  */
 export const stateHere = (
@@ -98,8 +101,13 @@ export const stateHere = (
         abort: (reason) => {
           state.abort(reason);
         },
-        transaction: async (closure) =>
-          await Effect.runPromise(sql.withTransaction(Effect.promise(closure))),
+        database: {
+          sql: storage.sql,
+          transaction: async (closure) =>
+            await Effect.runPromise(
+              sql.withTransaction(Effect.promise(closure))
+            ),
+        },
       },
     };
   }

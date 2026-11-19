@@ -9,6 +9,7 @@ import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import {
   Context,
+  Deferred,
   Effect,
   Layer,
   Logger,
@@ -142,6 +143,7 @@ export const SeerTasks = RpcGroup.make(
       built: Schema.Boolean,
     }),
   }),
+  Rpc.make("parked").annotate(ClusterSchema.Persisted, true),
   Rpc.make("transactions", {
     success: Schema.Struct({
       notes: Schema.Array(Schema.String),
@@ -331,11 +333,7 @@ const crashing = Action.implement(
   { authorize: Action.allowAll }
 );
 
-const yieldMicrotasksSinceTimersStallInTransactions = async () => {
-  for (let tick = 0; tick < 10; tick += 1) {
-    await Promise.resolve();
-  }
-};
+const parking = Deferred.makeUnsafe<true>();
 
 const seerTasks = Effect.map(
   Effect.all([Bumps, ActionCluster.ObjectState.orDie]),
@@ -356,17 +354,22 @@ const seerTasks = Effect.map(
           };
         }),
       bump: () => Effect.sync(() => (bumps.count += 1)),
+      parked: () =>
+        Rpc.fork(
+          Effect.andThen(
+            Effect.sync(() => {
+              received.push({ tag: "parked", authorization: null });
+            }),
+            Effect.asVoid(Deferred.await(parking))
+          )
+        ),
       transactions: () =>
         Effect.gen(function* () {
-          const { storage, transaction } =
-            yield* ActionCluster.ObjectState.orDie;
-
-          const sql = yield* ActionCluster.Sql.orDie;
-          const context = yield* Effect.context();
+          const { storage, database } = yield* ActionCluster.ObjectState.orDie;
           const planted = new Error("planted rollback");
 
           const note = (text: string) => {
-            storage.sql.exec("INSERT INTO seer_notes (note) VALUES (?)", text);
+            database.sql.exec("INSERT INTO seer_notes (note) VALUES (?)", text);
           };
 
           storage.sql.exec(
@@ -374,27 +377,21 @@ const seerTasks = Effect.map(
           );
 
           return yield* Effect.promise(async () => {
-            await transaction(async () => {
+            await database.transaction(async () => {
               note("kept");
             });
 
-            let outside: Promise<unknown> = Promise.resolve();
+            const rejectedAsThrown = await database
+              .transaction(async () => {
+                note("rolled back");
+                Deferred.doneUnsafe(parking, Effect.succeed(true));
 
-            const rejectedAsThrown = await transaction(async () => {
-              note("rolled back");
-              outside = Effect.runPromiseWith(context)(
-                sql`INSERT INTO seer_notes (note) VALUES ('outside')`
+                throw planted;
+              })
+              .then(
+                () => false,
+                (error: unknown) => error === planted
               );
-
-              await yieldMicrotasksSinceTimersStallInTransactions();
-
-              throw planted;
-            }).then(
-              () => false,
-              (error: unknown) => error === planted
-            );
-
-            await outside;
 
             const notes = storage.sql
               .exec<{ note: string }>(

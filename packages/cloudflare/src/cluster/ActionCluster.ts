@@ -147,20 +147,23 @@ export const layerObject: Layer.Layer<SqlClient.SqlClient | Event.Events> =
  * The Durable Object state of the entity object running the effect that reads it: its `id`, whose
  * `name` is `CloudflareCluster.encodeName(type, id)`, its `storage`, `waitUntil`, which keeps the
  * object alive until a promise settles, such as work forked past the call that started it,
- * `abort`, which resets the object, and `transaction`, which runs a Promise closure in a storage
- * transaction behind the gate the runtime's mailbox writes wait on, committing where it resolves
- * and rolling back and rejecting with its own rejection where it rejects, for a library written
- * with Promises taking the object's storage, as `{ sql: storage.sql, transaction }`. Read it with
- * `ObjectState.orDie`, in an entity's build, its `services`, a handler or a fiber either forks,
- * on an object whose class is `ActionClusterEntity.make`'s or `ActionClusterEntity.ClusterEntity`,
- * which record it; a test provides the service itself. Guide: `docs/ActionCluster.md` in this package.
+ * `abort`, which resets the object, and `database`, the object's SQLite storage for a library
+ * written with Promises, such as pi's: `storage.sql`, and `transaction`, which runs a Promise
+ * closure in a storage transaction behind the gate the runtime's mailbox writes wait on,
+ * committing where it resolves and rolling back and rejecting with its own rejection where it
+ * rejects. Read it with `ObjectState.orDie`, in an entity's build, its `services`, a handler or a
+ * fiber either forks, on an object whose class is `ActionClusterEntity.make`'s or
+ * `ActionClusterEntity.ClusterEntity`, which record it, the same object for each read in one
+ * build; a test provides the service itself. Guide: `docs/ActionCluster.md` in this package.
  *
  * **Gotchas**
  *
  * - On an object of Effect's own `ClusterEntity` class, which records no state, `orDie` dies naming the class to export: export `ActionClusterEntity.ClusterEntity`, or `make`'s class, as `ClusterEntity` from the Worker's module.
- * - `storage.transaction()` and `transactionSync()` called directly skip the gate the runtime's mailbox writes wait on, so another call's reply written while yours is open is lost to your rollback: open one with `transaction`, or `Sql`'s `withTransaction` in an Effect.
- * - A timer or I/O awaited inside `transaction`'s closure never resumes, as the input gate the storage transaction closes holds it: keep the closure to SQL work.
- * - `transaction` never nests: called inside `Sql`'s `withTransaction`, or inside another `transaction`'s closure, it waits forever on the gate the open one holds.
+ * - `storage.transaction()` and `transactionSync()` called directly skip the gate the runtime's mailbox writes wait on, so another call's reply written while yours is open is lost to your rollback: open one with `database.transaction`, or `Sql`'s `withTransaction` in an Effect.
+ * - A statement on `database.sql` outside `database.transaction` takes no gate, so one run while another transaction is open lands in it and is lost to its rollback: hand every adapter the same `database`, as a library such as Chord queues its statements behind its transactions per object it is given.
+ * - A timer or I/O awaited inside `database.transaction`'s closure never resumes, as the input gate the storage transaction closes holds it: keep the closure to SQL work.
+ * - `database.transaction` awaited before `Sql`'s `withTransaction` returns, inside it, in its `afterCommit` callbacks or inside another `database.transaction`'s closure, waits forever on the gate the open one holds: await it only once the open transaction has returned.
+ * - `database.transaction` cannot be cancelled: its closure runs once the gate frees even where its caller stopped waiting, without the caller's services or tracing; Effect work a caller owns opens `Sql`'s `withTransaction` instead.
  * - The runtime owns the object's alarm, for scheduled tells, replays and `Entity.keepAlive`: `storage.setAlarm` or `deleteAlarm` replaces its alarm and loses what it scheduled, and the class's `alarm` runs the runtime's; schedule work with a persisted tell carrying `DeliverAt` instead.
  * - Tables whose names start with `cluster_` are the runtime's mailbox: write none, and read them only as its tests do.
  * - `abort` ends every call under way on the object and evicts it; the next call builds it again, and the runtime replays its unprocessed persisted messages.

@@ -12,9 +12,9 @@
 
 - Migrate: nothing in code. A subscriber resuming from a cursor minted before is sent the value once, as one resuming from another key's cursor is; a subscriber that counted repeated equal values as heartbeats receives none.
 
-**`ActionCluster.ObjectState` in `@gjermundgaraba/effect-actions-cloudflare` holds `transaction(closure)`**, a Promise transaction behind the gate the runtime's mailbox writes wait on, so a library written with Promises that takes the object's SQLite storage, such as pi's, gets `{ sql: state.storage.sql, transaction: state.transaction }`, where an application ran `Sql`'s `withTransaction` through `Effect.runPromiseWith` itself, and a raw `storage.transaction` lost another call's reply to its rollback.
+**`ActionCluster.ObjectState` in `@gjermundgaraba/effect-actions-cloudflare` holds `database`**, the object's SQLite storage for a library written with Promises, such as pi's: `{ sql, transaction }`, `storage.sql` and a Promise transaction behind the gate the runtime's mailbox writes wait on, one object for each read in an activation, where an application ran `Sql`'s `withTransaction` through `Effect.runPromiseWith` itself, a raw `storage.transaction` lost another call's reply to its rollback, and two `{ sql, transaction }` literals split a library's per-object queue, a statement of one landing in the other's rollback.
 
-- Migrate: a test providing `ObjectState` itself adds a `transaction`, such as `(closure) => storage.transaction(closure)` where nothing else writes; drop an application's own bridge for `state.transaction`.
+- Migrate: pass `state.database` where a library takes the storage, and drop the application's own bridge; a test providing `ObjectState` itself adds a `database`, such as `{ sql: storage.sql, transaction: (closure) => storage.transaction(closure) }` where nothing else writes.
 
 ### Other changes
 
