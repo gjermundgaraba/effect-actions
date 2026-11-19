@@ -22,7 +22,7 @@ export const Cart = ActionEntity.make("Cart", Carts, {
 
 Each action is an rpc of the entity, named after it. Each event type is a unary rpc named `<event>/poll`, which answers the occurrences past a cursor, as an HTTP poll does, and `ActionRpc.layer` serves under the same name. The entity is Effect's own `Entity`, so `Entity.makeTestClient` and the rest of Effect's cluster functions take it. What its rpcs send, and why none of its actions' and event types' rpcs is persisted, is on `ActionEntity.make`.
 
-A call another part of the application makes, such as a Worker's settings reading an agent's model, is an action the entity lists and no surface's binding does: `ActionEntity.client` calls it, typed, failing with `Action.Unavailable` where the entity is out of reach. An entity may also serve native rpcs of its own, given to `make` as `rpcs`: tells, such as a persisted one another entity sends through Effect's `Entity.client`. They authenticate nothing, so no surface serves them. An entity scheduling work of its own for later needs none: it wakes itself with `wakeAt`, below.
+A call another part of the application makes, such as a Worker's settings reading an agent's model, is an action the entity lists and no surface's binding does: `ActionEntity.client` calls it, typed, failing with `Action.Unavailable` where the entity is out of reach. `ActionEntity.reaching` implements it too, so a surface given those implementations names what it serves: an HTTP or RPC binding of the public contracts, and MCP's `actions`. An entity may also serve native rpcs of its own, given to `make` as `rpcs`: tells, such as a persisted one another entity sends through Effect's `Entity.client`. They authenticate nothing, so no surface serves them. An entity scheduling work of its own for later needs none: it wakes itself with `wakeAt`, below.
 
 ## Serve it
 
@@ -86,7 +86,7 @@ A call the entity could not be reached for, or that did not answer within `reach
 
 An event is followed through the entity's poll rpc, so no watcher holds an entity open; a stream polls it from the surface. What crosses the two hops, and what does not, is on `ActionEntity.reaching`.
 
-A server outside the cluster that forwards a socket's calls into the entity, as the Cloudflare package's socket host does, forwards the rpcs of `ActionEntity.bindingRpcs(entity)` alone, never the entity's native rpcs, which authenticate nothing; its clients call them with `ActionRpc.client(entity.binding)`, or a binding of some of its contracts, whose watch polls them.
+A server outside the cluster that forwards a socket's calls into the entity, as the Cloudflare package's socket host does, forwards those rpcs of `ActionEntity.bindingRpcs(entity)` its own binding lists, never the entity's internal actions or native rpcs, which authenticate nothing; its clients call them with `ActionRpc.client` of that binding, whose watch polls them.
 
 ## Watch an event
 

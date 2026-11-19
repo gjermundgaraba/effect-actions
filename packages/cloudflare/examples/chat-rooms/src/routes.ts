@@ -7,7 +7,7 @@ import { Effect, Layer, Schema } from "effect";
 import { Entity } from "effect/cluster";
 
 import { RoomHttp } from "./Api.js";
-import { DemoRoomName } from "./chat/Chat.js";
+import { DemoRoomName, MessagePosted, Messages } from "./chat/Chat.js";
 import { messageEvents } from "./chat/events.js";
 import { messages } from "./chat/handlers.js";
 import { Room as CurrentRoom } from "./chat/room.js";
@@ -42,6 +42,7 @@ const inRooms = ActionEntity.reaching(Room);
 export const workerRoutes = Layer.mergeAll(
   ActionHttp.layer(RoomHttp, inRooms),
   ActionMcp.layerHttp(inRooms, {
+    actions: [...Messages, MessagePosted],
     name: "chat-rooms",
     version: "1.0.0",
     authentication: Login,

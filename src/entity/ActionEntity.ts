@@ -338,9 +338,10 @@ export function make(
 
 /**
  * The rpcs of `entity`'s binding, as its `protocol` holds them without its native rpcs: one per
- * action, and per event type its poll. What a surface outside the
- * cluster may forward to the entity, as the Cloudflare package's socket host does, which
- * `ActionRpc.client`'s watch polls, finding no stream rpc.
+ * action, the entity's internal actions included, and per event type its poll. A surface outside
+ * the cluster forwards to the entity those of them its own binding lists alone, as the Cloudflare
+ * package's socket host forwards its `actions`, which `ActionRpc.client`'s watch polls, finding
+ * no stream rpc.
  */
 export const bindingRpcs = (entity: Any): RpcGroup.RpcGroup<ErasedRpc> =>
   erasedOf(entity.binding.actions, entity.binding.events, "ActionEntity.layer");
@@ -1044,7 +1045,8 @@ type Nothing<C extends Action.Any | Event.Any> = {
 
 /**
  * The implementations of `entity`'s actions and event types that any surface serves beside its
- * own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`: each call sent through
+ * own, `ActionHttp.layer`, `ActionRpc.layer` or `ActionMcp.layerHttp`, one for every action the
+ * entity lists, those no surface's binding lists included: each call sent through
  * `Entity.client` to the entity its contract's key names for its input, with the caller's
  * headers, and its answer, declared errors and progress passed back; each event followed through
  * the entity's poll rpc. A call the entity could not be reached for, or that did not answer
@@ -1053,6 +1055,7 @@ type Nothing<C extends Action.Any | Event.Any> = {
  *
  * **Gotchas**
  *
+ * - A surface that serves every implementation it is given serves the entity's internal actions to its callers too: `ActionMcp.layerHttp` without `actions`, and `ActionRpc.layer` or `ActionHttp.layer` on `entity.binding`, so give MCP its `actions` and the others a binding of the public contracts.
  * - The caller's credential is verified by the surface serving these and again by the entity reached, so both are given the verifier: a call the surface refuses reaches no entity.
  * - A refusal by the entity, a credential expired since the surface verified it included, ends a stream after it answered 200, where the surface's own refusal would have answered its 401 or 403.
  * - The caller's request's headers are sent on as `forwardedHeaders` keeps them: its connection's, its body's, what it accepts and an MCP request's routing headers are not.
