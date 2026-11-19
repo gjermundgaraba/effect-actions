@@ -5,7 +5,7 @@ import { Cause, Effect, Exit } from "effect";
 import { RpcClient } from "effect/rpc";
 
 import { received } from "../support/worker.js";
-import { initialize, Seer } from "../worker.js";
+import { context, Seer } from "../worker.js";
 
 const crashes = Effect.map(
   received,
@@ -17,15 +17,13 @@ describe("ActionEntity.layer's defects on workerd", () => {
     "end an action that died after its work as Internal server error, never run it again, and build the entity again for its next call",
     () =>
       Effect.gen(function* () {
-        const context = yield* Effect.promise(
-          async () => await initialize(env)
-        );
+        const built = yield* Effect.promise(async () => await context(env));
 
-        const seers = yield* Effect.provideContext(Seer.client, context);
+        const seers = yield* Effect.provideContext(Seer.client, built);
 
         const actions = yield* Effect.provideContext(
           ActionEntity.client(Seer),
-          context
+          built
         );
 
         yield* crashes;

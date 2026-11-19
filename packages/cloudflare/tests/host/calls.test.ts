@@ -25,7 +25,7 @@ const lingered = (seen: string[]) =>
 const until = (seen: string[], tag: string) =>
   lingered(seen).pipe(eventually((tags) => tags.includes(tag)));
 
-describe("ActionClusterEntity's calls", () => {
+describe("ActionWorker's socket calls", () => {
   it.live(
     "interrupts a forwarded call its page interrupts, and keeps the socket through the next eviction",
     () =>

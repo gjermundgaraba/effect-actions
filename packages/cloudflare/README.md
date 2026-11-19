@@ -19,7 +19,7 @@ const Room = ActionEntity.make("Room", RoomRpc, {
 Make the Worker once, naming each entity with the layer serving it and the page's socket it accepts, and export what it returns: the four Durable Object classes, and its `fetch`, which judges each request's Host and Origin first, hands a page's upgrade to its room's object, and answers the rest with the routes, or a page with `fallback`:
 
 ```ts
-const worker = ActionWorker.make({
+const worker = ActionWorker.make<Env>({
   entities: [
     {
       entity: Room,

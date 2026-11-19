@@ -4,7 +4,7 @@ import { env } from "cloudflare:workers";
 import { Effect } from "effect";
 import { RpcClient } from "effect/rpc";
 
-import { initialize, Seer } from "../worker.js";
+import { context, Seer } from "../worker.js";
 
 const sent = {
   authorization: "Bearer alice",
@@ -17,13 +17,11 @@ describe("ActionEntity.layer's headers on workerd", () => {
     "authenticates a unary and a stream rpc from exactly the headers their client sent",
     () =>
       Effect.gen(function* () {
-        const context = yield* Effect.promise(
-          async () => await initialize(env)
-        );
+        const built = yield* Effect.promise(async () => await context(env));
 
         const seer = yield* Effect.provideContext(
           ActionEntity.client(Seer),
-          context
+          built
         );
 
         const steps: number[] = [];

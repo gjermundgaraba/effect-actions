@@ -70,7 +70,7 @@ const drift = (type: string, id: string) =>
     });
   });
 
-describe("ActionClusterEntity's polls", () => {
+describe("ActionWorker's socket polls", () => {
   it.live(
     "reads Stored.changeSignal from an object's SQLite, which fails with no such table before the entity first activates, then moves with each pin",
     () =>

@@ -9,24 +9,22 @@ import { Effect, Predicate } from "effect";
 import type { Context, Schema, Stream } from "effect";
 import type { Sharding } from "effect/cluster";
 import { RpcSchema } from "effect/rpc";
+import type { Rpc } from "effect/rpc";
 
 import { hold, listen } from "../cluster/objects.js";
+import type * as ActionWorker from "./ActionWorker.js";
 import { pingPong, replyToClose } from "./frames.js";
 import { makeSockets } from "./sockets.js";
 import type { Refusal, Served } from "./sockets.js";
 
 /** One entity whose objects accept sockets, with what they serve and the version they speak. */
-export interface Exposed {
+export type Exposed = Pick<ActionWorker.Socket, "actions" | "protocol"> & {
   readonly entity: ActionEntity.Any;
-  readonly actions?: ReadonlyArray<Action.Any | Event.Any> | undefined;
-  readonly protocol?:
-    | {
-        readonly version: string;
-        readonly code: number;
-        readonly reason?: string | undefined;
-      }
-    | undefined;
-}
+};
+
+/** Whether `request` asks for a WebSocket upgrade. */
+export const isUpgrade = (request: Request) =>
+  request.headers.get("upgrade")?.toLowerCase() === "websocket";
 
 const gateOf = (sql: SqlStorage) => () => {
   try {
@@ -62,13 +60,13 @@ const refusalOf = (
 
   if (!Number.isInteger(code) || code < 4000 || code > 4999) {
     throw new Error(
-      `ActionCluster.make: the socket of ${type} has protocol.code ${code} is not an integer from 4000 to 4999, the codes a watch ends at (give one of those)`
+      `ActionWorker.make: the socket of ${type} has protocol.code ${code} is not an integer from 4000 to 4999, the codes a watch ends at (give one of those)`
     );
   }
 
   if (bytesOf(reason) > closeReasonBytes) {
     throw new Error(
-      `ActionCluster.make: the socket of ${type} has a protocol.reason, given or the default naming its version, that is ${bytesOf(reason)} bytes, more than the ${closeReasonBytes} a close frame holds (give a reason of at most ${closeReasonBytes} bytes, UTF-8 encoded)`
+      `ActionWorker.make: the socket of ${type} has a protocol.reason, given or the default naming its version, that is ${bytesOf(reason)} bytes, more than the ${closeReasonBytes} a close frame holds (give a reason of at most ${closeReasonBytes} bytes, UTF-8 encoded)`
     );
   }
 
@@ -77,7 +75,7 @@ const refusalOf = (
 
 interface Exposure {
   readonly entity: ActionEntity.Any;
-  readonly tags: ReadonlySet<string>;
+  readonly rpcs: ReadonlyMap<string, Rpc.AnyWithProps>;
   readonly polls: ReadonlySet<string>;
   readonly refusal: Refusal | undefined;
 }
@@ -94,7 +92,7 @@ const exposureOf = ({ entity, actions, protocol }: Exposed): Exposure => {
 
   if (unbound.length > 0) {
     throw new Error(
-      `ActionCluster.make: the socket of ${type} lists ${unbound.map(({ name }) => name).join(", ")}, which ${type}'s binding does not hold (list only its binding's actions and event types)`
+      `ActionWorker.make: the socket of ${type} lists ${unbound.map(({ name }) => name).join(", ")}, which ${type}'s binding does not hold (list only its binding's actions and event types)`
     );
   }
 
@@ -116,15 +114,17 @@ const exposureOf = ({ entity, actions, protocol }: Exposed): Exposure => {
 
   if (streamed.length > 0) {
     throw new Error(
-      `ActionCluster.make: the socket of ${type} lists ${streamed.map(({ name }) => name).join(", ")}, a streaming action, which a socket does not serve, since its frames would hold the object awake (call it over HTTP through ActionEntity.reaching)`
+      `ActionWorker.make: the socket of ${type} lists ${streamed.map(({ name }) => name).join(", ")}, a streaming action, which a socket does not serve, since its frames would hold the object awake (call it over HTTP through ActionEntity.reaching)`
     );
   }
 
   const polls = new Set(events.map(({ name }) => ActionRpc.pollTag(name)));
 
+  const tags = new Set([...served.map(({ name }) => name), ...polls]);
+
   return {
     entity,
-    tags: new Set([...served.map(({ name }) => name), ...polls]),
+    rpcs: new Map([...rpcs].filter(([tag]) => tags.has(tag))),
     polls,
     refusal: refusalOf(type, protocol),
   };
@@ -140,19 +140,13 @@ type ClientFor = (
 ) => Readonly<Record<string, Method | undefined>>;
 
 const servingOf = (
-  { entity, tags, polls, refusal }: Exposure,
+  { entity, rpcs, polls, refusal }: Exposure,
   context: Context.Context<Sharding.Sharding>
 ): ((entityId: string) => Served) => {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   const clientFor = Effect.runSync(
     Effect.provideContext(entity.client, context)
   ) as ClientFor;
-
-  const rpcs = new Map(
-    [...ActionEntity.bindingRpcs(entity).requests].filter(([tag]) =>
-      tags.has(tag)
-    )
-  );
 
   return (entityId) => ({
     rpcs,
@@ -164,7 +158,7 @@ const servingOf = (
 
         return Effect.isEffect(answer)
           ? answer
-          : Effect.die(new Error(`ActionCluster: ${tag} is no unary rpc`));
+          : Effect.die(new Error(`ActionWorker: ${tag} is no unary rpc`));
       }).pipe(
         Effect.catchIf(ActionEntity.isClusterFailure, Effect.die),
         Effect.exit
@@ -208,7 +202,7 @@ const hostOf = (
   return {
     ...sockets,
     upgrade: (request: Request): Response => {
-      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      if (!isUpgrade(request)) {
         return new Response(
           "Expected a WebSocket upgrade: connect with a WebSocket client, or forward the page's own Request to the object",
           { status: 426 }
@@ -220,7 +214,7 @@ const hostOf = (
 
       if (name === undefined || served === undefined) {
         return new Response(
-          "This object serves no sockets: give its entity a socket in ActionCluster.make's entities",
+          "This object serves no sockets: give its entity a socket in ActionWorker.make's entities",
           { status: 404 }
         );
       }
@@ -320,21 +314,21 @@ export class Host<Env> extends CloudflareDurableObjects.ClusterEntity {
   }
 }
 
-/**
- * The `ClusterEntity` class serving the sockets of `exposed`, each forwarded through the cluster
- * of the `context` it is given: `exposed` is checked at once, before anything registers.
- */
-export const hostClass = (exposed: readonly Exposed[]) => {
-  const byType = new Map(
+/** What each entity's socket serves, by its type, checked at once: a misconfigured socket throws. */
+export const exposuresOf = (
+  exposed: readonly Exposed[]
+): ReadonlyMap<string, Exposure> =>
+  new Map(
     exposed.map((socket) => [socket.entity.type, exposureOf(socket)] as const)
   );
 
-  return <Env>(
-    context: (env: Env) => PromiseLike<Context.Context<Sharding.Sharding>>
-  ): new (ctx: DurableObjectState, env: Env) => Host<Env> =>
-    class extends Host<Env> {
-      constructor(ctx: DurableObjectState, env: Env) {
-        super(ctx, env, context, byType);
-      }
-    };
-};
+/** The `ClusterEntity` class serving the sockets of `byType`, each forwarded through the cluster of `context`. */
+export const hostClass = <Env>(
+  byType: ReadonlyMap<string, Exposure>,
+  context: (env: Env) => PromiseLike<Context.Context<Sharding.Sharding>>
+): new (ctx: DurableObjectState, env: Env) => Host<Env> =>
+  class extends Host<Env> {
+    constructor(ctx: DurableObjectState, env: Env) {
+      super(ctx, env, context, byType);
+    }
+  };

@@ -44,7 +44,7 @@ const made =
       ],
     });
 
-describe("ActionClusterEntity's frames", () => {
+describe("ActionWorker's socket frames", () => {
   it.live(
     "fails a call of the entity's native rpc with a defect naming its tag, which it does not forward",
     () =>
@@ -406,7 +406,7 @@ describe("ActionClusterEntity's frames", () => {
   );
 
   it.effect(
-    "throws as it runs, before registering, for a socket's refusal code outside 4000 to 4999, a reason past a close frame's 123 bytes, a contract its binding lacks or a streaming action",
+    "throws as it runs, before registering, for a socket's refusal code outside 4000 to 4999, a reason past a close frame's 123 bytes, a contract its binding lacks, a streaming action, an entity named twice or a malformed path",
     () =>
       Effect.sync(() => {
         expect(made({ protocol: { version: "1", code: 3999 } })).toThrow(
@@ -420,6 +420,19 @@ describe("ActionClusterEntity's frames", () => {
         expect(made({ actions: [Pinned, Kept] })).toThrow(
           "lists kept, which Board's binding does not hold"
         );
+        expect(() =>
+          ActionWorker.make<Cloudflare.Env>({
+            entities: [
+              { entity: Board, layer: () => Layer.empty },
+              {
+                entity: Board,
+                layer: () => Layer.empty,
+                socket: { path: "/:id" },
+              },
+            ],
+          })
+        ).toThrow("the entities name Board more than once");
+        expect(made({ path: "(" })).toThrow(TypeError);
         expect(made({ actions: [StreamHeaders] }, Seer)).toThrow(
           "lists streamHeaders, a streaming action"
         );

@@ -71,3 +71,10 @@ interface Unbound {
 export const unboundWorker = () =>
   // @ts-expect-error -- Published declarations must require cluster where Env binds no namespaces.
   ActionWorker.make<Unbound>({ entities: [] });
+
+export const undefinedCluster = () =>
+  ActionWorker.make<Unbound>({
+    entities: [],
+    // @ts-expect-error -- Published declarations must require a cluster function where Env binds no namespaces.
+    cluster: undefined,
+  });

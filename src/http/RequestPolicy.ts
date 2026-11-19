@@ -24,6 +24,19 @@ interface Seen {
   readonly origin: string | undefined;
 }
 
+const authorityOf = (target: string): string | undefined => {
+  const authority = target.indexOf("://");
+
+  if (authority === -1) {
+    return undefined;
+  }
+
+  const rest = target.slice(authority + 3);
+  const stop = rest.search(/[/?#]/u);
+
+  return stop === -1 ? rest : rest.slice(0, stop);
+};
+
 const pathOf = (target: string): string => {
   const authority = target.indexOf("://");
   const start = authority === -1 ? 0 : target.indexOf("/", authority + 3);
@@ -49,6 +62,7 @@ const forbidden = HttpServerResponse.text("Forbidden", { status: 403 });
  * - `/healthz` is unchecked, including its query and fragment; do not serve application data there.
  * - Provide `middleware.layer` to every route layer to protect; it is not global middleware.
  * - This checks browser request headers, not caller identity; access control belongs to the application or its network.
+ * - A request sending no Host header is judged by its absolute target's host, as a Worker's in-process `fetch` sends one; a Node server's path-only target has none, and is refused.
  */
 export const make = (options: Options) => {
   const { host } = options.publicUrl;
@@ -63,7 +77,7 @@ export const make = (options: Options) => {
       return true;
     }
 
-    if (request.host !== host) {
+    if ((request.host ?? authorityOf(request.target)) !== host) {
       return false;
     }
 
@@ -71,10 +85,10 @@ export const make = (options: Options) => {
   };
 
   return {
-    allows: (request: globalThis.Request): boolean =>
+    allows: (request: Request): boolean =>
       decide({
         target: request.url,
-        host: request.headers.get("host") ?? new URL(request.url).host,
+        host: request.headers.get("host") ?? undefined,
         origin: request.headers.get("origin") ?? undefined,
       }),
     middleware: HttpRouter.middleware((httpEffect) =>

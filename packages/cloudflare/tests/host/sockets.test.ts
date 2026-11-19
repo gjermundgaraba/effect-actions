@@ -25,7 +25,7 @@ const Read = Schema.Struct({
   headers: Schema.Record(Schema.String, Schema.String),
 });
 
-describe("ActionClusterEntity's sockets", () => {
+describe("ActionWorker's socket sockets", () => {
   it.live(
     "answers a check source's and a log source's parked polls after the object's eviction, with one stub call for the post, which sends no tells, and one for each parked poll",
     () =>

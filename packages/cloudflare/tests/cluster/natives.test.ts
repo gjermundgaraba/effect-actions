@@ -5,7 +5,7 @@ import { env } from "cloudflare:workers";
 import { Effect, Fiber } from "effect";
 
 import { gathered, received } from "../support/worker.js";
-import { initialize, Seer } from "../worker.js";
+import { context, Seer } from "../worker.js";
 
 const tags = Effect.map(received, (all) => all.map(({ tag }) => tag));
 
@@ -16,11 +16,9 @@ describe("ActionEntity.layer's native rpcs on workerd", () => {
     "read ActionCluster.ObjectState, the object's own state, in the build and per call, its waitUntil holding work past the answer",
     () =>
       Effect.gen(function* () {
-        const context = yield* Effect.promise(
-          async () => await initialize(env)
-        );
+        const built = yield* Effect.promise(async () => await context(env));
 
-        const seers = yield* Effect.provideContext(Seer.client, context);
+        const seers = yield* Effect.provideContext(Seer.client, built);
 
         yield* received;
 
@@ -40,11 +38,9 @@ describe("ActionEntity.layer's native rpcs on workerd", () => {
     "run ObjectState's database.transaction behind the mailbox's gate, so a persisted reply written while it is open lands after it and survives its rollback, and reject with the closure's own rejection",
     () =>
       Effect.gen(function* () {
-        const context = yield* Effect.promise(
-          async () => await initialize(env)
-        );
+        const built = yield* Effect.promise(async () => await context(env));
 
-        const seers = yield* Effect.provideContext(Seer.client, context);
+        const seers = yield* Effect.provideContext(Seer.client, built);
 
         yield* received;
 
@@ -83,11 +79,9 @@ describe("ActionEntity.layer's native rpcs on workerd", () => {
     "build services per entity id for their handlers, and run a handler answering through Rpc.fork beside the entity's other calls",
     () =>
       Effect.gen(function* () {
-        const context = yield* Effect.promise(
-          async () => await initialize(env)
-        );
+        const built = yield* Effect.promise(async () => await context(env));
 
-        const seers = yield* Effect.provideContext(Seer.client, context);
+        const seers = yield* Effect.provideContext(Seer.client, built);
 
         expect(yield* seers("natives-a").bump()).toBe(1);
         expect(yield* seers("natives-a").bump()).toBe(2);
@@ -108,11 +102,9 @@ describe("ActionEntity.layer's native rpcs on workerd", () => {
     "finish a handler answering through Rpc.uninterruptible after its caller is interrupted, where a plain one stops",
     () =>
       Effect.gen(function* () {
-        const context = yield* Effect.promise(
-          async () => await initialize(env)
-        );
+        const built = yield* Effect.promise(async () => await context(env));
 
-        const seers = yield* Effect.provideContext(Seer.client, context);
+        const seers = yield* Effect.provideContext(Seer.client, built);
 
         const interrupting = (id: string, uninterruptible: boolean) =>
           Effect.gen(function* () {

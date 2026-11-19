@@ -10,13 +10,12 @@ import {
   HttpEffect,
   HttpRouter,
   HttpServer,
-  HttpServerError,
+  HttpServerRequest,
   HttpServerResponse,
 } from "effect/http";
-import type { HttpServerRequest } from "effect/http";
 
 import * as ActionCluster from "../cluster/ActionCluster.js";
-import { hostClass } from "./host.js";
+import { exposuresOf, hostClass, isUpgrade } from "./host.js";
 import type { Host } from "./host.js";
 import { initializer } from "./initializer.js";
 
@@ -113,8 +112,12 @@ export interface Entity<Env> {
   readonly socket?: Socket | undefined;
 }
 
-/** `make`'s options. */
-export interface Options<Env> {
+/**
+ * `make`'s options. `cluster` names the cluster's four namespaces and its other options,
+ * `ActionCluster.layer`'s but `entities`; it may be left out, `Bindings`' four read from `env`,
+ * only where `Env` binds them under `Bindings`' names.
+ */
+export type Options<Env> = {
   /** Each entity of the cluster, each named once. */
   readonly entities: ReadonlyArray<Entity<Env>>;
   /**
@@ -138,8 +141,8 @@ export interface Options<Env> {
       >)
     | undefined;
   /**
-   * The Host and Origin policy every request is judged by first, built from the first request's
-   * `env` and kept for the isolate: a request it refuses is answered 403, `Forbidden`, reaching no
+   * The Host and Origin policy every request is judged by first, built from each request's `env`,
+   * so a deploy changing only a binding such as the public URL takes effect at once: a request it refuses is answered 403, `Forbidden`, reaching no
    * socket, route or fallback, nor the initializer.
    */
   readonly policy?: ((env: Env) => RequestPolicy.Policy) | undefined;
@@ -155,16 +158,15 @@ export interface Options<Env> {
   readonly fallback?:
     | ((request: Request, env: Env) => Response | PromiseLike<Response>)
     | undefined;
-  /**
-   * The cluster's four namespaces and its other options, `ActionCluster.layer`'s but `entities`;
-   * by default, `env`'s `Bindings`.
-   *
-   * **Gotchas**
-   *
-   * - Where `Env` binds the namespaces under other names than `Bindings`', `make` does not compile without it.
-   */
-  readonly cluster?: ((env: Env) => ClusterOptions) | undefined;
-}
+} & ([Env] extends [Bindings]
+  ? {
+      /** The cluster's namespaces and options; by default, `env`'s `Bindings`. */
+      readonly cluster?: ((env: Env) => ClusterOptions) | undefined;
+    }
+  : {
+      /** The cluster's namespaces and options, as `Env` binds them under other names than `Bindings`'. */
+      readonly cluster: (env: Env) => ClusterOptions;
+    });
 
 /** What `make` returns: the Worker module's exports, and the isolate's application. */
 export interface Worker<Env> {
@@ -174,7 +176,7 @@ export interface Worker<Env> {
   readonly context: (
     env: Env
   ) => Promise<Context.Context<Cluster | HttpRouter.HttpRouter>>;
-  /** The entity class to export as `ClusterEntity`. */
+  /** The entity class to export as `ClusterEntity`, as `export class ClusterEntity extends worker.ClusterEntity {}` in a module emitting declarations, since its type names a private class. */
   readonly ClusterEntity: new (ctx: DurableObjectState, env: Env) => Host<Env>;
   /** Effect's workflow class, to export as `ClusterWorkflow`. */
   readonly ClusterWorkflow: typeof CloudflareDurableObjects.ClusterWorkflow;
@@ -204,13 +206,6 @@ const decoded = (segment: string | undefined) => {
   }
 };
 
-const isUpgrade = (request: Request) =>
-  request.headers.get("upgrade")?.toLowerCase() === "websocket";
-
-const isRouteMiss = (error: unknown) =>
-  HttpServerError.isHttpServerError(error) &&
-  error.reason._tag === "RouteNotFound";
-
 /**
  * The Worker: each entity of `entities` registered with the cluster and served by its `layer`,
  * `routes` over them, one runtime built per isolate for both, and the four Durable Object classes
@@ -225,23 +220,46 @@ const isRouteMiss = (error: unknown) =>
  * - It registers the isolate's Durable Object initializer, and a second call in one isolate throws `the Durable Object initializer is already set`: make one Worker, from the Worker's module.
  * - A build still pending after 15 seconds is abandoned and another started, and a stalled build that registered its entities refuses the replacement's, so the entities run in the stalled build's services, the routes in the kept one's, and a stall that then fails leaves the isolate serving no entity type: build nothing slow, such as a migration or a remote fetch, in `layer` or `routes`.
  * - A build that fails rejects the request waiting on it, and the next request builds again; one failing after another was kept answers the kept one.
- * - Without `policy`, a socket judges no `Origin`, and the upgrade's cookies are each call's credentials: give `policy`, or refuse a page of another site in the socket's `id`, which reads the request.
+ * - The cluster is built from the first request's `env`, kept for the isolate, which Cloudflare may reuse across a deploy changing only bindings: deploy code with a namespace change, or the old namespaces serve until the isolate ends.
  * - The runtime owns each entity object's alarm: schedule work with the core's `ActionEntity.wakeAt`.
  */
-export const make = <Env>(
-  options: Options<Env> &
-    (Env extends Bindings ? unknown : Required<Pick<Options<Env>, "cluster">>)
-): Worker<Env> => {
+export const make = <Env>(options: Options<Env>): Worker<Env> => {
   const { entities, routes, fallback } = options;
 
   const clusterOf: (env: Env) => ClusterOptions =
     options.cluster ?? fromBindings;
+
+  const pages = (env: Env) =>
+    fallback === undefined
+      ? Layer.empty
+      : HttpRouter.add(
+          "*",
+          "/*",
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+
+            if (request.headers["upgrade"]?.toLowerCase() === "websocket") {
+              return HttpServerResponse.empty({ status: 404 });
+            }
+
+            const web = yield* HttpServerRequest.toWeb(request);
+
+            const response = yield* Effect.promise(
+              async () => await fallback(web, env)
+            );
+
+            return HttpServerResponse.raw(response, {
+              status: response.status,
+            });
+          }).pipe(Effect.orDie)
+        );
 
   const application = (env: Env) =>
     Layer.mergeAll(
       routes === undefined
         ? Layer.empty
         : routes(env).pipe(Layer.provide(HttpServer.layerServices)),
+      pages(env),
       ...entities.map(({ layer }) => layer(env))
     ).pipe(
       Layer.provideMerge(
@@ -252,23 +270,33 @@ export const make = <Env>(
       )
     );
 
+  const duplicated = entities
+    .map(({ entity }) => entity.type)
+    .filter((type, index, types) => types.indexOf(type) !== index);
+
+  if (duplicated.length > 0) {
+    throw new Error(
+      `ActionWorker.make: the entities name ${[...new Set(duplicated)].join(", ")} more than once (name each entity once, with its layer and socket)`
+    );
+  }
+
   const exposed = entities.flatMap(({ entity, socket }) =>
     socket === undefined ? [] : [{ ...socket, entity }]
   );
 
-  const hostOf = hostClass(exposed);
-
-  const context = CloudflareDurableObjects.setInitializer(
-    initializer(application)
-  );
-
-  const ClusterEntity = hostOf(context);
+  const byType = exposuresOf(exposed);
 
   const sockets = exposed.map(({ entity, path, id = Function.identity }) => ({
     entity,
     id,
     pattern: new URLPattern({ pathname: path }),
   }));
+
+  const context = CloudflareDurableObjects.setInitializer(
+    initializer(application)
+  );
+
+  const ClusterEntity = hostClass(byType, context);
 
   const objectOf = (env: Env, request: Request) => {
     for (const { entity, id, pattern } of sockets) {
@@ -285,31 +313,32 @@ export const make = <Env>(
     return undefined;
   };
 
+  let served:
+    | {
+        readonly built: Context.Context<Cluster | HttpRouter.HttpRouter>;
+        readonly handler: (request: Request) => Promise<Response>;
+      }
+    | undefined;
+
   const serve = async (request: Request, env: Env) => {
     const built = await context(env);
-    const router = Context.get(built, HttpRouter.HttpRouter).asHttpEffect();
 
-    const answered =
-      fallback === undefined || isUpgrade(request)
-        ? router
-        : Effect.catchIf(router, isRouteMiss, () =>
-            Effect.map(
-              Effect.promise(async () => await fallback(request, env)),
-              HttpServerResponse.fromWeb
-            )
-          );
+    if (served?.built !== built) {
+      served = {
+        built,
+        handler: HttpEffect.toWebHandlerWith<
+          HttpRouter.HttpRouter,
+          HttpServerRequest.HttpServerRequest | Scope.Scope
+        >(built)(Context.get(built, HttpRouter.HttpRouter).asHttpEffect()),
+      };
+    }
 
-    return await HttpEffect.toWebHandlerWith<
-      HttpRouter.HttpRouter,
-      HttpServerRequest.HttpServerRequest | Scope.Scope
-    >(built)(answered)(request);
+    return await served.handler(request);
   };
-
-  let policy: RequestPolicy.Policy | undefined;
 
   return {
     fetch: async (request, env) => {
-      policy ??= options.policy?.(env);
+      const policy = options.policy?.(env);
 
       if (policy !== undefined && !policy.allows(request)) {
         return new Response("Forbidden", { status: 403 });

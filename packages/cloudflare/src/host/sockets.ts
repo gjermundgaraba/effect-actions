@@ -197,7 +197,7 @@ const untracked =
   "This socket's attachment, its upgrade's headers, its calls under way and its parked polls, would pass the runtime's 16 KiB: send fewer calls at once, or fewer or smaller headers";
 
 const streamed = (tag: string) =>
-  `${tag} is a streaming action, which a socket of ActionClusterEntity does not serve, since its frames would hold the object awake: call it over HTTP through ActionEntity.reaching`;
+  `${tag} is a streaming action, which an ActionWorker socket does not serve, since its frames would hold the object awake: call it over HTTP through ActionEntity.reaching`;
 
 const lostCalls =
   "This server lost the calls it was answering on this socket: connect again";
@@ -393,7 +393,11 @@ export const makeSockets = (options: {
     const exits = yield* Effect.forEach(
       due((entry) => Exit.isFailure(read) || entry.gate !== read.value),
       ({ socket, served, entry }) =>
-        tracked(socket, entry.id, polled(socket, served, entry)),
+        served.rpcs.has(entry.tag)
+          ? tracked(socket, entry.id, polled(socket, served, entry))
+          : Effect.exit(
+              Effect.as(reply(socket, served, entry, Exit.succeed(null)), false)
+            ),
       { concurrency: "unbounded" }
     );
 

@@ -553,14 +553,20 @@ const worker = ActionWorker.make<Cloudflare.Env>({
     RequestPolicy.make({ publicUrl: new URL("https://worker.example") }),
   fallback: (request) =>
     new Response(`page ${new URL(request.url).pathname}`, {
-      headers: { "x-fallback": "page" },
+      headers: [
+        ["x-fallback", "page"],
+        ["set-cookie", "seen=1; Path=/a"],
+        ["set-cookie", "seen=2; Path=/b"],
+      ],
     }),
 });
 
-export const initialize = worker.context;
-
-export const { ClusterDurableQueue, ClusterSingleton, ClusterWorkflow } =
-  worker;
+export const {
+  context,
+  ClusterDurableQueue,
+  ClusterSingleton,
+  ClusterWorkflow,
+} = worker;
 
 const started = { invoke: 0, hold: 0, acknowledge: 0 };
 

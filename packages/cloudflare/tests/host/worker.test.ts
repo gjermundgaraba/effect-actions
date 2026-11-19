@@ -23,6 +23,7 @@ const fetched = (path: string, init: RequestInit = {}) =>
     return {
       status: response.status,
       fallback: response.headers.get("x-fallback"),
+      cookies: response.headers.getSetCookie(),
       body: await response.text(),
     };
   });
@@ -76,7 +77,7 @@ describe("ActionWorker.make's fetch", () => {
   );
 
   it.live(
-    "answers a request no route matches with fallback, but not a route's own 404, an upgrade no socket matches, or a refused one",
+    "answers a request no route matches with fallback, but not a route's own 404 or route miss, an upgrade no socket matches, or a refused one",
     () =>
       Effect.gen(function* () {
         const page = yield* fetched("/rooms/lobby");
@@ -94,6 +95,7 @@ describe("ActionWorker.make's fetch", () => {
         expect(page).toStrictEqual({
           status: 200,
           fallback: "page",
+          cookies: ["seen=1; Path=/a", "seen=2; Path=/b"],
           body: "page /rooms/lobby",
         });
         expect(socketPath.fallback).toBe("page");
