@@ -77,12 +77,14 @@ describe("ActionWorker.make's fetch", () => {
   );
 
   it.live(
-    "answers a request no route matches with fallback, but not a route's own 404 or route miss, an upgrade no socket matches, or a refused one",
+    "answers a request no route matches with fallback, but not a route's own 404 or route miss, its HEAD, an upgrade no socket matches, or a refused one",
     () =>
       Effect.gen(function* () {
         const page = yield* fetched("/rooms/lobby");
         const socketPath = yield* fetched("/sockets/Board/plain");
         const routed = yield* fetched("/gone");
+        const routedHead = yield* fetched("/gone", { method: "HEAD" });
+        const pageHead = yield* fetched("/rooms/lobby", { method: "HEAD" });
 
         const stray = yield* fetched("/nowhere", {
           headers: { upgrade: "websocket" },
@@ -103,6 +105,14 @@ describe("ActionWorker.make's fetch", () => {
           404,
           null,
           "gone",
+        ]);
+        expect([routedHead.status, routedHead.fallback]).toStrictEqual([
+          404,
+          null,
+        ]);
+        expect([pageHead.status, pageHead.fallback]).toStrictEqual([
+          200,
+          "page",
         ]);
         expect([stray.status, stray.fallback]).toStrictEqual([404, null]);
         expect([foreign.status, foreign.body]).toStrictEqual([

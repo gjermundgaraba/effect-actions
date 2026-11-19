@@ -154,6 +154,7 @@ export type Options<Env> = {
    *
    * - It runs once the application is built, as the routes do: a page the Worker answers waits for the isolate's first build.
    * - A route that matched and answered 404 is not a miss, and neither is an upgrade no socket matched: `fallback` answers neither.
+   * - A HEAD request is answered by a GET route it matches before `fallback`, and a method other than GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS by the routes' 404, never by `fallback`.
    */
   readonly fallback?:
     | ((request: Request, env: Env) => Response | PromiseLike<Response>)
@@ -206,6 +207,15 @@ const decoded = (segment: string | undefined) => {
   }
 };
 
+const methodsLeavingHeadToGet = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+] as const;
+
 /**
  * The Worker: each entity of `entities` registered with the cluster and served by its `layer`,
  * `routes` over them, one runtime built per isolate for both, and the four Durable Object classes
@@ -229,29 +239,32 @@ export const make = <Env>(options: Options<Env>): Worker<Env> => {
   const clusterOf: (env: Env) => ClusterOptions =
     options.cluster ?? fromBindings;
 
+  const page = (answer: NonNullable<typeof fallback>, env: Env) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+
+      if (request.headers["upgrade"]?.toLowerCase() === "websocket") {
+        return HttpServerResponse.empty({ status: 404 });
+      }
+
+      const web = yield* HttpServerRequest.toWeb(request);
+
+      const response = yield* Effect.promise(
+        async () => await answer(web, env)
+      );
+
+      return HttpServerResponse.raw(response, {
+        status: response.status,
+      });
+    }).pipe(Effect.orDie);
+
   const pages = (env: Env) =>
     fallback === undefined
       ? Layer.empty
-      : HttpRouter.add(
-          "*",
-          "/*",
-          Effect.gen(function* () {
-            const request = yield* HttpServerRequest.HttpServerRequest;
-
-            if (request.headers["upgrade"]?.toLowerCase() === "websocket") {
-              return HttpServerResponse.empty({ status: 404 });
-            }
-
-            const web = yield* HttpServerRequest.toWeb(request);
-
-            const response = yield* Effect.promise(
-              async () => await fallback(web, env)
-            );
-
-            return HttpServerResponse.raw(response, {
-              status: response.status,
-            });
-          }).pipe(Effect.orDie)
+      : HttpRouter.addAll(
+          methodsLeavingHeadToGet.map((method) =>
+            HttpRouter.route(method, "/*", page(fallback, env))
+          )
         );
 
   const application = (env: Env) =>
