@@ -87,7 +87,8 @@ export interface Socket {
    * **Gotchas**
    *
    * - A socket the runtime kept across a deploy changing `version` is closed with `code` at its next message, or as the object next settles, its parked polls unanswered: the version its upgrade named is in its attachment.
-   * - A socket accepted by a release whose attachment holds no version, or names another entity, is closed with 1012 at its next message, and its page's upgrade is then judged as any other.
+   * - A socket accepted by a release whose attachment holds no version is judged as one whose upgrade named none: closed with `code` at its next message or as the object next settles.
+   * - A socket whose attachment names another entity is closed with 1012 at its next message, and its page's upgrade is then judged as any other.
    */
   readonly protocol?:
     | {
