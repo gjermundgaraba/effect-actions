@@ -1,7 +1,15 @@
 import { SqliteClient } from "@effect/sql-sqlite-node";
 import { describe, expect, it } from "@effect/vitest";
 import type { Duration } from "effect";
-import { Context, Effect, Layer, Option, Schema } from "effect";
+import {
+  Context,
+  DateTime,
+  Effect,
+  Fiber,
+  Layer,
+  Option,
+  Schema,
+} from "effect";
 import { SingleRunner } from "effect/cluster";
 import { Digest } from "effect/crypto";
 import { HttpClient, HttpClientRequest } from "effect/http";
@@ -9,8 +17,10 @@ import { KeyValueStore } from "effect/persistence";
 import { SqlClient } from "effect/sql";
 
 import * as Authentication from "../../src/authentication/Authentication.js";
+import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
+import { makeWake } from "../../src/entity/wakes.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Testing from "../../src/testing/Testing.js";
@@ -480,5 +490,203 @@ describe("Webhook.layer with persist in an entity's services", () => {
       }).pipe(Effect.scoped, Effect.provide(server));
     },
     { timeout: 60_000 }
+  );
+});
+
+const Remind = Action.make("remind", {
+  description: "Wake the alarm a while from now.",
+  input: { alarm: Schema.String, inMs: Schema.Int },
+  success: { at: Schema.Int },
+  readOnly: false,
+  caller: Action.Anyone,
+});
+
+const Alarm = ActionEntity.make("Alarm", ActionRpc.make([Remind]), {
+  key: ({ alarm }) => alarm,
+});
+
+const reminding = Action.implement([Remind], {
+  remind: ({ inMs }) =>
+    Effect.gen(function* () {
+      const at = DateTime.add(yield* DateTime.now, { milliseconds: inMs });
+
+      yield* ActionEntity.wakeAt(at);
+
+      return { at: DateTime.toEpochMillis(at) };
+    }),
+});
+
+interface Woken {
+  readonly at: number;
+  readonly build: number;
+  readonly runtime: number;
+}
+
+const makeAlarms = (maxIdleTime?: Duration.Input) => {
+  const seen = {
+    builds: 0,
+    runtime: 1,
+    holding: false,
+    stops: [] as number[],
+    woken: [] as Woken[],
+  };
+
+  const services = Layer.effectDiscard(
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        seen.builds += 1;
+      }),
+      () =>
+        Effect.sync(() => {
+          seen.stops.push(Date.now());
+        })
+    )
+  );
+
+  const entities = ActionEntity.layer(Alarm, reminding, {
+    services,
+    maxIdleTime,
+    onWake: (at) =>
+      Effect.suspend(() => {
+        seen.woken.push({
+          at: DateTime.toEpochMillis(at),
+          build: seen.builds,
+          runtime: seen.runtime,
+        });
+
+        return seen.runtime === 1 && seen.holding ? Effect.never : Effect.void;
+      }),
+  }).pipe(Layer.provideMerge(runner));
+
+  return { seen, entities };
+};
+
+const remind = (alarm: string, inMs: number) =>
+  Effect.flatMap(ActionEntity.client(Alarm), (alarms) =>
+    alarms.remind({ alarm, inMs })
+  );
+
+describe("ActionEntity.wakeAt", () => {
+  it.live(
+    "runs onWake at its time in an activation built again for it, the one that asked having been stopped",
+    () => {
+      const { seen, entities } = makeAlarms("1 second");
+
+      return Effect.gen(function* () {
+        const { at } = yield* remind("a", 8000);
+
+        yield* eventually(() => seen.woken.length > 0, "15 seconds");
+
+        const wokenAt = Date.now();
+
+        expect(seen.woken).toStrictEqual([{ at, build: 2, runtime: 1 }]);
+        expect(seen.stops.some((stop) => stop < at)).toBe(true);
+        expect(wokenAt).toBeGreaterThanOrEqual(at);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(entities.pipe(Layer.provideMerge(database)))
+      );
+    },
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "runs onWake again in the next runtime where the runtime running it stopped, the wake stored with the runtime's messages",
+    () =>
+      Effect.gen(function* () {
+        const shared = Layer.succeedContext(yield* Layer.build(database));
+        const { seen, entities } = makeAlarms();
+        const served = entities.pipe(Layer.provideMerge(shared));
+
+        seen.holding = true;
+
+        const { at } = yield* Effect.gen(function* () {
+          const reminded = yield* remind("a", 1500);
+
+          yield* eventually(() => seen.woken.length > 0, "15 seconds");
+
+          return reminded;
+        }).pipe(Effect.scoped, Effect.provide(served));
+
+        seen.runtime = 2;
+
+        yield* eventually(() => seen.woken.length > 1, "15 seconds").pipe(
+          Effect.scoped,
+          Effect.provide(served)
+        );
+
+        expect(seen.woken).toStrictEqual([
+          { at, build: 1, runtime: 1 },
+          { at, build: 2, runtime: 2 },
+        ]);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "keeps the earliest wake: a later time sends nothing while an earlier one is pending, and an earlier time sends its own",
+    () => {
+      const { entities } = makeAlarms();
+
+      return Effect.gen(function* () {
+        yield* remind("a", 20_000);
+        const first = yield* pendingWakes;
+
+        yield* remind("a", 30_000);
+        const later = yield* pendingWakes;
+
+        yield* remind("a", 10_000);
+        const earlier = yield* pendingWakes;
+
+        expect([first, later, earlier]).toStrictEqual([1, 1, 2]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(entities.pipe(Layer.provideMerge(database)))
+      );
+    },
+    { timeout: 30_000 }
+  );
+});
+
+describe("An entity's wake in an activation", () => {
+  it.effect(
+    "has a wait behind an earlier pending wake ask again once that one fires, and ends at a wake due no earlier, a stale one aside",
+    () =>
+      Effect.gen(function* () {
+        const sent: number[] = [];
+
+        const { wake, woke } = yield* makeWake(({ at }) =>
+          Effect.sync(() => {
+            sent.push(at);
+          })
+        );
+
+        yield* wake.wakeAt(DateTime.makeUnsafe(3000));
+
+        const waiting = yield* Effect.forkChild(wake.until(5000));
+
+        yield* Effect.yieldNow;
+
+        const behind = [...sent];
+
+        yield* woke(1000);
+        yield* Effect.yieldNow;
+
+        const afterStale = [...sent];
+
+        yield* woke(3000);
+        yield* Effect.yieldNow;
+
+        const askedAgain = [...sent];
+        const runningAfterEarlier = waiting.pollUnsafe() === undefined;
+
+        yield* woke(5000);
+        yield* Fiber.join(waiting);
+
+        expect(behind).toStrictEqual([3000]);
+        expect(afterStale).toStrictEqual([3000]);
+        expect(askedAgain).toStrictEqual([3000, 5000]);
+        expect(runningAfterEarlier).toBe(true);
+      })
   );
 });

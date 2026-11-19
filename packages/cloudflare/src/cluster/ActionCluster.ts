@@ -165,7 +165,7 @@ export const layerObject: Layer.Layer<SqlClient.SqlClient | Event.Events> =
  * - A timer or I/O awaited inside `database.transaction`'s closure never resumes, as the input gate the storage transaction closes holds it: keep the closure to SQL work.
  * - `database.transaction` awaited before `Sql`'s `withTransaction` returns, inside it, in its `afterCommit` callbacks or inside another `database.transaction`'s closure, waits forever on the gate the open one holds: await it only once the open transaction has returned.
  * - `database.transaction` cannot be cancelled: its closure runs once the gate frees even where its caller stopped waiting, without the caller's services or tracing; Effect work a caller owns opens `Sql`'s `withTransaction` instead.
- * - The runtime owns the object's alarm, for scheduled tells, replays and `Entity.keepAlive`: `storage.setAlarm` or `deleteAlarm` replaces its alarm and loses what it scheduled, and the class's `alarm` runs the runtime's; schedule work with a persisted tell carrying `DeliverAt` instead.
+ * - The runtime owns the object's alarm, for scheduled tells, replays and `Entity.keepAlive`: `storage.setAlarm` or `deleteAlarm` replaces its alarm and loses what it scheduled, and the class's `alarm` runs the runtime's; schedule work with the core's `ActionEntity.wakeAt` instead.
  * - Tables whose names start with `cluster_` are the runtime's mailbox: write none, and read them only as its tests do.
  * - `abort` ends every call under way on the object and evicts it; the next call builds it again, and the runtime replays its unprocessed persisted messages.
  */

@@ -102,5 +102,5 @@ A protected event the Worker serves through `ActionEntity.reaching` is delivered
 
 ## What differs from another cluster runtime
 
-- **The runtime owns each object's alarm**, waking it for a scheduled tell, a replay or `Entity.keepAlive`: an application sets none of its own, though `ActionCluster.ObjectState`'s `storage` would let it.
+- **The runtime owns each object's alarm**, waking it for a scheduled tell, a replay or `Entity.keepAlive`: an application sets none of its own, though `ActionCluster.ObjectState`'s `storage` would let it, and schedules its work with the core's `ActionEntity.wakeAt`, run by the layer's `onWake`.
 - **An object is built per wake.** The runtime evicts an idle object, and the next request builds the entity again, `services` and builders included: anything in memory is gone, the database stays.

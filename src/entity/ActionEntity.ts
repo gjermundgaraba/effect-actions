@@ -1,4 +1,5 @@
 import {
+  DateTime,
   Duration,
   Effect,
   Function,
@@ -65,7 +66,7 @@ import {
 } from "../rpc/erased.js";
 import type { InputCheck, Reach } from "../rpc/erased.js";
 import { forwarded } from "./forwarded.js";
-import { makeWake, wakeTag, WakeRpc } from "./wakes.js";
+import { makeWake, reportingFailures, wakeTag, WakeRpc } from "./wakes.js";
 
 export { forwardedHeaders } from "./forwarded.js";
 
@@ -215,8 +216,8 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
   readonly key: Key<B>;
   /**
    * The entity's own native rpcs, beside its actions and event types, with their own schemas:
-   * `RpcGroup.make(Expire)`, such as a persisted tell the entity sends itself with `DeliverAt`.
-   * `layer` takes their handlers in its own `rpcs`.
+   * `RpcGroup.make(Expire)`, such as a tell another entity sends it; an entity waking itself later
+   * calls `wakeAt` instead. `layer` takes their handlers in its own `rpcs`.
    *
    * **Gotchas**
    *
@@ -235,8 +236,8 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
  * `notified`, `ActionRpc.Page`, as `ActionRpc.layer` serves it too, its subscription hook held
  * for the caller's principal. A protected event type has two more, `<event>/subscribe` and
  * `<event>/unsubscribe`, taking a webhook subscription and its cancellation, and the entity has
- * its wake, `effect-actions/wake`, a persisted tell it sends itself to end a webhook delivery's
- * retry wait. Guide: `docs/ActionEntity.md` in this package.
+ * its wake, `effect-actions/wake`, the persisted tell `wakeAt` sends it, which a webhook
+ * delivery's retry wait shares. Guide: `docs/ActionEntity.md` in this package.
  *
  * **Gotchas**
  *
@@ -306,6 +307,7 @@ export interface LayerOptions<
   RIn = never,
   Handlers = never,
   RX = never,
+  RW = never,
 > extends Omit<
   NonNullable<Parameters<Cluster.Any["toLayer"]>[1]>,
   "disableFatalDefects" | "defectRetryPolicy"
@@ -344,14 +346,29 @@ export interface LayerOptions<
         ? never
         : Handlers | Effect.Effect<Handlers, never, RX>)
     | undefined;
+  /**
+   * What the entity does when its wake fires, given the time it was due: `wakeAt` schedules it,
+   * and it runs in whichever activation is current then, one built again for it where the entity
+   * had stopped, reading `services`' output as a handler does.
+   *
+   * **Gotchas**
+   *
+   * - It is a check, not one reminder per `wakeAt`: it runs at the earliest time asked for, early for the later ones, which it asks for again, and may run again for a wake already handled, as a replay after a restart: do what is due by then and `wakeAt` the next time.
+   * - The entity's webhook retry waits share its wake, so with a `Webhook.layer` in `services` it also runs when a delivery's retry is due.
+   * - It runs beside the entity's calls, outside its `concurrency`, as a webhook delivery holding the entity's only slot waits on the wake.
+   * - Its failure or defect is reported to Effect's `ErrorReporter` and logged, and that wake is done; interrupted as the entity stops, it runs again in the next activation.
+   */
+  readonly onWake?:
+    | ((at: DateTime.Utc) => Effect.Effect<void, unknown, RW>)
+    | undefined;
 }
 
-type NativeLayerOptions<N extends Rpc.Any, ROut, RIn, Handlers, RX> = [
+type NativeLayerOptions<N extends Rpc.Any, ROut, RIn, Handlers, RX, RW> = [
   N,
 ] extends [never]
-  ? [options?: LayerOptions<ROut, RIn>]
+  ? [options?: LayerOptions<ROut, RIn, never, never, RW>]
   : [
-      options: LayerOptions<ROut, RIn, Handlers, RX> & {
+      options: LayerOptions<ROut, RIn, Handlers, RX, RW> & {
         readonly rpcs: Handlers | Effect.Effect<Handlers, never, RX>;
       },
     ];
@@ -359,9 +376,10 @@ type NativeLayerOptions<N extends Rpc.Any, ROut, RIn, Handlers, RX> = [
 /**
  * What an entity's activation provides to `layer`'s `services`, its implementations' builders and
  * the Effect building its native rpcs' handlers, without requiring it of the layer: the entity's
- * `Entity.CurrentAddress`, its runner's `Entity.CurrentRunnerAddress` and the activation's
- * `Scope`, closed as the entity stops. A layer an application builds for `services` apart from
- * `layer` reads it as `Layer.Layer<ROut, E, ActionEntity.Activation | …>`.
+ * `Entity.CurrentAddress`, its runner's `Entity.CurrentRunnerAddress`, the activation's
+ * `Scope`, closed as the entity stops, and the entity's wake, which `wakeAt` reads, as its
+ * handlers and `onWake` do too. A layer an application builds for `services` apart from `layer`
+ * reads it as `Layer.Layer<ROut, E, ActionEntity.Activation | …>`.
  *
  * **Gotchas**
  *
@@ -370,7 +388,26 @@ type NativeLayerOptions<N extends Rpc.Any, ROut, RIn, Handlers, RX> = [
 export type Activation =
   | Cluster.CurrentAddress
   | Cluster.CurrentRunnerAddress
-  | Scope.Scope;
+  | Scope.Scope
+  | Wake;
+
+/**
+ * Wake the entity at `at`: a persisted tell it sends itself, delivered then to `layer`'s
+ * `onWake`, through eviction, a restart and a deploy, in whichever activation is current, built
+ * again for it where the entity had stopped. It succeeds once the runtime stored the tell, and
+ * fails with `Action.Unavailable` where it could not, so a caller knows the wake is scheduled
+ * before it starts what the wake guards. Read it in the entity: `services`, a builder or a handler.
+ *
+ * **Gotchas**
+ *
+ * - The wake keeps the earliest time: a time no earlier than one this activation scheduled and has not seen fire sends nothing, as that wake's `onWake` asks for it again; a tell cannot be taken back, so a time moved later or dropped still fires.
+ * - Each wake is a row of the runtime's messages, kept once processed, on Effect's SQL runners until a `MessageRetention` layer deletes it, and on the Cloudflare runtime for good.
+ * - It holds nothing awake: work already running keeps its activation with `Entity.keepAlive` and its Durable Object event with `waitUntil`, beside the wake that resumes it later.
+ */
+export const wakeAt = (
+  at: DateTime.DateTime
+): Effect.Effect<void, Action.Unavailable, Wake> =>
+  Effect.flatMap(Wake, (wake) => wake.wakeAt(at));
 
 type PerCall<
   B extends ActionRpc.Any,
@@ -406,6 +443,7 @@ type EntityLayer<
   RIn,
   Handlers,
   RX,
+  RW,
   A extends Action.Any = B["actions"][number],
   E extends Event.Any = B["events"][number],
 > = Layer.Layer<
@@ -421,6 +459,7 @@ type EntityLayer<
           ServingEvents<Member<Apps>, E>
         >
       | RX
+      | RW
       | RpcGroup.HandlersServices<N, Handlers>,
       Activation | ROut
     >
@@ -444,6 +483,23 @@ type NativeHandler = (
   | Effect.Effect<unknown, unknown, unknown>
   | Stream.Stream<unknown, unknown, unknown>
 >;
+
+const ClusterFailures = Schema.Union([
+  ClusterError.MailboxFull,
+  ClusterError.PersistenceError,
+  ClusterError.AlreadyProcessingMessage,
+  ClusterError.EntityNotAssignedToRunner,
+]);
+
+/**
+ * Whether a failure is one of those Effect's entity client fails with when the entity could not
+ * be reached, `MailboxFull`, `PersistenceError`, `AlreadyProcessingMessage` and
+ * `EntityNotAssignedToRunner`, which `client`, `nativeClient` and `reaching` answer as
+ * `Action.Unavailable`: a server forwarding calls into an entity, as the Cloudflare package's
+ * socket host does, makes them a defect, and a Worker calling Effect's `Entity.client` itself
+ * answers them, as the Cloudflare package's `ActionCluster.failureResponse` does, with a 503.
+ */
+export const isClusterFailure = Schema.is(ClusterFailures);
 
 /**
  * Register `entity` with the cluster's `Sharding`, serving its binding's actions and event types
@@ -473,22 +529,25 @@ export function layer<
   ROut = never,
   RIn = never,
   RX = never,
+  RW = never,
 >(
   entity: Entity<Type, B, N>,
   implementations: Apps & NoPerCall<B, Apps, ROut>,
-  ...options: NativeLayerOptions<N, ROut, RIn, Handlers, RX>
-): EntityLayer<B, Apps, N, ROut, RIn, Handlers, RX>;
+  ...options: NativeLayerOptions<N, ROut, RIn, Handlers, RX, RW>
+): EntityLayer<B, Apps, N, ROut, RIn, Handlers, RX, RW>;
 export function layer<Type extends string, B extends ActionRpc.Any>(
   entity: Entity<Type, B, Rpc.Any>,
   served: Served,
   {
     services = Layer.empty,
     rpcs = {},
+    onWake,
     ...options
   }: LayerOptions<
     never,
     unknown,
     Readonly<Record<string, NativeHandler>>,
+    unknown,
     unknown
   > = {}
 ): Layer.Layer<never, never, unknown> {
@@ -513,20 +572,33 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
       Effect.flatMap(entity.client, (clientFor) => {
         // oxlint-disable-next-line typescript/no-unsafe-type-assertion
         const self = clientFor(address.entityId) as RpcClient.RpcClient<
-          typeof WakeRpc
+          typeof WakeRpc,
+          typeof ClusterFailures.Type
         >;
 
         return self[wakeTag](payload, { discard: true });
-      }).pipe(Effect.provideContext(sharding))
+      }).pipe(
+        Effect.catchIf(isClusterFailure, ({ _tag }) =>
+          Effect.fail(
+            new Action.Unavailable({
+              message: `The wake of ${address.entityType}/${address.entityId} could not be scheduled (${_tag})`,
+            })
+          )
+        ),
+        Effect.provideContext(sharding)
+      )
     );
 
     const built = yield* Layer.buildWithMemoMap(
-      first === undefined
-        ? services
-        : Layer.provideMerge(Layer.mergeAll(first, ...rest), services),
+      Layer.provideMerge(
+        first === undefined
+          ? services
+          : Layer.provideMerge(Layer.mergeAll(first, ...rest), services),
+        Layer.succeed(Wake, wake)
+      ),
       Layer.makeMemoMapUnsafe(),
       yield* Effect.scope
-    ).pipe(Effect.provideService(Wake, wake));
+    );
 
     const check: InputCheck = (contract, input) => {
       const entityId = named(input);
@@ -567,7 +639,25 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
     return Object.fromEntries(
       [...nativeOf(entity.protocol).requests.values()].map((rpc) => {
         if (rpc._tag === wakeTag) {
-          return [rpc._tag, woke] as const;
+          return [
+            rpc._tag,
+            ({ payload }: Cluster.Request<typeof WakeRpc>) =>
+              Rpc.fork(
+                Effect.andThen(
+                  woke(payload.at),
+                  onWake === undefined
+                    ? Effect.void
+                    : reportingFailures(
+                        Effect.provideContext(
+                          Effect.suspend(() =>
+                            onWake(DateTime.makeUnsafe(payload.at))
+                          ),
+                          built
+                        )
+                      )
+                )
+              ),
+          ] as const;
         }
 
         const handler = handlers[rpc._tag];
@@ -605,23 +695,6 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
     { ...options, disableFatalDefects: true }
   );
 }
-
-const ClusterFailures = Schema.Union([
-  ClusterError.MailboxFull,
-  ClusterError.PersistenceError,
-  ClusterError.AlreadyProcessingMessage,
-  ClusterError.EntityNotAssignedToRunner,
-]);
-
-/**
- * Whether a failure is one of those Effect's entity client fails with when the entity could not
- * be reached, `MailboxFull`, `PersistenceError`, `AlreadyProcessingMessage` and
- * `EntityNotAssignedToRunner`, which `client`, `nativeClient` and `reaching` answer as
- * `Action.Unavailable`: a server forwarding calls into an entity, as the Cloudflare package's
- * socket host does, makes them a defect, and a Worker calling Effect's `Entity.client` itself
- * answers them, as the Cloudflare package's `ActionCluster.failureResponse` does, with a 503.
- */
-export const isClusterFailure = Schema.is(ClusterFailures);
 
 /**
  * What one call of an action `A` fails with, beside the binding's errors `E`: its declared and

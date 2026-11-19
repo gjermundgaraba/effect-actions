@@ -1,5 +1,5 @@
 import { expectTypeOf } from "@effect/vitest";
-import { Context, Effect, Layer, Redacted, Schema } from "effect";
+import { Context, DateTime, Effect, Layer, Redacted, Schema } from "effect";
 import type { Stream } from "effect";
 import { Entity } from "effect/cluster";
 import type { Sharding } from "effect/cluster";
@@ -159,6 +159,41 @@ ActionEntity.layer(
   [readingPerCall, changes],
   { services: Layer.succeed(Rooms)(new Map()) }
 );
+
+const wakingLater = ActionEntity.wakeAt(DateTime.nowUnsafe());
+
+expectTypeOf<
+  Effect.Error<typeof wakingLater>
+>().toEqualTypeOf<Action.Unavailable>();
+
+expectTypeOf<
+  Effect.Services<typeof wakingLater>
+>().toExtend<ActionEntity.Activation>();
+
+const wakingPerCall = Action.implement(
+  [Get, Open],
+  {
+    get: () => Effect.as(wakingLater, ""),
+    open: () => Effect.succeed(""),
+  },
+  { authorize: () => Effect.void }
+);
+
+const servedWaking = ActionEntity.layer(Room, [wakingPerCall, changes], {
+  services: tenantPerEntity,
+  onWake: () =>
+    Effect.gen(function* () {
+      yield* Tenant;
+      yield* Rooms;
+    }),
+});
+
+expectTypeOf<
+  Exclude<
+    Layer.Services<typeof servedWaking>,
+    Event.Events | Layer.Success<typeof signIn> | Sharding.Sharding
+  >
+>().toEqualTypeOf<Rooms>();
 
 const authorizingPerCall = Action.implement(
   [Get, Open],

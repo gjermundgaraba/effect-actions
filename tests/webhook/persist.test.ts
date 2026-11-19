@@ -294,7 +294,7 @@ describe("webhook subscriptions kept by persist", () => {
 
         const { world, server } = makeWorld({
           kept: store,
-          wake: { until: (at) => slept(at) },
+          wake: { wakeAt: () => Effect.void, until: (at) => slept(at) },
         });
 
         const [kept, keptPastExpiry] = yield* Effect.gen(function* () {

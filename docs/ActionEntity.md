@@ -20,7 +20,7 @@ export const Cart = ActionEntity.make("Cart", CartRpc, {
 
 Each action is an rpc of the entity, named after it. Each event type is a unary rpc named `<event>/poll`, which answers the occurrences past a cursor, as an HTTP poll does, and `ActionRpc.layer` serves under the same name. The entity is Effect's own `Entity`, so `Entity.makeTestClient` and the rest of Effect's cluster functions take it. What its rpcs send, and why none of its actions' and event types' rpcs is persisted, is on `ActionEntity.make`.
 
-An entity may also serve native rpcs of its own, given to `make` as `rpcs`: tells the entity or another entity sends through Effect's `Entity.client`, such as a persisted one annotated `ClusterSchema.Persisted` that the entity sends itself to run later, at the time its payload's `DeliverAt` names. They authenticate nothing, so no surface serves them.
+An entity may also serve native rpcs of its own, given to `make` as `rpcs`: tells the entity or another entity sends through Effect's `Entity.client`. They authenticate nothing, so no surface serves them. An entity scheduling work of its own for later needs none: it wakes itself with `wakeAt`, below.
 
 ## Serve it
 
@@ -63,6 +63,12 @@ export const routes = ActionHttp.layer(
 Its [server.ts](../examples/shopping-carts/src/server.ts) runs both on Effect's `SingleRunner` over one SQLite file.
 
 A protected action authenticates each call from the headers its envelope carries, as an RPC message does. Then the input decodes, and an input whose key names another entity is refused with `Forbidden` before the implementation's `authorize` runs.
+
+## Wake it later
+
+An entity schedules work for later with `ActionEntity.wakeAt(at)`, read in its `services`, a builder or a handler: a persisted tell the entity sends itself, which succeeds once the runtime has stored it and fails with `Action.Unavailable` where it could not. When it is due, the layer's `onWake` runs with the time it was due, in whichever activation is current, built again where the entity had stopped, so the wake outlives eviction, a restart and a deploy.
+
+`onWake` is a check, as a Durable Object's alarm handler is: the wake keeps the earliest time asked for, so it may fire early for a later time, and again for a wake already handled after a restart, so `onWake` does what is due by then and asks `wakeAt` for the next time. A wake holds nothing awake: work already running keeps its activation with `Entity.keepAlive`, and the wake resumes it if the activation stops anyway. The rules are on `ActionEntity.wakeAt` and `ActionEntity.LayerOptions`' `onWake`.
 
 ## Call it
 

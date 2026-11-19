@@ -1,7 +1,18 @@
-import { Clock, DateTime, Duration, Effect, Exit, Latch, Schema } from "effect";
+import {
+  Cause,
+  Clock,
+  DateTime,
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Schema,
+  Semaphore,
+} from "effect";
 import { ClusterSchema, DeliverAt } from "effect/cluster";
 import { Rpc } from "effect/rpc";
 
+import type * as Action from "../contract/Action.js";
 import { reported } from "../contract/reported.js";
 import { Wake } from "../contract/wake.js";
 
@@ -20,73 +31,84 @@ export const WakeRpc = Rpc.make(wakeTag, { payload: WakeAt }).annotate(
   true
 );
 
-export const makeWake = <E>(
-  send: (wake: WakeAt) => Effect.Effect<unknown, E>
+/**
+ * The entity's wake: `wakeAt` sends the persisted tell unless one this activation sent, due no
+ * later, has not fired yet; `until` waits in the activation, asking again when an earlier wake
+ * fires first; `woke` takes a delivery, which may be stale or replayed.
+ */
+export const makeWake = (
+  send: (wake: WakeAt) => Effect.Effect<void, Action.Unavailable>
 ) =>
-  Effect.map(Clock.Clock, (clock) => {
-    const waiting = new Set<{
-      readonly at: number;
-      readonly woken: Latch.Latch;
-    }>();
+  Effect.gen(function* () {
+    const clock = yield* Clock.Clock;
+    const lock = yield* Semaphore.make(1);
+    const pending = new Set<number>();
+    const waiting = new Set<Deferred.Deferred<number>>();
 
-    const sent = new Set<number>();
+    const wakeAt = (at: number) =>
+      lock.withPermit(
+        Effect.suspend(() =>
+          [...pending].some((sent) => sent <= at)
+            ? Effect.void
+            : Effect.tap(send(new WakeAt({ at })), () =>
+                Effect.sync(() => pending.add(at))
+              )
+        )
+      );
 
     const slept = (at: number) =>
       clock.sleep(
         Duration.millis(Math.max(at - clock.currentTimeMillisUnsafe(), 0))
       );
 
-    const until = (at: number) =>
+    const until = (at: number): Effect.Effect<void> =>
       Effect.suspend(() => {
-        const waiter = { at, woken: Latch.makeUnsafe() };
+        const fired = Deferred.makeUnsafe<number>();
 
-        waiting.add(waiter);
+        waiting.add(fired);
 
-        return Effect.raceFirst(
-          waiter.woken.await,
-          sent.has(at)
-            ? Effect.never
-            : Effect.uninterruptible(
-                Effect.exit(
-                  Effect.tap(send(new WakeAt({ at })), () =>
-                    Effect.sync(() => sent.add(at))
-                  )
-                )
-              ).pipe(
-                Effect.flatMap(
-                  Exit.match({
-                    onSuccess: () => Effect.never,
-                    onFailure: (cause) =>
-                      Effect.andThen(reported(cause), slept(at)),
-                  })
-                )
-              )
-        ).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              waiting.delete(waiter);
-            })
-          )
+        return wakeAt(at).pipe(
+          Effect.matchCauseEffect({
+            onFailure: (cause) => Effect.andThen(reported(cause), slept(at)),
+            onSuccess: () =>
+              Effect.flatMap(Deferred.await(fired), (woke) =>
+                woke >= at ? Effect.void : until(at)
+              ),
+          }),
+          Effect.ensuring(Effect.sync(() => waiting.delete(fired)))
         );
       });
 
-    return {
-      wake: Wake.of({ until }),
-      woke: ({ payload }: { readonly payload: WakeAt }) =>
-        Rpc.fork(
-          Effect.sync(() => {
-            for (const each of sent) {
-              if (each <= payload.at) {
-                sent.delete(each);
-              }
-            }
+    const woke = (at: number) =>
+      Effect.sync(() => {
+        for (const sent of pending) {
+          if (sent <= at) {
+            pending.delete(sent);
+          }
+        }
 
-            for (const waiter of waiting) {
-              if (waiter.at <= payload.at) {
-                waiter.woken.openUnsafe();
-              }
-            }
-          })
-        ),
+        const woken = [...waiting];
+
+        waiting.clear();
+
+        for (const fired of woken) {
+          Deferred.doneUnsafe(fired, Exit.succeed(at));
+        }
+      });
+
+    return {
+      wake: Wake.of({
+        wakeAt: (at) => wakeAt(DateTime.toEpochMillis(at)),
+        until,
+      }),
+      woke,
     };
   });
+
+/** Runs `effect`, reporting its failure or defect, an interruption left to end the wake. */
+export const reportingFailures = <E, R>(effect: Effect.Effect<void, E, R>) =>
+  Effect.catchCauseIf(
+    effect,
+    (cause) => !Cause.hasInterruptsOnly(cause),
+    reported
+  );
