@@ -5,13 +5,13 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import { evictDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { Effect, Layer, Schedule, Schema, Stream } from "effect";
+import { Effect, Schedule, Schema, Stream } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { Socket } from "effect/socket";
 
 import { RoomHttp } from "../src/Api.js";
 import { initialize } from "../src/application.js";
-import { followRoom, openRoom, overSocket } from "../src/browser.js";
+import { followRoom, openRoom } from "../src/browser.js";
 import { MessagePosted, PostMessage } from "../src/chat/Chat.js";
 import type { DemoRoomName } from "../src/chat/Chat.js";
 import { Room } from "../src/entities.js";
@@ -28,37 +28,34 @@ import {
 } from "./support.js";
 
 const socketTo = (room: DemoRoomName) =>
-  overSocket.pipe(
-    Layer.provide(
-      Layer.effect(Socket.Socket)(
-        Socket.fromWebSocket(
-          Effect.acquireRelease(
-            Effect.flatMap(
-              Effect.promise(
-                async () =>
-                  await exports.default.fetch(
-                    `${baseUrl}/rooms/${room}/rpc?protocol=${protocolVersion}`,
-                    { headers: { upgrade: "websocket" } }
-                  )
-              ),
-              ({ status, webSocket }) => {
-                if (webSocket === null) {
-                  return Effect.die(new Error(`No WebSocket: ${status}`));
-                }
+  Effect.map(
+    Socket.fromWebSocket(
+      Effect.acquireRelease(
+        Effect.flatMap(
+          Effect.promise(
+            async () =>
+              await exports.default.fetch(
+                `${baseUrl}/rooms/${room}/rpc?protocol=${protocolVersion}`,
+                { headers: { upgrade: "websocket" } }
+              )
+          ),
+          ({ status, webSocket }) => {
+            if (webSocket === null) {
+              return Effect.die(new Error(`No WebSocket: ${status}`));
+            }
 
-                webSocket.accept();
+            webSocket.accept();
 
-                return Effect.succeed(webSocket);
-              }
-            ),
-            (webSocket) =>
-              Effect.sync(() => {
-                webSocket.close(1000);
-              })
-          )
-        )
+            return Effect.succeed(webSocket);
+          }
+        ),
+        (webSocket) =>
+          Effect.sync(() => {
+            webSocket.close(1000);
+          })
       )
-    )
+    ),
+    (socket) => ({ socket })
   );
 
 const jsonAs = (token?: string) =>
@@ -325,7 +322,12 @@ describe("the Worker and its rooms", () => {
     () =>
       Effect.gen(function* () {
         const page = yield* openRoom(baseUrl, "design", "ada");
-        const messages = yield* followRoom("design", "ada");
+
+        const messages = yield* followRoom(
+          yield* socketTo("design"),
+          "design",
+          "ada"
+        );
 
         const before = yield* page.post("Before the page watched.");
 
@@ -352,7 +354,7 @@ describe("the Worker and its rooms", () => {
           { _tag: "Occurrence", data: first },
           { _tag: "Occurrence", data: second },
         ]);
-      }).pipe(Effect.scoped, Effect.provide([worker, socketTo("design")])),
+      }).pipe(Effect.scoped, Effect.provide(worker)),
     { timeout: 30_000 }
   );
 
@@ -408,25 +410,23 @@ describe("the Worker and its rooms", () => {
         const page = yield* openRoom(baseUrl, "general", "ada");
         const received: unknown[] = [];
 
-        const watching = (socket: ReturnType<typeof socketTo>) =>
-          Effect.flatMap(Layer.build(socket), (context) =>
-            followRoom("general", "ada").pipe(
-              Effect.flatMap((messages) =>
-                messages(0).pipe(
-                  Stream.runForEach((item) =>
-                    Effect.sync(() => received.push(item))
-                  ),
-                  Effect.forkScoped
-                )
-              ),
-              Effect.provideContext(context)
+        const watching = Effect.flatMap(socketTo("general"), (socket) =>
+          followRoom(socket, "general", "ada").pipe(
+            Effect.flatMap((messages) =>
+              messages(0).pipe(
+                Stream.runForEach((item) =>
+                  Effect.sync(() => received.push(item))
+                ),
+                Effect.forkScoped
+              )
             )
-          );
+          )
+        );
 
         const { messages } = yield* settledStubCalls;
 
-        yield* watching(socketTo("general"));
-        yield* watching(socketTo("general"));
+        yield* watching;
+        yield* watching;
         yield* pollsParkedSince(messages.received, 4);
 
         const posts = [

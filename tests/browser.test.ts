@@ -50,12 +50,13 @@ const modulesOf = (entry: string): ReadonlyMap<string, readonly string[]> => {
   return seen;
 };
 
-const importMapEffectSpecifiers = [
+const importMapEffectSpecifiers = new Set([
   "effect",
   "effect/http",
   "effect/http-api",
   "effect/rpc",
-];
+  "effect/socket",
+]);
 
 describe("the modules a browser client imports", () => {
   it.each([
@@ -73,8 +74,7 @@ describe("the modules a browser client imports", () => {
         specifiers
           .filter(
             (specifier) =>
-              !isWalked(specifier) &&
-              !importMapEffectSpecifiers.includes(specifier)
+              !isWalked(specifier) && !importMapEffectSpecifiers.has(specifier)
           )
           .map((specifier) => `${file}: ${specifier}`)
       );
@@ -91,6 +91,8 @@ describe("the modules a browser client imports", () => {
     "examples/kitchen-sink/src/sdk.ts",
     "examples/live-rpc/src/Rpc.ts",
     "examples/kitchen-sink/src/Rpc.ts",
+    "examples/live-rpc/src/browser.ts",
+    "examples/kitchen-sink/src/browser.ts",
   ])(
     "%s, an application module a browser client imports, imports nothing a browser lacks",
     (entry) => {
@@ -98,37 +100,13 @@ describe("the modules a browser client imports", () => {
         specifiers
           .filter(
             (specifier) =>
-              !isWalked(specifier) &&
-              !importMapEffectSpecifiers.includes(specifier)
+              !isWalked(specifier) && !importMapEffectSpecifiers.has(specifier)
           )
           .map((specifier) => `${file}: ${specifier}`)
       );
 
       expect(outside).toStrictEqual([]);
       expect([...modulesOf(entry).keys()]).toContain("src/contract/Action.ts");
-    }
-  );
-
-  it.each([
-    "examples/live-rpc/src/browser.ts",
-    "examples/kitchen-sink/src/browser.ts",
-  ])(
-    "%s, an rpc client, imports nothing a browser lacks but effect/socket, which the import map serves beside the library's",
-    (entry) => {
-      const outside = [...modulesOf(entry)].flatMap(([file, specifiers]) =>
-        specifiers
-          .filter(
-            (specifier) =>
-              !isWalked(specifier) &&
-              ![...importMapEffectSpecifiers, "effect/socket"].includes(
-                specifier
-              )
-          )
-          .map((specifier) => `${file}: ${specifier}`)
-      );
-
-      expect(outside).toStrictEqual([]);
-      expect([...modulesOf(entry).keys()]).toContain("src/rpc/ActionRpc.ts");
     }
   );
 

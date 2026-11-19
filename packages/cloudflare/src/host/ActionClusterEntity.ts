@@ -49,7 +49,7 @@ export interface Options<Env> {
     | {
         /** The version served, which a page names in its socket's URL as `?protocol=<version>`. */
         readonly version: string;
-        /** The close code of a refusal, an integer from 4000 to 4999, which `ActionRpc.reconnectUntil(code)` stops at; another throws as the class is made. */
+        /** The close code of a refusal, an integer from 4000 to 4999, which `ActionRpc.socketClient` stops at; another throws as the class is made. */
         readonly code: number;
         /** The close reason, at most 123 bytes UTF-8 encoded; by default `This server speaks protocol <version>: reload the page`. A longer one throws as the class is made. */
         readonly reason?: string | undefined;

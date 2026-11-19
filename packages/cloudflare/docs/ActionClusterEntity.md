@@ -25,35 +25,30 @@ export const unsupportedProtocol = 4000;
 
 ## Follow a room from a page
 
-A page connects with `RpcClient.layerProtocolSocket`, whose `retryPolicy`, `ActionRpc.reconnectUntil(unsupportedProtocol)`, connects again after a drop but stops at the refusal, and watches through `ActionRpc.client(RoomRpc)` with `mode: "poll"`: a watch is then a sequence of polls, each a unary call the host forwards and answers, never a stream held open by the object. A page cannot set a browser `WebSocket`'s headers, only the browser's own cookies and `Origin` go with the upgrade, so the page puts its token on each message, through `RpcClient.CurrentHeaders`; the host lays a message's headers over the upgrade's, those `ActionEntity.forwardedHeaders` keeps, the message's winning. The page's actions stay on the JSON routes, `openRoom`:
+A page connects with `ActionRpc.socketClient(RoomRpc, { url, watchMode: "poll" })`, which connects again after a drop but stops at the refusal's code, as at any from 4000 to 4999, and watches by poll: a watch is then a sequence of polls, each a unary call the host forwards and answers, never a stream held open by the object. A page cannot set a browser `WebSocket`'s headers, only the browser's own cookies and `Origin` go with the upgrade, so the page puts its token on each message, through `RpcClient.CurrentHeaders`; the host lays a message's headers over the upgrade's, those `ActionEntity.forwardedHeaders` keeps, the message's winning. The page's actions stay on the JSON routes, `openRoom`:
 
 ```ts example=chat-rooms/src/browser.ts
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
-import { Effect, Layer, Predicate, Stream } from "effect";
+import { Effect, Predicate, Stream } from "effect";
 import { Headers, HttpClient, HttpClientRequest } from "effect/http";
-import { RpcClient, RpcSerialization } from "effect/rpc";
-import { Socket } from "effect/socket";
+import { RpcClient } from "effect/rpc";
 
 import { RoomHttp } from "./Api.js";
 import { MessagePosted } from "./chat/Chat.js";
 import type { DemoRoomName } from "./chat/Chat.js";
-import { protocolVersion, RoomRpc, unsupportedProtocol } from "./Rpc.js";
+import { protocolVersion, RoomRpc } from "./Rpc.js";
 
-export const overSocket = RpcClient.layerProtocolSocket({
-  retryPolicy: ActionRpc.reconnectUntil(unsupportedProtocol),
-}).pipe(Layer.provide(RpcSerialization.layerJson));
-
-export const roomConnection = (baseUrl: string, room: DemoRoomName) => {
+export const roomSocket = (
+  baseUrl: string,
+  room: DemoRoomName
+): ActionRpc.SocketTarget => {
   const url = new URL(`/rooms/${room}/rpc`, baseUrl);
 
   url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
   url.searchParams.set("protocol", protocolVersion);
 
-  return overSocket.pipe(
-    Layer.provide(Socket.layerWebSocket(url.href)),
-    Layer.provide(Socket.layerWebSocketConstructorGlobal)
-  );
+  return { url: url.href };
 };
 
 export const openRoom = (baseUrl: string, room: DemoRoomName, token: string) =>
@@ -87,12 +82,16 @@ export const openRoom = (baseUrl: string, room: DemoRoomName, token: string) =>
     };
   });
 
-export const followRoom = (room: DemoRoomName, token: string) =>
+export const followRoom = (
+  socket: ActionRpc.SocketTarget,
+  room: DemoRoomName,
+  token: string
+) =>
   Effect.map(
-    ActionRpc.client(RoomRpc),
+    ActionRpc.socketClient(RoomRpc, { ...socket, watchMode: "poll" }),
     (client) => (after: number) =>
       client
-        .watch(MessagePosted, { room }, { cursor: String(after), mode: "poll" })
+        .watch(MessagePosted, { room }, { cursor: String(after) })
         .pipe(
           Stream.updateService(
             RpcClient.CurrentHeaders,
@@ -121,4 +120,4 @@ No `hold` or `acknowledge` is called: a poll is unary. A page's next poll after 
 
 ## Test on workerd
 
-[`chat-rooms/test/worker.test.ts`](../examples/chat-rooms/test/worker.test.ts) opens a page's socket through the Worker's own `fetch`, with an `upgrade: websocket` header, and passes the response's `webSocket` to `Socket.fromWebSocket` under the browser module's `overSocket`, closing it when the scope ends: a socket left open keeps its attachment, and a later test of the object reads it. `evictDurableObject` evicts the room while the page's socket stays open, as hibernation does.
+[`chat-rooms/test/worker.test.ts`](../examples/chat-rooms/test/worker.test.ts) opens a page's socket through the Worker's own `fetch`, with an `upgrade: websocket` header, and passes the response's `webSocket` to `Socket.fromWebSocket`, the `socket` the browser module's `followRoom` connects with, closing it when the scope ends: a socket left open keeps its attachment, and a later test of the object reads it. `evictDurableObject` evicts the room while the page's socket stays open, as hibernation does.

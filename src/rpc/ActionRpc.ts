@@ -9,8 +9,16 @@ import {
 } from "effect";
 import type { Context, Scope, Stream, Types } from "effect";
 import type { HttpRouter, HttpServerRequest } from "effect/http";
-import { Rpc, RpcClient, RpcGroup, RpcMiddleware, RpcServer } from "effect/rpc";
+import {
+  Rpc,
+  RpcClient,
+  RpcGroup,
+  RpcMiddleware,
+  RpcSerialization,
+  RpcServer,
+} from "effect/rpc";
 import type { RpcClientError, RpcSchema } from "effect/rpc";
+import { Socket } from "effect/socket";
 
 import type {
   Any as Authentication,
@@ -664,19 +672,66 @@ export type Client<B extends Any> = {
 
 /**
  * `client`'s options: the native `RpcClient.make` options, `spanPrefix`, `spanAttributes`,
- * `generateRequestId` and `disableTracing`. `flatten` changes the client's shape, which the
- * method types cannot follow.
+ * `generateRequestId` and `disableTracing`, and `watchMode`. `flatten` changes the client's
+ * shape, which the method types cannot follow.
  */
-export type ClientOptions = Omit<
+export interface ClientOptions extends Omit<
   NonNullable<Parameters<typeof RpcClient.make>[1]>,
   "flatten"
->;
+> {
+  /**
+   * The `mode` of a watch that gives none: `"poll"` reads its pages from the first, as a server
+   * serving events by poll alone, such as the Cloudflare package's socket host, needs, without the
+   * round trip a watch otherwise spends finding that out. A watch's own `mode` wins.
+   */
+  readonly watchMode?: "stream" | "poll" | undefined;
+}
 
 /**
  * How long a polling watch waits for a poll's answer, 4 minutes, before it sends the poll again
  * from the same cursor and interrupts the first.
  */
 export const pollResentAfter = Duration.minutes(4);
+
+const clientOf = (
+  binding: Any,
+  { watchMode, ...options }: ClientOptions,
+  transient: (error: unknown) => boolean
+): Effect.Effect<object, never, RpcClient.Protocol | Scope.Scope> =>
+  Effect.map(
+    Effect.all([
+      RpcClient.make(
+        erasedOf(binding.actions, binding.events, "ActionRpc.layer").merge(
+          nativeOf(binding.rpcs)
+        ),
+        { ...options, flatten: true }
+      ),
+      Effect.map(
+        Effect.service(RpcClient.Protocol),
+        ({ supportsAck }) => !supportsAck
+      ),
+    ]),
+    ([call, silenceEnds]) => ({
+      ...methodsOf(
+        binding,
+        streamedTransport(
+          silenceEnds,
+          polledTransport(transient, pollResentAfter)
+        ),
+        watchMode
+      )(Function.constant(Effect.succeed(erasedCallOf(call)))),
+      ...Object.fromEntries(
+        [...nativeOf(binding.rpcs).requests.keys()].map(
+          (tag) =>
+            [
+              tag,
+              (payload: unknown, callOptions?: Parameters<typeof call>[2]) =>
+                call(tag, payload, callOptions),
+            ] as const
+        )
+      ),
+    })
+  );
 
 /**
  * Effect's native `RpcClient` for a binding, one method per action taking the action's input
@@ -711,39 +766,7 @@ export function client(
   binding: Any,
   options: ClientOptions = {}
 ): Effect.Effect<object, never, RpcClient.Protocol | Scope.Scope> {
-  return Effect.map(
-    Effect.all([
-      RpcClient.make(
-        erasedOf(binding.actions, binding.events, "ActionRpc.layer").merge(
-          nativeOf(binding.rpcs)
-        ),
-        { ...options, flatten: true }
-      ),
-      Effect.map(
-        Effect.service(RpcClient.Protocol),
-        ({ supportsAck }) => !supportsAck
-      ),
-    ]),
-    ([call, silenceEnds]) => ({
-      ...methodsOf(
-        binding,
-        streamedTransport(
-          silenceEnds,
-          polledTransport(isRpcTransient, pollResentAfter)
-        )
-      )(Function.constant(Effect.succeed(erasedCallOf(call)))),
-      ...Object.fromEntries(
-        [...nativeOf(binding.rpcs).requests.keys()].map(
-          (tag) =>
-            [
-              tag,
-              (payload: unknown, callOptions?: Parameters<typeof call>[2]) =>
-                call(tag, payload, callOptions),
-            ] as const
-        )
-      ),
-    })
-  );
+  return clientOf(binding, options, isRpcTransient);
 }
 
 /**
@@ -753,6 +776,18 @@ export function client(
 export interface ReconnectReason {
   readonly reason: unknown;
 }
+
+const closedWith = (reason: unknown, stops: (code: number) => boolean) =>
+  Predicate.isTagged(reason, "SocketCloseError") &&
+  Predicate.hasProperty(reason, "code") &&
+  Predicate.isNumber(reason.code) &&
+  stops(reason.code);
+
+const reconnectingUnless = (stops: (code: number) => boolean) =>
+  Schedule.min([Schedule.exponential(500, 1.5), Schedule.spaced(5000)]).pipe(
+    Schedule.setInputType<ReconnectReason>(),
+    Schedule.while(({ input: { reason } }) => !closedWith(reason, stops))
+  );
 
 /**
  * A socket client's `retryPolicy`, for `RpcClient.layerProtocolSocket`, that stops connecting
@@ -768,14 +803,127 @@ export interface ReconnectReason {
  * - Any other socket error, a drop included, is retried as Effect's default retries it.
  */
 export const reconnectUntil = (...codes: readonly number[]) =>
-  Schedule.min([Schedule.exponential(500, 1.5), Schedule.spaced(5000)]).pipe(
-    Schedule.setInputType<ReconnectReason>(),
-    Schedule.while(
-      ({ input: { reason } }) =>
-        !(
-          Predicate.isTagged(reason, "SocketCloseError") &&
-          Predicate.hasProperty(reason, "code") &&
-          codes.some((code) => code === reason.code)
+  reconnectingUnless((code) => codes.includes(code));
+
+const isApplicationCode = (code: number) => code >= 4000 && code <= 4999;
+
+/** Where `socketClient` connects: a URL, or a socket made elsewhere. */
+export type SocketTarget =
+  | {
+      /** The `ws:` or `wss:` URL the client dials, again after each drop. */
+      readonly url: string;
+      /**
+       * What makes each WebSocket. Omitted: the global `WebSocket`, looked up on every
+       * connection, as a browser has it. Node's `ws` package, `(url) => new WebSocket(url, {
+       * headers })`, sends headers on the upgrade, which a browser cannot.
+       */
+      readonly webSocket?: Socket.WebSocketConstructor["Service"] | undefined;
+    }
+  | {
+      /**
+       * A `Socket` made elsewhere, such as `Socket.fromWebSocket` over a socket a Worker's
+       * `fetch` returned: its acquisition runs again for each connection.
+       */
+      readonly socket: Socket.Socket;
+    };
+
+/** What `socketClient` takes: where it connects, how it reconnects, and `client`'s options. */
+export type SocketClientOptions = SocketTarget &
+  ClientOptions & {
+    /**
+     * Close codes beside the application codes, 4000 to 4999, that stop the client connecting
+     * again: a close with one ends every call and watch under way, and fails each later one,
+     * with an `RpcClientError` whose `reason` is that `SocketCloseError`.
+     */
+    readonly reconnectUntil?: readonly number[] | undefined;
+    /**
+     * Effects run as each connection opens and as it ends, Effect's `RpcClient.ConnectionHooks`:
+     * a page showing that it is connected.
+     */
+    readonly hooks?:
+      | {
+          readonly onConnect?: Effect.Effect<void> | undefined;
+          readonly onDisconnect?: Effect.Effect<void> | undefined;
+        }
+      | undefined;
+  };
+
+/**
+ * `client` over one WebSocket the client holds, for as long as the `Scope` it is built in:
+ * Effect's socket protocol under JSON serialization, which every `ActionRpc.layer` over
+ * `RpcSerialization.layerJson` and the Cloudflare package's socket host speak, its calls and
+ * watches sharing the socket, which connects again after a drop as Effect's own socket client
+ * does. A close with an application code, 4000 to 4999, or one of `reconnectUntil`, stops it.
+ * Guide: `docs/ActionRpc.md#call-the-rpcs`.
+ *
+ * **Gotchas**
+ *
+ * - The socket closes with the `Scope` the client was built in, not with each call's: a watch run after that scope ends fails with `RpcClientError`.
+ * - Once stopped by a close it never connects again: build a new client, in a new `Scope`, such as after a page's reload.
+ * - Another serialization, such as `RpcSerialization.layerNdjson`, or a protocol of your own takes `client` under `RpcClient.layerProtocolSocket`, its `retryPolicy` `reconnectUntil(code)`.
+ */
+export function socketClient<const B extends Any>(
+  binding: B,
+  options: SocketClientOptions
+): Effect.Effect<
+  Client<B>,
+  never,
+  Scope.Scope | Rpc.MiddlewareClient<RpcGroup.Rpcs<B["rpcs"]>>
+>;
+export function socketClient(
+  binding: Any,
+  {
+    url = "",
+    webSocket,
+    socket,
+    reconnectUntil: codes = [],
+    hooks: { onConnect = Effect.void, onDisconnect = Effect.void } = {},
+    ...options
+  }: SocketClientOptions & {
+    readonly url?: string;
+    readonly webSocket?: Socket.WebSocketConstructor["Service"] | undefined;
+    readonly socket?: Socket.Socket;
+  }
+): Effect.Effect<object, never, Scope.Scope> {
+  const connection =
+    socket === undefined
+      ? Socket.layerWebSocket(url).pipe(
+          Layer.provide(
+            webSocket === undefined
+              ? Socket.layerWebSocketConstructorGlobal
+              : Layer.succeed(Socket.WebSocketConstructor)(webSocket)
+          )
         )
-    )
+      : Layer.succeed(Socket.Socket)(socket);
+
+  const stops = (code: number) =>
+    isApplicationCode(code) || codes.includes(code);
+
+  return Effect.flatMap(
+    Layer.build(
+      RpcClient.layerProtocolSocket({
+        retryPolicy: reconnectingUnless(stops),
+      }).pipe(
+        Layer.provide([
+          connection,
+          RpcSerialization.layerJson,
+          Layer.succeed(RpcClient.ConnectionHooks)({ onConnect, onDisconnect }),
+        ])
+      )
+    ),
+    (protocol) =>
+      Effect.provideContext(
+        clientOf(
+          binding,
+          options,
+          (error) =>
+            isRpcTransient(error) &&
+            !(
+              Predicate.hasProperty(error, "reason") &&
+              closedWith(error.reason, stops)
+            )
+        ),
+        protocol
+      )
   );
+}

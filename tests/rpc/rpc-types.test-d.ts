@@ -560,6 +560,17 @@ export const refusedSocket = RpcClient.layerProtocolSocket({
   retryPolicy: ActionRpc.reconnectUntil(4001),
 });
 
+const overSocket = ActionRpc.socketClient(Rpc, { url: "ws://localhost/rpc" });
+
+expectTypeOf<Effect.Services<typeof overSocket>>().toEqualTypeOf<Scope.Scope>();
+
+expectTypeOf<Effect.Success<typeof overSocket>>().toEqualTypeOf<
+  ActionRpc.Client<typeof Rpc>
+>();
+
+// @ts-expect-error -- a socket client connects to a url or a socket
+export const nowhere = ActionRpc.socketClient(Rpc, { watchMode: "poll" });
+
 const Where = Action.make("where", {
   description: "Answer the URL of the request the call runs with",
   input: {},
