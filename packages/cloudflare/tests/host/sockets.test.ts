@@ -415,14 +415,12 @@ describe("ActionClusterEntity's sockets", () => {
   );
 
   it.effect(
-    "answers a request that is no upgrade 426, and an upgrade to an entity serving no sockets 404",
+    "answers a request handed to an object that is no upgrade 426, and an upgrade to an entity serving no sockets 404",
     () =>
       Effect.gen(function* () {
         const plain = yield* Effect.promise(
           async () =>
-            await exports.default.fetch(
-              "https://worker.example/sockets/Board/plain?protocol=1"
-            )
+            await objectOf("Board", "plain").fetch("https://object/?protocol=1")
         );
 
         const unserved = yield* Effect.promise(

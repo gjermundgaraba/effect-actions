@@ -1,35 +1,36 @@
-import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/ActionCluster";
-import * as ActionClusterEntity from "@gjermundgaraba/effect-actions-cloudflare/ActionClusterEntity";
+import * as ActionWorker from "@gjermundgaraba/effect-actions-cloudflare/ActionWorker";
 import { Schema } from "effect";
 
-import { initialize } from "./application.js";
-import { DemoRoomName } from "./chat/Chat.js";
+import { DemoRoomName, MessagePosted } from "./chat/Chat.js";
 import { Room } from "./entities.js";
+import { rooms, workerRoutes } from "./routes.js";
 import { protocolVersion, unsupportedProtocol } from "./Rpc.js";
-
-export {
-  ClusterDurableQueue,
-  ClusterSingleton,
-  ClusterWorkflow,
-} from "@effect/platform-cloudflare/CloudflareDurableObjects";
-
-export class ClusterEntity extends ActionClusterEntity.make({
-  initialize,
-  sockets: [Room],
-  protocol: { version: protocolVersion, code: unsupportedProtocol },
-}) {}
 
 const isRoom = Schema.is(DemoRoomName);
 
-export default ActionCluster.handler(initialize, {
-  sockets: {
-    entityNamespace: (env) => env.CLUSTER_ENTITY,
-    routes: [
-      {
-        entity: Room,
+const worker = ActionWorker.make<Cloudflare.Env>({
+  entities: [
+    {
+      entity: Room,
+      layer: () => rooms,
+      socket: {
         path: "/rooms/:id/rpc",
         id: (room) => (isRoom(room) ? room : undefined),
+        actions: [MessagePosted],
+        protocol: { version: protocolVersion, code: unsupportedProtocol },
       },
-    ],
-  },
+    },
+  ],
+  routes: () => workerRoutes,
 });
+
+export class ClusterEntity extends worker.ClusterEntity {}
+
+export const {
+  context,
+  ClusterWorkflow,
+  ClusterDurableQueue,
+  ClusterSingleton,
+} = worker;
+
+export default { fetch: worker.fetch };

@@ -116,10 +116,21 @@ const decodePoll = Schema.decodeUnknownOption(ActionRpc.Poll);
 
 const decodePage = Schema.decodeUnknownOption(ActionRpc.Page);
 
-/** One entity's binding, as a socket reaches it: its rpcs by tag, its polls, and a call into it. */
+/** The version a socket's upgrade must name, and the close refusing one naming another. */
+export interface Refusal {
+  readonly version: string;
+  readonly code: number;
+  readonly reason: string;
+}
+
+/**
+ * One entity's socket, as a page reaches it: the rpcs it serves by tag, its polls among them,
+ * its refusal, and a call into the entity.
+ */
 export interface Served {
   readonly rpcs: ReadonlyMap<string, Rpc.AnyWithProps>;
   readonly polls: ReadonlySet<string>;
+  readonly refusal: Refusal | undefined;
   readonly call: (
     tag: string,
     payload: Schema.Json,
@@ -200,6 +211,18 @@ const lostSocket =
  */
 export const uncalledWithin = Duration.seconds(30);
 
+const outdated = (socket: WebSocket, served: Served, held: Attachment) => {
+  const { refusal } = served;
+
+  if (refusal === undefined || held.version === refusal.version) {
+    return false;
+  }
+
+  closeQuietly(socket, refusal.code, refusal.reason);
+
+  return true;
+};
+
 /**
  * Answers sockets' frames from the entity each attachment names, parks the polls that find
  * nothing new, and answers them again once the gate moves.
@@ -210,25 +233,8 @@ export const makeSockets = (options: {
   readonly now: () => number;
   readonly sockets: () => readonly WebSocket[];
   readonly waitUntil: (promise: Promise<unknown>) => void;
-  readonly refusal:
-    | {
-        readonly version: string;
-        readonly code: number;
-        readonly reason: string;
-      }
-    | undefined;
 }) => {
-  const { now, refusal } = options;
-
-  const outdated = (socket: WebSocket, held: Attachment) => {
-    if (refusal === undefined || held.version === refusal.version) {
-      return false;
-    }
-
-    closeQuietly(socket, refusal.code, refusal.reason);
-
-    return true;
-  };
+  const { now } = options;
 
   const signal = Effect.exit(Effect.sync(options.gate));
 
@@ -280,7 +286,7 @@ export const makeSockets = (options: {
       if (
         held === undefined ||
         served === undefined ||
-        outdated(socket, held)
+        outdated(socket, served, held)
       ) {
         return [];
       }
@@ -374,6 +380,10 @@ export const makeSockets = (options: {
     });
 
   const pass = Effect.gen(function* () {
+    if (options.sockets().length === 0) {
+      return;
+    }
+
     const read = yield* signal;
 
     if (Exit.isSuccess(read) && read.value === undefined) {
@@ -505,7 +515,7 @@ export const makeSockets = (options: {
         return;
       }
 
-      if (outdated(socket, held)) {
+      if (outdated(socket, served, held)) {
         return;
       }
 

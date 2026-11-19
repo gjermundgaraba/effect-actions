@@ -1,12 +1,10 @@
-# ActionClusterEntity
+# ActionWorker sockets
 
-Import `@gjermundgaraba/effect-actions-cloudflare/ActionClusterEntity`. A page that follows an entity's events from a browser holds one WebSocket to that entity's Durable Object, which the Workers runtime keeps open while the object sleeps, or **hibernates**: the object is evicted from memory, and a message on the socket builds it again. `ActionClusterEntity.make(options)` returns the class the Worker exports as `ClusterEntity`, in place of `@effect/platform-cloudflare`'s own: it extends that class, so every entity of the cluster runs on it as before, and it serves Effect RPC over such sockets for the entities named in `sockets`. Each call on a socket is forwarded into the object's own entity through `Entity.client`, so the entity authenticates and answers it as it does a call from the Worker. `make`'s JSDoc holds the rules.
+A page that follows an entity's events from a browser holds one WebSocket to that entity's Durable Object, which the Workers runtime keeps open while the object sleeps, or **hibernates**: the object is evicted from memory, and a message on the socket builds it again. An entity given a `socket` in `ActionWorker.make`'s `entities` accepts such sockets: the Worker hands a page's upgrade at the socket's `path` to the entity's object, `getByName(CloudflareCluster.encodeName(type, id))` in the `ClusterEntity` namespace, without waiting on the application, and the class `make` returns as `ClusterEntity` serves Effect RPC over it, forwarding each call into the object's own entity through `Entity.client`, so the entity authenticates and answers it as it does a call from the Worker. `ActionWorker.Socket`'s JSDoc holds the rules; [ActionWorker.md](ActionWorker.md) shows the example's whole Worker, its room's socket at `/rooms/<room>/rpc`.
 
-## Export the class
+## Name the version a page speaks
 
-The Worker's module exports `ClusterEntity = ActionClusterEntity.make({ initialize, sockets: [Room], protocol })` beside Effect's three other classes, and its default export, `ActionCluster.handler`, hands a page's upgrade at `/rooms/<room>/rpc` to the room's object, `getByName(CloudflareCluster.encodeName(Room.type, room)).fetch(request)` in the `ClusterEntity` namespace, before the router: [`chat-rooms/src/worker.ts`](../examples/chat-rooms/src/worker.ts), shown whole in [ActionCluster.md](ActionCluster.md). `initialize` is the function `ActionClusterEntity.register` returned, the one that builds the application. The binding and migration in `wrangler.jsonc` are unchanged: the class keeps the name `ClusterEntity`.
-
-`protocol` names the version of the rpcs the page was built against. A page names it in its socket's URL, `?protocol=1`, and an upgrade naming another is accepted and closed at once with `protocol.code`, a code from 4000 to 4999, so a page left open across a deploy that changed the rpcs stops and asks to be reloaded, instead of sending calls the new server reads differently:
+A socket's `protocol` names the version of the rpcs the page was built against, and changes with them, and with the socket's `actions`. A page names it in its socket's URL, `?protocol=2`, and an upgrade naming another is accepted and closed at once with `protocol.code`, a code from 4000 to 4999, so a page left open across a deploy that changed the rpcs stops and asks to be reloaded, instead of sending calls the new server reads differently:
 
 ```ts example=chat-rooms/src/Rpc.ts
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -18,7 +16,7 @@ export const RoomRpc = ActionRpc.make([...Messages, MessagePosted], {
   authentication: Login,
 });
 
-export const protocolVersion = "1";
+export const protocolVersion = "2";
 
 export const unsupportedProtocol = 4000;
 ```
@@ -105,7 +103,7 @@ export const followRoom = (
 
 ## What the socket holds
 
-The host keeps no state in memory between messages but the calls it is forwarding, which a page's interrupt or the socket's close interrupts. Each socket's attachment, which the runtime keeps with the socket across hibernation, holds the upgrade's headers, the calls under way and the **parked** polls: a poll whose answer had nothing new is kept there instead of answered, and asked again once the object's events changed, read through `Stored.layerEvents`' change signal as `Stored.layerEvents` appends to a log or `notify`s a source in the object, through the `Stored.ChangeListener` that `ActionCluster.layer` gives each entity's build, so work a handler forked into the entity's scope that outlives its call wakes them too, and again each time a handler on the object ends, whether a call, a tell or the alarm ran it. Only a poll whose page is `notified`, `ActionRpc.Page`'s field, is parked: a check source not `notified` has each poll answered at once, its page polling at `nextPoll`. A change no handler writes to a `notified` source reaches a parked poll only when the page sends it again, `ActionRpc.pollResentAfter`, 4 minutes, after it sent it; `make`'s gotchas say which changes those are. So an entity serving sockets keeps its events on `Stored.layerEvents`, as the example's room does in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts); one keeping them elsewhere has every poll answered at once, its pages polling at `nextPoll`.
+The host keeps no state in memory between messages but the calls it is forwarding, which a page's interrupt or the socket's close interrupts. Each socket's attachment, which the runtime keeps with the socket across hibernation, holds the upgrade's headers, the calls under way and the **parked** polls: a poll whose answer had nothing new is kept there instead of answered, and asked again once the object's events changed, read through `Stored.layerEvents`' change signal as `Stored.layerEvents` appends to a log or `notify`s a source in the object, through the `Stored.ChangeListener` that `ActionCluster.layer` gives each entity's build, so work a handler forked into the entity's scope that outlives its call wakes them too, and again each time a handler on the object ends, whether a call, a tell or the alarm ran it. Only a poll whose page is `notified`, `ActionRpc.Page`'s field, is parked: a check source not `notified` has each poll answered at once, its page polling at `nextPoll`. A change no handler writes to a `notified` source reaches a parked poll only when the page sends it again, `ActionRpc.pollResentAfter`, 4 minutes, after it sent it; `ActionWorker.Socket`'s gotchas say which changes those are. So an entity serving sockets keeps its events on `Stored.layerEvents`, as the example's room does in [`chat-rooms/src/routes.ts`](../examples/chat-rooms/src/routes.ts); one keeping them elsewhere has every poll answered at once, its pages polling at `nextPoll`.
 
 ## What a post costs
 

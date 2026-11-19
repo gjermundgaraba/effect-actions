@@ -5,6 +5,7 @@ import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
+import * as RequestPolicy from "@gjermundgaraba/effect-actions/RequestPolicy";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import * as Webhook from "@gjermundgaraba/effect-actions/Webhook";
 import {
@@ -23,29 +24,25 @@ import { ClusterSchema } from "effect/cluster";
 import {
   FetchHttpClient,
   HttpRouter,
-  HttpServer,
   HttpServerRequest,
+  HttpServerResponse,
 } from "effect/http";
 import { KeyValueStore } from "effect/persistence";
 import { Rpc, RpcClient, RpcGroup } from "effect/rpc";
 import { SqlClient } from "effect/sql";
 
 import * as ActionCluster from "../src/cluster/ActionCluster.js";
-import * as ActionClusterEntity from "../src/host/ActionClusterEntity.js";
+import * as ActionWorker from "../src/host/ActionWorker.js";
 import {
   Board,
   BoardHttp,
   boardImplementations,
   boardTells,
+  Pin,
+  Pinned,
   Tally,
-  Unbound,
+  Watcher,
 } from "./board.js";
-
-export {
-  ClusterDurableQueue,
-  ClusterSingleton,
-  ClusterWorkflow,
-} from "@effect/platform-cloudflare/CloudflareDurableObjects";
 
 class Caller extends Context.Service<Caller, string>()("tests/Caller") {}
 
@@ -79,7 +76,7 @@ const ReadHeaders = Action.make("readHeaders", {
   caller: Caller,
 });
 
-const StreamHeaders = Action.make("streamHeaders", {
+export const StreamHeaders = Action.make("streamHeaders", {
   description: "Answer them after a progress step, as a stream rpc.",
   input: { room: Schema.String },
   success: Read,
@@ -451,7 +448,6 @@ const edgeLog = HttpRouter.middleware(
 );
 
 const stall = {
-  requested: false,
   above: false,
   released: false,
   builds: 0,
@@ -466,81 +462,105 @@ const untilReleased = Effect.sleep("50 millis").pipe(
   })
 );
 
-const stallingTheFirstBuild = Effect.suspend(() => {
-  stall.builds += 1;
+const stallingAboveTheCluster = Layer.effectDiscard(
+  Effect.gen(function* () {
+    stall.builds += 1;
 
-  return stall.requested && !stall.above && stall.builds === 1
-    ? untilReleased.pipe(
-        Effect.andThen(Effect.die(new Error("planted: the stalled build")))
-      )
-    : Effect.void;
+    const build = stall.builds;
+
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        stall.disposed += 1;
+      })
+    );
+
+    if (stall.above && build === 1) {
+      yield* untilReleased;
+    }
+
+    stall.finished += 1;
+  })
+);
+
+const signedIn = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
+  layer.pipe(Layer.provide([signIn, recording]));
+
+const boardSocket = (type: string) => ({
+  path: `/sockets/${type}/:id`,
+  id: (sent: string) => (sent === "refused" ? undefined : sent),
 });
 
-const stallingAboveTheCluster = (build: number) =>
-  Layer.effectDiscard(
-    Effect.gen(function* () {
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          stall.disposed += 1;
-        })
-      );
+const versioned = { version: "1", code: 4000 };
 
-      if (stall.above && build === 1) {
-        yield* untilReleased;
-      }
-
-      stall.finished += 1;
-    })
-  );
-
-const served = (env: Cloudflare.Env) =>
-  Layer.mergeAll(
-    ActionEntity.layer(Seer, [...seeing, crashing], {
-      services: Layer.merge(
-        Stored.layerIdempotency.pipe(
-          Layer.provideMerge(ActionCluster.layerObject)
+const worker = ActionWorker.make<Cloudflare.Env>({
+  entities: [
+    {
+      entity: Seer,
+      layer: () =>
+        signedIn(
+          ActionEntity.layer(Seer, [...seeing, crashing], {
+            services: Layer.merge(
+              Stored.layerIdempotency.pipe(
+                Layer.provideMerge(ActionCluster.layerObject)
+              ),
+              Layer.sync(Bumps)(() => ({ count: 0 }))
+            ),
+            rpcs: seerTasks,
+          })
         ),
-        Layer.sync(Bumps)(() => ({ count: 0 }))
-      ),
-      rpcs: seerTasks,
-    }),
-    ActionEntity.layer(Board, boardImplementations, {
-      services: ActionCluster.layerObject,
-      rpcs: boardTells,
-    }),
-    ActionEntity.layer(Tally, boardImplementations, {
-      services: Layer.merge(Event.layerMemory, entitySql),
-    }),
-    keeping,
+      socket: { ...boardSocket("Seer"), protocol: versioned },
+    },
+    {
+      entity: Board,
+      layer: () =>
+        ActionEntity.layer(Board, boardImplementations, {
+          services: ActionCluster.layerObject,
+          rpcs: boardTells,
+        }),
+      socket: { ...boardSocket("Board"), protocol: versioned },
+    },
+    {
+      entity: Tally,
+      layer: () =>
+        ActionEntity.layer(Tally, boardImplementations, {
+          services: Layer.merge(Event.layerMemory, entitySql),
+        }),
+      socket: { ...boardSocket("Tally"), protocol: versioned },
+    },
+    {
+      entity: Watcher,
+      layer: () =>
+        ActionEntity.layer(Watcher, boardImplementations, {
+          services: ActionCluster.layerObject,
+        }),
+      socket: { ...boardSocket("Watcher"), actions: [Pin, Pinned] },
+    },
+    { entity: Keeper, layer: () => keeping },
+  ],
+  routes: () =>
     Layer.mergeAll(
       ActionHttp.layer(SeerHttp, ActionEntity.reaching(Seer)),
       ActionHttp.layer(BoardHttp, ActionEntity.reaching(Board)),
-      edgeLog
-    ).pipe(Layer.provide(HttpServer.layerServices))
-  ).pipe(
-    Layer.provide(signIn),
-    Layer.provideMerge(
-      ActionCluster.layer({
-        entities: [Seer, Board, Tally, Keeper],
-        entityNamespace: env.CLUSTER_ENTITY,
-        workflowNamespace: env.CLUSTER_WORKFLOW,
-        queueNamespace: env.CLUSTER_QUEUE,
-        singletonNamespace: env.CLUSTER_SINGLETON,
-      })
-    ),
-    Layer.provideMerge(recording)
-  );
+      HttpRouter.add(
+        "GET",
+        "/gone",
+        HttpServerResponse.text("gone", { status: 404 })
+      ),
+      edgeLog,
+      stallingAboveTheCluster
+    ).pipe(Layer.provide(signIn), Layer.provideMerge(recording)),
+  policy: () =>
+    RequestPolicy.make({ publicUrl: new URL("https://worker.example") }),
+  fallback: (request) =>
+    new Response(`page ${new URL(request.url).pathname}`, {
+      headers: { "x-fallback": "page" },
+    }),
+});
 
-const application = (env: Cloudflare.Env) =>
-  Layer.unwrap(
-    Effect.map(stallingTheFirstBuild, () =>
-      stallingAboveTheCluster(stall.builds).pipe(
-        Layer.provideMerge(served(env))
-      )
-    )
-  );
+export const initialize = worker.context;
 
-export const initialize = ActionClusterEntity.register(application);
+export const { ClusterDurableQueue, ClusterSingleton, ClusterWorkflow } =
+  worker;
 
 const started = { invoke: 0, hold: 0, acknowledge: 0 };
 
@@ -559,18 +579,7 @@ const counted = async <A>(
   });
 };
 
-const Host = ActionClusterEntity.make({
-  initialize,
-  sockets: [Seer, Board, Tally],
-  protocol: { version: "1", code: 4000 },
-});
-
-export class OpenHost extends ActionClusterEntity.make({
-  initialize,
-  sockets: [Board, Unbound],
-}) {}
-
-export class ClusterEntity extends Host {
+export class ClusterEntity extends worker.ClusterEntity {
   constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env);
     instances.push(`${ctx.id.name ?? ""}#${crypto.randomUUID()}`);
@@ -601,18 +610,6 @@ for (const method of countedMethods) {
 
 export const foreignOrigin = "https://elsewhere.example";
 
-const handled = ActionCluster.handler(initialize, {
-  sockets: {
-    entityNamespace: (env) => env.CLUSTER_ENTITY,
-    routes: [Seer, Board, Tally].map((entity) => ({
-      entity,
-      path: `/sockets/${entity.type}/:id`,
-      id: (sent: string, request: Request) =>
-        request.headers.get("origin") === foreignOrigin ? undefined : sent,
-    })),
-  },
-});
-
 export default {
   async fetch(request: Request, env: Cloudflare.Env) {
     const { pathname } = new URL(request.url);
@@ -633,12 +630,11 @@ export default {
       stall.above = true;
     }
 
-    if (pathname === "/stall" || pathname === "/release") {
-      stall.requested = true;
-      stall.released = pathname === "/release";
+    if (pathname === "/release") {
+      stall.released = true;
     }
 
-    if (["/stall", "/stall-above", "/release"].includes(pathname)) {
+    if (["/stall-above", "/release"].includes(pathname)) {
       return Response.json({
         builds: stall.builds,
         finished: stall.finished,
@@ -646,6 +642,6 @@ export default {
       });
     }
 
-    return await handled.fetch(request, env);
+    return await worker.fetch(request, env);
   },
 } satisfies ExportedHandler<Cloudflare.Env>;

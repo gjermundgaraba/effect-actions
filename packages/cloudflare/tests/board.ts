@@ -118,7 +118,7 @@ export const Board = ActionEntity.make("Board", BoardRpc, {
 
 export const Tally = ActionEntity.make("Tally", BoardRpc, { key });
 
-export const Unbound = ActionEntity.make("Unbound", BoardRpc, { key });
+export const Watcher = ActionEntity.make("Watcher", BoardRpc, { key });
 
 const Rows = Schema.Array(Schema.Struct({ n: Schema.Int }));
 

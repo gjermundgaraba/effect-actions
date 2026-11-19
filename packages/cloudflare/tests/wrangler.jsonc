@@ -8,7 +8,6 @@
       { "name": "CLUSTER_WORKFLOW", "class_name": "ClusterWorkflow" },
       { "name": "CLUSTER_QUEUE", "class_name": "ClusterDurableQueue" },
       { "name": "CLUSTER_SINGLETON", "class_name": "ClusterSingleton" },
-      { "name": "OPEN_HOST", "class_name": "OpenHost" },
     ],
   },
   "migrations": [
@@ -19,7 +18,6 @@
         "ClusterWorkflow",
         "ClusterDurableQueue",
         "ClusterSingleton",
-        "OpenHost",
       ],
     },
   ],

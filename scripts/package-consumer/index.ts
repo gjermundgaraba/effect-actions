@@ -21,12 +21,16 @@ const policy = RequestPolicy.make({
 });
 
 if (
-  !policy.allows({
-    target: "/api",
-    host: "consumer.example",
-    origin: undefined,
-  }) ||
-  policy.allows({ target: "/api", host: "other.example", origin: undefined })
+  !policy.allows(
+    new Request("https://consumer.example/api", {
+      headers: { host: "consumer.example" },
+    })
+  ) ||
+  policy.allows(
+    new Request("https://consumer.example/api", {
+      headers: { host: "other.example" },
+    })
+  )
 ) {
   throw new Error("Published request policy failed");
 }

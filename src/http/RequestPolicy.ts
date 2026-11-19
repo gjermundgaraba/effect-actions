@@ -18,9 +18,7 @@ export interface Options {
 
 const uncheckedProbePath = "/healthz";
 
-/** One request, as a Node `upgrade` handler or a router middleware sees it. */
-export interface Request {
-  /** The request target: `/a?b` or an absolute URL. Only its path is read. */
+interface Seen {
   readonly target: string;
   readonly host: string | undefined;
   readonly origin: string | undefined;
@@ -43,8 +41,8 @@ const pathOf = (target: string): string => {
 const forbidden = HttpServerResponse.text("Forbidden", { status: 403 });
 
 /**
- * Build a Host/Origin policy once at startup. `allows` takes no services, so a
- * raw request or Node upgrade handler applies the same rule as the router.
+ * Build a Host/Origin policy once at startup. `allows` takes a web `Request` and no
+ * services, so a Worker's `fetch` or a raw web handler applies the same rule as the router.
  * The middleware answers refused requests with status 403 and text `Forbidden`.
  *
  * **Gotchas**
@@ -60,7 +58,7 @@ export const make = (options: Options) => {
     ...(options.allowedOrigins ?? []),
   ]);
 
-  const allows = (request: Request): boolean => {
+  const decide = (request: Seen): boolean => {
     if (pathOf(request.target) === uncheckedProbePath) {
       return true;
     }
@@ -73,12 +71,17 @@ export const make = (options: Options) => {
   };
 
   return {
-    allows,
+    allows: (request: globalThis.Request): boolean =>
+      decide({
+        target: request.url,
+        host: request.headers.get("host") ?? new URL(request.url).host,
+        origin: request.headers.get("origin") ?? undefined,
+      }),
     middleware: HttpRouter.middleware((httpEffect) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
 
-        const permitted = allows({
+        const permitted = decide({
           target: request.originalUrl,
           host: request.headers["host"],
           origin: request.headers["origin"],

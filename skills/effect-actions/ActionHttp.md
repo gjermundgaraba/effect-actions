@@ -138,7 +138,7 @@ export const withRequestPolicy = (publicUrl: URL) => {
 };
 ```
 
-Pass the deployed public URL from the host's configuration to `withRequestPolicy`, then serve its result as in [quickstart/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/server.ts). For a raw request, pass its target, Host and Origin to `policy.allows`; use `undefined` for absent headers. Allowing an additional browser origin through `RequestPolicy.Options` does not install CORS response headers; configure `HttpRouter.cors` too when the browser needs them.
+Pass the deployed public URL from the host's configuration to `withRequestPolicy`, then serve its result as in [quickstart/src/server.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/server.ts). For a raw web `Request`, such as a Worker's, pass it to `policy.allows`, which reads its Host header, or its URL's host where it sends none, and its Origin. Allowing an additional browser origin through `RequestPolicy.Options` does not install CORS response headers; configure `HttpRouter.cors` too when the browser needs them.
 
 ### Split a binding across layers, and add middleware
 

@@ -1,15 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import { runInDurableObject } from "cloudflare:test";
+import { exports } from "cloudflare:workers";
 import { Effect, Exit, Predicate, Queue, Scope, Stream } from "effect";
 
-import { BoardRpc, Pinned } from "../board.js";
+import { BoardRpc, Logged, Pinned } from "../board.js";
 import {
   clientOver,
   connected,
   evict,
   heldIn,
   objectOf,
-  openHostOf,
   opened,
   reconnecting,
   stubs,
@@ -118,34 +118,64 @@ describe("ActionClusterEntity's watches", () => {
   );
 
   it.live(
-    "accepts an upgrade naming any version, or none, on a host made without protocol",
+    "accepts an upgrade naming any version, or none, on a socket made without protocol",
     () =>
       Effect.gen(function* () {
         const board = "open";
 
-        const upgraded = (version: string) =>
+        const upgraded = (query: string) =>
           Effect.promise(
             async () =>
-              await openHostOf("Board", board).fetch(
-                `https://object/${version}`,
-                {
-                  headers: { upgrade: "websocket" },
-                }
+              await exports.default.fetch(
+                `https://worker.example/sockets/Watcher/${board}${query}`,
+                { headers: { upgrade: "websocket" } }
               )
           );
 
-        const unversioned = yield* upgraded("");
         const versioned = yield* upgraded("?protocol=0");
-        const socket = yield* connected(unversioned);
 
-        yield* (yield* clientOver(BoardRpc, socket)).pin({ board, n: 3 });
+        versioned.webSocket?.accept();
+        versioned.webSocket?.close(1000);
+
+        const unversioned = yield* upgraded("");
+        const socket = yield* connected(unversioned);
+        const watcher = yield* clientOver(BoardRpc, socket);
+        const pins = yield* following(watcher.watch(Pinned, { board }));
+
+        yield* watchingIn("Watcher", board, 1);
+        yield* watcher.pin({ board, n: 3 });
 
         expect([unversioned.status, versioned.status]).toStrictEqual([
           101, 101,
         ]);
+        expect(yield* notes(pins, 1)).toStrictEqual([{ n: 3 }]);
         expect(socket.closed).toStrictEqual([]);
-        versioned.webSocket?.accept();
-        versioned.webSocket?.close(1000);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
+  );
+
+  it.live(
+    "serves a socket only the contracts its actions list, answering a call of another Unknown request tag",
+    () =>
+      Effect.gen(function* () {
+        const board = "selected";
+        const socket = yield* opened("Watcher", board);
+        const watcher = yield* clientOver(BoardRpc, socket);
+        const pins = yield* following(watcher.watch(Pinned, { board }));
+        const refused = yield* Effect.exit(watcher.soon({ board, n: 1 }));
+
+        const logged = yield* Effect.exit(
+          Stream.runHead(
+            watcher.watch(Logged, { board }, { mode: "poll" })
+          ).pipe(Effect.timeout("10 seconds"))
+        );
+
+        yield* watchingIn("Watcher", board, 1);
+        yield* watcher.pin({ board, n: 2 });
+
+        expect(String(refused)).toContain("Unknown request tag: soon");
+        expect(String(logged)).toContain('Event "board.logged" is not served');
+        expect(yield* notes(pins, 1)).toStrictEqual([{ n: 2 }]);
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
   );

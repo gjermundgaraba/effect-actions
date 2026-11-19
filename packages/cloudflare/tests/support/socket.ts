@@ -12,9 +12,6 @@ import { eventually } from "./eventually.js";
 export const objectOf = (type: string, id: string) =>
   env.CLUSTER_ENTITY.getByName(CloudflareCluster.encodeName(type, id));
 
-export const openHostOf = (type: string, id: string) =>
-  env.OPEN_HOST.getByName(CloudflareCluster.encodeName(type, id));
-
 export const upgrade = (
   type: string,
   id: string,

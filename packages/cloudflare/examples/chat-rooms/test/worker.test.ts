@@ -10,13 +10,13 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import { Socket } from "effect/socket";
 
 import { RoomHttp } from "../src/Api.js";
-import { initialize } from "../src/application.js";
 import { followRoom, openRoom } from "../src/browser.js";
 import { MessagePosted, PostMessage } from "../src/chat/Chat.js";
 import type { DemoRoomName } from "../src/chat/Chat.js";
 import { Room } from "../src/entities.js";
 import { Login } from "../src/identity/Identity.js";
 import { protocolVersion } from "../src/Rpc.js";
+import { context } from "../src/worker.js";
 import {
   baseUrl,
   evict,
@@ -273,9 +273,9 @@ describe("the Worker and its rooms", () => {
 
   it.effect("refuses, in a room's entity, a call naming another room", () =>
     Effect.gen(function* () {
-      const context = yield* Effect.promise(async () => await initialize(env));
+      const built = yield* Effect.promise(async () => await context(env));
 
-      const clientFor = yield* Effect.provideContext(Room.client, context);
+      const clientFor = yield* Effect.provideContext(Room.client, built);
 
       const { readMessages } = clientFor("design");
 

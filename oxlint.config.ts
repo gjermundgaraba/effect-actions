@@ -98,8 +98,8 @@ const lint: ReturnType<typeof config> = config({
       files: [
         "packages/cloudflare/examples/chat-rooms/test/{support,worker,worker.test}.ts",
         "packages/cloudflare/src/cluster/{ActionCluster,objects}.ts",
-        "packages/cloudflare/src/host/ActionClusterEntity.ts",
-        "packages/cloudflare/tests/{worker,cluster/{eviction,handler,natives,redaction}.test,support/socket}.ts",
+        "packages/cloudflare/src/host/{ActionWorker,host,initializer}.ts",
+        "packages/cloudflare/tests/{worker,cluster/{eviction,natives,redaction}.test,host/worker.test,support/socket}.ts",
         "src/webhook/{address,subscriptions,Webhook}.ts",
         "examples/{build-events,kitchen-sink}/src/server.ts",
         "examples/build-events/test/support/memory.ts",
@@ -113,7 +113,7 @@ const lint: ReturnType<typeof config> = config({
     {
       files: [
         "packages/cloudflare/src/cluster/ActionCluster.ts",
-        "packages/cloudflare/src/host/{ActionClusterEntity,sockets}.ts",
+        "packages/cloudflare/src/host/{ActionWorker,host,sockets}.ts",
         "src/authentication/Authentication.ts",
         "src/cli/{ActionCli,commands}.ts",
         "src/contract/{Action,authorizer,call,caller,feed,idempotency,implementation,lease,push,serving,webhooks}.ts",

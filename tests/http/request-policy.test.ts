@@ -10,11 +10,19 @@ const publicUrl = new URL("https://notes.example");
 
 const policy = RequestPolicy.make({ publicUrl, allowedOrigins: ["wtf://app"] });
 
+const requestOf = (target: string, host: string | undefined, origin?: string) =>
+  new Request(new URL(target, "https://request.example"), {
+    headers: {
+      ...(host === undefined ? {} : { host }),
+      ...(origin === undefined ? {} : { origin }),
+    },
+  });
+
 const allows = (
   target: string,
   host: string | undefined,
   origin?: string
-): boolean => policy.allows({ target, host, origin });
+): boolean => policy.allows(requestOf(target, host, origin));
 
 describe("the request policy", () => {
   it("the Host header must equal the public host, as sent", () => {
@@ -32,27 +40,12 @@ describe("the request policy", () => {
     });
 
     assert.equal(
-      local.allows({
-        target: "/",
-        host: "app.notes.localhost:5173",
-        origin: undefined,
-      }),
+      local.allows(requestOf("/", "app.notes.localhost:5173")),
       true
     );
+    assert.equal(local.allows(requestOf("/", "app.notes.localhost")), false);
     assert.equal(
-      local.allows({
-        target: "/",
-        host: "app.notes.localhost",
-        origin: undefined,
-      }),
-      false
-    );
-    assert.equal(
-      local.allows({
-        target: "/",
-        host: "app.notes.localhost:5174",
-        origin: undefined,
-      }),
+      local.allows(requestOf("/", "app.notes.localhost:5174")),
       false
     );
   });
@@ -88,26 +81,6 @@ describe("the request policy", () => {
     assert.equal(allows("/healthzz", undefined), false);
     assert.equal(allows("/health", undefined), false);
     assert.equal(allows("/", undefined), false);
-  });
-
-  it("a malformed target is a path, never a parse failure", () => {
-    for (const target of [
-      "",
-      "//",
-      "://",
-      "http://",
-      "%%%",
-      "/a%2",
-      "\\\\evil",
-      "http://h",
-    ]) {
-      assert.doesNotThrow(() =>
-        policy.allows({ target, host: "notes.example", origin: undefined })
-      );
-    }
-
-    assert.equal(allows("", "notes.example"), true);
-    assert.equal(allows("http://h", "notes.example"), true);
   });
 
   it("the middleware refuses before any handler runs and lets exempt paths through", async () => {

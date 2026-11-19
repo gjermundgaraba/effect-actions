@@ -33,7 +33,7 @@ const roomServices = roomWebhooks.pipe(
   Layer.provideMerge(ActionCluster.layerObject)
 );
 
-export const entities = ActionEntity.layer(Room, [messages, messageEvents], {
+export const rooms = ActionEntity.layer(Room, [messages, messageEvents], {
   services: roomServices,
 }).pipe(Layer.provide(authenticate));
 

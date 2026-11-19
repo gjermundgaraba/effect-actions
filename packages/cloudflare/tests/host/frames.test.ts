@@ -2,15 +2,14 @@ import { describe, expect, it } from "@effect/vitest";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import { runInDurableObject } from "cloudflare:test";
-import { Effect, Predicate } from "effect";
+import { Effect, Layer, Predicate } from "effect";
 import { RpcMessage, RpcSerialization } from "effect/rpc";
 
-import * as ActionClusterEntity from "../../src/host/ActionClusterEntity.js";
-import { Pinned } from "../board.js";
+import * as ActionWorker from "../../src/host/ActionWorker.js";
+import { Board, Pinned } from "../board.js";
 import {
   evict,
   objectOf,
-  openHostOf,
   pollOf,
   raw,
   settledStubs,
@@ -18,7 +17,7 @@ import {
   until,
   upgrade,
 } from "../support/socket.js";
-import { initialize } from "../worker.js";
+import { Kept, Seer, StreamHeaders } from "../worker.js";
 
 const parser = RpcSerialization.json.makeUnsafe();
 
@@ -28,6 +27,22 @@ const instancesOf = (board: string) =>
     ({ instances }) =>
       instances.filter((instance) => instance.includes(board)).length
   );
+
+const made =
+  (
+    socket: Partial<ActionWorker.Socket>,
+    entity: typeof Board | typeof Seer = Board
+  ) =>
+  () =>
+    ActionWorker.make<Cloudflare.Env>({
+      entities: [
+        {
+          entity,
+          layer: () => Layer.empty,
+          socket: { path: "/:id", ...socket },
+        },
+      ],
+    });
 
 describe("ActionClusterEntity's frames", () => {
   it.live(
@@ -390,45 +405,24 @@ describe("ActionClusterEntity's frames", () => {
     { timeout: 30_000 }
   );
 
-  it.live(
-    "fails an upgrade to an entity of sockets that ActionCluster.layer's entities lacks with CloudflareCluster's message",
-    () =>
-      Effect.gen(function* () {
-        const failure = yield* Effect.flip(
-          Effect.tryPromise(
-            async () =>
-              await openHostOf("Unbound", "stray").fetch("https://object/", {
-                headers: { upgrade: "websocket" },
-              })
-          )
-        );
-
-        expect(String(failure.cause)).toContain(
-          "is not part of the entities bound at Worker init"
-        );
-      }),
-    { timeout: 30_000 }
-  );
-
   it.effect(
-    "throws as the class is made for a refusal code outside 4000 to 4999, or a reason past a close frame's 123 bytes",
+    "throws as it runs, before registering, for a socket's refusal code outside 4000 to 4999, a reason past a close frame's 123 bytes, a contract its binding lacks or a streaming action",
     () =>
       Effect.sync(() => {
-        expect(() =>
-          ActionClusterEntity.make({
-            initialize,
-            sockets: [],
-            protocol: { version: "1", code: 3999 },
-          })
-        ).toThrow("protocol.code 3999 is not an integer from 4000 to 4999");
-
-        expect(() =>
-          ActionClusterEntity.make({
-            initialize,
-            sockets: [],
+        expect(made({ protocol: { version: "1", code: 3999 } })).toThrow(
+          "protocol.code 3999 is not an integer from 4000 to 4999"
+        );
+        expect(
+          made({
             protocol: { version: "1", code: 4000, reason: "é".repeat(62) },
           })
         ).toThrow("is 124 bytes, more than the 123 a close frame holds");
+        expect(made({ actions: [Pinned, Kept] })).toThrow(
+          "lists kept, which Board's binding does not hold"
+        );
+        expect(made({ actions: [StreamHeaders] }, Seer)).toThrow(
+          "lists streamHeaders, a streaming action"
+        );
       })
   );
 });

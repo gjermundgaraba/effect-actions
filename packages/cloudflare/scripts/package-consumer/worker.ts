@@ -1,4 +1,5 @@
 import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/ActionCluster";
+import * as ActionWorker from "@gjermundgaraba/effect-actions-cloudflare/ActionWorker";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
@@ -60,3 +61,13 @@ export const checkLayerTypes = (env: Env) => {
 
   return wrong;
 };
+
+export const defaultedWorker = () => ActionWorker.make<Env>({ entities: [] });
+
+interface Unbound {
+  readonly OTHER: string;
+}
+
+export const unboundWorker = () =>
+  // @ts-expect-error -- Published declarations must require cluster where Env binds no namespaces.
+  ActionWorker.make<Unbound>({ entities: [] });

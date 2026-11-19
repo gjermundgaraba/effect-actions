@@ -7,6 +7,6 @@ export const RoomRpc = ActionRpc.make([...Messages, MessagePosted], {
   authentication: Login,
 });
 
-export const protocolVersion = "1";
+export const protocolVersion = "2";
 
 export const unsupportedProtocol = 4000;
