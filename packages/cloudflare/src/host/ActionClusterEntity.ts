@@ -51,7 +51,7 @@ export interface Options<Env> {
    * **Gotchas**
    *
    * - A socket the runtime kept across a deploy changing `version` is closed with `code` at its next message, or as the object next settles, its parked polls unanswered: the version its upgrade named is in its attachment.
-   * - A socket accepted by a release before this one, whose attachment holds no version, is closed with 1012 at its next message, and its page's upgrade is then judged as any other.
+   * - A socket accepted by a release before this one, whose attachment holds no version, is judged as one whose upgrade named none: closed with `code` at its next message or as the object next settles.
    */
   readonly protocol?:
     | {

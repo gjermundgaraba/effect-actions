@@ -363,10 +363,11 @@ describe("ActionClusterEntity's sockets", () => {
         [
           { served: "0", closed: [4000], pinned: [] },
           { served: "1", closed: [], pinned: [{ n: 3 }] },
+          { served: undefined, closed: [4000], pinned: [] },
         ],
         ({ served, closed, pinned }) =>
           Effect.gen(function* () {
-            const board = `deployed-${served}`;
+            const board = `deployed-${served ?? "unversioned"}`;
             const http = yield* boards;
             const socket = yield* opened("Board", board);
 
@@ -381,10 +382,17 @@ describe("ActionClusterEntity's sockets", () => {
                   const attachment: unknown = held.deserializeAttachment();
 
                   if (Predicate.isObject(attachment)) {
-                    held.serializeAttachment({
-                      ...attachment,
-                      version: served,
-                    });
+                    const unversioned = Object.fromEntries(
+                      Object.entries(attachment).filter(
+                        ([key]) => key !== "version"
+                      )
+                    );
+
+                    held.serializeAttachment(
+                      served === undefined
+                        ? unversioned
+                        : { ...unversioned, version: served }
+                    );
                   }
                 }
               });

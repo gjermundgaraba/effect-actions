@@ -42,7 +42,9 @@ const Answered = Schema.Struct({
 
 const Attachment = Schema.Struct({
   name: Schema.String,
-  version: Schema.NullOr(Schema.String),
+  version: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null))
+  ),
   headers: Headers,
   calls: Schema.Array(RequestId),
   parked: Schema.Array(Parked),
