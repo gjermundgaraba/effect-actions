@@ -331,6 +331,12 @@ const crashing = Action.implement(
   { authorize: Action.allowAll }
 );
 
+const yieldMicrotasksSinceTimersStallInTransactions = async () => {
+  for (let tick = 0; tick < 10; tick += 1) {
+    await Promise.resolve();
+  }
+};
+
 const seerTasks = Effect.map(
   Effect.all([Bumps, ActionCluster.ObjectState.orDie]),
   ([bumps, built]) =>
@@ -380,9 +386,7 @@ const seerTasks = Effect.map(
                 sql`INSERT INTO seer_notes (note) VALUES ('outside')`
               );
 
-              for (let tick = 0; tick < 10; tick += 1) {
-                await Promise.resolve();
-              }
+              await yieldMicrotasksSinceTimersStallInTransactions();
 
               throw planted;
             }).then(

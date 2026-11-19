@@ -2,9 +2,18 @@ import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluste
 import { Effect, Option, Predicate } from "effect";
 import type { SqlClient } from "effect/sql";
 
+/** What `ActionCluster.ObjectState` holds, whose JSDoc says what each field is. */
+export interface Recorded extends Pick<
+  DurableObjectState,
+  "id" | "storage" | "waitUntil" | "abort"
+> {
+  readonly transaction: <A>(closure: () => Promise<A>) => Promise<A>;
+}
+
 interface Held {
   readonly state: DurableObjectState;
   changed: () => void;
+  recorded?: { readonly sql: SqlClient.SqlClient; readonly state: Recorded };
 }
 
 const held = new WeakMap<DurableObjectStorage, Held>();
@@ -60,10 +69,43 @@ export const objectHere: Effect.Effect<
   }
 );
 
-/** The state `hold` recorded for `storage`, if its object's class recorded one. */
-export const stateOf = (
+/**
+ * The state `hold` recorded for the object of `storage`, its transactions run through `sql`, the
+ * same for every read in one handler build, or `undefined` where its class recorded none; a
+ * rebuild in the same object, which makes a new client, records it anew.
+ */
+export const stateHere = (
+  sql: SqlClient.SqlClient,
   storage: DurableObjectStorage
-): DurableObjectState | undefined => held.get(storage)?.state;
+): Recorded | undefined => {
+  const found = held.get(storage);
+
+  if (found === undefined) {
+    return undefined;
+  }
+
+  if (found.recorded?.sql !== sql) {
+    const { state } = found;
+
+    found.recorded = {
+      sql,
+      state: {
+        id: state.id,
+        storage,
+        waitUntil: (promise) => {
+          state.waitUntil(promise);
+        },
+        abort: (reason) => {
+          state.abort(reason);
+        },
+        transaction: async (closure) =>
+          await Effect.runPromise(sql.withTransaction(Effect.promise(closure))),
+      },
+    };
+  }
+
+  return found.recorded.state;
+};
 
 /** Tells the listener of the object of `storage`, if it has one, that its events changed. */
 export const changedIn = (storage: DurableObjectStorage): void => {
