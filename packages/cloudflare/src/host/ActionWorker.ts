@@ -47,7 +47,7 @@ export type Cluster = Layer.Success<ReturnType<typeof ActionCluster.layer>>;
  * - A post a socket watches, by a handler that sends no calls or tells, costs 1 + P stub calls, `invoke` each: the post, and one for each of the P polls parked on that object, sent as its first append or `notify` is made, a later change in the same post asking again only the polls that answered nothing; the page's client polls again `nextPoll` later, and that poll is parked with no call when nothing changed meanwhile and the last poll's call was under 30 seconds earlier, so a source whose `nextPoll` is 30 seconds or more costs one call a page each `nextPoll`; the signal is one for all the object's events, so any handler appending to any of its logs, or `notify`ing any of its sources, asks every parked poll again, whatever event it watches.
  * - A change a `notified` check source reads from an upstream, which no handler `notify`s, moves no signal at all, so a parked poll answers it only when its client sends it again, `ActionRpc.pollResentAfter` after it was sent: `notify` the source from a handler, or leave it not `notified`, to answer it at `nextPoll`.
  * - A source's subscription hook is held by the entity's activation until its `lease`, 5 minutes by default, after the last poll the host sent the entity, on a timer that keeps the object awake, so the object of a page watching a hooked source does not hibernate until the hook lapses: the host sends a page's poll at most 4 minutes 30 seconds after its last, or `nextPoll` after its last answer when that is longer, so a `lease` under 4 minutes 30 seconds may lapse while a poll is parked, and one not longer than its `nextPoll`, as the default is at a `nextPoll` of 5 minutes, may lapse after each answered page; a lapsed hook is set up again by the next poll the host sends the entity.
- * - Only the entity's actions and event types, or those `actions` lists, are forwarded: a call of a native rpc, which authenticates nothing, is answered `Unknown request tag`, and one of a streaming action, whose frames would hold the object awake, fails with a defect naming it.
+ * - Only what `actions` lists is forwarded: a call of another action, or of a native rpc, which authenticates nothing, is answered `Unknown request tag`.
  * - A call under way is interrupted, through Effect's own interrupt to the entity, when the page interrupts it, as `Effect.timeout` does, or its socket closes or fails; a frame the host cannot read is answered with Effect's `Defect`, which fails the page's calls under way on that socket, though each runs on in the entity to its end.
  * - A call under way when the object is evicted, by a deploy, a crash or `evictDurableObject`, is lost: the next instance closes that socket with 1012, and the page's client connects again and polls from its cursor; a message on a socket whose attachment the object cannot read, as after a deploy changing it, closes it with 1012 the same way, and a parked poll whose event type the deploy removed is answered `Unknown request tag`, as a call of it is, once the object next settles.
  * - The upgrade's headers, cookies included, are each call's credentials, and the host judges no `Origin`: give `make` a `policy`, which judges the upgrade before it reaches the object, or refuse a page of another site in `id`, which reads the request.
@@ -71,17 +71,16 @@ export interface Socket {
     | ((sent: string, request: Request) => string | undefined)
     | undefined;
   /**
-   * The actions and event types of the entity the socket serves: `AgentEvents`, a page that only
-   * watches, or the contracts of the page's own binding, `RoomSocket.events`. Defaults to every
-   * action and event type the entity was made of.
+   * The actions and event types of the entity the socket serves, and nothing else: the contracts of
+   * the page's own binding, `RoomSocket.events`. Required, so an action the entity lists for the
+   * application's own calls, which no surface's binding lists, reaches no page unless named here.
    *
    * **Gotchas**
    *
    * - A call of one the socket does not serve, or a poll of one a deploy removed, is answered `Unknown request tag`, as Effect's server answers one: change `protocol.version` with the list, so a page built against the old one reloads instead.
-   * - Left out, the socket serves an action the entity lists for the application's own calls too, which no surface's binding lists: list the page's contracts.
-   * - A contract the entity was not made of, or a streaming action, whose frames would hold the object awake, throws as `make` runs.
+   * - A contract the entity was not made of, a streaming action, whose frames would hold the object awake, or a socket given no list, throws as `make` runs.
    */
-  readonly actions?: ReadonlyArray<Action.Any | Event.Any> | undefined;
+  readonly actions: ReadonlyArray<Action.Any | Event.Any>;
   /**
    * The version a page's upgrade names, `?protocol=<version>` in its URL, every other refused with
    * a close; without it, every upgrade is accepted.

@@ -9,7 +9,7 @@ import {
   Predicate,
   Schema,
 } from "effect";
-import { Rpc, RpcMessage, RpcSchema, RpcSerialization } from "effect/rpc";
+import { Rpc, RpcMessage, RpcSerialization } from "effect/rpc";
 
 import { closeQuietly, died, encodeDefect, parser, send } from "./frames.js";
 
@@ -195,9 +195,6 @@ const reply = (
 
 const untracked =
   "This socket's attachment, its upgrade's headers, its calls under way and its parked polls, would pass the runtime's 16 KiB: send fewer calls at once, or fewer or smaller headers";
-
-const streamed = (tag: string) =>
-  `${tag} is a streaming action, which an ActionWorker socket does not serve, since its frames would hold the object awake: call it over HTTP through ActionEntity.reaching`;
 
 const lostCalls =
   "This server lost the calls it was answering on this socket: connect again";
@@ -470,12 +467,6 @@ export const makeSockets = (options: {
 
       if (rpc === undefined) {
         send(socket, died(id, unknownTag(tag)));
-
-        return;
-      }
-
-      if (RpcSchema.isStreamSchema(rpc.successSchema)) {
-        send(socket, died(id, streamed(tag)));
 
         return;
       }

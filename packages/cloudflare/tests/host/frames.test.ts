@@ -39,7 +39,7 @@ const made =
         {
           entity,
           layer: () => Layer.empty,
-          socket: { path: "/:id", ...socket },
+          socket: { path: "/:id", actions: [Pinned], ...socket },
         },
       ],
     });
@@ -68,33 +68,6 @@ describe("ActionWorker's socket frames", () => {
 
         expect(answer).toContain('"_tag":"Die"');
         expect(answer).toContain("Unknown request tag: delayed");
-      }).pipe(Effect.scoped),
-    { timeout: 30_000 }
-  );
-
-  it.live(
-    "fails a call of a streaming action with a defect naming it, which it does not forward",
-    () =>
-      Effect.gen(function* () {
-        const { socket, received } = yield* raw("Seer", "streams");
-
-        socket.send(
-          JSON.stringify({
-            _tag: "Request",
-            id: "1",
-            tag: "whoami",
-            payload: { room: "streams" },
-            headers: [],
-          })
-        );
-
-        const [answer] = yield* until(
-          () => received,
-          (messages) => messages.length > 0
-        );
-
-        expect(answer).toContain('"_tag":"Die"');
-        expect(answer).toContain("whoami is a streaming action");
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
   );
@@ -406,7 +379,7 @@ describe("ActionWorker's socket frames", () => {
   );
 
   it.effect(
-    "throws as it runs, before registering, for a socket's refusal code outside 4000 to 4999, a reason past a close frame's 123 bytes, a contract its binding lacks, a streaming action, an entity named twice or a malformed path",
+    "throws as it runs, before registering, for a socket's refusal code outside 4000 to 4999, a reason past a close frame's 123 bytes, a contract its entity lacks, a streaming action, an entity named twice, a malformed path or no actions",
     () =>
       Effect.sync(() => {
         expect(made({ protocol: { version: "1", code: 3999 } })).toThrow(
@@ -427,12 +400,24 @@ describe("ActionWorker's socket frames", () => {
               {
                 entity: Board,
                 layer: () => Layer.empty,
-                socket: { path: "/:id" },
+                socket: { path: "/:id", actions: [Pinned] },
               },
             ],
           })
         ).toThrow("the entities name Board more than once");
         expect(made({ path: "(" })).toThrow(TypeError);
+        expect(() =>
+          ActionWorker.make<Cloudflare.Env>({
+            entities: [
+              {
+                entity: Board,
+                layer: () => Layer.empty,
+                // @ts-expect-error -- a socket lists what it serves, so an internal action reaches no page by default.
+                socket: { path: "/:id" },
+              },
+            ],
+          })
+        ).toThrow("the socket of Board lists no actions");
         expect(made({ actions: [StreamHeaders] }, Seer)).toThrow(
           "lists streamHeaders, a streaming action"
         );

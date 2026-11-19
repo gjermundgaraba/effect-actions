@@ -123,6 +123,8 @@ const contracts = [
 
 export const SeerHttp = ActionHttp.make(contracts, { authentication: Login });
 
+const unary = [Linger, Seen, ReadHeaders, Relay, Crash];
+
 export const SeerTasks = RpcGroup.make(
   Rpc.make("bump", { success: Schema.Int }),
   Rpc.make("hold"),
@@ -503,7 +505,11 @@ const worker = ActionWorker.make<Cloudflare.Env>({
             rpcs: seerTasks,
           })
         ),
-      socket: { ...boardSocket("Seer"), protocol: versioned },
+      socket: {
+        ...boardSocket("Seer"),
+        actions: unary,
+        protocol: versioned,
+      },
     },
     {
       entity: Board,
@@ -512,7 +518,11 @@ const worker = ActionWorker.make<Cloudflare.Env>({
           services: ActionCluster.layerObject,
           rpcs: boardTells,
         }),
-      socket: { ...boardSocket("Board"), protocol: versioned },
+      socket: {
+        ...boardSocket("Board"),
+        actions: [...Board.binding.actions, ...Board.binding.events],
+        protocol: versioned,
+      },
     },
     {
       entity: Tally,
@@ -520,7 +530,11 @@ const worker = ActionWorker.make<Cloudflare.Env>({
         ActionEntity.layer(Tally, boardImplementations, {
           services: Layer.merge(Event.layerMemory, entitySql),
         }),
-      socket: { ...boardSocket("Tally"), protocol: versioned },
+      socket: {
+        ...boardSocket("Tally"),
+        actions: [...Tally.binding.actions, ...Tally.binding.events],
+        protocol: versioned,
+      },
     },
     {
       entity: Watcher,
@@ -530,6 +544,7 @@ const worker = ActionWorker.make<Cloudflare.Env>({
         }),
       socket: { ...boardSocket("Watcher"), actions: [Pin, Pinned] },
     },
+
     { entity: Keeper, layer: () => keeping },
   ],
   routes: () =>

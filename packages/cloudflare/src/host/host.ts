@@ -88,7 +88,13 @@ const exposureOf = ({ entity, actions, protocol }: Exposed): Exposure => {
     ...binding.events,
   ]);
 
-  const unbound = (actions ?? []).filter((contract) => !bound.has(contract));
+  if (actions === undefined) {
+    throw new TypeError(
+      `ActionWorker.make: the socket of ${type} lists no actions (list the actions and event types the page calls, such as its own binding's: actions: RoomSocket.events)`
+    );
+  }
+
+  const unbound = actions.filter((contract) => !bound.has(contract));
 
   if (unbound.length > 0) {
     throw new Error(
@@ -96,21 +102,16 @@ const exposureOf = ({ entity, actions, protocol }: Exposed): Exposure => {
     );
   }
 
-  const listed = new Set(actions ?? bound);
+  const listed = new Set(actions);
   const served = binding.actions.filter((action) => listed.has(action));
   const events = binding.events.filter((event) => listed.has(event));
   const rpcs = ActionEntity.bindingRpcs(entity).requests;
 
-  const streamed =
-    actions === undefined
-      ? []
-      : served.filter(({ name }) => {
-          const rpc = rpcs.get(name);
+  const streamed = served.filter(({ name }) => {
+    const rpc = rpcs.get(name);
 
-          return (
-            rpc !== undefined && RpcSchema.isStreamSchema(rpc.successSchema)
-          );
-        });
+    return rpc !== undefined && RpcSchema.isStreamSchema(rpc.successSchema);
+  });
 
   if (streamed.length > 0) {
     throw new Error(

@@ -66,9 +66,7 @@ const Room = ActionEntity.make("Room", [Get, Open, Changed], {
   key: byRoom,
 });
 
-const Rpc = Room.binding;
-
-expectTypeOf(Rpc).toEqualTypeOf<
+expectTypeOf(Room.binding).toEqualTypeOf<
   ActionRpc.Binding<
     ReadonlyArray<typeof Get | typeof Open>,
     [],
@@ -77,12 +75,7 @@ expectTypeOf(Rpc).toEqualTypeOf<
   >
 >();
 
-expectTypeOf(
-  ActionEntity.make("Room", [Get, Open, Changed], {
-    authentication: SignedIn,
-    key: ({ room }) => room,
-  }).key
-).toEqualTypeOf<ActionEntity.Key<typeof Rpc>>();
+expectTypeOf(Room.key).toEqualTypeOf<ActionEntity.Key<typeof Room.binding>>();
 
 ActionEntity.make("Room", [Get, Open, Changed], {
   authentication: SignedIn,
@@ -99,6 +92,30 @@ ActionEntity.make("Room", [Get, Open, Changed], {
 
 // @ts-expect-error -- protected contracts name their authentication.
 ActionEntity.make("Room", [Get, Open, Changed], { key: byRoom });
+
+const OtherSignedIn = Authentication.make("entity-types.Other", Tenant, {
+  principal: (tenant) => tenant,
+});
+
+ActionEntity.make("Room", [Get, Open, Changed], {
+  // @ts-expect-error -- the descriptor is of the protected contracts' identity, never one of two.
+  authentication: OtherSignedIn as typeof SignedIn | typeof OtherSignedIn,
+  key: byRoom,
+});
+
+const widened: readonly Action.Any[] = [Get, Open];
+
+// @ts-expect-error -- a list that may hold a protected action names its authentication.
+ActionEntity.make("Widened", widened, { key: () => "x" });
+
+const options: ActionEntity.MakeOptions<
+  readonly [typeof Get, typeof Open, typeof Changed],
+  typeof SignedIn
+> = { authentication: SignedIn, key: byRoom };
+
+expectTypeOf(
+  ActionEntity.make("Named", [Get, Open, Changed], options).binding
+).toEqualTypeOf<typeof Room.binding>();
 
 const notes = Action.implement(
   [Get, Open],
@@ -262,7 +279,7 @@ expectTypeOf<
   Effect.Services<typeof clientOf>
 >().toEqualTypeOf<Sharding.Sharding>();
 
-type RoomClient = ActionEntity.Client<typeof Rpc>;
+type RoomClient = ActionEntity.Client<typeof Room.binding>;
 
 expectTypeOf<Effect.Success<typeof clientOf>>().toEqualTypeOf<RoomClient>();
 
@@ -323,7 +340,7 @@ const reached = ActionEntity.reaching(Room);
 
 const overHttp = ActionHttp.layer(Http, reached);
 
-const overRpc = ActionRpc.layer(Rpc, reached);
+const overRpc = ActionRpc.layer(Room.binding, reached);
 
 const overMcp = ActionMcp.layerHttp(reached, {
   name: "rooms",

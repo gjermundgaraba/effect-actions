@@ -6,16 +6,15 @@ import {
   ShardingConfig,
   TestRunner,
 } from "effect/cluster";
-import { HttpApiSecurity } from "effect/http-api";
 import { RpcClient } from "effect/rpc";
 
-import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { DeclaredFailure } from "../../src/rpc/erased.js";
 import { CurrentActor } from "../support/app/authorization.js";
+import { Login } from "../support/app/binding.js";
 import {
   makeRooms,
   Posted,
@@ -193,12 +192,6 @@ const Liner = ActionEntity.make("Liner", [Lines], {
   key: ({ room }) => room,
 });
 
-const apiKeyedIn = (place: "query" | "header") =>
-  Authentication.make("entity.Keyed", CurrentActor, {
-    principal: (actor) => actor.id,
-    security: HttpApiSecurity.apiKey({ in: place, key: "api_key" }),
-  });
-
 describe("ActionEntity.make", () => {
   const Whoami = Action.make("whoami", {
     description: "Answer the caller.",
@@ -208,21 +201,9 @@ describe("ActionEntity.make", () => {
     caller: CurrentActor,
   });
 
-  it("binds its contracts as ActionRpc.make does: one listed twice, or an API key read from the query, throws, and its binding holds what it was made of", () => {
-    expect(() =>
-      ActionEntity.make("Twice", [Count, Count], { key: ({ room }) => room })
-    ).toThrow("count");
-    expect(() =>
-      ActionEntity.make("Keyed", [Whoami], {
-        authentication: apiKeyedIn("query"),
-        key: ({ room }) => room,
-      })
-    ).toThrow("reads its API key api_key from the query");
-
-    const authentication = apiKeyedIn("header");
-
+  it("binds its contracts and authentication as its binding, its actions and event types apart", () => {
     const Keyed = ActionEntity.make("Keyed", [Whoami, Count, Posted], {
-      authentication,
+      authentication: Login,
       key: ({ room }) => room,
     });
 
@@ -230,7 +211,7 @@ describe("ActionEntity.make", () => {
       actions: [Whoami, Count],
       events: [Posted],
       error: [],
-      authentication,
+      authentication: Login,
     });
   });
 });

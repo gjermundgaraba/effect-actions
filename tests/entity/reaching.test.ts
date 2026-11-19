@@ -269,8 +269,6 @@ const Seer = ActionEntity.make("Seer", [Whoami, Seen], {
   key: ({ room }) => room,
 });
 
-const SeerRpc = Seer.binding;
-
 const seeing = [
   Action.implement(
     Whoami,
@@ -316,7 +314,7 @@ const seerEdge = Testing.layer(
       authentication: Login,
       requestScoped: true,
     }),
-    ActionRpc.layer(SeerRpc, reachedSeer).pipe(
+    ActionRpc.layer(Seer.binding, reachedSeer).pipe(
       Layer.provide(RpcServer.layerProtocolHttp({ path: "/rpc" })),
       Layer.provide(RpcSerialization.layerNdjson)
     )
@@ -381,7 +379,7 @@ describe("ActionEntity.reaching's protected calls and watches", () => {
           transformClient: bearer("alice"),
         });
 
-        const rpc = yield* ActionRpc.client(SeerRpc);
+        const rpc = yield* ActionRpc.client(Seer.binding);
         const from = yield* seenFrom("a");
 
         const direct = yield* ActionEntity.client(Seer);

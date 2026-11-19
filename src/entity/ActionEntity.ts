@@ -23,6 +23,7 @@ import type {
   Any as Authentication,
   Matching,
   RemoteRequest,
+  Required as RequiredAuthentication,
   ServerBuildServices,
   ServedProvider,
   VerifierError,
@@ -228,18 +229,12 @@ export type BindingOf<
   Only<Contracts, Event.Any>
 >;
 
-type Authenticating<C extends Pick<Action.Any, "caller">, D> = [
-  Exclude<C, { readonly caller: typeof Action.Anyone }>,
-] extends [never]
-  ? { readonly authentication?: D }
-  : { readonly authentication: D };
-
-/** `make`'s options. */
-export interface MakeOptions<
+/** `make`'s options: `authentication` required where a contract is protected, and of its identity. */
+export type MakeOptions<
   Contracts extends ReadonlyArray<Action.Any | Event.Any>,
   D extends Authentication | undefined = undefined,
   N extends Rpc.Any = never,
-> {
+> = {
   /**
    * The entity id an input names: one function every input of the contracts reads,
    * `({ room }) => room`.
@@ -248,12 +243,12 @@ export interface MakeOptions<
    *
    * - It takes the union of the contracts' inputs, so it reads only a field every one declares: a field one input lacks is a type error.
    */
-  readonly key: NoInfer<Key<BindingOf<Contracts, D>>>;
+  readonly key: (input: Contracts[number]["input"]["Type"]) => string;
   /**
    * `Authentication.make(...)` of the protected contracts' identity, which authenticates each call
    * from the headers its client sent: required where a contract is protected, and of its identity.
    */
-  readonly authentication?: Authentication | undefined;
+  readonly authentication?: D;
   /**
    * The entity's own native rpcs, beside its contracts, with their own schemas:
    * `RpcGroup.make(Expire)`, such as a tell another entity sends it; an entity waking itself later
@@ -266,7 +261,8 @@ export interface MakeOptions<
    * - A native rpc named after an action, an event type, an event's `<event>/poll`, a protected event's `<event>/subscribe` or `<event>/unsubscribe`, or the entity's wake, `effect-actions/wake`, throws as the entity is made.
    */
   readonly rpcs?: RpcGroup.RpcGroup<N> | undefined;
-}
+} & RequiredAuthentication<Contracts[number]> &
+  Matching<Contracts[number], D>;
 
 /**
  * The cluster entity of type `type` serving `contracts`, actions and event types, each call and
@@ -285,20 +281,38 @@ export interface MakeOptions<
  * - The rpcs of its actions, event types and webhook subscriptions are volatile, as `ClusterSchema.Persisted` defaults, and its wake alone is persisted: annotated persisted, each envelope, its caller's headers and credential included, would be stored and replayed with them, on Effect's SQL runners until a `MessageRetention` layer deletes it, and on the Cloudflare runtime, which never prunes `cluster_messages`, for good, its credential headers redacted. `rpcs`' natives are persisted as their own annotations say.
  * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers, and returning a `Stream` of the elements of an `Action.Stream` answer; it holds a slot of the entity's `concurrency`, by default its only one, until its stream ends, but on the Cloudflare runtime, which frees the slot while a frame waits for its client's acknowledgement.
  */
-export const make = <
+export function make<
   const Type extends string,
-  const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
-  D extends Authentication | undefined = undefined,
+  const Contracts extends ReadonlyArray<
+    (Action.Any | Event.Any) & { readonly caller: typeof Action.Anyone }
+  >,
   N extends Rpc.Any = never,
 >(
   type: Type,
   contracts: Contracts,
-  options: MakeOptions<Contracts, NoInfer<D>, N> &
-    Authenticating<Contracts[number], D> &
-    Matching<Contracts[number], NoInfer<D>>
-): Entity<Type, BindingOf<Contracts, D>, N> => {
-  const { key, rpcs = RpcGroup.make() } = options;
-  const authentication: Authentication | undefined = options.authentication;
+  options: MakeOptions<Contracts, undefined, N>
+): Entity<Type, BindingOf<Contracts>, N>;
+export function make<
+  const Type extends string,
+  const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
+  D extends Authentication,
+  N extends Rpc.Any = never,
+>(
+  type: Type,
+  contracts: Contracts,
+  options: MakeOptions<Contracts, D, N>
+): Entity<Type, BindingOf<Contracts, D>, N>;
+export function make(
+  type: string,
+  contracts: ReadonlyArray<Action.Any | Event.Any>,
+  options: {
+    readonly key: Key<ActionRpc.Any>;
+    readonly authentication?: Authentication | undefined;
+    readonly rpcs?: RpcGroup.Any | undefined;
+  }
+): Any {
+  const { key, authentication } = options;
+  const rpcs = nativeOf(options.rpcs ?? RpcGroup.make());
 
   const binding = bindingOf(
     contracts,
@@ -319,15 +333,8 @@ export const make = <
     );
   }
 
-  return entityOf<Type, BindingOf<Contracts, D>, N>(
-    type,
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    binding as BindingOf<Contracts, D>,
-    key,
-    erased,
-    nativeOf(rpcs)
-  );
-};
+  return entityOf(type, binding, key, erased, nativeOf(rpcs));
+}
 
 /**
  * The rpcs of `entity`'s binding, as its `protocol` holds them without its native rpcs: one per
@@ -765,7 +772,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
 }
 
 /**
- * What one call of an action `A` fails with, beside the binding's errors `E`: its declared and
+ * What one call of an action `A` fails with, beside its verifier's errors `E`: its declared and
  * built-in errors, `Action.Unavailable` among them where the entity could not be reached or did
  * not answer in time. An answer that does not decode is a defect.
  */
@@ -780,14 +787,13 @@ type Method<A extends Action.Any, E extends Action.Errors[number]> = Call<
 >;
 
 /**
- * What a watch of `W` over the binding `B` may fail with: a refusal, `InvalidInput`, the
- * binding's errors or an `Event.SubscriptionError` (`NotServed` for an event the entity does not
+ * What a watch of `W` over the binding `B` may fail with: a refusal, `InvalidInput`, what its
+ * descriptor's verifier declares, or an `Event.SubscriptionError` (`NotServed` for an event the entity does not
  * serve).
  */
 export type WatchError<W extends Event.Any, B extends ActionRpc.Any> =
   | Event.SubscriptionError
   | BuiltIns["Type"]
-  | B["error"][number]["Type"]
   | VerifierError<W, B["authentication"]>["Type"];
 
 type Watching<B extends ActionRpc.Any> = [B["events"][number]] extends [never]
@@ -807,7 +813,7 @@ type Watching<B extends ActionRpc.Any> = [B["events"][number]] extends [never]
 export type Client<B extends ActionRpc.Any> = {
   readonly [A in B["actions"][number] as A["name"]]: Method<
     A,
-    B["error"][number] | VerifierError<A, B["authentication"]>
+    VerifierError<A, B["authentication"]>
   >;
 } & Watching<B>;
 

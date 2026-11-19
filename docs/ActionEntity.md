@@ -6,7 +6,7 @@ The example is [shopping-carts](../examples/shopping-carts/), carts on one proce
 
 ## Define an entity
 
-Give `ActionEntity.make` the entity type's name, its contracts, actions and event types, and a `key`, which reads the entity id from the input: one function of every input, such as `({ cart }) => cart`, so every contract of an entity names its entity in its input. A field one input lacks is a type error. Protected contracts name their `authentication`, and errors every rpc declares go in `error`, as `ActionRpc.make` takes them ([ActionRpc.md](ActionRpc.md#bind-actions-to-rpcs)); the entity builds that RPC binding itself, as `Cart.binding`, which a socket client calls.
+Give `ActionEntity.make` the entity type's name, its contracts, actions and event types, and a `key`, which reads the entity id from the input: one function of every input, such as `({ cart }) => cart`, so every contract of an entity names its entity in its input. A field one input lacks is a type error. Protected contracts name their `authentication`, as `ActionRpc.make` takes it ([ActionRpc.md](ActionRpc.md#bind-actions-to-rpcs)); the entity builds that RPC binding itself, as `Cart.binding`, which a socket client calls.
 
 ```ts example=shopping-carts/src/entities.ts
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";

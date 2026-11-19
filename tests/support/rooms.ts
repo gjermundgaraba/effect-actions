@@ -90,8 +90,6 @@ export const Room = ActionEntity.make(
   { authentication: Login, key: ({ room: named }) => named }
 );
 
-export const RoomRpc = Room.binding;
-
 export const makeRooms = () => {
   const ran = { echo: 0, post: 0, read: 0, tally: 0, builds: 0 };
 
