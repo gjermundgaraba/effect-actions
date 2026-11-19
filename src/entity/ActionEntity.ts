@@ -1,4 +1,5 @@
 import {
+  Cause,
   DateTime,
   Duration,
   Effect,
@@ -43,6 +44,7 @@ import type {
   Written,
   WrittenHandler,
 } from "../contract/implementation.js";
+import { reported } from "../contract/reported.js";
 import { buildersOf, servingOf } from "../contract/serving.js";
 import type { Answer } from "../contract/stream.js";
 import { Wake } from "../contract/wake.js";
@@ -66,7 +68,7 @@ import {
 } from "../rpc/erased.js";
 import type { InputCheck, Reach } from "../rpc/erased.js";
 import { forwarded } from "./forwarded.js";
-import { makeWake, reportingFailures, wakeTag, WakeRpc } from "./wakes.js";
+import { makeWake, wakeTag, WakeRpc } from "./wakes.js";
 
 export { forwardedHeaders } from "./forwarded.js";
 
@@ -407,7 +409,7 @@ export type Activation =
 export const wakeAt = (
   at: DateTime.DateTime
 ): Effect.Effect<void, Action.Unavailable, Wake> =>
-  Effect.flatMap(Wake, (wake) => wake.wakeAt(at));
+  Effect.flatMap(Wake, (wake) => wake.wakeAt(DateTime.toEpochMillis(at)));
 
 type PerCall<
   B extends ActionRpc.Any,
@@ -627,6 +629,15 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
       built
     );
 
+    const woken = (at: number) =>
+      onWake === undefined
+        ? Effect.void
+        : Effect.catchCauseIf(
+            Effect.provideContext(onWake(DateTime.makeUnsafe(at)), built),
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            reported
+          );
+
     const answering =
       (handler: NativeHandler): NativeHandler =>
       (request) =>
@@ -643,19 +654,7 @@ export function layer<Type extends string, B extends ActionRpc.Any>(
             rpc._tag,
             ({ payload }: Cluster.Request<typeof WakeRpc>) =>
               Rpc.fork(
-                Effect.andThen(
-                  woke(payload.at),
-                  onWake === undefined
-                    ? Effect.void
-                    : reportingFailures(
-                        Effect.provideContext(
-                          Effect.suspend(() =>
-                            onWake(DateTime.makeUnsafe(payload.at))
-                          ),
-                          built
-                        )
-                      )
-                )
+                Effect.andThen(woke(payload.at), () => woken(payload.at))
               ),
           ] as const;
         }

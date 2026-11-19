@@ -68,7 +68,7 @@ A protected action authenticates each call from the headers its envelope carries
 
 An entity schedules work for later with `ActionEntity.wakeAt(at)`, read in its `services`, a builder or a handler: a persisted tell the entity sends itself, which succeeds once the runtime has stored it and fails with `Action.Unavailable` where it could not. When it is due, the layer's `onWake` runs with the time it was due, in whichever activation is current, built again where the entity had stopped, so the wake outlives eviction, a restart and a deploy.
 
-`onWake` is a check, as a Durable Object's alarm handler is: the wake keeps the earliest time asked for, so it may fire early for a later time, and again for a wake already handled after a restart, so `onWake` does what is due by then and asks `wakeAt` for the next time. A wake holds nothing awake: work already running keeps its activation with `Entity.keepAlive`, and the wake resumes it if the activation stops anyway. The rules are on `ActionEntity.wakeAt` and `ActionEntity.LayerOptions`' `onWake`.
+`onWake` is a check, as a Durable Object's alarm handler is: it does what is due by then and asks `wakeAt` for the next time. The rules are on `ActionEntity.wakeAt` and `ActionEntity.LayerOptions`' `onWake`.
 
 ## Call it
 

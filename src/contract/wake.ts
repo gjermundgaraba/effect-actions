@@ -1,5 +1,5 @@
 import { Context } from "effect";
-import type { DateTime, Effect } from "effect";
+import type { Effect } from "effect";
 
 import type { Unavailable } from "./errors.js";
 
@@ -12,9 +12,7 @@ import type { Unavailable } from "./errors.js";
 export class Wake extends Context.Service<
   Wake,
   {
-    readonly wakeAt: (
-      at: DateTime.DateTime
-    ) => Effect.Effect<void, Unavailable>;
+    readonly wakeAt: (at: number) => Effect.Effect<void, Unavailable>;
     readonly until: (at: number) => Effect.Effect<void>;
   }
 >()("effect-actions/Wake") {}

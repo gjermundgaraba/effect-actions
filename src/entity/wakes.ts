@@ -1,5 +1,4 @@
 import {
-  Cause,
   Clock,
   DateTime,
   Deferred,
@@ -43,7 +42,7 @@ export const makeWake = (
     const clock = yield* Clock.Clock;
     const lock = yield* Semaphore.make(1);
     const pending = new Set<number>();
-    const waiting = new Set<Deferred.Deferred<number>>();
+    let fired = Deferred.makeUnsafe<number>();
 
     const wakeAt = (at: number) =>
       lock.withPermit(
@@ -63,19 +62,16 @@ export const makeWake = (
 
     const until = (at: number): Effect.Effect<void> =>
       Effect.suspend(() => {
-        const fired = Deferred.makeUnsafe<number>();
-
-        waiting.add(fired);
+        const next = fired;
 
         return wakeAt(at).pipe(
           Effect.matchCauseEffect({
             onFailure: (cause) => Effect.andThen(reported(cause), slept(at)),
             onSuccess: () =>
-              Effect.flatMap(Deferred.await(fired), (woke) =>
+              Effect.flatMap(Deferred.await(next), (woke) =>
                 woke >= at ? Effect.void : until(at)
               ),
-          }),
-          Effect.ensuring(Effect.sync(() => waiting.delete(fired)))
+          })
         );
       });
 
@@ -87,28 +83,11 @@ export const makeWake = (
           }
         }
 
-        const woken = [...waiting];
+        const done = fired;
 
-        waiting.clear();
-
-        for (const fired of woken) {
-          Deferred.doneUnsafe(fired, Exit.succeed(at));
-        }
+        fired = Deferred.makeUnsafe();
+        Deferred.doneUnsafe(done, Exit.succeed(at));
       });
 
-    return {
-      wake: Wake.of({
-        wakeAt: (at) => wakeAt(DateTime.toEpochMillis(at)),
-        until,
-      }),
-      woke,
-    };
+    return { wake: Wake.of({ wakeAt, until }), woke };
   });
-
-/** Runs `effect`, reporting its failure or defect, an interruption left to end the wake. */
-export const reportingFailures = <E, R>(effect: Effect.Effect<void, E, R>) =>
-  Effect.catchCauseIf(
-    effect,
-    (cause) => !Cause.hasInterruptsOnly(cause),
-    reported
-  );

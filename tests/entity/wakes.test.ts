@@ -661,7 +661,7 @@ describe("An entity's wake in an activation", () => {
           })
         );
 
-        yield* wake.wakeAt(DateTime.makeUnsafe(3000));
+        yield* wake.wakeAt(3000);
 
         const waiting = yield* Effect.forkChild(wake.until(5000));
 
