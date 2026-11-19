@@ -141,6 +141,12 @@ export const SeerTasks = RpcGroup.make(
       name: Schema.NullOr(Schema.String),
       built: Schema.Boolean,
     }),
+  }),
+  Rpc.make("transactions", {
+    success: Schema.Struct({
+      notes: Schema.Array(Schema.String),
+      rejectedAsThrown: Schema.Boolean,
+    }),
   })
 );
 
@@ -344,6 +350,58 @@ const seerTasks = Effect.map(
           };
         }),
       bump: () => Effect.sync(() => (bumps.count += 1)),
+      transactions: () =>
+        Effect.gen(function* () {
+          const { storage, transaction } =
+            yield* ActionCluster.ObjectState.orDie;
+
+          const sql = yield* ActionCluster.Sql.orDie;
+          const context = yield* Effect.context();
+          const planted = new Error("planted rollback");
+
+          const note = (text: string) => {
+            storage.sql.exec("INSERT INTO seer_notes (note) VALUES (?)", text);
+          };
+
+          storage.sql.exec(
+            "CREATE TABLE IF NOT EXISTS seer_notes (note TEXT NOT NULL)"
+          );
+
+          return yield* Effect.promise(async () => {
+            await transaction(async () => {
+              note("kept");
+            });
+
+            let outside: Promise<unknown> = Promise.resolve();
+
+            const rejectedAsThrown = await transaction(async () => {
+              note("rolled back");
+              outside = Effect.runPromiseWith(context)(
+                sql`INSERT INTO seer_notes (note) VALUES ('outside')`
+              );
+
+              for (let tick = 0; tick < 10; tick += 1) {
+                await Promise.resolve();
+              }
+
+              throw planted;
+            }).then(
+              () => false,
+              (error: unknown) => error === planted
+            );
+
+            await outside;
+
+            const notes = storage.sql
+              .exec<{ note: string }>(
+                "SELECT note FROM seer_notes ORDER BY rowid"
+              )
+              .toArray()
+              .map((row) => row.note);
+
+            return { notes, rejectedAsThrown };
+          });
+        }),
       hold: () =>
         Rpc.fork(
           Effect.andThen(
@@ -438,15 +496,15 @@ const served = (env: Cloudflare.Env) =>
   Layer.mergeAll(
     ActionEntity.layer(Seer, [...seeing, crashing], {
       services: Layer.merge(
-        Layer.merge(Stored.layerEvents, Stored.layerIdempotency).pipe(
-          Layer.provide(entitySql)
+        Stored.layerIdempotency.pipe(
+          Layer.provideMerge(ActionCluster.layerObject)
         ),
         Layer.sync(Bumps)(() => ({ count: 0 }))
       ),
       rpcs: seerTasks,
     }),
     ActionEntity.layer(Board, boardImplementations, {
-      services: Stored.layerEvents.pipe(Layer.provideMerge(entitySql)),
+      services: ActionCluster.layerObject,
       rpcs: boardTells,
     }),
     ActionEntity.layer(Tally, boardImplementations, {

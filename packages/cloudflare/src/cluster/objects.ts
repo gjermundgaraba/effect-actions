@@ -1,5 +1,6 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
 import { Effect, Option, Predicate } from "effect";
+import type { SqlClient } from "effect/sql";
 
 interface Held {
   readonly state: DurableObjectState;
@@ -30,27 +31,34 @@ export const listen = (state: DurableObjectState, listener: () => void) => {
 };
 
 /**
- * The storage of the entity object whose build, call or forked work runs this: the runtime's
- * `DurableObjectSqlClient` is `@effect/sql-sqlite-do`'s client built over it, which keeps it as
- * its `config.storage`; `undefined` outside an entity object.
+ * The SQL client and storage of the entity object whose build, call or forked work runs this:
+ * the runtime's `DurableObjectSqlClient` is `@effect/sql-sqlite-do`'s client built over the
+ * storage, which it keeps as its `config.storage`; `undefined` outside an entity object.
  */
-export const storageHere: Effect.Effect<DurableObjectStorage | undefined> =
-  Effect.map(
-    Effect.serviceOption(CloudflareCluster.DurableObjectSqlClient),
-    (found) => {
-      const sql = Option.getOrUndefined(found);
-
-      const config = Predicate.hasProperty(sql, "config")
-        ? sql.config
-        : undefined;
-
-      const storage = Predicate.hasProperty(config, "storage")
-        ? config.storage
-        : undefined;
-
-      return isStorage(storage) ? storage : undefined;
+export const objectHere: Effect.Effect<
+  | {
+      readonly sql: SqlClient.SqlClient;
+      readonly storage: DurableObjectStorage;
     }
-  );
+  | undefined
+> = Effect.map(
+  Effect.serviceOption(CloudflareCluster.DurableObjectSqlClient),
+  (found) => {
+    const sql = Option.getOrUndefined(found);
+
+    const config = Predicate.hasProperty(sql, "config")
+      ? sql.config
+      : undefined;
+
+    const storage = Predicate.hasProperty(config, "storage")
+      ? config.storage
+      : undefined;
+
+    return sql !== undefined && isStorage(storage)
+      ? { sql, storage }
+      : undefined;
+  }
+);
 
 /** The state `hold` recorded for `storage`, if its object's class recorded one. */
 export const stateOf = (

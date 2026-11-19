@@ -36,6 +36,24 @@ describe("ActionEntity.layer's native rpcs on workerd", () => {
   );
 
   it.live(
+    "run ObjectState's Promise transaction holding the object's SQL client, so a write made outside it while it is open lands after it and survives its rollback, and reject with the closure's own rejection",
+    () =>
+      Effect.gen(function* () {
+        const context = yield* Effect.promise(
+          async () => await initialize(env)
+        );
+
+        const seers = yield* Effect.provideContext(Seer.client, context);
+
+        expect(yield* seers("transactions-a").transactions()).toStrictEqual({
+          notes: ["kept", "outside"],
+          rejectedAsThrown: true,
+        });
+      }),
+    { timeout: 30_000 }
+  );
+
+  it.live(
     "build services per entity id for their handlers, and run a handler answering through Rpc.fork beside the entity's other calls",
     () =>
       Effect.gen(function* () {

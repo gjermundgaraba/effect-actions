@@ -1,6 +1,7 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
+import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import {
   Cause,
@@ -16,9 +17,9 @@ import type { Scope } from "effect";
 import { ClusterSchema, Sharding } from "effect/cluster";
 import { Headers, HttpEffect, HttpRouter } from "effect/http";
 import type { HttpServerRequest } from "effect/http";
-import type { SqlClient } from "effect/sql";
+import { SqlClient } from "effect/sql";
 
-import { changedIn, stateOf, storageHere } from "./objects.js";
+import { changedIn, objectHere, stateOf } from "./objects.js";
 
 type Answer =
   | Effect.Effect<unknown, unknown, unknown>
@@ -57,11 +58,11 @@ export const layer = (
         registerEntity: (entity, build, registerOptions) =>
           sharding.registerEntity(
             entity,
-            Effect.flatMap(storageHere, (storage) =>
-              storage === undefined
+            Effect.flatMap(objectHere, (object) =>
+              object === undefined
                 ? build
                 : Effect.provideService(build, Stored.ChangeListener, () => {
-                    changedIn(storage);
+                    changedIn(object.storage);
                   })
             ),
             registerOptions
@@ -107,9 +108,8 @@ export const layer = (
  * The entity object's own SQL client, `@effect/platform-cloudflare`'s
  * `CloudflareCluster.DurableObjectSqlClient`, under its key: an `@effect/sql-sqlite-do` `SqlClient` over the
  * Durable Object's SQLite storage, which an entity's build, its `services`, its handlers and the
- * fibers they fork read with `ActionCluster.Sql.orDie`, such as to provide it as `SqlClient` to
- * `Stored.layerEvents`: `Layer.effect(SqlClient.SqlClient)(ActionCluster.Sql.orDie)`. Guide:
- * `docs/ActionCluster.md` in this package.
+ * fibers they fork read with `ActionCluster.Sql.orDie`, and `layerObject` provides as `SqlClient`.
+ * Guide: `docs/ActionCluster.md` in this package.
  *
  * **Gotchas**
  *
@@ -127,25 +127,49 @@ export class Sql extends Context.Service<Sql, SqlClient.SqlClient>()(
 }
 
 /**
+ * The entity object's database as an entity's `services` read it, built per activation: `Sql` as
+ * `SqlClient`, and `Stored.layerEvents` over it, keeping the entity's events in the object's
+ * SQLite database. Provide it beneath the entity's own stores, as
+ * `Layer.provideMerge(ActionCluster.layerObject)`. Guide: `docs/ActionCluster.md` in this package.
+ *
+ * **Gotchas**
+ *
+ * - Built outside an entity's Durable Object, as in the Worker's routes, it dies: build it in `ActionEntity.layer`'s `services`.
+ * - Its `SqlClient` is the object's: a Worker route reading a separate database, such as D1, provides that one to its own layers instead.
+ */
+export const layerObject: Layer.Layer<SqlClient.SqlClient | Event.Events> =
+  Stored.layerEvents.pipe(
+    Layer.provideMerge(Layer.effect(SqlClient.SqlClient)(Sql.orDie))
+  );
+
+const states = new WeakMap<SqlClient.SqlClient, ObjectState["Service"]>();
+
+/**
  * The Durable Object state of the entity object running the effect that reads it: its `id`, whose
  * `name` is `CloudflareCluster.encodeName(type, id)`, its `storage`, `waitUntil`, which keeps the
- * object alive until a promise settles, such as work forked past the call that started it, and
- * `abort`, which resets the object. Read it with `ObjectState.orDie`, in an entity's build, its
- * `services`, a handler or a fiber either forks, on an object whose class is
- * `ActionClusterEntity.make`'s or `ActionClusterEntity.ClusterEntity`, which record it; a test
- * provides the service itself. Guide: `docs/ActionCluster.md` in this package.
+ * object alive until a promise settles, such as work forked past the call that started it,
+ * `abort`, which resets the object, and `transaction`, which runs a Promise closure in a storage
+ * transaction behind the gate the runtime's mailbox writes wait on, for a library written with
+ * Promises taking the object's storage, as `{ sql: storage.sql, transaction }`. Read it with
+ * `ObjectState.orDie`, in an entity's build, its `services`, a handler or a fiber either forks,
+ * on an object whose class is `ActionClusterEntity.make`'s or `ActionClusterEntity.ClusterEntity`,
+ * which record it; a test provides the service itself. Guide: `docs/ActionCluster.md` in this package.
  *
  * **Gotchas**
  *
  * - On an object of Effect's own `ClusterEntity` class, which records no state, `orDie` dies naming the class to export: export `ActionClusterEntity.ClusterEntity`, or `make`'s class, as `ClusterEntity` from the Worker's module.
- * - `storage.transaction()` and `transactionSync()` called directly skip the gate the runtime's mailbox writes wait on, so another call's reply written while yours is open is lost to your rollback: open a transaction through `Sql`'s `withTransaction`, which takes that gate, and await no timer or I/O in it, as the input gate it closes never lets them resume.
+ * - `storage.transaction()` and `transactionSync()` called directly skip the gate the runtime's mailbox writes wait on, so another call's reply written while yours is open is lost to your rollback: open a transaction with `transaction`, or `Sql`'s `withTransaction` in an Effect, which take that gate, and await no timer or I/O in it, as the input gate it closes never lets them resume.
+ * - `transaction` opens a transaction of its own, never a nested one: called inside `Sql`'s `withTransaction`, or inside another `transaction`'s closure, it waits on the gate the open one holds, forever.
+ * - `transaction` commits where the closure resolves, and rolls back and rejects with the closure's own rejection where it rejects.
  * - The runtime owns the object's alarm, for scheduled tells, replays and `Entity.keepAlive`: `storage.setAlarm` or `deleteAlarm` replaces its alarm and loses what it scheduled, and the class's `alarm` runs the runtime's; schedule work with a persisted tell carrying `DeliverAt` instead.
  * - Tables whose names start with `cluster_` are the runtime's mailbox: write none, and read them only as its tests do.
  * - `abort` ends every call under way on the object and evicts it; the next call builds it again, and the runtime replays its unprocessed persisted messages.
  */
 export class ObjectState extends Context.Service<
   ObjectState,
-  Pick<DurableObjectState, "id" | "storage" | "waitUntil" | "abort">
+  Pick<DurableObjectState, "id" | "storage" | "waitUntil" | "abort"> & {
+    readonly transaction: <A>(closure: () => Promise<A>) => Promise<A>;
+  }
 >()("@gjermundgaraba/effect-actions-cloudflare/ActionCluster/ObjectState") {
   /** The state of the entity object running this, provided or recorded by its class, or a defect saying why there is none. */
   static readonly orDie: Effect.Effect<ObjectState["Service"]> = Effect.flatMap(
@@ -153,8 +177,8 @@ export class ObjectState extends Context.Service<
     Option.match({
       onSome: Effect.succeed,
       onNone: () =>
-        Effect.flatMap(storageHere, (storage) => {
-          if (storage === undefined) {
+        Effect.flatMap(objectHere, (object) => {
+          if (object === undefined) {
             return Effect.die(
               new Error(
                 "ActionCluster.ObjectState is read outside an entity's Durable Object: read it in an entity's build, services or handlers, or provide ObjectState in a test"
@@ -162,15 +186,35 @@ export class ObjectState extends Context.Service<
             );
           }
 
+          const { sql, storage } = object;
           const state = stateOf(storage);
 
-          return state === undefined
-            ? Effect.die(
-                new Error(
-                  "ActionCluster.ObjectState found no state recorded for this object: export ActionClusterEntity.ClusterEntity, or ActionClusterEntity.make's class, as ClusterEntity from the Worker's module, in place of Effect's own"
-                )
+          if (state === undefined) {
+            return Effect.die(
+              new Error(
+                "ActionCluster.ObjectState found no state recorded for this object: export ActionClusterEntity.ClusterEntity, or ActionClusterEntity.make's class, as ClusterEntity from the Worker's module, in place of Effect's own"
               )
-            : Effect.succeed(state);
+            );
+          }
+
+          const found = states.get(sql) ?? {
+            id: state.id,
+            storage,
+            waitUntil: (promise) => {
+              state.waitUntil(promise);
+            },
+            abort: (reason) => {
+              state.abort(reason);
+            },
+            transaction: async (closure) =>
+              await Effect.runPromise(
+                sql.withTransaction(Effect.promise(closure))
+              ),
+          };
+
+          states.set(sql, found);
+
+          return Effect.succeed(found);
         }),
     })
   );

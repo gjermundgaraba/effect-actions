@@ -45,7 +45,6 @@ src/
 │   ├── members.ts     the demo members
 │   └── verifier.ts    Authentication.layer: tokens to members, server only
 ├── platform/
-│   ├── object-sql.ts    the entity's own SQLite database, as SqlClient
 │   ├── sql-messages.ts  MessageStore over the entity's SQLite database
 │   └── webhook-delivery.ts  the table a room keeps its webhook subscriptions in, and fetch's client for their POSTs
 ├── Api.ts             the room's JSON binding
@@ -74,7 +73,7 @@ test/
 | --- | --- |
 | The four classes, bindings and migration a cluster needs | `src/worker.ts`, `wrangler.jsonc` |
 | One initializer building the application once per isolate | `src/application.ts` |
-| An entity's stores over its own SQLite, built per activation | `src/routes.ts`, `src/platform/object-sql.ts`, `src/platform/sql-messages.ts` |
+| An entity's stores over its own SQLite, built per activation on `ActionCluster.layerObject` | `src/routes.ts`, `src/platform/sql-messages.ts` |
 | An authorizer that yields the entity's room once, when it is built | `src/chat/authorize.ts`, `src/routes.ts` |
 | A Worker serving every room's actions and event, each in the room it names | `src/routes.ts`, `test/worker.test.ts` |
 | One MCP endpoint for every room, its event polled | `src/routes.ts`, `test/worker.test.ts` |
