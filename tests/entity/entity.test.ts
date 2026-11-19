@@ -6,13 +6,16 @@ import {
   ShardingConfig,
   TestRunner,
 } from "effect/cluster";
+import { HttpApiSecurity } from "effect/http-api";
 import { RpcClient } from "effect/rpc";
 
+import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { DeclaredFailure } from "../../src/rpc/erased.js";
+import { CurrentActor } from "../support/app/authorization.js";
 import {
   makeRooms,
   Posted,
@@ -174,7 +177,7 @@ const Count = Action.make("count", {
   caller: Action.Anyone,
 });
 
-const Counter = ActionEntity.make("Counter", ActionRpc.make([Count]), {
+const Counter = ActionEntity.make("Counter", [Count], {
   key: ({ room }) => room,
 });
 
@@ -186,8 +189,50 @@ const Lines = Action.make("lines", {
   caller: Action.Anyone,
 });
 
-const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
+const Liner = ActionEntity.make("Liner", [Lines], {
   key: ({ room }) => room,
+});
+
+const apiKeyedIn = (place: "query" | "header") =>
+  Authentication.make("entity.Keyed", CurrentActor, {
+    principal: (actor) => actor.id,
+    security: HttpApiSecurity.apiKey({ in: place, key: "api_key" }),
+  });
+
+describe("ActionEntity.make", () => {
+  const Whoami = Action.make("whoami", {
+    description: "Answer the caller.",
+    input: { room: Schema.String },
+    success: Schema.String,
+    readOnly: true,
+    caller: CurrentActor,
+  });
+
+  it("binds its contracts as ActionRpc.make does: one listed twice, or an API key read from the query, throws, and its binding holds what it was made of", () => {
+    expect(() =>
+      ActionEntity.make("Twice", [Count, Count], { key: ({ room }) => room })
+    ).toThrow("count");
+    expect(() =>
+      ActionEntity.make("Keyed", [Whoami], {
+        authentication: apiKeyedIn("query"),
+        key: ({ room }) => room,
+      })
+    ).toThrow("reads its API key api_key from the query");
+
+    const authentication = apiKeyedIn("header");
+
+    const Keyed = ActionEntity.make("Keyed", [Whoami, Count, Posted], {
+      authentication,
+      key: ({ room }) => room,
+    });
+
+    expect(Keyed.binding).toMatchObject({
+      actions: [Whoami, Count],
+      events: [Posted],
+      error: [],
+      authentication,
+    });
+  });
 });
 
 describe("ActionEntity's stream answer", () => {
@@ -275,7 +320,7 @@ describe("ActionEntity's key", () => {
       const owner = { id: "lobby" };
       const unset: Owner = owner;
 
-      const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
+      const Prober = ActionEntity.make("Prober", [Probe], {
         key: () => owner.id,
       });
 
@@ -317,7 +362,7 @@ describe("ActionEntity.client's key", () => {
       const owner = { id: "lobby" };
       const unset: Owner = owner;
 
-      const Prober = ActionEntity.make("Prober", ActionRpc.make([Probe]), {
+      const Prober = ActionEntity.make("Prober", [Probe], {
         key: () => owner.id,
       });
 
@@ -367,7 +412,7 @@ describe("ActionEntity.client's key", () => {
         caller: Action.Anyone,
       });
 
-      const Finder = ActionEntity.make("Finder", ActionRpc.make([Where]), {
+      const Finder = ActionEntity.make("Finder", [Where], {
         key: ({ room }) => room,
       });
 

@@ -2,7 +2,6 @@ import * as ActionCluster from "@gjermundgaraba/effect-actions-cloudflare/Action
 import * as ActionWorker from "@gjermundgaraba/effect-actions-cloudflare/ActionWorker";
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import { Effect, Layer, Schema } from "effect";
 import type { Sharding } from "effect/cluster";
 
@@ -28,7 +27,7 @@ export const Ping = Action.make("ping", {
   success: Schema.Literal("pong"),
 });
 
-export const Room = ActionEntity.make("Room", ActionRpc.make([Ping]), {
+export const Room = ActionEntity.make("Room", [Ping], {
   key: ({ room }) => room,
 });
 

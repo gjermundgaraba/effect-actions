@@ -24,7 +24,7 @@ Each trap below is shown in the code of the files it names.
 - **The room is the entity's id**, and only a room `DemoRoomName` lists is reached: `src/chat/Chat.ts`, `src/entities.ts`, `roomOfAddress` in `src/routes.ts`.
 - **The Worker serves every room, and each room builds its stores over its own database as it activates**: `services` in `src/routes.ts`.
 - **A post writes its message and wakes its followers in one transaction, and the table keeps one message per author and `request`**, so a post whose notification fails keeps nothing, and a page sending it again with its `request`, even after the room failed past its write, is answered with the first message, notifying nothing; the page sends it again only after a transport failure: `src/platform/sql-messages.ts`, `src/chat/handlers.ts`, `src/browser.ts`.
-- **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; its socket serves the event alone, and a page built against other rpcs is refused, and stops: `src/browser.ts`, `actions` and `protocol` in `src/worker.ts`, `src/Rpc.ts`.
+- **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; its socket serves the event alone, and a page built against other rpcs is refused, and stops: `src/browser.ts`, `src/Rpc.ts`, whose binding the socket's `actions` in `src/worker.ts` reads, and `protocol` there.
 - **A page watches over its socket, which lets the room hibernate**; a stream through the Worker, its JSON `watch` or MCP's `events/stream`, calls the room each `nextPoll`, 2 seconds, while it is open, so the room never hibernates: `followRoom` in `src/browser.ts`, `nextPoll` in `src/chat/events.ts`.
 - **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
 - **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for each retry wait, and a subscribed room hibernates while idle, as `MessagePosted` is `notified`, asked again only when a post notifies it: `roomWebhooks` in `src/routes.ts`, `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
@@ -48,7 +48,7 @@ src/
 │   ├── sql-messages.ts  MessageStore over the entity's SQLite database
 │   └── webhook-delivery.ts  the table a room keeps its webhook subscriptions in, and fetch's client for their POSTs
 ├── Api.ts             the room's JSON binding
-├── Rpc.ts             the room's rpc binding, and the version a page's socket names
+├── Rpc.ts             what a page's socket serves, the event alone, and the version it names
 ├── entities.ts        Room, the entity
 ├── routes.ts          the entity's layer and services, and the Worker's routes
 ├── worker.ts          entrypoint: ActionWorker.make, the four classes and the Worker's fetch, a room's socket

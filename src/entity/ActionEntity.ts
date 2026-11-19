@@ -20,6 +20,8 @@ import type { RpcClient } from "effect/rpc";
 import { SqlClient } from "effect/sql";
 
 import type {
+  Any as Authentication,
+  Matching,
   RemoteRequest,
   ServerBuildServices,
   ServedProvider,
@@ -47,6 +49,7 @@ import type {
   Written,
   WrittenHandler,
 } from "../contract/implementation.js";
+import type { Only } from "../contract/listed.js";
 import { reported } from "../contract/reported.js";
 import { buildersOf, servingOf } from "../contract/serving.js";
 import type { Answer } from "../contract/stream.js";
@@ -55,7 +58,7 @@ import { polling } from "../contract/watch.js";
 import type { WatchArgs } from "../contract/watch.js";
 import { offersWebhook } from "../contract/webhooks.js";
 import type { WebhookHolder } from "../contract/webhooks.js";
-import type * as ActionRpc from "../rpc/ActionRpc.js";
+import * as ActionRpc from "../rpc/ActionRpc.js";
 import {
   actionMethodOf,
   erasedCallOf,
@@ -91,16 +94,22 @@ type ErasedRpc =
   ReturnType<typeof erasedOf> extends RpcGroup.RpcGroup<infer R> ? R : never;
 
 /**
- * A cluster `Entity` serving an `ActionRpc` binding: one rpc of JSON per action, and per event
- * type one unary rpc answering a page past a cursor, plus the entity's own native rpcs `N`, the
- * binding and the key of each of its contracts. `layer` serves it, `client` calls its actions,
- * and Effect's own `Entity` functions take it, `Entity.client` calling its native rpcs.
+ * A cluster `Entity` serving actions and event types, `make`'s contracts: one rpc of JSON per
+ * action, and per event type one unary rpc answering a page past a cursor, plus the entity's own
+ * native rpcs `N`, the binding `make` built of its contracts and the key of each. `layer` serves
+ * it, `client` calls its actions, and Effect's own `Entity` functions take it, `Entity.client`
+ * calling its native rpcs.
  */
 export interface Entity<
   Type extends string,
   B extends ActionRpc.Any,
   N extends Rpc.Any = never,
 > extends Cluster.Entity<Type, ErasedRpc | N> {
+  /**
+   * The RPC binding of the entity's contracts and its `authentication`, as
+   * `ActionRpc.make` builds it: what `ActionRpc.client` and `socketClient` call where a socket
+   * forwards every contract into the entity.
+   */
   readonly binding: B;
   readonly key: Key<B>;
   /**
@@ -162,13 +171,10 @@ const namedBy =
     return Predicate.isString(named) ? named : undefined;
   };
 
-type WithoutNatives<B extends ActionRpc.Any> = [
-  RpcGroup.Rpcs<B["rpcs"]>,
-] extends [never]
-  ? unknown
-  : {
-      readonly "An entity's binding holds no native rpcs: give them to ActionEntity.make's rpcs": never;
-    };
+const bindingOf: (
+  contracts: ReadonlyArray<Action.Any | Event.Any>,
+  options: ActionRpc.Options
+) => ActionRpc.Any = ActionRpc.make;
 
 const libraryRpcsOf = (binding: ActionRpc.Any) =>
   erasedOf(binding.actions, binding.events, "ActionEntity.layer")
@@ -208,35 +214,65 @@ const entityOf = <
   });
 };
 
+/**
+ * The binding `make` builds from an entity's contracts and its `authentication`, as
+ * `ActionRpc.make` builds one: the entity's `binding`.
+ */
+export type BindingOf<
+  Contracts extends ReadonlyArray<Action.Any | Event.Any>,
+  D extends Authentication | undefined = undefined,
+> = ActionRpc.Binding<
+  Only<Contracts, Action.Any>,
+  [],
+  D,
+  Only<Contracts, Event.Any>
+>;
+
+type Authenticating<C extends Pick<Action.Any, "caller">, D> = [
+  Exclude<C, { readonly caller: typeof Action.Anyone }>,
+] extends [never]
+  ? { readonly authentication?: D }
+  : { readonly authentication: D };
+
 /** `make`'s options. */
-export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
+export interface MakeOptions<
+  Contracts extends ReadonlyArray<Action.Any | Event.Any>,
+  D extends Authentication | undefined = undefined,
+  N extends Rpc.Any = never,
+> {
   /**
-   * The entity id an input names: one function every action and event input of the binding
-   * reads, `({ room }) => room`.
+   * The entity id an input names: one function every input of the contracts reads,
+   * `({ room }) => room`.
    *
    * **Gotchas**
    *
-   * - It takes the union of the binding's inputs, so it reads only a field every one declares: a field one input lacks is a type error.
+   * - It takes the union of the contracts' inputs, so it reads only a field every one declares: a field one input lacks is a type error.
    */
-  readonly key: Key<B>;
+  readonly key: NoInfer<Key<BindingOf<Contracts, D>>>;
   /**
-   * The entity's own native rpcs, beside its actions and event types, with their own schemas:
+   * `Authentication.make(...)` of the protected contracts' identity, which authenticates each call
+   * from the headers its client sent: required where a contract is protected, and of its identity.
+   */
+  readonly authentication?: Authentication | undefined;
+  /**
+   * The entity's own native rpcs, beside its contracts, with their own schemas:
    * `RpcGroup.make(Expire)`, such as a tell another entity sends it; an entity waking itself later
-   * calls `wakeAt` instead. `layer` takes their handlers in its own `rpcs`.
+   * calls `wakeAt` instead, and a call another part of the application makes is an action the
+   * entity lists and no surface's binding does. `layer` takes their handlers in its own `rpcs`.
    *
    * **Gotchas**
    *
-   * - A native rpc authenticates nothing, whatever the binding's `authentication`: it is for tells the entity and other entities send with `Entity.client`, never for a surface's callers.
+   * - A native rpc authenticates nothing, whatever `authentication` says: it is for tells the entity and other entities send with `Entity.client`, never for a surface's callers.
    * - A native rpc named after an action, an event type, an event's `<event>/poll`, a protected event's `<event>/subscribe` or `<event>/unsubscribe`, or the entity's wake, `effect-actions/wake`, throws as the entity is made.
    */
   readonly rpcs?: RpcGroup.RpcGroup<N> | undefined;
 }
 
 /**
- * The cluster entity of type `type` serving the actions and event types of `binding`, an
- * `ActionRpc` binding, each call and subscription in the entity its contract's `key` names for
- * its input. Each event type is a unary rpc named `<event>/poll`, `ActionRpc.pollTag`, taking
- * `{ input, cursor, maxEvents, watch }` and answering a page,
+ * The cluster entity of type `type` serving `contracts`, actions and event types, each call and
+ * subscription in the entity its contract's `key` names for its input. Each action is an rpc named
+ * after it, as `ActionRpc.make` binds it, and each event type a unary rpc named `<event>/poll`,
+ * `ActionRpc.pollTag`, taking `{ input, cursor, maxEvents, watch }` and answering a page,
  * `{ events, cursor, truncated, hasMore, nextPollMs, notified }`, an HTTP poll's page and
  * `notified`, `ActionRpc.Page`, as `ActionRpc.layer` serves it too, its subscription hook held
  * for the caller's principal. A protected event type has two more, `<event>/subscribe` and
@@ -247,30 +283,29 @@ export interface MakeOptions<B extends ActionRpc.Any, N extends Rpc.Any> {
  * **Gotchas**
  *
  * - The rpcs of its actions, event types and webhook subscriptions are volatile, as `ClusterSchema.Persisted` defaults, and its wake alone is persisted: annotated persisted, each envelope, its caller's headers and credential included, would be stored and replayed with them, on Effect's SQL runners until a `MessageRetention` layer deletes it, and on the Cloudflare runtime, which never prunes `cluster_messages`, for good, its credential headers redacted. `rpcs`' natives are persisted as their own annotations say.
- * - A binding with native rpcs throws: give the entity's own rpcs to `make`'s `rpcs`.
  * - A streaming action, one declaring `progress` or answering `Action.Stream`, is a stream rpc, its frames those `ActionRpc.make` states, `client`'s method handing each progress value to `onProgress` before it answers, and returning a `Stream` of the elements of an `Action.Stream` answer; it holds a slot of the entity's `concurrency`, by default its only one, until its stream ends, but on the Cloudflare runtime, which frees the slot while a frame waits for its client's acknowledgement.
  */
 export const make = <
   const Type extends string,
-  const B extends ActionRpc.Any,
+  const Contracts extends ReadonlyArray<Action.Any | Event.Any>,
+  D extends Authentication | undefined = undefined,
   N extends Rpc.Any = never,
 >(
   type: Type,
-  binding: B & WithoutNatives<B>,
-  options: NoInfer<Omit<MakeOptions<B, N>, "rpcs">> &
-    Pick<MakeOptions<B, N>, "rpcs">
-): Entity<Type, B, N> => {
-  const natives = [...nativeOf(binding.rpcs).requests.keys()];
+  contracts: Contracts,
+  options: MakeOptions<Contracts, NoInfer<D>, N> &
+    Authenticating<Contracts[number], D> &
+    Matching<Contracts[number], NoInfer<D>>
+): Entity<Type, BindingOf<Contracts, D>, N> => {
+  const { key, rpcs = RpcGroup.make() } = options;
+  const authentication: Authentication | undefined = options.authentication;
 
-  if (natives.length > 0) {
-    throw new Error(
-      `ActionEntity.make: the binding of ${type} holds native rpcs, ${natives.join(", ")} (give them to ActionEntity.make's rpcs, unauthenticated)`
-    );
-  }
+  const binding = bindingOf(
+    contracts,
+    authentication === undefined ? {} : { authentication }
+  );
 
   const erased = libraryRpcsOf(binding);
-
-  const rpcs = options.rpcs ?? RpcGroup.make();
 
   const taken = [...rpcs.requests.keys()].filter(
     (tag) =>
@@ -284,10 +319,11 @@ export const make = <
     );
   }
 
-  return entityOf<Type, B, N>(
+  return entityOf<Type, BindingOf<Contracts, D>, N>(
     type,
-    binding,
-    options.key,
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    binding as BindingOf<Contracts, D>,
+    key,
     erased,
     nativeOf(rpcs)
   );
@@ -331,7 +367,7 @@ export interface LayerOptions<
    * - A `Webhook.layer` here holds the entity's webhook subscriptions and delivers them from its activation: give it `persist`, so a later activation restores them; each retry wait is a wake the entity sends itself, so a stopped entity is built again to retry, on Effect's SQL runners up to `entityMessagePollInterval` after it is due, each wake a row of the runtime's messages, kept once processed.
    * - A webhook subscription to a check source not `notified` is refused with `Event.SubscriptionError`, reason `Unsupported`, and a warning saying why, its polls and unsubscribes still served: its reads on a timer would be cut by Effect's reaper and keep a Durable Object awake.
    * - A webhook subscription past its expiry ends at its next delivery, and its kept record at the next activation, on no timer: until then it holds its subscription hook.
-   * - A `Webhook.layer` here with `persist` needs the binding's authentication to name a `schema` where it serves a protected event whose source is no check source left un-`notified`: without one each activation dies with the library's message naming `schema`, so on Effect's runners each call to the entity waits while the runner builds it again, and on the Cloudflare runtime each fails at once.
+   * - A `Webhook.layer` here with `persist` needs the entity's authentication to name a `schema` where it serves a protected event whose source is no check source left un-`notified`: without one each activation dies with the library's message naming `schema`, so on Effect's runners each call to the entity waits while the runner builds it again, and on the Cloudflare runtime each fails at once.
    */
   readonly services?: Layer.Layer<ROut, unknown, RIn> | undefined;
   /**
@@ -512,10 +548,10 @@ const ClusterFailures = Schema.Union([
 export const isClusterFailure = Schema.is(ClusterFailures);
 
 /**
- * Register `entity` with the cluster's `Sharding`, serving its binding's actions and event types
+ * Register `entity` with the cluster's `Sharding`, serving its actions and event types
  * from `implementations`, which implement every one. Each entity id builds the implementations
  * itself as it activates, so a builder may read `Entity.CurrentAddress`; each call of a
- * protected one authenticates from the headers its client sent with the binding's descriptor, as
+ * protected one authenticates from the headers its client sent with the entity's descriptor, as
  * `ActionRpc.layer`'s does; then the input decodes, failing `InvalidInput` where it does not, an
  * input whose key names another entity or none is refused with `Forbidden`, and the
  * implementation's `authorize` and the handler run; a declared error is the call's typed failure.
@@ -528,7 +564,7 @@ export const isClusterFailure = Schema.is(ClusterFailures);
  * - `Action.layer` above it shares no build with it: each entity id runs its implementations' builders again, beside the run `Action.layer` made for the other surfaces.
  * - A builder that fails or dies is a defect of the entity's activation, never a failure of the layer: Effect's own runners log it and build again, 500 ms later and growing to 10 seconds apart, while its calls wait, and the Cloudflare runtime fails the calls waiting on that build, the next call building again.
  * - A handler's defect or undeclared failure ends that call with an `Error` whose message is `Internal server error`, as on `ActionRpc.layer`, and the call is not run again; Effect's own runners keep the entity's handlers for its next call, and the Cloudflare runtime builds them again, so what its builders and `services` held in memory is gone.
- * - An implementation missing for one of the binding's actions or event types throws as the layer is made: an entity serves its whole binding.
+ * - An implementation missing for one of the entity's actions or event types throws as the layer is made: an entity serves every contract it was made of.
  */
 export function layer<
   const Type extends string,
@@ -1023,7 +1059,7 @@ type Nothing<C extends Action.Any | Event.Any> = {
  * - HTTP's `text/event-stream` whose polling ended on a failure other than a refusal sends `Failed` and opens it again 5 seconds later, from where it reached; MCP's `events/stream` does what `ActionMcp.layerHttp` says of an upstream's failure, a `-32603` before `active`.
  * - A stream's polls, and a poll, MCP's `events/poll` included, hold the subscriber's subscription hook in the entity until its source's `lease` lapses after the last, as on any surface.
  * - A protected event's webhook subscription is held by the entity its input's key names, the subscribe and unsubscribe sent there with the caller's headers, and delivered by the `Webhook.layer` in that entity's `services`, never the serving surface's: an entity without one fails the subscribe with `Event.SubscriptionError`, reason `Unsupported`, a 409 over HTTP, before any callback is sent.
- * - An error the entity declares beyond the action's own and the built-in ones, its binding's `error` or its verifier's, is undeclared where the serving surface's binding does not declare it too.
+ * - An error the entity declares beyond the action's own and the built-in ones, its verifier's, is undeclared where the serving surface's binding does not declare it too.
  */
 export const reaching = <
   const Type extends string,

@@ -59,27 +59,46 @@ const signIn = Authentication.layer(SignedIn, (token) =>
   Effect.succeed(Redacted.value(token))
 );
 
-const Rpc = ActionRpc.make([Get, Open, Changed], { authentication: SignedIn });
-
 const byRoom = ({ room }: { readonly room: string }) => room;
 
-const Room = ActionEntity.make("Room", Rpc, { key: byRoom });
+const Room = ActionEntity.make("Room", [Get, Open, Changed], {
+  authentication: SignedIn,
+  key: byRoom,
+});
+
+const Rpc = Room.binding;
+
+expectTypeOf(Rpc).toEqualTypeOf<
+  ActionRpc.Binding<
+    ReadonlyArray<typeof Get | typeof Open>,
+    [],
+    typeof SignedIn,
+    ReadonlyArray<typeof Changed>
+  >
+>();
 
 expectTypeOf(
-  ActionEntity.make("Room", Rpc, { key: ({ room }) => room }).key
+  ActionEntity.make("Room", [Get, Open, Changed], {
+    authentication: SignedIn,
+    key: ({ room }) => room,
+  }).key
 ).toEqualTypeOf<ActionEntity.Key<typeof Rpc>>();
 
-ActionEntity.make("Room", Rpc, {
-  // @ts-expect-error -- one key reads only a field every input of the binding declares.
+ActionEntity.make("Room", [Get, Open, Changed], {
+  authentication: SignedIn,
+  // @ts-expect-error -- one key reads only a field every input of the contracts declares.
   key: ({ id }: { readonly id: string }) => id,
 });
 
-ActionEntity.make(
-  "Room",
-  // @ts-expect-error -- an entity's binding holds no native rpcs.
-  ActionRpc.make([Open], { rpcs: RpcGroup.make(NativeRpc.make("ping")) }),
-  { key: byRoom }
-);
+ActionEntity.make("Room", [Get, Open, Changed], {
+  authentication: SignedIn,
+  key: byRoom,
+  // @ts-expect-error -- an entity runs no middleware, so it declares no errors of its own.
+  error: Missing,
+});
+
+// @ts-expect-error -- protected contracts name their authentication.
+ActionEntity.make("Room", [Get, Open, Changed], { key: byRoom });
 
 const notes = Action.implement(
   [Get, Open],
@@ -251,7 +270,8 @@ expectTypeOf<ReturnType<RoomClient["get"]>>().toEqualTypeOf<
   Effect.Effect<string, Missing | Action.BuiltIn>
 >();
 
-const Pinged = ActionEntity.make("Pinged", Rpc, {
+const Pinged = ActionEntity.make("Pinged", [Get, Open, Changed], {
+  authentication: SignedIn,
   key: byRoom,
   rpcs: RpcGroup.make(
     NativeRpc.make("ping", { success: Schema.Int, error: Missing })

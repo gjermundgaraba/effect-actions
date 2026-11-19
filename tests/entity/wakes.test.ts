@@ -26,7 +26,6 @@ import { Wake } from "../../src/contract/wake.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import { makeWake } from "../../src/entity/wakes.js";
 import * as ActionHttp from "../../src/http/ActionHttp.js";
-import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Testing from "../../src/testing/Testing.js";
 import * as Webhook from "../../src/webhook/Webhook.js";
 import { verify } from "../support/app/authentication.js";
@@ -37,11 +36,10 @@ import { unaryOf } from "../support/rpc.js";
 import { Ticked } from "../support/ticked.js";
 import { challengeIn, Login, secretOf } from "../support/webhook.js";
 
-const Ticker = ActionEntity.make(
-  "Ticker",
-  ActionRpc.make([Ticked], { authentication: Login }),
-  { key: ({ room }) => room }
-);
+const Ticker = ActionEntity.make("Ticker", [Ticked], {
+  authentication: Login,
+  key: ({ room }) => room,
+});
 
 const TickerHttp = ActionHttp.make([Ticked], { authentication: Login });
 
@@ -404,11 +402,10 @@ const Unkept = Authentication.make("wakes.Unkept", CurrentActor, {
   principal: (actor) => actor.id,
 });
 
-const UnkeptTicker = ActionEntity.make(
-  "UnkeptTicker",
-  ActionRpc.make([Ticked], { authentication: Unkept }),
-  { key: ({ room }) => room }
-);
+const UnkeptTicker = ActionEntity.make("UnkeptTicker", [Ticked], {
+  authentication: Unkept,
+  key: ({ room }) => room,
+});
 
 describe("Webhook.layer with persist in an entity's services", () => {
   it.live(
@@ -510,7 +507,7 @@ const Remind = Action.make("remind", {
   caller: Action.Anyone,
 });
 
-const Alarm = ActionEntity.make("Alarm", ActionRpc.make([Remind]), {
+const Alarm = ActionEntity.make("Alarm", [Remind], {
   key: ({ alarm }) => alarm,
 });
 

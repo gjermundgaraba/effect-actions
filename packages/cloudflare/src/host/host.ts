@@ -92,7 +92,7 @@ const exposureOf = ({ entity, actions, protocol }: Exposed): Exposure => {
 
   if (unbound.length > 0) {
     throw new Error(
-      `ActionWorker.make: the socket of ${type} lists ${unbound.map(({ name }) => name).join(", ")}, which ${type}'s binding does not hold (list only its binding's actions and event types)`
+      `ActionWorker.make: the socket of ${type} lists ${unbound.map(({ name }) => name).join(", ")}, which ${type} was not made of (list only its actions and event types)`
     );
   }
 

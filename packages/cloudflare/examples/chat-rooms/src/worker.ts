@@ -1,10 +1,10 @@
 import * as ActionWorker from "@gjermundgaraba/effect-actions-cloudflare/ActionWorker";
 import { Schema } from "effect";
 
-import { DemoRoomName, MessagePosted } from "./chat/Chat.js";
+import { DemoRoomName } from "./chat/Chat.js";
 import { Room } from "./entities.js";
 import { rooms, workerRoutes } from "./routes.js";
-import { protocolVersion, unsupportedProtocol } from "./Rpc.js";
+import { protocolVersion, RoomSocket, unsupportedProtocol } from "./Rpc.js";
 
 const isRoom = Schema.is(DemoRoomName);
 
@@ -16,7 +16,7 @@ const worker = ActionWorker.make<Cloudflare.Env>({
       socket: {
         path: "/rooms/:id/rpc",
         id: (room) => (isRoom(room) ? room : undefined),
-        actions: [MessagePosted],
+        actions: RoomSocket.events,
         protocol: { version: protocolVersion, code: unsupportedProtocol },
       },
     },

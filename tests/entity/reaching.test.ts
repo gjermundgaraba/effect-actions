@@ -262,13 +262,14 @@ const Seen = Event.make("seen", {
   caller: CurrentActor,
 });
 
-const SeerRpc = ActionRpc.make([Whoami, Seen], { authentication: Login });
-
 const SeerHttp = ActionHttp.make([Whoami, Seen], { authentication: Login });
 
-const Seer = ActionEntity.make("Seer", SeerRpc, {
+const Seer = ActionEntity.make("Seer", [Whoami, Seen], {
+  authentication: Login,
   key: ({ room }) => room,
 });
+
+const SeerRpc = Seer.binding;
 
 const seeing = [
   Action.implement(
@@ -427,11 +428,10 @@ const Hooked = Event.make("hooked", {
   caller: CurrentActor,
 });
 
-const Hooks = ActionEntity.make(
-  "Hooks",
-  ActionRpc.make([Hooked], { authentication: Login }),
-  { key: ({ room }) => room }
-);
+const Hooks = ActionEntity.make("Hooks", [Hooked], {
+  authentication: Login,
+  key: ({ room }) => room,
+});
 
 describe("ActionEntity.reaching's polls", () => {
   it.live(
@@ -511,11 +511,9 @@ describe("ActionEntity.reaching's key", () => {
         caller: Action.Anyone,
       });
 
-      const Prober = ActionEntity.make(
-        "Prober",
-        ActionRpc.make([Probe, Probed]),
-        { key: () => owner.id }
-      );
+      const Prober = ActionEntity.make("Prober", [Probe, Probed], {
+        key: () => owner.id,
+      });
 
       const sourced = Event.implement(Probed, {
         check: () => Effect.succeed({ cursor: "0", events: [] }),
@@ -573,7 +571,7 @@ const Lines = Action.make("lines", {
   caller: Action.Anyone,
 });
 
-const Liner = ActionEntity.make("Liner", ActionRpc.make([Lines]), {
+const Liner = ActionEntity.make("Liner", [Lines], {
   key: ({ room }) => room,
 });
 
@@ -775,9 +773,7 @@ const Nap = Action.make("nap", {
   caller: Action.Anyone,
 });
 
-const NapRpc = ActionRpc.make([Nap]);
-
-const Napper = ActionEntity.make("Napper", NapRpc, {
+const Napper = ActionEntity.make("Napper", [Nap], {
   key: ({ room }) => room,
 });
 

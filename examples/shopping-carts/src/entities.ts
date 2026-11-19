@@ -1,7 +1,9 @@
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 
-import { CartRpc } from "./Rpc.js";
+import { Carts } from "./cart/Cart.js";
+import { Login } from "./identity/Identity.js";
 
-export const Cart = ActionEntity.make("Cart", CartRpc, {
+export const Cart = ActionEntity.make("Cart", Carts, {
+  authentication: Login,
   key: ({ cart }) => cart,
 });

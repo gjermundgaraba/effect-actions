@@ -4,15 +4,15 @@ A page that follows an entity's events from a browser holds one WebSocket to tha
 
 ## Name the version a page speaks
 
-A socket's `protocol` names the version of the rpcs the page was built against, and changes with them, and with the socket's `actions`. A page names it in its socket's URL, `?protocol=2`, and an upgrade naming another is accepted and closed at once with `protocol.code`, a code from 4000 to 4999, so a page left open across a deploy that changed the rpcs stops and asks to be reloaded, instead of sending calls the new server reads differently:
+A socket's `actions` lists the contracts of the entity it serves, here those of the page's own binding, `RoomSocket`, so the page and the socket name one list. Its `protocol` names the version of the rpcs the page was built against, and changes with them, and with the socket's `actions`. A page names it in its socket's URL, `?protocol=2`, and an upgrade naming another is accepted and closed at once with `protocol.code`, a code from 4000 to 4999, so a page left open across a deploy that changed the rpcs stops and asks to be reloaded, instead of sending calls the new server reads differently:
 
 ```ts example=chat-rooms/src/Rpc.ts
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 
-import { MessagePosted, Messages } from "./chat/Chat.js";
+import { MessagePosted } from "./chat/Chat.js";
 import { Login } from "./identity/Identity.js";
 
-export const RoomRpc = ActionRpc.make([...Messages, MessagePosted], {
+export const RoomSocket = ActionRpc.make([MessagePosted], {
   authentication: Login,
 });
 
@@ -23,7 +23,7 @@ export const unsupportedProtocol = 4000;
 
 ## Follow a room from a page
 
-A page connects with `ActionRpc.socketClient(RoomRpc, { url, watchMode: "poll" })`, which connects again after a drop but stops at the refusal's code, as at any from 4000 to 4999, and watches by poll: a watch is then a sequence of polls, each a unary call the host forwards and answers, never a stream held open by the object. A page cannot set a browser `WebSocket`'s headers, only the browser's own cookies and `Origin` go with the upgrade, so the page puts its token on each message, through `RpcClient.CurrentHeaders`; the host lays a message's headers over the upgrade's, those `ActionEntity.forwardedHeaders` keeps, the message's winning. The page's actions stay on the JSON routes, `openRoom`:
+A page connects with `ActionRpc.socketClient(RoomSocket, { url, watchMode: "poll" })`, which connects again after a drop but stops at the refusal's code, as at any from 4000 to 4999, and watches by poll: a watch is then a sequence of polls, each a unary call the host forwards and answers, never a stream held open by the object. A page cannot set a browser `WebSocket`'s headers, only the browser's own cookies and `Origin` go with the upgrade, so the page puts its token on each message, through `RpcClient.CurrentHeaders`; the host lays a message's headers over the upgrade's, those `ActionEntity.forwardedHeaders` keeps, the message's winning. The page's actions stay on the JSON routes, `openRoom`:
 
 ```ts example=chat-rooms/src/browser.ts
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
@@ -35,7 +35,7 @@ import { RpcClient } from "effect/rpc";
 import { RoomHttp } from "./Api.js";
 import { MessagePosted } from "./chat/Chat.js";
 import type { DemoRoomName } from "./chat/Chat.js";
-import { protocolVersion, RoomRpc } from "./Rpc.js";
+import { protocolVersion, RoomSocket } from "./Rpc.js";
 
 export const roomSocket = (
   baseUrl: string,
@@ -86,7 +86,7 @@ export const followRoom = (
   token: string
 ) =>
   Effect.map(
-    ActionRpc.socketClient(RoomRpc, { ...socket, watchMode: "poll" }),
+    ActionRpc.socketClient(RoomSocket, { ...socket, watchMode: "poll" }),
     (client) => (after: number) =>
       client
         .watch(MessagePosted, { room }, { cursor: String(after) })

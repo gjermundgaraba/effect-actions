@@ -5,7 +5,6 @@ import * as Authentication from "../../src/authentication/Authentication.js";
 import * as Action from "../../src/contract/Action.js";
 import * as Event from "../../src/contract/Event.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
-import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import { verify } from "./app/authentication.js";
 import { authorize, CurrentActor } from "./app/authorization.js";
 import { Login } from "./app/binding.js";
@@ -83,18 +82,15 @@ export const Posted = Event.make("room.posted", {
   caller: Action.Anyone,
 });
 
-export const RoomRpc = ActionRpc.make(
-  [Echo, Post, Read, Shut, Boom, Tally, Posted],
-  {
-    authentication: Login,
-  }
-);
-
 export const signIn = Authentication.layer(Login, verify);
 
-export const Room = ActionEntity.make("Room", RoomRpc, {
-  key: ({ room: named }) => named,
-});
+export const Room = ActionEntity.make(
+  "Room",
+  [Echo, Post, Read, Shut, Boom, Tally, Posted],
+  { authentication: Login, key: ({ room: named }) => named }
+);
+
+export const RoomRpc = Room.binding;
 
 export const makeRooms = () => {
   const ran = { echo: 0, post: 0, read: 0, tally: 0, builds: 0 };

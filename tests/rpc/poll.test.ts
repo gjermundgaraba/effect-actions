@@ -13,7 +13,7 @@ import * as Testing from "../../src/testing/Testing.js";
 import { makeMessages, Posted, settle, texts } from "../support/events.js";
 import { overHttp, rpcRoutes, unaryOf } from "../support/rpc.js";
 
-const Board = ActionEntity.make("Board", ActionRpc.make([Posted]), {
+const Board = ActionEntity.make("Board", [Posted], {
   key: () => "board",
 });
 

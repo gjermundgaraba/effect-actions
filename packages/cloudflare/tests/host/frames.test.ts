@@ -418,7 +418,7 @@ describe("ActionWorker's socket frames", () => {
           })
         ).toThrow("is 124 bytes, more than the 123 a close frame holds");
         expect(made({ actions: [Pinned, Kept] })).toThrow(
-          "lists kept, which Board's binding does not hold"
+          "lists kept, which Board was not made of"
         );
         expect(() =>
           ActionWorker.make<Cloudflare.Env>({

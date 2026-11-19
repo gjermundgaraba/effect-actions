@@ -6,7 +6,6 @@ import { RpcClient } from "effect/rpc";
 
 import * as Action from "../../src/contract/Action.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
-import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import {
   actors,
   authorize,
@@ -34,13 +33,10 @@ const StreamHeaders = Action.make("streamHeaders", {
   caller: CurrentActor,
 });
 
-const Reader = ActionEntity.make(
-  "Reader",
-  ActionRpc.make([ReadHeaders, StreamHeaders], { authentication: Login }),
-  {
-    key: ({ room }) => room,
-  }
-);
+const Reader = ActionEntity.make("Reader", [ReadHeaders, StreamHeaders], {
+  authentication: Login,
+  key: ({ room }) => room,
+});
 
 const seen = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;

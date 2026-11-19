@@ -6,7 +6,6 @@ import { Rpc, RpcGroup, RpcMiddleware } from "effect/rpc";
 
 import * as Action from "../../src/contract/Action.js";
 import * as ActionEntity from "../../src/entity/ActionEntity.js";
-import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 
 class Tally extends Context.Service<Tally, { count: number }>()(
   "natives-types/Tally"
@@ -31,18 +30,16 @@ const Peek = Action.make("peek", {
   success: Schema.Int,
 });
 
-const binding = ActionRpc.make([Peek]);
-
 const key = ({ counter }: { readonly counter: string }) => counter;
 
-const Counter = ActionEntity.make("Counter", binding, { key, rpcs: Natives });
+const Counter = ActionEntity.make("Counter", [Peek], { key, rpcs: Natives });
 
-const AuditedCounter = ActionEntity.make("AuditedCounter", binding, {
+const AuditedCounter = ActionEntity.make("AuditedCounter", [Peek], {
   key,
   rpcs: Audited,
 });
 
-const Plain = ActionEntity.make("Plain", binding, { key });
+const Plain = ActionEntity.make("Plain", [Peek], { key });
 
 expectTypeOf(Counter).toExtend<ActionEntity.Any>();
 

@@ -7,7 +7,7 @@ import { RpcClient } from "effect/rpc";
 import { RoomHttp } from "./Api.js";
 import { MessagePosted } from "./chat/Chat.js";
 import type { DemoRoomName } from "./chat/Chat.js";
-import { protocolVersion, RoomRpc } from "./Rpc.js";
+import { protocolVersion, RoomSocket } from "./Rpc.js";
 
 export const roomSocket = (
   baseUrl: string,
@@ -58,7 +58,7 @@ export const followRoom = (
   token: string
 ) =>
   Effect.map(
-    ActionRpc.socketClient(RoomRpc, { ...socket, watchMode: "poll" }),
+    ActionRpc.socketClient(RoomSocket, { ...socket, watchMode: "poll" }),
     (client) => (after: number) =>
       client
         .watch(MessagePosted, { room }, { cursor: String(after) })

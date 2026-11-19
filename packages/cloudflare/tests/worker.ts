@@ -2,7 +2,6 @@ import * as CloudflareDurableObjects from "@effect/platform-cloudflare/Cloudflar
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
-import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as RequestPolicy from "@gjermundgaraba/effect-actions/RequestPolicy";
@@ -151,14 +150,11 @@ export const SeerTasks = RpcGroup.make(
 
 const byRoom = ({ room }: { readonly room: string }) => room;
 
-export const Seer = ActionEntity.make(
-  "Seer",
-  ActionRpc.make(contracts, { authentication: Login }),
-  {
-    key: byRoom,
-    rpcs: SeerTasks,
-  }
-);
+export const Seer = ActionEntity.make("Seer", contracts, {
+  authentication: Login,
+  key: byRoom,
+  rpcs: SeerTasks,
+});
 
 const received: Array<{
   readonly tag: string;
@@ -285,11 +281,10 @@ export const Kept = Event.make("kept", {
   caller: Caller,
 });
 
-export const Keeper = ActionEntity.make(
-  "Keeper",
-  ActionRpc.make([Kept], { authentication: Unkept }),
-  { key: byRoom }
-);
+export const Keeper = ActionEntity.make("Keeper", [Kept], {
+  authentication: Unkept,
+  key: byRoom,
+});
 
 const keeping = ActionEntity.layer(
   Keeper,

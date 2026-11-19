@@ -8,10 +8,11 @@ pnpm add @gjermundgaraba/effect-actions @gjermundgaraba/effect-actions-cloudflar
 
 Its declarations name the Workers runtime's types: generate them with `wrangler types`, or install `@cloudflare/workers-types`, as a Worker project does.
 
-Declare an entity with the core's `ActionEntity`, keyed by its input:
+Declare an entity with the core's `ActionEntity`, from its actions and event types, keyed by its input:
 
 ```ts
-const Room = ActionEntity.make("Room", RoomRpc, {
+const Room = ActionEntity.make("Room", [...Messages, MessagePosted], {
+  authentication: Login,
   key: ({ room }) => room,
 });
 ```
