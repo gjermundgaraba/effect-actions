@@ -35,10 +35,9 @@ if (
   throw new Error("Published request policy failed");
 }
 
-const rootImport = await import(packageRoot).then(
-  () => "resolved",
-  () => "absent"
-);
+const rootImport = await import(packageRoot)
+  .then(() => "resolved")
+  .catch(() => "absent");
 
 if (rootImport !== "absent") {
   throw new Error("The package root must not be an entry point");

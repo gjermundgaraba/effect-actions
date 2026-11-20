@@ -11,14 +11,14 @@ import {
 import type { Scope, Context } from "effect";
 
 import { authorizerOf } from "./authorizer.js";
-import type { Authorizer, Deferred, ErasedAuthorizer } from "./authorizer.js";
+import type { Deferred, ErasedAuthorizer } from "./authorizer.js";
 import { checked, checkedStream, jsonRoundTrip, sentInput } from "./call.js";
 import type { Call, CheckedInput, CheckedMethod } from "./call.js";
 import { Anyone, assertCaller } from "./caller.js";
 import { codecOf } from "./codec.js";
 import type { Codec, CodecOf, Fields, NoInput } from "./codec.js";
 import { assertDistinctTags, errorList, projectedErrors } from "./declared.js";
-import type { BuiltIn } from "./errors.js";
+import type { BuiltIn, Refusal } from "./errors.js";
 import type * as Event from "./Event.js";
 import { NotServed, SubscriptionError } from "./Event.js";
 import { acquireFeeds, eventsOf } from "./feed.js";
@@ -276,13 +276,12 @@ type Rules<O> = Options extends O
 
 type OptionOf<O, K extends keyof Options, Default> = O extends unknown
   ? K extends keyof O
-    ?
-        | Exclude<O[K], undefined>
-        | ({} extends Pick<O, K>
+    ? | Exclude<O[K], undefined>
+      | ({} extends Pick<O, K>
+          ? Default
+          : undefined extends O[K]
             ? Default
-            : undefined extends O[K]
-              ? Default
-              : never)
+            : never)
     : Default
   : never;
 
@@ -671,10 +670,23 @@ export function implement<
     | HandlersOf<T, R, RequestServices>
     | Effect.Effect<HandlersOf<T, R, RequestServices>, EX, RX>,
   options: [Protected<ActionsOf<T>>] extends [never]
-    ?
-        | { readonly authorize?: "A public-only target takes no authorize" }
-        | undefined
-    : { readonly authorize: Authorizer<Protected<ActionsOf<T>>, RA, EAX, RAX> }
+    ? | { readonly authorize?: "A public-only target takes no authorize" }
+      | undefined
+    : {
+        // Inline, not a generic alias: through one, TypeScript 7.1 infers no `RA` from a built
+        // rule declared apart, https://github.com/microsoft/TypeScript/issues/64757
+        readonly authorize:
+          | ((
+              contract: Protected<ActionsOf<T>>
+            ) => Effect.Effect<void, Refusal, RA>)
+          | Effect.Effect<
+              (
+                contract: Protected<ActionsOf<T>>
+              ) => Effect.Effect<void, Refusal, RA>,
+              EAX,
+              RAX
+            >;
+      }
 ): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
 export function implement<
   const T extends Target,
@@ -746,12 +758,9 @@ export function implement(
     : Effect.succeed(pairWithActions(handlers));
 
   const recorded = listed.some((action) => action.idempotencyKey !== undefined)
-    ? Effect.flatMap(paired, (written) =>
-        Effect.map(Effect.service(Idempotency), (store) =>
-          written.map(
-            ([action, handle]) =>
-              [action, keyed(action, store, handle)] as const
-          )
+    ? Effect.zipWith(paired, Effect.service(Idempotency), (written, store) =>
+        written.map(
+          ([action, handle]) => [action, keyed(action, store, handle)] as const
         )
       )
     : paired;

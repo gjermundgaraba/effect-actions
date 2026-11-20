@@ -30,14 +30,10 @@ export type ErrorsOf<O> = O extends unknown
         readonly error: infer G extends Action.Errors | Action.Errors[number];
       }
       ? ListOf<G>
-      :
-          | ListOf<
-              Extract<
-                O["error" & keyof O],
-                Action.Errors | Action.Errors[number]
-              >
-            >
-          | []
+      : | ListOf<
+            Extract<O["error" & keyof O], Action.Errors | Action.Errors[number]>
+          >
+        | []
     : []
   : never;
 

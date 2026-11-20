@@ -116,8 +116,10 @@ const authenticatingOf = (authentication: Authentication) =>
       verifying: (verify: Verification, options: CallOptions) => Verification
     ): Step =>
       (effect, options) =>
-        Effect.flatMap(verifying(verify, options), (actor) =>
-          Effect.provideService(effect, authentication.identity, actor)
+        Effect.provideServiceEffect(
+          effect,
+          authentication.identity,
+          verifying(verify, options)
         );
   });
 

@@ -382,10 +382,8 @@ const seerTasks = Effect.map(
 
                 throw planted;
               })
-              .then(
-                () => false,
-                (error: unknown) => error === planted
-              );
+              .then(() => false)
+              .catch((error: unknown) => error === planted);
 
             const notes = storage.sql
               .exec<{ note: string }>(

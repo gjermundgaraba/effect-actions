@@ -465,11 +465,10 @@ type RpcLayer<
 
 type NativeServer<N extends Rpc.Any, D> = [N] extends [never]
   ? never
-  :
-      | Rpc.ToHandler<N>
-      | Exclude<Rpc.Middleware<N>, Authenticated<unknown>>
-      | Rpc.ServicesServer<N>
-      | ProviderOf<D>;
+  : | Rpc.ToHandler<N>
+    | Exclude<Rpc.Middleware<N>, Authenticated<unknown>>
+    | Rpc.ServicesServer<N>
+    | ProviderOf<D>;
 
 /** `ActionRpc.layer`'s options. */
 export interface LayerOptions<

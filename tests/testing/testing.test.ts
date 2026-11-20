@@ -59,10 +59,8 @@ describe("layer", () => {
         });
 
         const stamped = HttpRouter.middleware((route) =>
-          Effect.flatMap(Effect.service(Stage), (stage) =>
-            Effect.map(route, (response) =>
-              HttpServerResponse.setHeader(response, "x-stage", stage)
-            )
+          Effect.zipWith(Effect.service(Stage), route, (stage, response) =>
+            HttpServerResponse.setHeader(response, "x-stage", stage)
           )
         ).layer;
 
