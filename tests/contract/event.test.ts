@@ -206,10 +206,12 @@ describe("Action.client given actions", () => {
           .watch(Ticked, {}, { cursor: "0" })
           .pipe(Stream.take(1), Stream.runCollect);
 
-        const unlisted = yield* watching
-          // @ts-expect-error -- The failure under test: an event type the client does not list.
-          .watch(Posted, {}, { cursor: "0" })
-          .pipe(Stream.runCollect, Effect.flip);
+        const unlisted = yield* (
+          watching
+            // @ts-expect-error -- The failure under test: an event type the client does not list.
+            .watch(Posted, {}, { cursor: "0" })
+            .pipe(Stream.runCollect, Effect.flip)
+        );
 
         const pinging = yield* Action.client([ping, clock], {
           actions: [Ping],

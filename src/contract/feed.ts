@@ -769,11 +769,10 @@ export type EventRequestOf<App, E extends Event.Any> = App extends {
   readonly "~eventAuthorizeRequest": infer RA;
 }
   ? E extends Held
-    ?
-        | RequestOf<R, E["name"]>
-        | (E["caller"] extends typeof Anyone
-            ? never
-            : RA | IdentityOf<E["caller"]>)
+    ? | RequestOf<R, E["name"]>
+      | (E["caller"] extends typeof Anyone
+          ? never
+          : RA | IdentityOf<E["caller"]>)
     : never
   : never;
 
@@ -820,14 +819,13 @@ export type EventServedRequest<
 }
   ? [ServingEvents<App, Listed>] extends [never]
     ? never
-    :
-        | EndpointRequest<R, ServingEvents<App, Listed>>
-        | (ServesProtected<App, Listed> extends true
-            ? Exclude<
-                RA,
-                IdentityOf<Protected<ServingEvents<App, Listed>>["caller"]>
-              >
-            : never)
+    : | EndpointRequest<R, ServingEvents<App, Listed>>
+      | (ServesProtected<App, Listed> extends true
+          ? Exclude<
+              RA,
+              IdentityOf<Protected<ServingEvents<App, Listed>>["caller"]>
+            >
+          : never)
   : never;
 
 type EndpointRequest<R, E extends Event.Any> = E extends unknown

@@ -283,7 +283,7 @@ export class Host<Env> extends CloudflareDurableObjects.ClusterEntity {
 
       ctx.waitUntil = (promise) => {
         waitUntil(promise);
-        void promise.then(host.settled, host.settled);
+        void promise.then(host.settled).catch(host.settled);
       };
 
       this.#host = host;

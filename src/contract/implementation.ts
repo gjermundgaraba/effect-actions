@@ -453,11 +453,15 @@ type Listing<O> = O extends unknown
 /**
  * No key of any member of `O` beyond those of `Keys`, so a misspelled option is refused
  * rather than ignored: options inferred whole, as a type parameter, skip TypeScript's own
- * check, and `keyof` a union holds only the keys every member has.
+ * check, and `keyof` a union holds only the keys every member has. An index signature of `O`,
+ * a record built at runtime, names no key, so it is left to the runtime check.
  */
 export type Known<O, Keys> = {
   readonly [
-    K in Exclude<O extends unknown ? keyof O : never, keyof Keys>
+    K in Exclude<
+      O extends unknown ? keyof O : never,
+      keyof Keys
+    > as string extends K ? never : number extends K ? never : K
   ]?: never;
 };
 
@@ -632,10 +636,9 @@ export type RequestOf<App, A extends Action.Any> = App extends {
       ? unknown
       : [A["name"] & keyof R] extends [never]
         ? never
-        :
-            | R[A["name"] & keyof R]
-            | (A["caller"] extends typeof Anyone ? never : RA)
-            | AuthenticationOf<A>
+        : | R[A["name"] & keyof R]
+          | (A["caller"] extends typeof Anyone ? never : RA)
+          | AuthenticationOf<A>
     : never
   : never;
 

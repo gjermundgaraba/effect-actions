@@ -53,17 +53,16 @@ export type SuccessOf<A extends Action.Any, E extends Schema.Top> =
         E
       >
     : A["progress"] extends Codec
-      ?
-          | Schema.toCodecJson<A["success"]>
-          | HttpApiSchema.StreamSse<
-              Schema.Union<
-                readonly [
-                  EventOf<"progress", A["progress"]>,
-                  EventOf<"final", A["success"]>,
-                ]
-              >,
-              E
-            >
+      ? | Schema.toCodecJson<A["success"]>
+        | HttpApiSchema.StreamSse<
+            Schema.Union<
+              readonly [
+                EventOf<"progress", A["progress"]>,
+                EventOf<"final", A["success"]>,
+              ]
+            >,
+            E
+          >
       : Schema.toCodecJson<A["success"]>;
 
 const keepAliveEvery = Duration.seconds(15);

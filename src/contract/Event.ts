@@ -11,7 +11,7 @@ import type { DateTime, Duration, Scope, Stream } from "effect";
 
 import type * as Action from "./Action.js";
 import { authorizerOf } from "./authorizer.js";
-import type { Authorizer, Deferred, ErasedAuthorizer } from "./authorizer.js";
+import type { Deferred, ErasedAuthorizer } from "./authorizer.js";
 import { Anyone, assertCaller } from "./caller.js";
 import { codecOf } from "./codec.js";
 import type { Codec, CodecOf, Fields, NoInput } from "./codec.js";
@@ -65,9 +65,8 @@ type OnlyOptions<O> = {
 type Rules<O> = Options extends O ? unknown : OnlyOptions<O>;
 
 type InputOf<O> = O extends { readonly input?: infer I }
-  ?
-      | CodecOf<Extract<Exclude<I, undefined>, Codec | Fields>>
-      | ([undefined] extends [I] ? typeof NoInput : never)
+  ? | CodecOf<Extract<Exclude<I, undefined>, Codec | Fields>>
+    | ([undefined] extends [I] ? typeof NoInput : never)
   : typeof NoInput;
 
 type PayloadOf<O> = O extends {
@@ -617,19 +616,15 @@ type SourcesOf<T extends Target, R, RequestServices> = T extends Any
   ? Check<T, R> | Current<T, R> | Log<T, R>
   : {
       readonly [K in keyof RequestServices]: K extends NamesOf<T>
-        ?
-            | Check<
-                Extract<EventsOf<T>, { readonly name: K }>,
-                RequestServices[K]
-              >
-            | Current<
-                Extract<EventsOf<T>, { readonly name: K }>,
-                RequestServices[K]
-              >
-            | Log<
-                Extract<EventsOf<T>, { readonly name: K }>,
-                RequestServices[K]
-              >
+        ? | Check<
+              Extract<EventsOf<T>, { readonly name: K }>,
+              RequestServices[K]
+            >
+          | Current<
+              Extract<EventsOf<T>, { readonly name: K }>,
+              RequestServices[K]
+            >
+          | Log<Extract<EventsOf<T>, { readonly name: K }>, RequestServices[K]>
         : never;
     };
 
@@ -690,10 +685,23 @@ export function implement<
     | SourcesOf<T, R, RequestServices>
     | Effect.Effect<SourcesOf<T, R, RequestServices>, EX, RX>,
   options: [Protected<EventsOf<T>>] extends [never]
-    ?
-        | { readonly authorize?: "A public-only target takes no authorize" }
-        | undefined
-    : { readonly authorize: Authorizer<Protected<EventsOf<T>>, RA, EAX, RAX> }
+    ? | { readonly authorize?: "A public-only target takes no authorize" }
+      | undefined
+    : {
+        // Inline, not a generic alias: through one, TypeScript 7.1 infers no `RA` from a built
+        // rule declared apart, https://github.com/microsoft/TypeScript/issues/64757
+        readonly authorize:
+          | ((
+              contract: Protected<EventsOf<T>>
+            ) => Effect.Effect<void, Refusal, RA>)
+          | Effect.Effect<
+              (
+                contract: Protected<EventsOf<T>>
+              ) => Effect.Effect<void, Refusal, RA>,
+              EAX,
+              RAX
+            >;
+      }
 ): Implemented<T, RequestServices, R, EX, RX, RA, EAX, RAX>;
 export function implement<
   const T extends Target,

@@ -1,16 +1,10 @@
 import { Effect, Predicate } from "effect";
 
-import type { Refusal } from "./errors.js";
 import { memoized } from "./implementation.js";
 import type { ErasedAuthorize } from "./implementation.js";
 
 /** `T`, read only once it is inferred: an implementation's build channels. */
 export type Deferred<T> = [T][T extends unknown ? 0 : never];
-
-/** What `implement` takes as `authorize` for contracts `C`: the rule, or an Effect building it. */
-export type Authorizer<C, RA, EAX, RAX> =
-  | ((contract: C) => Effect.Effect<void, Refusal, RA>)
-  | Effect.Effect<(contract: C) => Effect.Effect<void, Refusal, RA>, EAX, RAX>;
 
 export type ErasedAuthorizer<C> =
   | ErasedAuthorize<C>
