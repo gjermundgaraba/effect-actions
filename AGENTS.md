@@ -92,7 +92,7 @@ The readers are coding agents, and they read two ways. Each fact has one home, c
 
 ## Effect
 
-Before writing or reviewing Effect code, read `node_modules/effect/AGENTS.md` in the package you are changing and the examples it links under `ai-docs/`. They ship with the installed `effect`, so they match the APIs the code compiles against. For exact signatures, read that package's installed source and types in `node_modules/effect` and `node_modules/@effect/*`. Do not write Effect APIs from memory or from examples for another version.
+Before writing or reviewing Effect code, read `node_modules/effect/AGENTS.md` in the package you are changing and the examples it links under `ai-docs/`. They ship with the installed `effect`, so they match the APIs the code compiles against. For exact signatures, read that package's installed source and types in `node_modules/effect` and `node_modules/@effect/*`. For what npm does not ship, such as `MIGRATION.md`, the guides under `packages/effect/` and the tests, read `.agents/repos/effect`, a shallow clone of `Effect-TS/effect` at the installed version's tag. If it is missing, or `git -C .agents/repos/effect tag --points-at HEAD --list 'effect@*'` names another version, delete it and clone again with `git clone --depth 1 --branch effect@<version> https://github.com/Effect-TS/effect .agents/repos/effect`. Do not write Effect APIs from memory or from examples for another version.
 
 ## Upstream behavior the code depends on
 

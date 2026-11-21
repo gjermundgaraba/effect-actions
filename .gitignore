@@ -17,3 +17,5 @@ coverage/
 .build-events/
 shopping-carts.db*
 .wrangler/
+
+.agents/repos/
