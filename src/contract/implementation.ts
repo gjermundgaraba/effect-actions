@@ -27,7 +27,6 @@ import { elementOf } from "./stream.js";
 
 export const uniqueKey = (): string => Math.random().toString(36).slice(2);
 
-/** Decoded values at the dispatch boundary every surface shares. */
 export type ErasedValue = Action.Any["input"]["Type"];
 
 export type WrittenHandler<R> = {
@@ -41,12 +40,6 @@ export type WrittenHandler<R> = {
 
 export type Handlers<R> = Readonly<Record<string, WrittenHandler<R>>>;
 
-/**
- * A handler behind its action's authentication, authorization and declared errors, as a surface
- * calls it. For an action answering a stream it succeeds at once with the call's stream, which
- * `elementsOf` reads, the refusals included. `reporting` is where its progress goes, ignored for
- * an action declaring no `progress`, so a surface may hand one to every call.
- */
 export type ErasedHandler<R> = (
   input: ErasedValue,
   reporting?: Reporting
@@ -85,22 +78,18 @@ export type Authorize<A extends Action.Any, R = never> = (
   action: A
 ) => Effect.Effect<void, Refusal, R>;
 
-/** An authorization rule over contracts `C`, erased: it refuses, or lets the call run. */
 export type ErasedAuthorize<C = Action.Any> = (
   contract: C
 ) => Effect.Effect<void, unknown, unknown>;
 
-/** Each action of an implementation with its handler, as `dispatch` makes it. */
 export type Bound = ReadonlyArray<
   readonly [Action.Any, ErasedHandler<unknown>]
 >;
 
-/** Each action of an implementation with its handler as written, as its builder made them. */
 export type Written = ReadonlyArray<
   readonly [Action.Any, WrittenHandler<unknown>]
 >;
 
-/** A build shared by every layer an implementation reaches, through the one key it is provided under. */
 export interface Memoized<S, E, R> {
   readonly key: Context.Key<S, S>;
   readonly layer: Layer.Layer<S, E, R>;
@@ -283,9 +272,7 @@ export class Implementation<
 
   constructor(
     actions: readonly A[],
-    /** Builds each action paired with its handler: its own builder, or the one it shares. */
     handlers: Memoized<Written, EX, RX>,
-    /** Builds its authorizer. */
     authorizer: Memoized<ErasedAuthorize, EAX, RAX>
   ) {
     this.actions = actions;
@@ -293,7 +280,6 @@ export class Implementation<
     this.#authorizer = authorizer;
   }
 
-  /** Select contracts while retaining their handlers, authorization and shared builder. */
   static share(
     actions: readonly Action.Any[],
     app: AnyImplementation
@@ -303,10 +289,6 @@ export class Implementation<
     return new Implementation(actions, source.#handlers, source.#authorizer);
   }
 
-  /**
-   * The key of what runs a call of `app`'s actions: its handlers' memoized layer's, which each
-   * `implement` makes, so it is unique to the implementation. Every selection retains it.
-   */
   static runKey(app: AnyImplementation): string {
     return Implementation.own(app).#handlers.key.key;
   }
@@ -322,10 +304,6 @@ export class Implementation<
     return builderLayer(app.actions, source.#handlers, source.#authorizer);
   }
 
-  /**
-   * The actions of `app` with their handlers, behind its authorizer, from the context
-   * `layerOf(app)` provides.
-   */
   static boundOf(
     app: AnyImplementation,
     keyed: Keyed | undefined
@@ -573,7 +551,6 @@ export const assertHeld = <C extends Pick<Action.Any, "name">>(
   }
 };
 
-/** One kind of contract an implementation holds, and how to narrow an implementation to some. */
 export interface ContractKind<App, C> {
   readonly noun: "action" | "event";
   readonly holds: (app: App) => readonly C[];

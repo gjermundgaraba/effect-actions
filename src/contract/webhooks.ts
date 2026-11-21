@@ -70,7 +70,6 @@ export type WebhookHolder = Pick<
   "subscribe" | "unsubscribe"
 >;
 
-/** Whether a surface offers `event` by webhook: a protected one, its caller an identity. */
 export const offersWebhook = (event: Event.Any): event is Protected =>
   event.caller !== Anyone;
 
@@ -87,11 +86,6 @@ export interface Subscriber extends Pick<
   readonly webhooks: WebhookHolder;
 }
 
-/**
- * Who subscribes to `feed`'s webhooks, and where they are held: the holder the feed names, a
- * reached entity, or else the surface's own `Webhooks`; none where the event is not offered by
- * webhook. Its principal is read from the caller each time it runs.
- */
 export const webhookSubscriber = (
   feed: Feed,
   keyed: Keyed | undefined,
@@ -110,7 +104,6 @@ export const webhookSubscriber = (
       )
     : Option.none();
 
-/** As `webhookSubscriber`, failing as `Unsupported` where the event is not offered by webhook. */
 export const subscriberOf = (
   feed: Feed,
   keyed: Keyed | undefined,
@@ -120,7 +113,6 @@ export const subscriberOf = (
     Effect.fail(deliveryUnsupported(feed.event.name, "webhook"))
   );
 
-/** A surface's answers to a webhook subscribe and unsubscribe of `feed`, run as its subscriber. */
 export const webhookAnswers = (
   feed: Feed,
   keyed: Keyed | undefined,
@@ -142,11 +134,6 @@ export const webhookAnswers = (
   };
 };
 
-/**
- * The feeds of `events` a surface's layer serves, and the `Webhooks` it offers them by: run as
- * the layer builds, which serves the webhooks it delivers itself, those of the feeds `holds`
- * admits, and restores their kept subscriptions.
- */
 export const servingFeeds = Effect.fnUntraced(function* (
   events: readonly AnyEventImplementation[],
   keyed: Keyed | undefined,

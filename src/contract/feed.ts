@@ -665,7 +665,6 @@ export class EventImplementation<
     this.#authorizer = authorizer;
   }
 
-  /** Select event types while retaining their sources, authorization and shared builder. */
   static share(
     events: readonly Event.Any[],
     app: AnyEventImplementation
@@ -675,7 +674,6 @@ export class EventImplementation<
     return new EventImplementation(events, source.#running, source.#authorizer);
   }
 
-  /** The builders of `app`, its sources' and its authorizer's, as one layer. */
   static layerOf(
     app: AnyEventImplementation
   ): Layer.Layer<never, unknown, unknown> {
@@ -689,7 +687,6 @@ export class EventImplementation<
     return builderLayer(app.events, { layer: runs }, source.#authorizer);
   }
 
-  /** The event types of `app` with what runs them, behind its authorizer. */
   static feedsOf(
     app: AnyEventImplementation
   ): Effect.Effect<readonly Feed[], never, unknown> {

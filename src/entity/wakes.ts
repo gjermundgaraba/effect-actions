@@ -29,13 +29,6 @@ export const WakeRpc = Rpc.make(wakeTag, { payload: WakeAt }).annotate(
   true
 );
 
-/**
- * The entity's wake. `wakeAt` sends the persisted tell unless one this activation stored, due no
- * later, has not fired; `until` stores its own deadline, unless one at that time is pending, then
- * waits for a wake due no earlier, so no earlier wake hands it over; `woke` takes a delivery,
- * which may be stale or replayed. A send and its record hold the lock, uninterruptibly, and so
- * does a delivery's bookkeeping, so a delivery racing its own send cannot leave a fired time pending.
- */
 export const makeWake = (
   send: (wake: WakeAt) => Effect.Effect<void, Action.Unavailable>
 ) =>

@@ -8,6 +8,7 @@ import {
   Stream,
 } from "effect";
 import { HttpServerRequest } from "effect/http";
+import type { HttpClientResponse } from "effect/http";
 import { HttpApiSchema } from "effect/http-api";
 
 import type * as Action from "../contract/Action.js";
@@ -19,10 +20,14 @@ import type { CallOptions, Reporting } from "../contract/progress.js";
 import { concealed } from "../contract/reported.js";
 import type { StreamOf } from "../contract/stream.js";
 
-interface Sent {
-  readonly event: "progress" | "element" | "final";
-  readonly data: ErasedValue;
-}
+const Sent = Schema.Struct({
+  event: Schema.Literals(["progress", "element", "final"]),
+  data: Schema.Unknown,
+});
+
+type Sent = typeof Sent.Type;
+
+const isSent = Schema.is(Sent);
 
 const eventOf = <const N extends Sent["event"], D extends Codec>(
   event: N,
@@ -155,10 +160,28 @@ const checkedBy = (schema: Codec) => {
   return (data: ErasedValue) => Effect.orDie(encode(data));
 };
 
-/** Whether `request` asks for an SSE stream, `text/event-stream` among whatever else it accepts. */
 export const acceptsEventStream = (
   request: HttpServerRequest.HttpServerRequest
-): boolean => (request.headers["accept"] ?? "").includes("text/event-stream");
+): boolean =>
+  (
+    (request.headers["accept"] ?? "").match(/(?:[^",]|"(?:[^"\\]|\\.)*")+/gu) ??
+    []
+  ).some((range) => {
+    const [media, ...parameters] =
+      range.match(/(?:[^";]|"(?:[^"\\]|\\.)*")+/gu) ?? [];
+
+    if (media?.trim().toLowerCase() !== "text/event-stream") {
+      return false;
+    }
+
+    const quality = parameters.find((parameter) =>
+      /^\s*q\s*=/iu.test(parameter)
+    );
+
+    const weight = quality === undefined ? 1 : Number(quality.split("=")[1]);
+
+    return weight > 0 && weight <= 1;
+  });
 
 export const answeringWithProgress = (
   success: Action.Any["success"],
@@ -207,20 +230,35 @@ const answeredWithout = new Error(
   "A route of an action declaring progress or answering a stream answered without its event stream"
 );
 
-const sentFrom = (answer: ErasedValue): Stream.Stream<Progressed, unknown> =>
-  Stream.isStream(answer)
-    ? // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      Stream.map(answer as Stream.Stream<Sent, unknown>, progressedOf)
+type WithResponse = readonly [
+  ErasedValue,
+  HttpClientResponse.HttpClientResponse,
+];
+
+const sentFrom = ([answer, response]: WithResponse): Stream.Stream<
+  Progressed,
+  unknown
+> =>
+  response.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() ===
+    "text/event-stream" && Stream.isStream(answer)
+    ? Stream.mapEffect(
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+        answer as Stream.Stream<unknown, unknown>,
+        (event) =>
+          isSent(event)
+            ? Effect.succeed(progressedOf(event))
+            : Effect.die(answeredWithout)
+      )
     : Stream.die(answeredWithout);
 
 export const readWithProgress = (
-  answer: ErasedValue,
+  answer: WithResponse,
   onProgress: CallOptions<unknown>["onProgress"]
 ): Effect.Effect<ErasedValue, unknown> =>
   answerFrom(sentFrom(answer), onProgress);
 
 export const readElements = (
-  answer: ErasedValue,
+  answer: WithResponse,
   onProgress: CallOptions<unknown>["onProgress"]
 ): Stream.Stream<ErasedValue, unknown> =>
   elementsFrom(sentFrom(answer), onProgress);

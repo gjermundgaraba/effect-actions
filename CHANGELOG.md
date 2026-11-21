@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixes
+
+- Native RPC authentication returns `Unauthenticated` when its verifier fails with `Forbidden`, as the middleware's wire contract declares. The verifier's own declared errors still pass through.
+- HTTP progress and watch routes honor an explicit `text/event-stream` Accept range only at a nonzero quality. The action client also checks the response media type before reading the decoded result as SSE.
+- `ActionWorker` names a missing or invalid default namespace binding before using it. A socket poll only reuses a fresh answer when the next request matches its tag, input, options and effective headers; a changed request goes through the entity again.
+
 ### Other changes
 
 - Under TypeScript 7.1, `Action.implement` and `Event.implement` infer what an `authorize` built by an Effect reads per request when it is declared apart from the call, as 7.0 does; 7.1 inferred nothing through the generic alias the parameter was typed with ([microsoft/TypeScript#64757](https://github.com/microsoft/TypeScript/issues/64757)), so a shared authorizer failed to compile. Options built at runtime, such as `commands: Object.fromEntries(...)` given to `ActionCli`, compile under 7.1 as under 7.0, their keys checked when the command is made.
@@ -870,7 +876,7 @@ Each area below lists what is renamed or removed, then what changes without a re
     error: ProviderUnavailable,
   });
   const Http = ActionHttp.make(actions, { authentication: Login });
-  const verify = check; // fails with a refusal or ProviderUnavailable
+  const verify = check;
   ```
 
 - On a protected route, or any route of an MCP endpoint naming a Bearer descriptor, `Unauthenticated`, or a `Forbidden` naming `scopes`, from authentication, an authorizer or a handler, is answered with its HTTP status, challenge and JSON, on MCP too instead of a tool result, as MCP authorization defines. If an MCP handler's notification has already started the response, a later refusal remains a tool error in that stream. Elsewhere, such a refusal is a declared error. A defect or an interruption after such a refusal, such as a finalizer dying, is the route's own, answered as one, not hidden behind the refusal's answer.
@@ -947,10 +953,10 @@ Each area below lists what is renamed or removed, then what changes without a re
 - `Action.client(implementations)` calls implementations in process: one method per action, taking its input directly, as `ActionHttp.client`'s methods do, so moving between an in-process and a remote caller changes the line acquiring it. A call runs as a remote one does, through the dispatch every surface shares: its input passes through its JSON codec, encoded to JSON text then decoded, the authorizer and the handler run in a scope of their own, and the success or the failure passes through its codec too. It fails with the action's errors and the built-in ones, as a remote caller decodes them: input that does not pass is `InvalidInput`, before the authorizer, and a success or a failure that does not, an error the action does not declare included, is a defect, as it is an empty 500 over HTTP: its `SchemaError`, then the failure itself. Each call owes what the authorizer and the handler read, the caller's identity included, provided around the call, never around the acquisition. Acquiring it builds the implementations into the layer graph around it, as a layer does, sharing each builder's run with the surfaces of that graph: acquire it in a builder, a layer or a scoped program, never per request. It is how an implementation's own behavior is tested, several callers in one test, an action no binding holds included; `Testing.layer` tests what a surface adds. `actions` lists fewer of their actions. `Action.Client<Apps>` is its type.
 
   ```ts
-  const asAlice = Effect.provideService(CurrentActor, alice); // each call's caller
+  const asAlice = Effect.provideService(CurrentActor, alice);
 
   Effect.gen(function* () {
-    const users = yield* Action.client(userActions); // once, where builders live
+    const users = yield* Action.client(userActions);
     return yield* users.renameUser({ id: "1", name: "Bea" }).pipe(asAlice);
   });
   ```
@@ -1136,7 +1142,6 @@ Built and tested against `effect` and `@effect/platform-node` `4.0.0-rc.117`. Th
   const Users = ActionGroup.make({ name: "users" }, GetUser);
   const Audit = ActionGroup.make({ name: "audit" }, ListChanges);
   const Http = ActionHttp.make({ apiPath: "/api" }, Users);
-  // Audit's implementation goes to ActionMcp.layerHttp, ActionToolkit.make or ActionCli.
   ```
 
   Catalog readers: drop `http`, and check for `version: "4"`. Explicit `Action.make<...>` type arguments: delete them and let `make` infer.

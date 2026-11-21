@@ -76,10 +76,6 @@ export const jsonRoundTrip = <S extends Codec>(schema: S) => {
     );
 };
 
-/**
- * A call's or a watch's input as it is sent, `{}` decoded where it is left out: its JSON, and the
- * value the server decodes from it.
- */
 export const sentInput = (
   event: Pick<Action.Any, "input">,
   input: ErasedValue
@@ -133,7 +129,6 @@ export type ErasedStreamMethod<R = never> = (
   ...input: readonly ErasedValue[]
 ) => Stream.Stream<ErasedValue, unknown, R>;
 
-/** What `checked` or `checkedStream` makes of an action: one value, or a stream of elements. */
 export type CheckedMethod<R = never> = ErasedMethod<R> | ErasedStreamMethod<R>;
 
 export const checkedStream = <S, R>(

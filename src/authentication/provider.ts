@@ -51,19 +51,11 @@ type Response = Effect.Effect<
   unknown
 >;
 
-/** What a provider holds for the surfaces serving its descriptor, beside its identity. */
 export interface Runtime {
-  /** The descriptor the provider was built from, the one a binding naming it must hold. */
   readonly descriptor: unknown;
-  /**
-   * The verifier itself, for a surface answering refusals its own way, such as RPC: the
-   * credential to the identity, or a refusal, or an error the descriptor declares. An empty
-   * credential, as the native decoder gives an absent one, is refused without reaching it.
-   */
   readonly authenticate: (
     credential: Credential
   ) => Effect.Effect<unknown, unknown, unknown>;
-  /** The native security middleware's implementation, keyed by its scheme. */
   readonly middleware: Readonly<
     Record<
       string,
@@ -73,16 +65,7 @@ export interface Runtime {
       ) => Response
     >
   >;
-  /**
-   * A protected HTTP route as it leaves the layer's middleware, a step-up refusal it fails with
-   * answered with its challenge under Bearer; as it is under another scheme.
-   */
   readonly stepUp: HttpApiMiddleware.HttpApiMiddleware<never, never, never>;
-  /**
-   * An MCP endpoint's request: decoded here, and a protected tool's call promotes what it
-   * verified. Where `optional`, a request presenting no credential, which the scheme decodes as
-   * empty, passes signed out.
-   */
   readonly http: <E, R>(
     route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
     optional: boolean
@@ -91,10 +74,6 @@ export interface Runtime {
     E,
     R | HttpRouter.Provided
   >;
-  /**
-   * A route of the host's own: the request is decoded here, the route gets the identity
-   * itself, and a refusal it fails with is answered as an action route's.
-   */
   readonly route: <E, R>(
     route: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>
   ) => Effect.Effect<
@@ -129,7 +108,6 @@ export interface Descriptor<
   readonly schema?: Codec | undefined;
   readonly "~provider": Context.Key<Provider<I, Name>, Runtime>;
   readonly "~middleware": Context.Key<SecurityMiddleware<I, Name>, unknown>;
-  /** An MCP request's verified identity, which a protected tool's call promotes. */
   readonly "~verified": Context.Key<never, unknown>;
 }
 

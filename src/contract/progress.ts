@@ -14,7 +14,6 @@ import type { Scope } from "effect";
 import type { Codec } from "./codec.js";
 import type { ErasedValue } from "./implementation.js";
 
-/** Where a call's progress goes: each value reported, checked by its schema, is given to `progress`. */
 export interface Reporting {
   readonly progress: (value: ErasedValue) => Effect.Effect<void>;
 }

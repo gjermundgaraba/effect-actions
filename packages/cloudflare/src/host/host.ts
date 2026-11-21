@@ -17,12 +17,10 @@ import { pingPong, replyToClose } from "./frames.js";
 import { makeSockets } from "./sockets.js";
 import type { Refusal, Served } from "./sockets.js";
 
-/** One entity whose objects accept sockets, with what they serve and the version they speak. */
 export type Exposed = Pick<ActionWorker.Socket, "actions" | "protocol"> & {
   readonly entity: ActionEntity.Any;
 };
 
-/** Whether `request` asks for a WebSocket upgrade. */
 export const isUpgrade = (request: Request) =>
   request.headers.get("upgrade")?.toLowerCase() === "websocket";
 
@@ -315,7 +313,6 @@ export class Host<Env> extends CloudflareDurableObjects.ClusterEntity {
   }
 }
 
-/** What each entity's socket serves, by its type, checked at once: a misconfigured socket throws. */
 export const exposuresOf = (
   exposed: readonly Exposed[]
 ): ReadonlyMap<string, Exposure> =>
@@ -323,7 +320,6 @@ export const exposuresOf = (
     exposed.map((socket) => [socket.entity.type, exposureOf(socket)] as const)
   );
 
-/** The `ClusterEntity` class serving the sockets of `byType`, each forwarded through the cluster of `context`. */
 export const hostClass = <Env>(
   byType: ReadonlyMap<string, Exposure>,
   context: (env: Env) => PromiseLike<Context.Context<Sharding.Sharding>>

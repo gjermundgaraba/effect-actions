@@ -4,7 +4,7 @@ import type * as Action from "@gjermundgaraba/effect-actions/Action";
 import type * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import type * as RequestPolicy from "@gjermundgaraba/effect-actions/RequestPolicy";
-import { Context, Effect, Function, Layer } from "effect";
+import { Context, Effect, Function, Layer, Predicate } from "effect";
 import type { Scope } from "effect";
 import {
   HttpEffect,
@@ -163,7 +163,7 @@ export type Options<Env> = {
     | undefined;
 } & ([Env] extends [Bindings]
   ? {
-      /** The cluster's namespaces and options; by default, `env`'s `Bindings`. */
+      /** The cluster's namespaces and options; by default, `env`'s four `Bindings`, checked before use. */
       readonly cluster?: ((env: Env) => ClusterOptions) | undefined;
     }
   : {
@@ -189,17 +189,38 @@ export interface Worker<Env> {
   readonly ClusterSingleton: typeof CloudflareDurableObjects.ClusterSingleton;
 }
 
-const fromBindings = (env: unknown): ClusterOptions => {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const bound = env as Bindings;
+const isNamespace = (value: unknown): value is DurableObjectNamespace =>
+  [
+    "get",
+    "getByName",
+    "idFromName",
+    "idFromString",
+    "jurisdiction",
+    "newUniqueId",
+  ].every(
+    (method) =>
+      Predicate.hasProperty(value, method) &&
+      Predicate.isFunction(value[method])
+  );
 
-  return {
-    entityNamespace: bound.CLUSTER_ENTITY,
-    workflowNamespace: bound.CLUSTER_WORKFLOW,
-    queueNamespace: bound.CLUSTER_QUEUE,
-    singletonNamespace: bound.CLUSTER_SINGLETON,
-  };
+const namespaceOf = (env: unknown, name: keyof Bindings) => {
+  const bound = Predicate.hasProperty(env, name) ? env[name] : undefined;
+
+  if (!isNamespace(bound)) {
+    throw new TypeError(
+      `ActionWorker.make: ${name} is not a Durable Object namespace (bind it in wrangler.jsonc, or give make a cluster option)`
+    );
+  }
+
+  return bound;
 };
+
+const fromBindings = (env: unknown): ClusterOptions => ({
+  entityNamespace: namespaceOf(env, "CLUSTER_ENTITY"),
+  workflowNamespace: namespaceOf(env, "CLUSTER_WORKFLOW"),
+  queueNamespace: namespaceOf(env, "CLUSTER_QUEUE"),
+  singletonNamespace: namespaceOf(env, "CLUSTER_SINGLETON"),
+});
 
 const decoded = (segment: string | undefined) => {
   try {

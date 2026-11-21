@@ -114,7 +114,7 @@ A post a socket watches, by a handler that sends no calls or tells, costs **1 + 
 
 The P is paid by any handler, or any work it forked, that appends to any of the object's logs or `notify`s any of its sources, not only a post to the event a page watches: the host reads one change signal for all of them.
 
-No `hold` or `acknowledge` is called: a poll is unary. A page's next poll after an answer reaches the object as a socket message, not a stub call, and is parked at once when nothing changed since the answer and the answer's call was under 30 seconds earlier; later it is sent to the entity, one stub call, which renews a subscription hook's lease. A page watching over HTTP adds no P. The example's test of these counts, "costs each post 1 + P stub calls", runs the Worker through [`chat-rooms/test/worker.ts`](../examples/chat-rooms/test/worker.ts), which exports a `ClusterEntity` counting each `invoke` by object and tag.
+No `hold` or `acknowledge` is called: a poll is unary. A page's next poll after an answer reaches the object as a socket message, not a stub call. It is parked at once if it keeps the same tag, input, poll options and effective request headers, resumes from that answer's cursor, and nothing changed in the under 30 seconds since the answer's call. Otherwise it is sent to the entity, one stub call, which renews a subscription hook's lease. A page watching over HTTP adds no P. The example's test of these counts, "costs each post 1 + P stub calls", runs the Worker through [`chat-rooms/test/worker.ts`](../examples/chat-rooms/test/worker.ts), which exports a `ClusterEntity` counting each `invoke` by object and tag.
 
 ## Test on workerd
 

@@ -27,19 +27,9 @@ export interface Checking {
   readonly revision: (key: string | undefined) => Effect.Effect<string>;
 }
 
-/**
- * Where an `Events` keeps its check and current sources' revisions: counters by name, which only count up,
- * in an `epoch` telling them from counters that started again.
- */
 export interface RevisionStorage {
-  /**
-   * The epoch the counters count in, run before each revision is built from it: one value until
-   * the counters start again, so a cursor from before is behind every revision, kept by the time
-   * it succeeds.
-   */
   readonly epoch: Effect.Effect<string>;
   readonly get: (name: string) => Effect.Effect<number>;
-  /** Adds one to each counter `names` names. */
   readonly bump: (names: readonly string[]) => Effect.Effect<void>;
 }
 
@@ -157,31 +147,11 @@ const holding = <A>(
     () => Effect.sync(() => set.delete(value))
   );
 
-/** `makeEvents`' options: where it keeps logs and revisions. */
 export interface MakeEventsOptions {
-  /**
-   * The storage of `event`'s log, made at its first attachment: the core keeps the log's cursors,
-   * bounds and expiry over it.
-   */
   readonly log: (event: Event.Any) => LogStorage<ErasedEmitted>;
-  /**
-   * Where check and current sources' revisions are kept; defaults to memory, a new epoch with each
-   * `makeEvents`. A host keeping its logs in storage keeps them there too, so a subscriber's
-   * cursor outlives the host.
-   */
   readonly revisions?: RevisionStorage | undefined;
 }
 
-/**
- * An `Events` for as long as the scope lasts, over the log storage `log` makes: what
- * `Stored.layerEvents` provides over SQL, its subscribers' wakes in memory and its logs where
- * `log` keeps them.
- *
- * **Gotchas**
- *
- * - Make it once per database, around the handlers that announce and the surfaces that serve, as `layerMemory` is built.
- * - A log's storage is made once per event for the life of the scope, its position read on every append and read: a storage emptied behind its back starts a new epoch, and a cursor from before reads a gap.
- */
 export const makeEvents = (
   options: MakeEventsOptions
 ): Effect.Effect<Events["Service"], never, Scope.Scope> =>

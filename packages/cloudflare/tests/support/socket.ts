@@ -99,14 +99,19 @@ export const raw = (type: string, id: string) =>
 
 export const pollOf =
   (socket: WebSocket, event: string, board: string) =>
-  (id: string, watch: string, cursor: string | null) => {
+  (
+    id: string,
+    watch: string,
+    cursor: string | null,
+    headers: ReadonlyArray<readonly [string, string]> = []
+  ) => {
     socket.send(
       JSON.stringify({
         _tag: "Request",
         id,
         tag: ActionRpc.pollTag(event),
         payload: { input: { board }, cursor, watch },
-        headers: [],
+        headers,
       })
     );
   };

@@ -1,7 +1,7 @@
 import { Effect, Stream } from "effect";
 import type { Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import type { HttpClientError } from "effect/http";
+import type { HttpClientError, HttpClientResponse } from "effect/http";
 import { HttpApiClient } from "effect/http-api";
 import type { HttpApi } from "effect/http-api";
 
@@ -162,6 +162,15 @@ type NativeMethod<R> = (request: {
   readonly payload: ErasedValue;
 }) => Effect.Effect<ErasedValue, unknown, R>;
 
+type NativeStreamMethod<R> = (request: {
+  readonly payload: ErasedValue;
+  readonly responseMode: "decoded-and-response";
+}) => Effect.Effect<
+  readonly [ErasedValue, HttpClientResponse.HttpClientResponse],
+  unknown,
+  R
+>;
+
 interface NativeClient<M> {
   readonly [name: string]: M | undefined;
 }
@@ -209,7 +218,7 @@ const nativeOf = <E, R>(
 
 const actionMethodOf = <R>(
   action: Action.Any,
-  native: NativeClient<NativeMethod<R>>
+  native: NativeClient<NativeStreamMethod<R> & NativeMethod<R>>
 ): CheckedMethod<R> => {
   const method = methodOf(native, action.name, "action");
 
@@ -218,15 +227,17 @@ const actionMethodOf = <R>(
       checked(action, sendingValue, (payload) => method({ payload })),
     Progressed: () =>
       checked(action, sendingValue, (payload, onProgress) =>
-        Effect.flatMap(method({ payload }), (answer) =>
-          readWithProgress(answer, onProgress)
+        Effect.flatMap(
+          method({ payload, responseMode: "decoded-and-response" }),
+          (answer) => readWithProgress(answer, onProgress)
         )
       ),
     Elements: () =>
       checkedStream(action, sendingValue, (payload, onProgress) =>
         Stream.unwrap(
-          Effect.map(method({ payload }), (answer) =>
-            readElements(answer, onProgress)
+          Effect.map(
+            method({ payload, responseMode: "decoded-and-response" }),
+            (answer) => readElements(answer, onProgress)
           )
         )
       ),

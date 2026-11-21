@@ -25,15 +25,10 @@ const isStorage = (value: unknown): value is DurableObjectStorage =>
   Predicate.hasProperty(value, "sql") &&
   Predicate.hasProperty(value, "transaction");
 
-/**
- * Records an entity object's state by its storage, from its class's constructor, for
- * `ActionCluster.ObjectState` and for the listener `listen` sets.
- */
 export const hold = (state: DurableObjectState): void => {
   held.set(state.storage, { state, changed: () => undefined });
 };
 
-/** Calls `listener` at each change `Stored.layerEvents` makes in the object of `state`, which `hold` recorded. */
 export const listen = (state: DurableObjectState, listener: () => void) => {
   const found = held.get(state.storage);
 
@@ -72,11 +67,6 @@ export const objectHere: Effect.Effect<
   }
 );
 
-/**
- * The state `hold` recorded for the object of `storage`, its `database`'s transactions run
- * through `sql`, the same for every read in one handler build, or `undefined` where its class recorded none; a
- * rebuild in the same object, which makes a new client, records it anew.
- */
 export const stateHere = (
   sql: SqlClient.SqlClient,
   storage: DurableObjectStorage
@@ -115,7 +105,6 @@ export const stateHere = (
   return found.recorded.state;
 };
 
-/** Tells the listener of the object of `storage`, if it has one, that its events changed. */
 export const changedIn = (storage: DurableObjectStorage): void => {
   held.get(storage)?.changed();
 };

@@ -211,7 +211,7 @@ describe("ActionWorker's socket polls", () => {
   );
 
   it.live(
-    "parks a page's next poll with no call within 30 seconds of its watch's last call, and forwards one sent later to the entity",
+    "only parks an equivalent poll within 30 seconds without calling the entity",
     () =>
       Effect.gen(function* () {
         const board = "lease";
@@ -219,6 +219,7 @@ describe("ActionWorker's socket polls", () => {
         const poll = pollOf(socket, Pinned.name, board);
         const fresh = crypto.randomUUID();
         const stale = crypto.randomUUID();
+        const changed = crypto.randomUUID();
 
         poll("0", crypto.randomUUID(), null);
 
@@ -229,25 +230,27 @@ describe("ActionWorker's socket polls", () => {
 
         poll("1", fresh, null);
         poll("2", stale, null);
+        poll("3", changed, null);
 
         yield* until(
           () => received,
-          (messages) => messages.length >= 3
+          (messages) => messages.length >= 4
         );
 
         yield* answeredEarlier("Board", board, stale, 30_000);
 
         const before = yield* settledStubs;
 
-        poll("3", fresh, "0");
-        poll("4", stale, "0");
+        poll("4", fresh, "0");
+        poll("5", stale, "0");
+        poll("6", changed, "0", [["x-client-version", "2"]]);
 
-        yield* parkedIn(board, 2);
+        yield* parkedIn(board, 3);
 
         const after = yield* settledStubs;
 
-        expect(received).toHaveLength(3);
-        expect(after.started.invoke - before.started.invoke).toBe(1);
+        expect(received).toHaveLength(4);
+        expect(after.started.invoke - before.started.invoke).toBe(2);
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
   );

@@ -43,13 +43,11 @@ export interface Logged<A> {
   readonly key: string | undefined;
 }
 
-/** Where a log stands: the epoch its cursors name, and the last sequence number it gave. */
 export interface Position {
   readonly epoch: string;
   readonly last: number;
 }
 
-/** One entry as a log's storage keeps it: when it was appended, and what was published. */
 export interface Stored<A> {
   readonly at: number;
   readonly logged: Logged<A>;
@@ -65,24 +63,16 @@ export interface Listed<A> {
   readonly logged: Logged<A> | undefined;
 }
 
-/**
- * Where a log keeps its position and its entries, by sequence number, as `makeEvents` is
- * given it: storage alone, the log's cursors, bounds, truncation and expiry being the core's.
- */
 export interface LogStorage<A> {
-  /** The position `put` last kept, or `undefined` for a storage never written or emptied. */
   readonly position: Effect.Effect<Position | undefined>;
-  /** Keeps `position`, and `entry` with it where given, at once, inside `transaction` where given. */
   readonly put: (
     position: Position,
     entry?: { readonly seq: number; readonly stored: Stored<A> }
   ) => Effect.Effect<void>;
-  /** The entries kept from sequence number `from` on, at most `limit`, in order. */
   readonly list: (
     from: number,
     limit: number
   ) => Effect.Effect<ReadonlyArray<readonly [seq: number, listed: Listed<A>]>>;
-  /** Deletes every entry kept up to and including sequence number `seq`. */
   readonly deleteThrough: (seq: number) => Effect.Effect<void>;
   /**
    * Runs one whole append or read of the log, every call above inside it, holding what those

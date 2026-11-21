@@ -601,14 +601,9 @@ export function layer(
         return servedActions;
       }
 
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-      const authenticate = authenticating(
-        verifyingNative
-      ) as RpcMiddleware.RpcMiddleware<unknown, unknown, never>;
-
       return Layer.merge(
         servedActions,
-        Layer.succeed(authenticated)(authenticate)
+        Layer.succeed(authenticated)(authenticating(verifyingNative))
       );
     })
   ).pipe(provideServed(selected.apps, selected.events));

@@ -90,7 +90,6 @@ export const projectedErrors = (
   surface: Action.Errors = []
 ): Action.Errors => errorSchemas([...builtIns, ...action.error, ...surface]);
 
-/** The errors a binding declares for every call, and its protected actions' authentication's. */
 export interface Declaring {
   readonly error: Action.Errors;
   readonly authentication?: { readonly error: Action.Errors } | undefined;
