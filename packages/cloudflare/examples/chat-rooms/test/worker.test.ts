@@ -515,6 +515,30 @@ describe("the Worker and its rooms", () => {
   );
 
   it.live(
+    "opens an agent's push stream of a room on MCP's events/stream, served from the Worker's MCP objects",
+    () =>
+      Effect.gen(function* () {
+        const stream = yield* HttpClient.execute(
+          ActionMcp.request(
+            "events/stream",
+            { name: "message.posted", arguments: { room: "general" } },
+            { url: `${baseUrl}/mcp`, headers: { authorization: "Bearer ada" } }
+          )
+        );
+
+        const [active] = yield* stream.stream.pipe(
+          Stream.decodeText,
+          Stream.take(1),
+          Stream.runCollect
+        );
+
+        expect(stream.headers["content-type"]).toBe("text/event-stream");
+        expect(active).toContain("notifications/events/active");
+      }).pipe(Effect.scoped, Effect.provide(worker)),
+    { timeout: 30_000 }
+  );
+
+  it.live(
     "polls a room over one MCP connection across the room's eviction",
     () =>
       Effect.gen(function* () {

@@ -7,6 +7,7 @@ export {
   ClusterDurableQueue,
   ClusterSingleton,
   ClusterWorkflow,
+  McpEndpoint,
 } from "../src/worker.js";
 
 const Envelope = Schema.Struct({ tag: Schema.String });

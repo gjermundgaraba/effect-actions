@@ -113,7 +113,7 @@ const lint: ReturnType<typeof config> = config({
     {
       files: [
         "packages/cloudflare/src/cluster/ActionCluster.ts",
-        "packages/cloudflare/src/host/{ActionWorker,host,sockets}.ts",
+        "packages/cloudflare/src/host/{ActionWorker,host,mcp,sockets}.ts",
         "src/authentication/Authentication.ts",
         "src/cli/{ActionCli,commands}.ts",
         "src/contract/{Action,authorizer,call,caller,feed,idempotency,implementation,lease,push,serving,webhooks}.ts",

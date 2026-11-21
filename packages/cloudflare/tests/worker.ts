@@ -2,6 +2,7 @@ import * as CloudflareDurableObjects from "@effect/platform-cloudflare/Cloudflar
 import * as Action from "@gjermundgaraba/effect-actions/Action";
 import * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import * as ActionHttp from "@gjermundgaraba/effect-actions/ActionHttp";
+import * as ActionMcp from "@gjermundgaraba/effect-actions/ActionMcp";
 import * as Authentication from "@gjermundgaraba/effect-actions/Authentication";
 import * as Event from "@gjermundgaraba/effect-actions/Event";
 import * as RequestPolicy from "@gjermundgaraba/effect-actions/RequestPolicy";
@@ -477,6 +478,30 @@ const stallingAboveTheCluster = Layer.effectDiscard(
   })
 );
 
+const loggingEachRequest = HttpRouter.middleware(
+  (httpEffect) => Effect.tap(httpEffect, () => Effect.log("mcp request")),
+  { global: true }
+);
+
+const mcpBuilds = { built: 0, failNext: false };
+
+const countingBuilds = Layer.effectDiscard(
+  Effect.suspend(() => {
+    mcpBuilds.built += 1;
+
+    const failing = mcpBuilds.failNext;
+
+    mcpBuilds.failNext = false;
+
+    return Effect.andThen(
+      Effect.sleep("10 millis"),
+      failing
+        ? Effect.die(new Error("planted MCP endpoint build failure"))
+        : Effect.void
+    );
+  })
+);
+
 const signedIn = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
   layer.pipe(Layer.provide([signIn, recording]));
 
@@ -557,6 +582,19 @@ const worker = ActionWorker.make<Cloudflare.Env>({
       edgeLog,
       stallingAboveTheCluster
     ).pipe(Layer.provide(signIn), Layer.provideMerge(recording)),
+  mcp: {
+    layer: () =>
+      ActionMcp.layerHttp(ActionEntity.reaching(Seer), {
+        actions: [Whoami, Seen],
+        name: "seers",
+        version: "1.0.0",
+        authentication: Login,
+      }).pipe(
+        Layer.provide(signIn),
+        Layer.merge(countingBuilds),
+        Layer.merge(loggingEachRequest)
+      ),
+  },
   policy: () =>
     RequestPolicy.make({ publicUrl: new URL("https://worker.example") }),
   fallback: (request) =>
@@ -574,6 +612,7 @@ export const {
   ClusterDurableQueue,
   ClusterSingleton,
   ClusterWorkflow,
+  McpEndpoint,
 } = worker;
 
 const started = { invoke: 0, hold: 0, acknowledge: 0 };
@@ -630,6 +669,16 @@ export default {
 
     if (pathname === "/stubs") {
       return Response.json({ started, finished, instances });
+    }
+
+    if (pathname === "/mcp-builds") {
+      return Response.json({ built: mcpBuilds.built });
+    }
+
+    if (pathname === "/fail-mcp-build") {
+      mcpBuilds.failNext = true;
+
+      return new Response(null, { status: 204 });
     }
 
     if (pathname === "/logged") {

@@ -3,7 +3,7 @@ import { Schema } from "effect";
 
 import { DemoRoomName } from "./chat/Chat.js";
 import { Room } from "./entities.js";
-import { rooms, workerRoutes } from "./routes.js";
+import { agents, rooms, workerRoutes } from "./routes.js";
 import { protocolVersion, RoomSocket, unsupportedProtocol } from "./Rpc.js";
 
 const isRoom = Schema.is(DemoRoomName);
@@ -22,6 +22,7 @@ const worker = ActionWorker.make<Cloudflare.Env>({
     },
   ],
   routes: () => workerRoutes,
+  mcp: { layer: () => agents },
 });
 
 export class ClusterEntity extends worker.ClusterEntity {}
@@ -31,6 +32,7 @@ export const {
   ClusterWorkflow,
   ClusterDurableQueue,
   ClusterSingleton,
+  McpEndpoint,
 } = worker;
 
 export default { fetch: worker.fetch };

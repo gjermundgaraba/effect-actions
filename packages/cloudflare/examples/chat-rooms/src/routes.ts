@@ -39,13 +39,13 @@ export const rooms = ActionEntity.layer(Room, [messages, messageEvents], {
 
 const inRooms = ActionEntity.reaching(Room);
 
-export const workerRoutes = Layer.mergeAll(
-  ActionHttp.layer(RoomHttp, inRooms),
-  ActionMcp.layerHttp(inRooms, {
-    actions: [...Messages, MessagePosted],
-    name: "chat-rooms",
-    version: "1.0.0",
-    authentication: Login,
-    requestScoped: true,
-  })
-).pipe(Layer.provide(authenticate));
+export const workerRoutes = ActionHttp.layer(RoomHttp, inRooms).pipe(
+  Layer.provide(authenticate)
+);
+
+export const agents = ActionMcp.layerHttp(inRooms, {
+  actions: [...Messages, MessagePosted],
+  name: "chat-rooms",
+  version: "1.0.0",
+  authentication: Login,
+}).pipe(Layer.provide(authenticate));

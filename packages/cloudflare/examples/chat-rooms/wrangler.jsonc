@@ -8,6 +8,7 @@
       { "name": "CLUSTER_WORKFLOW", "class_name": "ClusterWorkflow" },
       { "name": "CLUSTER_QUEUE", "class_name": "ClusterDurableQueue" },
       { "name": "CLUSTER_SINGLETON", "class_name": "ClusterSingleton" },
+      { "name": "MCP_ENDPOINT", "class_name": "McpEndpoint" },
     ],
   },
   "migrations": [
@@ -20,5 +21,6 @@
         "ClusterSingleton",
       ],
     },
+    { "tag": "mcp-v1", "new_sqlite_classes": ["McpEndpoint"] },
   ],
 }

@@ -17,7 +17,7 @@ const Room = ActionEntity.make("Room", [...Messages, MessagePosted], {
 });
 ```
 
-Make the Worker once, naming each entity with the layer serving it and the page's socket it accepts, and export what it returns: the four Durable Object classes, and its `fetch`, which judges each request's Host and Origin first, hands a page's upgrade to its room's object, and answers the rest with the routes, or a page with `fallback`:
+Make the Worker once, naming each entity with the layer serving it and the page's socket it accepts, and export what it returns: the four cluster classes and `McpEndpoint`, and its `fetch`, which judges each request's Host and Origin first, hands a page's upgrade to its room's object, sends MCP requests to the endpoint `mcp` serves from Durable Objects of its own, and answers the rest with the routes, or a page with `fallback`:
 
 ```ts
 const worker = ActionWorker.make<Env>({
@@ -34,6 +34,9 @@ const worker = ActionWorker.make<Env>({
     },
   ],
   routes: () => ActionHttp.layer(RoomHttp, ActionEntity.reaching(Room)),
+  mcp: {
+    layer: () => ActionMcp.layerHttp(ActionEntity.reaching(Room), mcpOptions),
+  },
   policy: (env) => RequestPolicy.make({ publicUrl: new URL(env.PUBLIC_URL) }),
   fallback: (request) => page(request),
 });
@@ -43,6 +46,7 @@ export const {
   ClusterWorkflow,
   ClusterDurableQueue,
   ClusterSingleton,
+  McpEndpoint,
 } = worker;
 export default { fetch: worker.fetch };
 ```
