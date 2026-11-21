@@ -184,9 +184,7 @@ export interface LayerHttpOptions<
    * alone, so a client that opens with `initialize` is refused; it keeps no session and takes only
    * `POST`, a `DELETE` answering 405. It has no subscriptions, so `allowSubscriptions` is ignored,
    * and native `features` send no list-change notification. `McpServer.elicit` reaches no client
-   * on it, as Effect's `McpServer.layerHttpRequestScoped` says. On Cloudflare,
-   * `@gjermundgaraba/effect-actions-cloudflare`'s `ActionWorker.make` serves an endpoint without
-   * it from Durable Objects, with its sessions, push streams and subscriptions.
+   * on it, as Effect's `McpServer.layerHttpRequestScoped` says.
    */
   readonly requestScoped?: boolean | undefined;
 }

@@ -19,7 +19,7 @@ Where things are, in a project that installs the package: these pages in `node_m
 
 | Read | When you need to |
 | --- | --- |
-| [ActionWorker.md](ActionWorker.md) | make the Worker: name each entity once, export the cluster's four classes and `McpEndpoint`, serve MCP from Durable Objects, build once per isolate, judge requests by a request policy, answer pages with a fallback, choose what each socket serves |
+| [ActionWorker.md](ActionWorker.md) | make the Worker: name each entity once, export the four classes, build once per isolate, judge requests by a request policy, answer pages with a fallback, choose what each socket serves |
 | [ActionCluster.md](ActionCluster.md) | serve entities from the Worker, answer a call made through an entity's client, read an object's own state, deliver their events by webhook, test them on workerd |
 | [ActionWorker-sockets.md](ActionWorker-sockets.md) | follow an entity's events from a page over a WebSocket the object keeps while it hibernates, refuse a page built against other rpcs, count the stub calls a post costs |
 | [ActionCluster-failures.md](ActionCluster-failures.md) | find what workerd's, the compiler's or Effect's message means, and the fix |

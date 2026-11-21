@@ -1,6 +1,6 @@
 # chat-rooms
 
-Chat rooms on Cloudflare, on Effect Cluster: each room is one entity, `Room`, and so one Durable Object holding its messages in its own SQLite database. Members read and post messages in the rooms they belong to over the Worker's JSON routes and MCP endpoint, which reach every room through `ActionEntity.reaching`, the MCP endpoint served from Durable Objects of its own so an agent may open a session and be pushed events. A page follows its room through an event, `MessagePosted`, over a WebSocket to the room's own object, which the runtime holds open while the room hibernates; an agent watches it over MCP, and a subscriber's callback receives it by webhook, delivered by the room across its eviction.
+Chat rooms on Cloudflare, on Effect Cluster: each room is one entity, `Room`, and so one Durable Object holding its messages in its own SQLite database. Members read and post messages in the rooms they belong to over the Worker's JSON routes and MCP endpoint, which reach every room through `ActionEntity.reaching`. A page follows its room through an event, `MessagePosted`, over a WebSocket to the room's own object, which the runtime holds open while the room hibernates; an agent polls it over MCP, and a subscriber's callback receives it by webhook, delivered by the room across its eviction.
 
 Start here to run actions on Cloudflare. The same chat on a long-lived server is live-rpc, in the core package's `examples/`.
 
@@ -26,8 +26,7 @@ Each trap below is shown in the code of the files it names.
 - **A post writes its message and wakes its followers in one transaction, and the table keeps one message per author and `request`**, so a post whose notification fails keeps nothing, and a page sending it again with its `request`, even after the room failed past its write, is answered with the first message, notifying nothing; the page sends it again only after a transport failure: `src/platform/sql-messages.ts`, `src/chat/handlers.ts`, `src/browser.ts`.
 - **A page follows its room over its socket, and sends its token on each message**, as a page cannot set a browser socket's headers, while its actions stay on the JSON routes; its socket serves the event alone, and a page built against other rpcs is refused, and stops: `src/browser.ts`, `src/Rpc.ts`, whose binding the socket's `actions` in `src/worker.ts` reads, and `protocol` there.
 - **A page watches over its socket, which lets the room hibernate**; a stream through the Worker, its JSON `watch` or MCP's `events/stream`, calls the room each `nextPoll`, 2 seconds, while it is open, so the room never hibernates: `followRoom` in `src/browser.ts`, `nextPoll` in `src/chat/events.ts`.
-- **The first migration creates the cluster's four classes, and a second the MCP endpoint's**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
-- **The MCP endpoint runs in `McpEndpoint` objects, not in the Worker**, so it serves sessions and push streams, and its store is the rooms' alone: `agents` in `src/routes.ts`, `mcp` in `src/worker.ts`.
+- **The one migration creates the four classes**: `wrangler.jsonc`; a deployment of classes of its own adds a step deleting them, and their data.
 - **Each room delivers its own webhook subscriptions**, kept in a table of its own and woken by a persisted tell for each retry wait, and a subscribed room hibernates while idle, as `MessagePosted` is `notified`, asked again only when a post notifies it: `roomWebhooks` in `src/routes.ts`, `src/platform/webhook-delivery.ts`, `Login` in `src/identity/Identity.ts`, `test/webhooks.test.ts`.
 
 ## Layout
@@ -51,8 +50,8 @@ src/
 ├── Api.ts             the room's JSON binding
 ├── Rpc.ts             what a page's socket serves, the event alone, and the version it names
 ├── entities.ts        Room, the entity
-├── routes.ts          the entity's layer and services, the Worker's routes and its MCP endpoint
-├── worker.ts          entrypoint: ActionWorker.make, its five classes and the Worker's fetch, a room's socket
+├── routes.ts          the entity's layer and services, and the Worker's routes
+├── worker.ts          entrypoint: ActionWorker.make, the four classes and the Worker's fetch, a room's socket
 ├── browser.ts         client module: a page's room over JSON and its socket
 └── env.d.ts           the bindings' types, as `wrangler types` writes them
 test/
@@ -71,12 +70,12 @@ test/
 
 | To see | Read |
 | --- | --- |
-| The four classes, bindings and migration a cluster needs, and the MCP endpoint's | `src/worker.ts`, `wrangler.jsonc` |
+| The four classes, bindings and migration a cluster needs | `src/worker.ts`, `wrangler.jsonc` |
 | One Worker building the application once per isolate | `src/worker.ts` |
 | An entity's stores over its own SQLite, built per activation on `ActionCluster.layerObject` | `src/routes.ts`, `src/platform/sql-messages.ts` |
 | An authorizer that yields the entity's room once, when it is built | `src/chat/authorize.ts`, `src/routes.ts` |
 | A Worker serving every room's actions and event, each in the room it names | `src/routes.ts`, `test/worker.test.ts` |
-| One MCP endpoint for every room, its event polled and pushed | `src/routes.ts`, `src/worker.ts`, `test/worker.test.ts` |
+| One MCP endpoint for every room, its event polled | `src/routes.ts`, `test/worker.test.ts` |
 | A room refusing a call that names another room | `src/entities.ts`, `test/worker.test.ts` |
 | A page's socket to its room, kept open while the room hibernates | `src/worker.ts`, `src/browser.ts`, `test/worker.test.ts` |
 | A room's posts delivered by webhook, across its hibernation | `src/routes.ts`, `src/platform/webhook-delivery.ts`, `test/webhooks.test.ts` |

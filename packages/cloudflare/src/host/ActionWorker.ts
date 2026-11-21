@@ -4,7 +4,6 @@ import type * as Action from "@gjermundgaraba/effect-actions/Action";
 import type * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import type * as RequestPolicy from "@gjermundgaraba/effect-actions/RequestPolicy";
-import type { DurableObject } from "cloudflare:workers";
 import { Context, Effect, Function, Layer } from "effect";
 import type { Scope } from "effect";
 import {
@@ -19,8 +18,6 @@ import * as ActionCluster from "../cluster/ActionCluster.js";
 import { exposuresOf, hostClass, isUpgrade } from "./host.js";
 import type { Host } from "./host.js";
 import { initializer } from "./initializer.js";
-import { endpointClass, forwarding } from "./mcp.js";
-import type { EndpointOf } from "./mcp.js";
 
 /** The four namespaces `make` reads by default, bound in `wrangler.jsonc` under these names. */
 export interface Bindings {
@@ -28,11 +25,6 @@ export interface Bindings {
   readonly CLUSTER_WORKFLOW: DurableObjectNamespace;
   readonly CLUSTER_QUEUE: DurableObjectNamespace;
   readonly CLUSTER_SINGLETON: DurableObjectNamespace;
-}
-
-/** The namespace of `McpEndpoint` objects `make` reads by default, bound in `wrangler.jsonc` under this name. */
-export interface McpBinding {
-  readonly MCP_ENDPOINT: DurableObjectNamespace;
 }
 
 /** `ActionCluster.layer`'s options but its `entities`, which `make` takes from its own. */
@@ -123,42 +115,6 @@ export interface Entity<Env> {
 }
 
 /**
- * The Worker's MCP endpoint at `/mcp`, served from objects of `make`'s `McpEndpoint` class, so it
- * speaks every revision and keeps what `ActionMcp.layerHttp` keeps without `requestScoped`: 2025
- * sessions, push streams and subscriptions. Each isolate of the Worker sends its requests to one
- * object of its own, which builds the endpoint as it starts, over the isolate's application, and a
- * session's later requests, from any isolate, to the object that opened it, named in the
- * `Mcp-Session-Id` the client is given. Guide: `docs/ActionWorker.md` in this package.
- *
- * **Gotchas**
- *
- * - An occurrence a log of the endpoint's own publishes, under `Event.layerMemory`, and a list change a handler makes through `McpServer.McpServer`, reach only streams held in the same object, so a client of another isolate's object never sees them: serve events from entities, through `ActionEntity.reaching`, whose streams poll the entity, each occurrence up to its poll's `nextPollMs` late and costing the entity the calls a poll does.
- * - A session lives in its object's memory, and the runtime evicts an object idle for a while, or on a deploy: a session's next request is then answered 404, on which the client opens a new one, as MCP's transport says.
- * - An open push stream or subscription keeps its object awake, billed for its duration, until the client closes it or a host's timeout ends it.
- * - A service `routes` merges, such as a `Logger.layer`, is the isolate's and in each request's context, as a route's is, but a service built inside `layer`, or a layer it provides itself, is built again in each object, so an in-memory store there is the object's alone: keep state in entities.
- * - A build that fails fails the requests waiting on it and resets the object, whose next request builds again.
- */
-export type Mcp<Env> = {
-  /**
-   * The endpoint, `ActionMcp.layerHttp(implementations, options)` without `requestScoped` or
-   * `path`, given `HttpServer.layerServices` and the cluster, as `routes` is.
-   *
-   * **Gotchas**
-   *
-   * - The Worker forwards `/mcp` alone, `ActionMcp.layerHttp`'s default `path`: an endpoint given another answers every request 404.
-   */
-  readonly layer: EndpointOf<Env>;
-} & ([Env] extends [McpBinding]
-  ? {
-      /** The `McpEndpoint` objects' namespace; by default, `env`'s `MCP_ENDPOINT`. */
-      readonly namespace?: ((env: Env) => DurableObjectNamespace) | undefined;
-    }
-  : {
-      /** The `McpEndpoint` objects' namespace, as `Env` binds it under another name than `McpBinding`'s. */
-      readonly namespace: (env: Env) => DurableObjectNamespace;
-    });
-
-/**
  * `make`'s options. `cluster` names the cluster's four namespaces and its other options,
  * `ActionCluster.layer`'s but `entities`; it may be left out, `Bindings`' four read from `env`,
  * only where `Env` binds them under `Bindings`' names.
@@ -186,8 +142,6 @@ export type Options<Env> = {
         | Layer.Success<typeof HttpServer.layerServices>
       >)
     | undefined;
-  /** The MCP endpoint, served from `McpEndpoint` objects, which `make` then returns. */
-  readonly mcp?: Mcp<Env> | undefined;
   /**
    * The Host and Origin policy every request is judged by first, built from each request's `env`,
    * so a deploy changing only a binding such as the public URL takes effect at once: a request it refuses is answered 403, `Forbidden`, reaching no
@@ -247,15 +201,6 @@ const fromBindings = (env: unknown): ClusterOptions => {
   };
 };
 
-const mcpFromBinding = (env: unknown): DurableObjectNamespace => {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const bound = env as McpBinding;
-
-  return bound.MCP_ENDPOINT;
-};
-
-const mcpPath = "/mcp";
-
 const decoded = (segment: string | undefined) => {
   try {
     return segment === undefined ? undefined : decodeURIComponent(segment);
@@ -275,12 +220,11 @@ const methodsLeavingHeadToGet = [
 
 /**
  * The Worker: each entity of `entities` registered with the cluster and served by its `layer`,
- * `routes` over them, one runtime built per isolate for both, and the Durable Object classes to
- * export: the cluster's four, the entity class serving each entity's `socket`, and, where `mcp` is
- * given, `McpEndpoint`, serving it. Its `fetch` judges every request by `policy` first, hands a
- * WebSocket upgrade a socket's path matches to the entity's object, without waiting on the
- * runtime, and a request to `/mcp` to an `McpEndpoint` object, and answers the rest with the routes, or with
- * `fallback` where no route matches. Call it once, from the Worker's module, exporting its classes under their names
+ * `routes` over them, one runtime built per isolate for both, and the four Durable Object classes
+ * to export, the entity class serving each entity's `socket`. Its `fetch` judges every request by
+ * `policy` first, hands a WebSocket upgrade a socket's path matches to the entity's object,
+ * without waiting on the runtime, and answers the rest with the routes, or with `fallback` where no
+ * route matches. Call it once, from the Worker's module, exporting its classes under their names
  * and `{ fetch }` as the default. Guide: `docs/ActionWorker.md` in this package.
  *
  * **Gotchas**
@@ -291,23 +235,8 @@ const methodsLeavingHeadToGet = [
  * - The cluster is built from the first request's `env`, kept for the isolate, which Cloudflare may reuse across a deploy changing only bindings: deploy code with a namespace change, or the old namespaces serve until the isolate ends.
  * - The runtime owns each entity object's alarm: schedule work with the core's `ActionEntity.wakeAt`.
  */
-export function make<Env>(
-  options: Options<Env> & { readonly mcp: Mcp<Env> }
-): Worker<Env> & {
-  /** The class serving `mcp`, to export as `McpEndpoint`. */
-  readonly McpEndpoint: new (
-    ctx: DurableObjectState,
-    env: Env
-  ) => DurableObject<Env>;
-};
-export function make<Env>(options: Options<Env>): Worker<Env>;
-export function make<Env>(options: Options<Env>): Worker<Env> & {
-  readonly McpEndpoint?: new (
-    ctx: DurableObjectState,
-    env: Env
-  ) => DurableObject<Env>;
-} {
-  const { entities, routes, fallback, mcp } = options;
+export const make = <Env>(options: Options<Env>): Worker<Env> => {
+  const { entities, routes, fallback } = options;
 
   const clusterOf: (env: Env) => ClusterOptions =
     options.cluster ?? fromBindings;
@@ -384,11 +313,6 @@ export function make<Env>(options: Options<Env>): Worker<Env> & {
 
   const ClusterEntity = hostClass(byType, context);
 
-  const mcpNamespaceOf: (env: Env) => DurableObjectNamespace =
-    mcp?.namespace ?? mcpFromBinding;
-
-  const forward = forwarding();
-
   const objectOf = (env: Env, request: Request) => {
     for (const { entity, id, pattern } of sockets) {
       const sent = decoded(pattern.exec(request.url)?.pathname.groups["id"]);
@@ -427,7 +351,7 @@ export function make<Env>(options: Options<Env>): Worker<Env> & {
     return await served.handler(request);
   };
 
-  const worker: Worker<Env> = {
+  return {
     fetch: async (request, env) => {
       const policy = options.policy?.(env);
 
@@ -437,13 +361,9 @@ export function make<Env>(options: Options<Env>): Worker<Env> & {
 
       const object = isUpgrade(request) ? objectOf(env, request) : undefined;
 
-      if (object !== undefined) {
-        return await object.fetch(request);
-      }
-
-      return mcp !== undefined && new URL(request.url).pathname === mcpPath
-        ? await forward(request, mcpNamespaceOf(env))
-        : await serve(request, env);
+      return object === undefined
+        ? await serve(request, env)
+        : await object.fetch(request);
     },
     context,
     ClusterEntity,
@@ -451,8 +371,4 @@ export function make<Env>(options: Options<Env>): Worker<Env> & {
     ClusterDurableQueue: CloudflareDurableObjects.ClusterDurableQueue,
     ClusterSingleton: CloudflareDurableObjects.ClusterSingleton,
   };
-
-  return mcp === undefined
-    ? worker
-    : { ...worker, McpEndpoint: endpointClass(context, mcp.layer) };
-}
+};

@@ -2,12 +2,6 @@
 
 ## Unreleased
 
-### Additions
-
-**`ActionWorker.make` in `@gjermundgaraba/effect-actions-cloudflare` serves an MCP endpoint at `/mcp` from Durable Objects, `mcp: { layer, namespace? }`, speaking every revision `ActionMcp.layerHttp` speaks on a long-lived server.** Where a `requestScoped` endpoint in `routes` spoke 2026-07-28 alone, refusing a client that opens with `initialize`, such as Codex, and pushed nothing, `mcp` serves 2025-11-25 and 2025-06-18 sessions, `events/stream` pushed and `subscriptions/listen`. `layer` is `ActionMcp.layerHttp(...)` without `requestScoped` or `path`, built once in each object of the new `McpEndpoint` class as it starts, before it takes a request, over the isolate's application; each isolate sends its requests to one object of its own, and a session's later requests, from any isolate, to the object that opened it, whose id begins the `Mcp-Session-Id` the client is given. Each request runs with the services `routes` merges, as a route's does, and a failed build resets the object, whose next request builds again. A session lives in its object's memory and ends, answered 404, when the runtime evicts it; an occurrence or list change made inside the endpoint reaches only streams of the same object, so its events come from entities, through `ActionEntity.reaching`. `make` returns `McpEndpoint` where `mcp` is given, and its type has it only then, exported and bound under `MCP_ENDPOINT`, or the binding `namespace` reads, with a migration of its own. chat-rooms serves its agents this way.
-
-- Use: move the MCP endpoint out of `routes` into `mcp`, dropping `requestScoped`; export `McpEndpoint` from the Worker's module, bind it in `wrangler.jsonc` as `{ "name": "MCP_ENDPOINT", "class_name": "McpEndpoint" }`, and add a migration step creating it, `{ "tag": "mcp-v1", "new_sqlite_classes": ["McpEndpoint"] }`, after the existing ones. A `requestScoped` endpoint in `routes` keeps working as before, for 2026-07-28 clients alone.
-
 ### Other changes
 
 - Under TypeScript 7.1, `Action.implement` and `Event.implement` infer what an `authorize` built by an Effect reads per request when it is declared apart from the call, as 7.0 does; 7.1 inferred nothing through the generic alias the parameter was typed with ([microsoft/TypeScript#64757](https://github.com/microsoft/TypeScript/issues/64757)), so a shared authorizer failed to compile. Options built at runtime, such as `commands: Object.fromEntries(...)` given to `ActionCli`, compile under 7.1 as under 7.0, their keys checked when the command is made.
