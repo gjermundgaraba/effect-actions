@@ -45,7 +45,6 @@ const isStreamOf = (success: Codec): success is StreamOf<Codec> =>
 export const elementOf = (success: Codec): Codec | undefined =>
   isStreamOf(success) ? success.element : undefined;
 
-/** How a surface carries an action's answer: one value, a value after its progress, or elements. */
 export type Answering = Data.TaggedEnum<{
   readonly Value: { readonly success: Codec };
   readonly Progressed: { readonly success: Codec; readonly progress: Codec };

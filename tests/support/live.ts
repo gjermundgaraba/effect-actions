@@ -1,6 +1,5 @@
 import { Duration, Effect, Schedule } from "effect";
 
-/** Asks `done` every 20 real milliseconds until it holds, dying if it does not within `within`. */
 export const eventually = (
   done: () => boolean,
   within: Duration.Input = "10 seconds"

@@ -3,7 +3,6 @@ import { Effect, Predicate } from "effect";
 import { memoized } from "./implementation.js";
 import type { ErasedAuthorize } from "./implementation.js";
 
-/** `T`, read only once it is inferred: an implementation's build channels. */
 export type Deferred<T> = [T][T extends unknown ? 0 : never];
 
 export type ErasedAuthorizer<C> =

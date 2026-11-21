@@ -4,7 +4,7 @@ import type * as Action from "@gjermundgaraba/effect-actions/Action";
 import type * as ActionEntity from "@gjermundgaraba/effect-actions/ActionEntity";
 import type * as Event from "@gjermundgaraba/effect-actions/Event";
 import type * as RequestPolicy from "@gjermundgaraba/effect-actions/RequestPolicy";
-import { Context, Effect, Function, Layer } from "effect";
+import { Context, Effect, Function, Layer, Predicate } from "effect";
 import type { Scope } from "effect";
 import {
   HttpEffect,
@@ -44,7 +44,7 @@ export type Cluster = Layer.Success<ReturnType<typeof ActionCluster.layer>>;
  * **Gotchas**
  *
  * - A watch's poll that finds nothing new, on a page `notified`, is parked in the socket's attachment and asked again once `Stored.layerEvents`' change signal moved, read as `Stored.layerEvents` appends or `notify`s in the object, by a handler or by work it forked that outlived its call, and as each handler the object runs ends, whether a call, a tell or an alarm ran it: an entity whose events are not on `Stored.layerEvents`, and a check source not `notified`, have their polls answered at once, their watches polling at `nextPoll`, each poll a stub call.
- * - A post a socket watches, by a handler that sends no calls or tells, costs 1 + P stub calls, `invoke` each: the post, and one for each of the P polls parked on that object, sent as its first append or `notify` is made, a later change in the same post asking again only the polls that answered nothing; the page's client polls again `nextPoll` later, and that poll is parked with no call when nothing changed meanwhile and the last poll's call was under 30 seconds earlier, so a source whose `nextPoll` is 30 seconds or more costs one call a page each `nextPoll`; the signal is one for all the object's events, so any handler appending to any of its logs, or `notify`ing any of its sources, asks every parked poll again, whatever event it watches.
+ * - A post a socket watches, by a handler that sends no calls or tells, costs 1 + P stub calls, `invoke` each: the post, and one for each of the P polls parked on that object, sent as its first append or `notify` is made, a later change in the same post asking again only the polls that answered nothing; the next poll can park with no call when it resumes the last answer's cursor, its tag, other payload fields and effective headers serialize identically, nothing changed meanwhile, and the last call was under 30 seconds earlier; the signal is one for all the object's events, so a change asks every parked poll again, whatever event it watches.
  * - A change a `notified` check source reads from an upstream, which no handler `notify`s, moves no signal at all, so a parked poll answers it only when its client sends it again, `ActionRpc.pollResentAfter` after it was sent: `notify` the source from a handler, or leave it not `notified`, to answer it at `nextPoll`.
  * - A source's subscription hook is held by the entity's activation until its `lease`, 5 minutes by default, after the last poll the host sent the entity, on a timer that keeps the object awake, so the object of a page watching a hooked source does not hibernate until the hook lapses: the host sends a page's poll at most 4 minutes 30 seconds after its last, or `nextPoll` after its last answer when that is longer, so a `lease` under 4 minutes 30 seconds may lapse while a poll is parked, and one not longer than its `nextPoll`, as the default is at a `nextPoll` of 5 minutes, may lapse after each answered page; a lapsed hook is set up again by the next poll the host sends the entity.
  * - Only what `actions` lists is forwarded: a call of another action, or of a native rpc, which authenticates nothing, is answered `Unknown request tag`.
@@ -163,7 +163,7 @@ export type Options<Env> = {
     | undefined;
 } & ([Env] extends [Bindings]
   ? {
-      /** The cluster's namespaces and options; by default, `env`'s `Bindings`. */
+      /** The cluster's namespaces and options; by default, `env`'s four `Bindings`, checked before use. */
       readonly cluster?: ((env: Env) => ClusterOptions) | undefined;
     }
   : {
@@ -189,17 +189,38 @@ export interface Worker<Env> {
   readonly ClusterSingleton: typeof CloudflareDurableObjects.ClusterSingleton;
 }
 
-const fromBindings = (env: unknown): ClusterOptions => {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const bound = env as Bindings;
+const isNamespace = (value: unknown): value is DurableObjectNamespace =>
+  [
+    "get",
+    "getByName",
+    "idFromName",
+    "idFromString",
+    "jurisdiction",
+    "newUniqueId",
+  ].every(
+    (method) =>
+      Predicate.hasProperty(value, method) &&
+      Predicate.isFunction(value[method])
+  );
 
-  return {
-    entityNamespace: bound.CLUSTER_ENTITY,
-    workflowNamespace: bound.CLUSTER_WORKFLOW,
-    queueNamespace: bound.CLUSTER_QUEUE,
-    singletonNamespace: bound.CLUSTER_SINGLETON,
-  };
+const namespaceOf = (env: unknown, name: keyof Bindings) => {
+  const bound = Predicate.hasProperty(env, name) ? env[name] : undefined;
+
+  if (!isNamespace(bound)) {
+    throw new TypeError(
+      `ActionWorker.make: ${name} is not a Durable Object namespace (bind it in wrangler.jsonc, or give make a cluster option)`
+    );
+  }
+
+  return bound;
 };
+
+const fromBindings = (env: unknown): ClusterOptions => ({
+  entityNamespace: namespaceOf(env, "CLUSTER_ENTITY"),
+  workflowNamespace: namespaceOf(env, "CLUSTER_WORKFLOW"),
+  queueNamespace: namespaceOf(env, "CLUSTER_QUEUE"),
+  singletonNamespace: namespaceOf(env, "CLUSTER_SINGLETON"),
+});
 
 const decoded = (segment: string | undefined) => {
   try {

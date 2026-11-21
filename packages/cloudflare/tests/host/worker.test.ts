@@ -1,10 +1,10 @@
 import * as CloudflareCluster from "@effect/platform-cloudflare/CloudflareCluster";
 import { describe, expect, it } from "@effect/vitest";
-import { exports } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { Effect } from "effect";
 
 import { stubs, upgrade } from "../support/socket.js";
-import { foreignOrigin } from "../worker.js";
+import { foreignOrigin, workerFetch } from "../worker.js";
 
 const reached = (id: string) =>
   Effect.map(stubs, ({ instances }) =>
@@ -29,6 +29,20 @@ const fetched = (path: string, init: RequestInit = {}) =>
   });
 
 describe("ActionWorker.make's fetch", () => {
+  it("names the invalid default namespace binding before forwarding an upgrade", async () => {
+    const request = new Request("https://worker.example/sockets/Board/lobby", {
+      headers: { upgrade: "websocket" },
+    });
+
+    await expect(
+      workerFetch(request, {
+        ...env,
+        // @ts-expect-error An untyped Worker can receive a misconfigured binding.
+        CLUSTER_QUEUE: "not a namespace",
+      })
+    ).rejects.toThrow("CLUSTER_QUEUE is not a Durable Object namespace");
+  });
+
   it.live(
     "refuses a foreign Origin 403 before any socket, and answers an upgrade its socket's id refuses 404, reaching neither object",
     () =>

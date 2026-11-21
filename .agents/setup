@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Prepares an Amp orb the way CI does: Vite+ (`vp`), the Node.js and pnpm the
-# project pins, and the workspace's dependencies.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

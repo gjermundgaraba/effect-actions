@@ -21,7 +21,6 @@ export const overHttp = <E, R>(
     Layer.provide(Testing.layer(rpcRoutes(rpcs, serialization)))
   );
 
-/** An rpc call's answer as the Effect a unary rpc answers, dying for a missing or streamed one. */
 export const unaryOf = <A, E, R>(
   answer: Effect.Effect<A, E, R> | Stream.Stream<A, E, R> | undefined,
   rpc: string
@@ -30,7 +29,6 @@ export const unaryOf = <A, E, R>(
     ? answer
     : Effect.die(new Error(`No unary rpc ${rpc}`));
 
-/** An rpc call's answer as the Stream a stream rpc answers, dying for a missing or unary one. */
 export const streamOf = <A, E, R>(
   answer: Effect.Effect<A, E, R> | Stream.Stream<A, E, R> | undefined,
   rpc: string

@@ -36,6 +36,7 @@ type Parked = typeof Parked.Type;
 const Answered = Schema.Struct({
   watch: Schema.String,
   cursor: Schema.String,
+  fingerprint: Schema.optionalKey(Schema.String),
   gate: Schema.Finite,
   at: Schema.Finite,
 });
@@ -116,17 +117,12 @@ const decodePoll = Schema.decodeUnknownOption(ActionRpc.Poll);
 
 const decodePage = Schema.decodeUnknownOption(ActionRpc.Page);
 
-/** The version a socket's upgrade must name, and the close refusing one naming another. */
 export interface Refusal {
   readonly version: string;
   readonly code: number;
   readonly reason: string;
 }
 
-/**
- * One entity's socket, as a page reaches it: the rpcs it serves by tag, its polls among them,
- * its refusal, and a call into the entity.
- */
 export interface Served {
   readonly rpcs: ReadonlyMap<string, Rpc.AnyWithProps>;
   readonly polls: ReadonlySet<string>;
@@ -146,6 +142,21 @@ const merged = (upgrade: Headers, own: Headers): Headers => {
     ...own,
   ];
 };
+
+const fingerprintOf = (tag: string, payload: Schema.Json, headers: Headers) =>
+  Effect.promise(async () => {
+    const input = Predicate.isObject(payload)
+      ? Object.entries<unknown>(payload).filter(([key]) => key !== "cursor")
+      : payload;
+
+    const bytes = new TextEncoder().encode(
+      JSON.stringify([tag, input, headers])
+    );
+
+    const hash = await crypto.subtle.digest("SHA-256", bytes);
+
+    return new Uint8Array(hash).toHex();
+  });
 
 const encodeExit = (rpc: Rpc.AnyWithProps, exit: Exit.Exit<unknown, unknown>) =>
   Schema.encodeUnknownEffect(
@@ -202,10 +213,7 @@ const lostCalls =
 const lostSocket =
   "This server cannot read what it kept for this socket: connect again";
 
-/**
- * How long after a watch's last call to the entity a page's next poll is parked with no call:
- * with `ActionRpc.pollResentAfter`, it bounds how long the entity goes without a page's poll.
- */
+/** Together with `ActionRpc.pollResentAfter`, bounds how long an active watch can go without calling the entity. */
 export const uncalledWithin = Duration.seconds(30);
 
 const outdated = (socket: WebSocket, served: Served, held: Attachment) => {
@@ -220,10 +228,6 @@ const outdated = (socket: WebSocket, served: Served, held: Attachment) => {
   return true;
 };
 
-/**
- * Answers sockets' frames from the entity each attachment names, parks the polls that find
- * nothing new, and answers them again once the gate moves.
- */
 export const makeSockets = (options: {
   readonly servedBy: (name: string) => Served | undefined;
   readonly gate: () => number | undefined;
@@ -254,22 +258,21 @@ export const makeSockets = (options: {
 
       running.set(socket, calls);
 
-      const fiber = yield* Effect.forkChild(
-        Effect.onInterrupt(call, () =>
-          Effect.sync(() =>
-            updated(socket, (held) => ({
-              ...held,
-              calls: without(held.calls, (under) => under === id),
-            }))
-          )
-        )
-      );
+      const fiber = yield* Effect.forkChild(call);
 
       calls.set(id, fiber);
 
-      return yield* Effect.ensuring(
-        Fiber.await(fiber),
-        Effect.sync(() => calls.delete(id))
+      return yield* Effect.onExit(Fiber.await(fiber), (awaited) =>
+        Effect.sync(() => {
+          calls.delete(id);
+
+          if (Exit.isFailure(awaited) || Exit.hasInterrupts(awaited.value)) {
+            updated(socket, (held) => ({
+              ...held,
+              calls: without(held.calls, (under) => under === id),
+            }));
+          }
+        })
       );
     });
 
@@ -324,12 +327,9 @@ export const makeSockets = (options: {
       const before = read.value;
       const at = now();
       const upgrade = attachmentOf(socket)?.headers ?? [];
+      const headers = merged(upgrade, entry.headers);
 
-      const exit = yield* served.call(
-        entry.tag,
-        entry.payload,
-        merged(upgrade, entry.headers)
-      );
+      const exit = yield* served.call(entry.tag, entry.payload, headers);
 
       const poll = Option.getOrUndefined(decodePoll(entry.payload));
 
@@ -353,11 +353,15 @@ export const makeSockets = (options: {
         return true;
       }
 
-      yield* reply(socket, served, entry, exit);
-
       if (holding && poll?.watch !== undefined && page.cursor !== null) {
         const { watch } = poll;
         const { cursor } = page;
+
+        const fingerprint = yield* fingerprintOf(
+          entry.tag,
+          entry.payload,
+          headers
+        );
 
         updated(socket, (held) => ({
           ...held,
@@ -368,10 +372,12 @@ export const makeSockets = (options: {
                 answer.watch === watch ||
                 at - answer.at >= Duration.toMillis(uncalledWithin)
             ),
-            { watch, cursor, gate: before, at },
+            { watch, cursor, fingerprint, gate: before, at },
           ],
         }));
       }
+
+      yield* reply(socket, served, entry, exit);
 
       return false;
     });
@@ -431,17 +437,26 @@ export const makeSockets = (options: {
         return false;
       }
 
-      const answer = attachmentOf(socket)?.answered.find(
-        ({ watch }) => watch === poll.watch
-      );
+      const held = attachmentOf(socket);
+      const answer = held?.answered.find(({ watch }) => watch === poll.watch);
 
       forget(socket, poll.watch);
 
       if (
-        answer === undefined ||
+        answer?.fingerprint === undefined ||
         answer.cursor !== poll.cursor ||
         now() - answer.at >= Duration.toMillis(uncalledWithin)
       ) {
+        return false;
+      }
+
+      const fingerprint = yield* fingerprintOf(
+        request.tag,
+        request.payload,
+        merged(held?.headers ?? [], request.headers)
+      );
+
+      if (answer.fingerprint !== fingerprint) {
         return false;
       }
 
@@ -471,10 +486,6 @@ export const makeSockets = (options: {
         return;
       }
 
-      if (served.polls.has(tag) && (yield* parkedAgain(socket, request))) {
-        return;
-      }
-
       if (
         !updated(socket, (held) => ({ ...held, calls: [...held.calls, id] }))
       ) {
@@ -489,7 +500,11 @@ export const makeSockets = (options: {
         socket,
         id,
         served.polls.has(tag)
-          ? Effect.asVoid(polled(socket, served, { id, tag, payload, headers }))
+          ? Effect.flatMap(parkedAgain(socket, request), (parked) =>
+              parked
+                ? Effect.void
+                : Effect.asVoid(polled(socket, served, request))
+            )
           : Effect.flatMap(
               served.call(tag, payload, merged(upgrade, headers)),
               (exit) => reply(socket, served, request, exit)

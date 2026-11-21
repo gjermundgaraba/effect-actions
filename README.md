@@ -29,7 +29,7 @@ const greeting = Action.implement(Greet, ({ name }) =>
 A binding gives it a route, for the server to serve and a client to call:
 
 ```ts
-const Http = ActionHttp.make([Greet]); // POST /api/greet
+const Http = ActionHttp.make([Greet]);
 ```
 
 And the same implementation is served on every surface the host wants:
@@ -44,13 +44,13 @@ const routes = Layer.mergeAll(
 Serve `routes` with Effect's `HttpRouter.serve` and a platform server, as [examples/quickstart](examples/quickstart) does, file by file, and you have `POST /api/greet` and an MCP tool named `greet` at `/mcp`. The same `greeting` implementation is also:
 
 ```ts
-const { toolkit, layer } = ActionToolkit.make(greeting); // native Effect AI Toolkit and its handler layer
-const cli = ActionCli.make(greeting, { name: "greetings" }); // greetings greet --name Ada
+const { toolkit, layer } = ActionToolkit.make(greeting);
+const cli = ActionCli.make(greeting, { name: "greetings" });
 const remote = ActionCli.remoteCommand(Http, Greet, {
   client: ActionHttp.client(Http, { baseUrl }),
-}); // greet --name Ada, over HTTP
-const local = Action.client(greeting); // the HTTP client's methods, in process
-const rpc = ActionRpc.layer(ActionRpc.make([Greet]), greeting); // Effect RPC, on the protocol the host provides
+});
+const local = Action.client(greeting);
+const rpc = ActionRpc.layer(ActionRpc.make([Greet]), greeting);
 ```
 
 And the client is Effect's own `HttpApiClient`, typed from the same contract, one method per action:
@@ -59,7 +59,7 @@ And the client is Effect's own `HttpApiClient`, typed from the same contract, on
 Effect.gen(function* () {
   const client = yield* ActionHttp.client(Http, { baseUrl });
 
-  return yield* client.greet({ name: "Ada" }); // "Hello, Ada!"
+  return yield* client.greet({ name: "Ada" });
 });
 ```
 

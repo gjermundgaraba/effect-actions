@@ -114,8 +114,8 @@ const authenticatingOf = (authentication: Authentication) =>
 
     return (
       verifying: (verify: Verification, options: CallOptions) => Verification
-    ): Step =>
-      (effect, options) =>
+    ) =>
+      <A, E, R>(effect: Effect.Effect<A, E, R>, options: CallOptions) =>
         Effect.provideServiceEffect(
           effect,
           authentication.identity,
@@ -169,11 +169,6 @@ const unaryOf = (name: string) =>
     error: Declared,
   });
 
-/**
- * What serves a binding's erased rpcs: `ActionRpc.layer`, which streams each event type beside
- * polling it, through its `middleware`, or an entity, which only polls them, holds their webhooks
- * and runs `check` on each input.
- */
 export type Server =
   | {
       readonly _tag: "ActionRpc.layer";
@@ -207,7 +202,6 @@ export const webhookRpcsOf = (events: readonly Event.Any[]) =>
 const webhookErrors = (event: Event.Any, binding: Declaring) =>
   Schema.Union([...eventErrors(event, binding), Event.SubscriptionError]);
 
-/** The rpcs `server` serves for `actions` and `events`, and its clients call. */
 export const erasedOf = (
   actions: readonly Action.Any[],
   events: readonly Event.Any[],
@@ -503,20 +497,11 @@ interface ClientBinding extends Declaring {
   readonly events: readonly Event.Any[];
 }
 
-/**
- * Where a call or a watch goes, read from its input: an entity's client sends each to the entity
- * the input's key names, refusing an input naming none, and `ActionRpc.client` everything to its
- * one server.
- */
 export type Reach = (
   contract: Action.Any | Event.Any,
   input: ErasedValue
 ) => Effect.Effect<ErasedCall, Action.Forbidden>;
 
-/**
- * An action's client method over `reach`: its call goes where its input, decoded as the server
- * will decode it, a decoding default included, says.
- */
 export const actionMethodOf = (
   action: Action.Any,
   binding: Declaring
@@ -832,11 +817,6 @@ export const verifyingNative = (
 const requested: Step = (effect, { headers }) =>
   withSyntheticRequestFromHeaders(headers)(effect);
 
-/**
- * What a server checks of each call's and subscription's decoded input, once it has verified its
- * caller and before the implementation's authorizer: an entity refuses an input whose key names
- * another entity.
- */
 export type InputCheck = (
   contract: Action.Any | Event.Any,
   input: ErasedValue

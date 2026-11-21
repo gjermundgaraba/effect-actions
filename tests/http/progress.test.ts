@@ -8,6 +8,8 @@ import {
   Fiber,
   Layer,
   Schema,
+  SchemaTransformation,
+  Stream,
 } from "effect";
 import { OpenApi } from "effect/http-api";
 import { TestClock } from "effect/testing";
@@ -119,7 +121,13 @@ describe("HTTP progress", () => {
     "streams each value as a progress event, then the answer as a final one",
     () =>
       Effect.gen(function* () {
-        const response = yield* call("importAll", { count: 2 });
+        const response = yield* call(
+          "importAll",
+          { count: 2 },
+          {
+            accept: "application/json, Text/Event-Stream; q=0.5",
+          }
+        );
 
         expect([
           response.status,
@@ -133,17 +141,56 @@ describe("HTTP progress", () => {
       }).pipe(Effect.provide(served()))
   );
 
-  it.effect(
-    "answers JSON alone where the request does not accept an event stream",
-    () =>
+  it.effect.each([
+    {},
+    { accept: "application/json, text/event-stream; q=0.000" },
+    { accept: 'application/json; example="x,text/event-stream,y"' },
+    { accept: "application/json, text/event-streaming" },
+  ])(
+    "answers JSON alone where the request does not accept an event stream (%#)",
+    (headers) =>
       Effect.gen(function* () {
-        const response = yield* call("importAll", { count: 2 }, {});
+        const response = yield* call("importAll", { count: 2 }, headers);
 
         expect([response.status, yield* response.json]).toStrictEqual([
           200,
           { imported: 2 },
         ]);
       }).pipe(Effect.provide(served()))
+  );
+
+  it.effect("does not consume a JSON success decoded to a stream as SSE", () =>
+    Effect.gen(function* () {
+      const progresses = Action.make("progresses", {
+        description:
+          "Reports progress and returns a value decoded to a stream.",
+        readOnly: true,
+        progress: Schema.Finite,
+        success: Schema.Finite.pipe(
+          Schema.decodeTo(
+            Schema.declare(Stream.isStream),
+            SchemaTransformation.transform({
+              decode: (data): Stream.Stream<unknown, unknown, unknown> =>
+                Stream.make({ event: "final", data }),
+              encode: () => 0,
+            })
+          )
+        ),
+        caller: Action.Anyone,
+      });
+
+      const client = ActionHttp.fetchClient(ActionHttp.make([progresses]), {
+        baseUrl: "http://localhost",
+        fetch: async () => Response.json(7),
+      });
+
+      const result = yield* Effect.exit(client.progresses());
+
+      assert(Exit.isFailure(result));
+      expect(String(Cause.squash(result.cause))).toContain(
+        "without its event stream"
+      );
+    })
   );
 
   it.effect(

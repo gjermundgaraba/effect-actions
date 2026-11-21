@@ -571,6 +571,7 @@ const worker = ActionWorker.make<Cloudflare.Env>({
 
 export const {
   context,
+  fetch: workerFetch,
   ClusterDurableQueue,
   ClusterSingleton,
   ClusterWorkflow,

@@ -99,7 +99,6 @@ export const signedBy = async (secret: string, delivery: Delivery) =>
       await signatureOf(secret, delivery.id, delivery.timestamp, delivery.body)
     );
 
-/** The `challenge` of a raw verification request's body, or `undefined` for any other body. */
 export const challengeIn = (body: string) =>
   /"challenge":"(?<challenge>[^"]+)"/u.exec(body)?.groups?.["challenge"];
 

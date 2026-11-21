@@ -118,10 +118,6 @@ export const recordStepUp = <A, E, R>(
       : Effect.void
   );
 
-/**
- * `run` as the caller of `called`: unchanged where it is public or nothing authenticates, and
- * otherwise with the identity its request verified, a step-up it fails with recorded.
- */
 export const asCaller = <A, E, R>(
   authentication: Any | undefined,
   called: Pick<Called, "caller">,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as ActionRpc from "@gjermundgaraba/effect-actions/ActionRpc";
 import * as Stored from "@gjermundgaraba/effect-actions/Stored";
 import { runInDurableObject } from "cloudflare:test";
@@ -19,6 +19,7 @@ import {
 } from "../support/socket.js";
 import { boards, following, notes } from "../support/watch.js";
 import { throughWorker } from "../support/worker.js";
+import { ClusterEntity } from "../worker.js";
 
 const parkedIn = (board: string, count: number) =>
   heldIn("Board", board).pipe(
@@ -211,7 +212,7 @@ describe("ActionWorker's socket polls", () => {
   );
 
   it.live(
-    "parks a page's next poll with no call within 30 seconds of its watch's last call, and forwards one sent later to the entity",
+    "only parks an equivalent poll within 30 seconds without calling the entity",
     () =>
       Effect.gen(function* () {
         const board = "lease";
@@ -219,6 +220,7 @@ describe("ActionWorker's socket polls", () => {
         const poll = pollOf(socket, Pinned.name, board);
         const fresh = crypto.randomUUID();
         const stale = crypto.randomUUID();
+        const changed = crypto.randomUUID();
 
         poll("0", crypto.randomUUID(), null);
 
@@ -229,25 +231,27 @@ describe("ActionWorker's socket polls", () => {
 
         poll("1", fresh, null);
         poll("2", stale, null);
+        poll("3", changed, null);
 
         yield* until(
           () => received,
-          (messages) => messages.length >= 3
+          (messages) => messages.length >= 4
         );
 
         yield* answeredEarlier("Board", board, stale, 30_000);
 
         const before = yield* settledStubs;
 
-        poll("3", fresh, "0");
-        poll("4", stale, "0");
+        poll("4", fresh, "0");
+        poll("5", stale, "0");
+        poll("6", changed, "0", [["x-client-version", "2"]]);
 
-        yield* parkedIn(board, 2);
+        yield* parkedIn(board, 3);
 
         const after = yield* settledStubs;
 
-        expect(received).toHaveLength(3);
-        expect(after.started.invoke - before.started.invoke).toBe(1);
+        expect(received).toHaveLength(4);
+        expect(after.started.invoke - before.started.invoke).toBe(2);
       }).pipe(Effect.scoped),
     { timeout: 30_000 }
   );
@@ -317,6 +321,58 @@ describe("ActionWorker's socket polls", () => {
         ).toStrictEqual([{ n: 7 }]);
       }).pipe(Effect.scoped, Effect.provide(throughWorker)),
     { timeout: 60_000 }
+  );
+
+  it.live(
+    "cancels a resumed poll interrupted in the same batch before it can park",
+    () =>
+      Effect.gen(function* () {
+        const board = "interrupted-in-batch";
+        const { socket, received } = yield* raw("Board", board);
+        const poll = pollOf(socket, Pinned.name, board);
+        const watch = crypto.randomUUID();
+
+        poll("0", crypto.randomUUID(), null);
+        yield* until(
+          () => received,
+          (messages) => messages.length === 1
+        );
+        poll("1", watch, null);
+        yield* until(
+          () => received,
+          (messages) => messages.length === 2
+        );
+
+        yield* Effect.promise(async () => {
+          await runInDurableObject(
+            objectOf("Board", board),
+            async (object, state) => {
+              const [server] = state.getWebSockets();
+
+              assert(object instanceof ClusterEntity && server !== undefined);
+              await object.webSocketMessage(
+                server,
+                JSON.stringify([
+                  {
+                    _tag: "Request",
+                    id: "2",
+                    tag: ActionRpc.pollTag(Pinned.name),
+                    payload: { input: { board }, cursor: "0", watch },
+                    headers: [],
+                  },
+                  { _tag: "Interrupt", requestId: "2" },
+                ])
+              );
+            }
+          );
+        });
+
+        expect(yield* heldIn("Board", board)).toStrictEqual([
+          { calls: [], parked: [] },
+        ]);
+        expect(received).toHaveLength(2);
+      }).pipe(Effect.scoped),
+    { timeout: 30_000 }
   );
 
   it.live(

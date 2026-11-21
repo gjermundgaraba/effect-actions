@@ -31,7 +31,6 @@ export const CallerKeyed = Context.Reference<Keyed | undefined>(
   }
 );
 
-/** The caller's principal: none for a public one, or on a surface with no authentication. */
 export const principalOf = (
   called: Pick<Called, "caller">,
   keyed: Keyed | undefined
