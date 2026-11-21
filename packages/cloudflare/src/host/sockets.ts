@@ -213,6 +213,7 @@ const lostCalls =
 const lostSocket =
   "This server cannot read what it kept for this socket: connect again";
 
+/** Together with `ActionRpc.pollResentAfter`, bounds how long an active watch can go without calling the entity. */
 export const uncalledWithin = Duration.seconds(30);
 
 const outdated = (socket: WebSocket, served: Served, held: Attachment) => {
@@ -257,22 +258,21 @@ export const makeSockets = (options: {
 
       running.set(socket, calls);
 
-      const fiber = yield* Effect.forkChild(
-        Effect.onInterrupt(call, () =>
-          Effect.sync(() =>
-            updated(socket, (held) => ({
-              ...held,
-              calls: without(held.calls, (under) => under === id),
-            }))
-          )
-        )
-      );
+      const fiber = yield* Effect.forkChild(call);
 
       calls.set(id, fiber);
 
-      return yield* Effect.ensuring(
-        Fiber.await(fiber),
-        Effect.sync(() => calls.delete(id))
+      return yield* Effect.onExit(Fiber.await(fiber), (awaited) =>
+        Effect.sync(() => {
+          calls.delete(id);
+
+          if (Exit.isFailure(awaited) || Exit.hasInterrupts(awaited.value)) {
+            updated(socket, (held) => ({
+              ...held,
+              calls: without(held.calls, (under) => under === id),
+            }));
+          }
+        })
       );
     });
 
@@ -486,10 +486,6 @@ export const makeSockets = (options: {
         return;
       }
 
-      if (served.polls.has(tag) && (yield* parkedAgain(socket, request))) {
-        return;
-      }
-
       if (
         !updated(socket, (held) => ({ ...held, calls: [...held.calls, id] }))
       ) {
@@ -504,7 +500,11 @@ export const makeSockets = (options: {
         socket,
         id,
         served.polls.has(tag)
-          ? Effect.asVoid(polled(socket, served, { id, tag, payload, headers }))
+          ? Effect.flatMap(parkedAgain(socket, request), (parked) =>
+              parked
+                ? Effect.void
+                : Effect.asVoid(polled(socket, served, request))
+            )
           : Effect.flatMap(
               served.call(tag, payload, merged(upgrade, headers)),
               (exit) => reply(socket, served, request, exit)

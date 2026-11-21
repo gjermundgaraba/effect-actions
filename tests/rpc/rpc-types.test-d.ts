@@ -457,7 +457,10 @@ export const watchedClient = Effect.gen(function* () {
   expectTypeOf(watching).toEqualTypeOf<
     Stream.Stream<
       string,
-      Action.Unauthenticated | Offline | RpcClientError.RpcClientError
+      | Action.Unauthenticated
+      | Action.Forbidden
+      | Offline
+      | RpcClientError.RpcClientError
     >
   >();
 

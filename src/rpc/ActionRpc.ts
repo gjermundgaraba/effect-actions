@@ -41,7 +41,7 @@ import type { Anyone } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
 import { bindingErrors, bindingOf, eventErrors } from "../contract/declared.js";
 import type { Certain, ErrorsOf } from "../contract/declared.js";
-import { Unauthenticated } from "../contract/errors.js";
+import { Forbidden, Unauthenticated } from "../contract/errors.js";
 import type { BuiltIn, BuiltIns } from "../contract/errors.js";
 import type * as Event from "../contract/Event.js";
 import type {
@@ -142,7 +142,7 @@ type EventRpcOf<
 const authenticatedKey = "effect-actions/ActionRpc/Authenticated";
 
 type RefusalOf<E extends Action.Errors> = Schema.Union<
-  ReadonlyArray<typeof Unauthenticated | E[number]>
+  ReadonlyArray<typeof Unauthenticated | typeof Forbidden | E[number]>
 >;
 
 declare const authenticatedBrand: unique symbol;
@@ -246,8 +246,8 @@ export interface Options<E extends Action.Errors = Action.Errors> {
   /**
    * Native rpcs the binding serves beside its actions and event types, with their own schemas
    * and handlers: `RpcGroup.make(Upload)`. Under an `authentication`, each of their messages
-   * authenticates as a protected action's does: its handler reads the identity, and a refusal
-   * fails the call with `Unauthenticated`.
+   * authenticates as a protected action's does: its handler reads the identity, and the client
+   * receives the verifier's `Unauthenticated`, `Forbidden` (including any `scopes`), or declared error.
    *
    * **Gotchas**
    *
@@ -269,7 +269,11 @@ const authenticatedOf = (authentication: Authentication) =>
   RpcMiddleware.Service<Authenticated<unknown>, { provides: unknown }>()(
     authenticatedKey,
     {
-      error: Schema.Union([Unauthenticated, ...authentication.error]),
+      error: Schema.Union([
+        Unauthenticated,
+        Forbidden,
+        ...authentication.error,
+      ]),
     }
   );
 

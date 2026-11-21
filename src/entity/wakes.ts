@@ -29,6 +29,10 @@ export const WakeRpc = Rpc.make(wakeTag, { payload: WakeAt }).annotate(
   true
 );
 
+/**
+ * An entity's wake scheduler. Sending and recording a wake hold the same lock as delivery
+ * bookkeeping, so a delivery racing its own send cannot leave a fired time pending.
+ */
 export const makeWake = (
   send: (wake: WakeAt) => Effect.Effect<void, Action.Unavailable>
 ) =>

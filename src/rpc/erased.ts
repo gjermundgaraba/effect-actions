@@ -32,7 +32,6 @@ import { Anyone, principalOf } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
 import { bindingErrors, eventErrors } from "../contract/declared.js";
 import type { Declaring } from "../contract/declared.js";
-import { Forbidden, Unauthenticated } from "../contract/errors.js";
 import * as Event from "../contract/Event.js";
 import { acquireFeeds } from "../contract/feed.js";
 import type { AnyEventImplementation, Feed } from "../contract/feed.js";
@@ -812,10 +811,6 @@ export const verifyingNative = (
   { headers }: CallOptions
 ) =>
   withSyntheticRequestFromHeaders(headers)(verify).pipe(
-    Effect.catchIf(
-      (error) => error instanceof Forbidden,
-      ({ message }) => Effect.fail(new Unauthenticated({ message }))
-    ),
     Effect.catchCauseIf(Cause.hasDies, concealed)
   );
 

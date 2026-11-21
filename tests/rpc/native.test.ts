@@ -369,7 +369,7 @@ describe("ActionRpc native rpcs", () => {
   );
 
   it.effect(
-    "returns typed verifier failures on native RPC, normalizing Forbidden to Unauthenticated",
+    "returns declared verifier failures and Forbidden with its scopes on native RPC",
     () =>
       Effect.gen(function* () {
         class Offline extends Schema.TaggedError<
@@ -403,7 +403,10 @@ describe("ActionRpc native rpcs", () => {
 
               return supplied === "blocked"
                 ? Effect.fail(
-                    new Action.Forbidden({ message: "Token blocked." })
+                    new Action.Forbidden({
+                      message: "Token blocked.",
+                      scopes: ["account:read", "profile:read"],
+                    })
                   )
                 : verify(token);
             })
@@ -423,8 +426,11 @@ describe("ActionRpc native rpcs", () => {
         );
 
         expect(refused).toBeInstanceOf(Offline);
-        expect(blocked).toBeInstanceOf(Action.Unauthenticated);
-        expect(blocked).toMatchObject({ message: "Token blocked." });
+        expect(blocked).toBeInstanceOf(Action.Forbidden);
+        expect(blocked).toMatchObject({
+          message: "Token blocked.",
+          scopes: ["account:read", "profile:read"],
+        });
       })
   );
 

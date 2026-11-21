@@ -2,11 +2,14 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- Protected native RPCs now declare and return the verifier's `Forbidden` as a typed error, preserving any `scopes`. Previously the middleware declared only `Unauthenticated` and custom verifier errors, so `Forbidden` could not encode. Update exhaustive client error handlers to distinguish `Forbidden` from `Unauthenticated`, and upgrade clients before servers that may send the new variant.
+
 ### Fixes
 
-- Native RPC authentication returns `Unauthenticated` when its verifier fails with `Forbidden`, as the middleware's wire contract declares. The verifier's own declared errors still pass through.
 - HTTP progress and watch routes honor an explicit `text/event-stream` Accept range only at a nonzero quality. The action client also checks the response media type before reading the decoded result as SSE.
-- `ActionWorker` names a missing or invalid default namespace binding before using it. A socket poll only reuses a fresh answer when the next request matches its tag, input, options and effective headers; a changed request goes through the entity again.
+- `ActionWorker` names a missing or invalid default namespace binding before using it. A resumed socket poll reuses a fresh answer only if its tag, request body apart from the cursor, and effective headers match in their serialized order. Other polls go through the entity again. An interrupt batched with the resumed poll cancels it before it can park.
 
 ### Other changes
 

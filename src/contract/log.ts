@@ -64,15 +64,19 @@ export interface Listed<A> {
 }
 
 export interface LogStorage<A> {
+  /** The last position written by `put`, or `undefined` before the first write or after storage is emptied. */
   readonly position: Effect.Effect<Position | undefined>;
+  /** Writes the position and any entry atomically, inside `transaction` where supplied. */
   readonly put: (
     position: Position,
     entry?: { readonly seq: number; readonly stored: Stored<A> }
   ) => Effect.Effect<void>;
+  /** Lists at most `limit` entries in ascending sequence order, starting at `from` inclusive. */
   readonly list: (
     from: number,
     limit: number
   ) => Effect.Effect<ReadonlyArray<readonly [seq: number, listed: Listed<A>]>>;
+  /** Deletes entries up to and including `seq`. */
   readonly deleteThrough: (seq: number) => Effect.Effect<void>;
   /**
    * Runs one whole append or read of the log, every call above inside it, holding what those

@@ -27,9 +27,12 @@ export interface Checking {
   readonly revision: (key: string | undefined) => Effect.Effect<string>;
 }
 
+/** Monotonically increasing counters by name within each epoch. */
 export interface RevisionStorage {
+  /** Keep the epoch stable while counters persist; change it when they reset so earlier cursors are behind every new revision. */
   readonly epoch: Effect.Effect<string>;
   readonly get: (name: string) => Effect.Effect<number>;
+  /** Increments each named counter once. */
   readonly bump: (names: readonly string[]) => Effect.Effect<void>;
 }
 
@@ -148,7 +151,9 @@ const holding = <A>(
   );
 
 export interface MakeEventsOptions {
+  /** Each event's log storage, acquired once per event for the life of the scope. The core owns cursor, bound and expiry handling. */
   readonly log: (event: Event.Any) => LogStorage<ErasedEmitted>;
+  /** Defaults to a new in-memory epoch. Persist alongside logs when cursors must survive the host. */
   readonly revisions?: RevisionStorage | undefined;
 }
 
