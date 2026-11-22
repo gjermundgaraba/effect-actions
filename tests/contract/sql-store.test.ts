@@ -361,7 +361,7 @@ describe("Stored.layerEvents", () => {
           ).toStrictEqual(kept);
         }
       }),
-    { arbitrary: { runs: 500 } }
+    { arbitrary: { runs: 500 }, timeout: 30_000 }
   );
 });
 

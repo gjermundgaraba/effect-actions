@@ -4,6 +4,7 @@
 
 ### Breaking changes
 
+- `engines.node` is `>=26.13.1`, where it accepted Node 26.13.0, which the November 2026 Node security release (16 CVEs, 7 High, in TLS and HTTP/2) fixes. Migrate: run on Node 26.13.1 or a later release.
 - Protected native RPCs now declare and return the verifier's `Forbidden` as a typed error, preserving any `scopes`. Previously the middleware declared only `Unauthenticated` and custom verifier errors, so `Forbidden` could not encode. Update exhaustive client error handlers to distinguish `Forbidden` from `Unauthenticated`, and upgrade clients before servers that may send the new variant.
 
 ### Fixes
