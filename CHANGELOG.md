@@ -14,6 +14,7 @@
 
 ### Other changes
 
+- Built and tested on Effect 4.1.5; the `effect` peer stays `~4.1.4`, which both satisfy. Under `@effect/platform-node` 4.1.5, a Node server answers a request it gets while serving no routes, such as before `HttpRouter.serve` attaches them, with a text 503 and `Retry-After: 1`, where 4.1.4 left it unanswered; `ActionHttp.client` fails with it as an undeclared answer, not `Action.Unavailable`. A call in flight as the server stops is answered as under 4.1.4.
 - Under TypeScript 7.1, `Action.implement` and `Event.implement` infer what an `authorize` built by an Effect reads per request when it is declared apart from the call, as 7.0 does; 7.1 inferred nothing through the generic alias the parameter was typed with ([microsoft/TypeScript#64757](https://github.com/microsoft/TypeScript/issues/64757)), so a shared authorizer failed to compile. Options built at runtime, such as `commands: Object.fromEntries(...)` given to `ActionCli`, compile under 7.1 as under 7.0, their keys checked when the command is made.
 
 ## 0.36.0

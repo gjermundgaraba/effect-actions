@@ -527,6 +527,7 @@ type EntityLayer<
 const callOf = (request: Cluster.Request<Rpc.Any>, rpc: Rpc.AnyWithProps) => ({
   client: new Rpc.ServerClient(0),
   requestId: RpcMessage.RequestId(String(request.requestId)),
+  remoteParentSpan: undefined,
   headers: request.headers,
   rpc,
 });
