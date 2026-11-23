@@ -2,6 +2,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Context,
+  DateTime,
   Effect,
   Layer,
   Option,
@@ -54,6 +55,11 @@ const headersAs = (token = "alice") => ({
 const mcpAs = (token = "alice") =>
   ActionMcp.client([GetUser, RenameUser, Double, WhoAmI], as(token));
 
+const rawAnswer = (method: string, params: ActionMcp.Params) =>
+  Effect.flatMap(HttpClient.HttpClient, (http) =>
+    http.execute(ActionMcp.request(method, params))
+  ).pipe(Effect.flatMap((response) => response.json));
+
 describe("client", () => {
   it.effect(
     "encodes the input and decodes the success from the structured content",
@@ -79,17 +85,69 @@ describe("client", () => {
       })
   );
 
-  it.effect(
-    "decodes a string success from the raw text the tool sends alone, quotes, tabs and newlines included",
-    () =>
-      Effect.gen(function* () {
-        const source = 'const a = "x";\n\tindented\n';
+  const instant = DateTime.makeUnsafe("2026-11-23T12:00:00.000Z");
+  const source = 'const a = "x";\n\tindented\n';
 
+  it.effect.each([
+    [
+      "a string, quotes, tabs and newlines included",
+      Schema.String,
+      source,
+      source,
+    ],
+    ["a string literal", Schema.Literal("on"), "on", "on"],
+    [
+      "an identified string",
+      Schema.String.annotate({ identifier: "Source" }),
+      source,
+      source,
+    ],
+    [
+      "a transformation encoding to a string",
+      Schema.DateTimeUtc,
+      instant,
+      "2026-11-23T12:00:00.000Z",
+    ],
+  ] as const)(
+    "sends %s as its raw text alone, and decodes it back",
+    ([, success, value, text]) =>
+      Effect.gen(function* () {
         const Read = Action.make("read", {
-          description: "Reads a file",
+          description: "Reads",
           readOnly: true,
           caller: Action.Anyone,
-          success: Schema.String,
+          success,
+        });
+
+        const routes = ActionMcp.layerHttp(
+          Action.implement(Read, () => Effect.succeed(value)),
+          { name: "test", version: "0" }
+        );
+
+        const [decoded, sent, listed] = yield* Effect.all([
+          Effect.flatMap(ActionMcp.client([Read]), (mcp) => mcp.read()),
+          rawAnswer("tools/call", { name: "read", arguments: {} }),
+          rawAnswer("tools/list", {}),
+        ]).pipe(Effect.provide(Testing.layer(routes)));
+
+        expect(decoded).toStrictEqual(value);
+        expect(sent).toMatchObject({
+          result: { isError: false, content: [{ type: "text", text }] },
+        });
+        expect(sent).not.toHaveProperty("result.structuredContent");
+        expect(listed).not.toHaveProperty("result.tools.0.outputSchema");
+      })
+  );
+
+  it.effect(
+    "sends a union holding a string as any other success, its string JSON beside its structured content, and decodes it back",
+    () =>
+      Effect.gen(function* () {
+        const Read = Action.make("read", {
+          description: "Reads",
+          readOnly: true,
+          caller: Action.Anyone,
+          success: Schema.NullOr(Schema.String),
         });
 
         const routes = ActionMcp.layerHttp(
@@ -108,9 +166,12 @@ describe("client", () => {
 
         expect(decoded).toBe(source);
         expect(sent).toMatchObject({
-          result: { isError: false, content: [{ type: "text", text: source }] },
+          result: {
+            isError: false,
+            structuredContent: source,
+            content: [{ type: "text", text: JSON.stringify(source) }],
+          },
         });
-        expect(sent).not.toHaveProperty("result.structuredContent");
       })
   );
 
@@ -494,8 +555,6 @@ describe("client", () => {
           success: Schema.String,
           error: EditMissed,
         });
-
-        const source = 'const a = "x";\n\tindented\n';
 
         const answeredBy037 = (result: Schema.Json) =>
           ActionMcp.client([Read], { url: "/old" }).pipe(
