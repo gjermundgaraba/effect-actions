@@ -45,7 +45,7 @@ import {
   post,
   rawToolCall,
   send,
-  valueOf,
+  rawTextOf,
 } from "../support/requests.js";
 import { serve, serveWithContext } from "../support/serve.js";
 import { converse } from "../support/stdio-host.js";
@@ -299,7 +299,7 @@ describe("a value provided per request", () => {
       const httpResponse = await web.handler(http);
 
       await expect(httpResponse.json()).resolves.toBe("request");
-      await expect(valueOf(await web.handler(mcp))).resolves.toBe("request");
+      await expect(rawTextOf(await web.handler(mcp))).resolves.toBe("request");
     }
   );
 
@@ -451,9 +451,9 @@ describe("what the routes were built with", () => {
     const levelResponse = await web.handler(post("/api/level"));
 
     await expect(levelResponse.json()).resolves.toBe("Warn");
-    await expect(valueOf(await call({}))).resolves.toBe("Warn");
+    await expect(rawTextOf(await call({}))).resolves.toBe("Warn");
     await expect(
-      valueOf(await call({ "io.modelcontextprotocol/logLevel": "debug" }))
+      rawTextOf(await call({ "io.modelcontextprotocol/logLevel": "debug" }))
     ).resolves.toBe("Debug");
   });
 
@@ -825,7 +825,7 @@ describe("over stdio", () => {
         );
 
         expect(JSON.parse(answer ?? "")).toMatchObject({
-          result: { structuredContent: "host" },
+          result: { content: [{ type: "text", text: "host" }] },
         });
         expect(authorized).toStrictEqual(["host"]);
       })

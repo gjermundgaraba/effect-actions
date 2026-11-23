@@ -964,40 +964,61 @@ describe("projection boundaries", () => {
     }
   });
 
-  it("reports a declared error as its encoding over MCP, message field included", async () => {
+  it("reports a declared error over MCP as its message, its encoding in _meta, and an error with no message as its JSON", async () => {
     class Denied extends Schema.TaggedError<
       Denied,
       { readonly brand: unique symbol }
     >()("Denied", {
+      path: Schema.String,
       message: Schema.String,
     }) {}
+
+    class Unlabelled extends Schema.TaggedError<
+      Unlabelled,
+      { readonly brand: unique symbol }
+    >()("Unlabelled", { id: Schema.String }) {}
 
     const Fail = Action.make("fail", {
       description: "Error with a message",
       readOnly: false,
       caller: Action.Anyone,
+      input: { which: Schema.Literals(["denied", "missing"]) },
       success: Schema.String,
-      error: [Denied],
+      error: [Denied, Unlabelled],
     });
+
+    const message = 'old_string not found in a.ts:\n\t"x"';
 
     const mcp = makeTestMcp(
       Action.implement([Fail], {
-        fail: () =>
-          Effect.fail(new Denied({ message: "Owner access required" })),
+        fail: ({ which }) =>
+          which === "denied"
+            ? Effect.fail(new Denied({ path: "a.ts", message }))
+            : Effect.fail(new Unlabelled({ id: "1" })),
       })
     );
 
-    const failResponse = await mcp.handler(rawToolCall("fail"));
+    const denied = await mcp.handler(rawToolCall("fail", { which: "denied" }));
 
-    await expect(failResponse.json()).resolves.toMatchObject({
+    await expect(denied.json()).resolves.toMatchObject({
       result: {
         isError: true,
-        content: [
-          {
-            type: "text",
-            text: '{"_tag":"Denied","message":"Owner access required"}',
-          },
-        ],
+        content: [{ type: "text", text: message }],
+        _meta: {
+          "effect-actions/error": { _tag: "Denied", path: "a.ts", message },
+        },
+      },
+    });
+
+    const missing = await mcp.handler(
+      rawToolCall("fail", { which: "missing" })
+    );
+
+    await expect(missing.json()).resolves.toMatchObject({
+      result: {
+        isError: true,
+        content: [{ type: "text", text: '{"_tag":"Unlabelled","id":"1"}' }],
+        _meta: { "effect-actions/error": { _tag: "Unlabelled", id: "1" } },
       },
     });
   });
@@ -1405,7 +1426,11 @@ describe("projection boundaries", () => {
     const scalarResponse = await mcp.handler(rawToolCall("scalar"));
 
     await expect(scalarResponse.json()).resolves.toMatchObject({
-      result: { isError: true, content: [{ type: "text", text: '"failure"' }] },
+      result: {
+        isError: true,
+        content: [{ type: "text", text: "failure" }],
+        _meta: { "effect-actions/error": "failure" },
+      },
     });
   });
 
@@ -1577,7 +1602,7 @@ describe("MCP registration", () => {
     const whoAmIResponse = await web.handler(rawToolCall("whoAmI"));
 
     await expect(whoAmIResponse.json()).resolves.toMatchObject({
-      result: { structuredContent: "ada" },
+      result: { content: [{ type: "text", text: "ada" }] },
     });
   });
 

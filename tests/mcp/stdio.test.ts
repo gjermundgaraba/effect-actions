@@ -241,7 +241,7 @@ describe("runStdio's successes", () => {
   const assorted = Action.implement([Ready, Count, Greeting, List, Reset], {
     ready: () => Effect.succeed({ ready: true }),
     count: () => Effect.succeed(42),
-    greeting: () => Effect.succeed('say "hi"'),
+    greeting: () => Effect.succeed('say "hi"\n\tindented'),
     list: () => Effect.succeed([1, 2]),
     reset: () => Effect.void,
   });
@@ -249,7 +249,7 @@ describe("runStdio's successes", () => {
   const successes = [
     ["ready", { ready: true }],
     ["count", 42],
-    ["greeting", 'say "hi"'],
+    ["greeting", 'say "hi"\n\tindented'],
     ["list", [1, 2]],
     ["reset", null],
   ] as const;
@@ -280,7 +280,7 @@ describe("runStdio's successes", () => {
   );
 
   it.effect.each([
-    ["2026-07-28", ["ready", "count", "greeting", "list", "reset"]],
+    ["2026-07-28", ["ready", "count", "list", "reset"]],
     ["2025-11-25", ["ready"]],
     ["2025-06-18", ["ready"]],
   ] as const)(
@@ -443,7 +443,7 @@ it.effect(
       expect(lines).toHaveLength(1);
       expect(JSON.parse(lines[0] ?? "")).toMatchObject({
         id: 1,
-        result: { structuredContent: "pong" },
+        result: { content: [{ type: "text", text: "pong" }] },
       });
     })
 );

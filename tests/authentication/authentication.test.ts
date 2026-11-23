@@ -48,7 +48,7 @@ import {
   post,
   rawToolCall,
   send,
-  valueOf,
+  rawTextOf,
   withBearer,
 } from "../support/requests.js";
 import { serve } from "../support/serve.js";
@@ -1199,7 +1199,7 @@ describe("a scheme other than Bearer", () => {
 
     const tool = await web.handler(withSession(rawToolCall("identify"), "s1"));
     await expect(tool.json()).resolves.toMatchObject({
-      result: { structuredContent: "alice" },
+      result: { content: [{ type: "text", text: "alice" }] },
     });
 
     for (const refused of [
@@ -1513,15 +1513,15 @@ const answersPresentingSecrets = async (
     return sending;
   };
 
-  const bare = await valueOf(await web.handler(rawToolCall("ping")));
+  const bare = await rawTextOf(await web.handler(rawToolCall("ping")));
 
-  const empty = await valueOf(
+  const empty = await rawTextOf(
     await web.handler(withSecret(rawToolCall("ping"), ""))
   );
 
   const stale = await web.handler(withSecret(rawToolCall("ping"), "stale"));
 
-  const valid = await valueOf(
+  const valid = await rawTextOf(
     await web.handler(withSecret(rawToolCall("identify"), "s1"))
   );
 

@@ -246,7 +246,7 @@ describe("the authorizer", () => {
     const readResponse = await mcp.handler(withReadScope(rawToolCall("read")));
 
     await expect(readResponse.json()).resolves.toMatchObject({
-      result: { isError: false, structuredContent: "read ok" },
+      result: { isError: false, content: [{ type: "text", text: "read ok" }] },
     });
 
     const writeResponse = await mcp.handler(
@@ -256,12 +256,13 @@ describe("the authorizer", () => {
     await expect(writeResponse.json()).resolves.toMatchObject({
       result: {
         isError: true,
-        content: [
-          {
-            type: "text",
-            text: '{"_tag":"Forbidden","message":"Requires write."}',
+        content: [{ type: "text", text: "Requires write." }],
+        _meta: {
+          "effect-actions/error": {
+            _tag: "Forbidden",
+            message: "Requires write.",
           },
-        ],
+        },
       },
     });
 
@@ -398,14 +399,12 @@ describe("the authorizer", () => {
     await expect(result.json()).resolves.toMatchObject({
       result: {
         isError: true,
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              Schema.encodeSync(Action.Unauthenticated)(signIn)
-            ),
-          },
-        ],
+        content: [{ type: "text", text: signIn.message }],
+        _meta: {
+          "effect-actions/error": Schema.encodeSync(Action.Unauthenticated)(
+            signIn
+          ),
+        },
       },
     });
   });
@@ -524,7 +523,7 @@ describe("the authorizer", () => {
     const text = await reply.text();
     expect(text).toContain('"method":"notifications/progress"');
     expect(text).toContain('"isError":true');
-    expect(text).toContain(String.raw`\"_tag\":\"Forbidden\"`);
+    expect(text).toContain('"effect-actions/error":{"_tag":"Forbidden"');
   });
 
   it.effect("runs over the native Toolkit", () =>

@@ -91,7 +91,7 @@ describe.each([
         ).pipe(Effect.provide(Testing.layer(endpoint)));
 
         expect(replies).toMatchObject([
-          { result: { structuredContent: "pong" } },
+          { result: { content: [{ type: "text", text: "pong" }] } },
           { result: { isError: false } },
         ]);
         expect(seen).toStrictEqual(seenFor);
@@ -141,7 +141,7 @@ it.effect(
       );
 
       expect(JSON.parse(called)).toMatchObject({
-        result: { structuredContent: "pong" },
+        result: { content: [{ type: "text", text: "pong" }] },
       });
       expect(seen).toStrictEqual(["tools/call ping"]);
     })

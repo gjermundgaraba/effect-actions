@@ -210,7 +210,7 @@ describe("protected resource discovery", () => {
 
     const tool = await web.handler(withBearer(rawToolCall("identify"), "bob"));
     await expect(tool.json()).resolves.toMatchObject({
-      result: { structuredContent: "bob@acme" },
+      result: { content: [{ type: "text", text: "bob@acme" }] },
     });
     expect(built).toBe(1);
   });

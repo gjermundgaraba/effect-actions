@@ -149,25 +149,111 @@ describe("MCP registration without media", () => {
   ];
 
   const resetCall = call("reset");
+  const greetingCall = call("greeting");
+  const failCall = call("fail");
 
   const requests = [
     { method: "tools/list" },
     call("ready"),
     call("ready", { verbose: true }),
     call("find", { id: "n1" }),
-    call("greeting"),
+    greetingCall,
     call("count"),
     resetCall,
-    call("fail"),
+    failCall,
     call("boom"),
     call("broken"),
     ...invalidArgumentCalls,
   ];
 
   const voidAnswer = requests.indexOf(resetCall);
+  const greetingAnswer = requests.indexOf(greetingCall);
+  const failAnswer = requests.indexOf(failCall);
 
-  const besidesRegisterToolkitsEmptyVoidAnswer = (answers: readonly string[]) =>
-    answers.filter((_, index) => index !== voidAnswer);
+  const ToolsListed = Schema.Struct({
+    result: Schema.Struct({
+      tools: Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          outputSchema: Schema.optionalKey(Schema.Json),
+        })
+      ),
+    }),
+  });
+
+  const textSuccesses = new Set(["greeting", "fail", "boom"]);
+
+  const listedOutputSchemas = (line: string) =>
+    Object.fromEntries(
+      Schema.decodeSync(Schema.fromJsonString(ToolsListed))(
+        line
+      ).result.tools.map(({ name, outputSchema }) => [name, outputSchema])
+    );
+
+  const registerToolkitsStringOutputSchema =
+    ',"outputSchema":{"type":"string"}';
+
+  const besidesDepartures = (answers: readonly string[]) =>
+    answers.flatMap((answer, index) => {
+      if ([voidAnswer, greetingAnswer, failAnswer].includes(index)) {
+        return [];
+      }
+
+      return [
+        index === 0
+          ? answer.replaceAll(registerToolkitsStringOutputSchema, "")
+          : answer,
+      ];
+    });
+
+  const expectDepartures = (
+    ours: readonly string[],
+    theirs: readonly string[],
+    stateless: boolean
+  ) => {
+    const schemas = listedOutputSchemas(ours[0] ?? "");
+    const theirSchemas = listedOutputSchemas(theirs[0] ?? "");
+
+    for (const name of textSuccesses) {
+      expect(schemas[name]).toBeUndefined();
+      expect(theirSchemas[name]).toStrictEqual(
+        stateless ? { type: "string" } : undefined
+      );
+    }
+
+    expect(replyOf(theirs[greetingAnswer] ?? "")).toStrictEqual({
+      result: stateless
+        ? {
+            isError: false,
+            structuredContent: 'say "hi"',
+            content: [{ type: "text", text: String.raw`"say \"hi\""` }],
+          }
+        : { isError: false, content: [{ type: "text", text: 'say "hi"' }] },
+    });
+    expect(replyOf(theirs[failAnswer] ?? "")).toStrictEqual({
+      result: {
+        isError: true,
+        content: [{ type: "text", text: '{"_tag":"Missing","id":"1"}' }],
+      },
+    });
+    expect(theirs[failAnswer] ?? "").not.toContain("effect-actions/error");
+
+    expect(replyOf(ours[greetingAnswer] ?? "")).toStrictEqual({
+      result: {
+        isError: false,
+        content: [{ type: "text", text: 'say "hi"' }],
+      },
+    });
+    expect(replyOf(ours[failAnswer] ?? "")).toStrictEqual({
+      result: {
+        isError: true,
+        content: [{ type: "text", text: '{"_tag":"Missing","id":"1"}' }],
+      },
+    });
+    expect(ours[failAnswer]).toContain(
+      '"effect-actions/error":{"_tag":"Missing","id":"1"}'
+    );
+  };
 
   it.effect(
     "lists and answers as Effect's registerToolkit does, over HTTP",
@@ -188,9 +274,10 @@ describe("MCP registration without media", () => {
           )
         );
 
-        expect(besidesRegisterToolkitsEmptyVoidAnswer(ours)).toStrictEqual(
-          besidesRegisterToolkitsEmptyVoidAnswer(theirs)
+        expect(besidesDepartures(ours)).toStrictEqual(
+          besidesDepartures(theirs)
         );
+        expectDepartures(ours, theirs, true);
 
         expect(replyOf(ours[voidAnswer] ?? "")).toStrictEqual({
           result: {
@@ -204,12 +291,6 @@ describe("MCP registration without media", () => {
             isError: false,
             structuredContent: { ready: true },
             content: [{ type: "text", text: '{"ready":true}' }],
-          },
-        });
-        expect(replyOf(ours[7] ?? "")).toStrictEqual({
-          result: {
-            isError: true,
-            content: [{ type: "text", text: '{"_tag":"Missing","id":"1"}' }],
           },
         });
         expect(ours[8]).toContain("internal server error");
@@ -237,9 +318,10 @@ describe("MCP registration without media", () => {
           requests
         );
 
-        expect(besidesRegisterToolkitsEmptyVoidAnswer(ours)).toStrictEqual(
-          besidesRegisterToolkitsEmptyVoidAnswer(theirs)
+        expect(besidesDepartures(ours)).toStrictEqual(
+          besidesDepartures(theirs)
         );
+        expectDepartures(ours, theirs, revision === "2026-07-28");
 
         expect(replyOf(ours[voidAnswer] ?? "")).toStrictEqual({
           result: {
@@ -248,15 +330,6 @@ describe("MCP registration without media", () => {
             content: [{ type: "text", text: "null" }],
           },
         });
-
-        if (revision !== "2026-07-28") {
-          expect(replyOf(ours[4] ?? "")).toStrictEqual({
-            result: {
-              isError: false,
-              content: [{ type: "text", text: 'say "hi"' }],
-            },
-          });
-        }
       })
   );
 });

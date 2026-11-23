@@ -42,11 +42,16 @@ export class UndeclaredError extends Schema.TaggedError<
   text: Schema.String,
 }) {}
 
-/** The tool returned a result without the structured content its action's success needs. */
-export class NoStructuredContent extends Schema.TaggedError<
-  NoStructuredContent,
+/**
+ * The tool returned a result whose content does not fit its action's success: no structured
+ * content where the success needs it, or, for a success whose schema encodes only to a string,
+ * no text block, or structured content beside it, as an endpoint of 0.37.0 or earlier sends,
+ * whose text is that string's JSON.
+ */
+export class UnexpectedContent extends Schema.TaggedError<
+  UnexpectedContent,
   { readonly brand: unique symbol }
->()("NoStructuredContent", {
+>()("UnexpectedContent", {
   body: Schema.String,
 }) {}
 
@@ -70,7 +75,7 @@ const Reason = Schema.Union([
   ProtocolError,
   NoReply,
   UndeclaredError,
-  NoStructuredContent,
+  UnexpectedContent,
   FrameTooLarge,
 ]);
 
@@ -79,7 +84,8 @@ const sentenceOf = Match.typeTags<(typeof Reason)["Type"], string>()({
   ProtocolError: ({ code, message }) => `failed with ${code}: ${message}`,
   NoReply: ({ body }) => `had no reply: ${body}`,
   UndeclaredError: ({ text }) => `returned an error: ${text}`,
-  NoStructuredContent: ({ body }) => `returned no structured content: ${body}`,
+  UnexpectedContent: ({ body }) =>
+    `returned content that does not fit its success: ${body}`,
   FrameTooLarge: ({ maxEventSize }) =>
     `sent more than ${maxEventSize} characters of an event stream with no frame ending`,
 });

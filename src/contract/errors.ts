@@ -108,7 +108,7 @@ const ScopeToken = Schema.String.check(Schema.isPattern(scopeToken));
  * **Gotchas**
  *
  * - Over HTTP its JSON with a 403: from authentication before the body is read, from `authorize` or a handler after the input is decoded; on a protected route under Bearer, one naming `scopes` also carries the challenge.
- * - Over MCP, from authentication the HTTP 403 before the arguments are decoded; from `authorize` or a handler an `isError: true` tool result holding its JSON as text, in a **200**, not a 403; only on an endpoint under Bearer is a protected tool's refusal naming `scopes` the HTTP 403 with the challenge instead.
+ * - Over MCP, from authentication the HTTP 403 before the arguments are decoded; from `authorize` or a handler an `isError: true` tool result, in a **200**, not a 403, whose text is its `message` alone, so a model reads no `scopes` unless the message names them; only on an endpoint under Bearer is a protected tool's refusal naming `scopes` the HTTP 403 with the challenge instead.
  * - Over RPC the typed failure, never a status or a challenge; on a Toolkit and in a CLI as a declared error.
  * - From another service's client, such as `ActionHttp.client`, one passed on becomes this server's own refusal: map it to an error the action declares, or to a defect.
  */

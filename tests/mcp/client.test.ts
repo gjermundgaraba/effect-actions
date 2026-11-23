@@ -80,6 +80,41 @@ describe("client", () => {
   );
 
   it.effect(
+    "decodes a string success from the raw text the tool sends alone, quotes, tabs and newlines included",
+    () =>
+      Effect.gen(function* () {
+        const source = 'const a = "x";\n\tindented\n';
+
+        const Read = Action.make("read", {
+          description: "Reads a file",
+          readOnly: true,
+          caller: Action.Anyone,
+          success: Schema.String,
+        });
+
+        const routes = ActionMcp.layerHttp(
+          Action.implement(Read, () => Effect.succeed(source)),
+          { name: "test", version: "0" }
+        );
+
+        const [decoded, sent] = yield* Effect.all([
+          Effect.flatMap(ActionMcp.client([Read]), (mcp) => mcp.read()),
+          Effect.flatMap(HttpClient.HttpClient, (http) =>
+            http.execute(
+              ActionMcp.request("tools/call", { name: "read", arguments: {} })
+            )
+          ).pipe(Effect.flatMap((response) => response.json)),
+        ]).pipe(Effect.provide(Testing.layer(routes)));
+
+        expect(decoded).toBe(source);
+        expect(sent).toMatchObject({
+          result: { isError: false, content: [{ type: "text", text: source }] },
+        });
+        expect(sent).not.toHaveProperty("result.structuredContent");
+      })
+  );
+
+  it.effect(
     "fails with a declared error or a refusal as its decoded value",
     () =>
       Effect.gen(function* () {
@@ -443,6 +478,73 @@ describe("client", () => {
       })
   );
 
+  it.effect(
+    "fails loudly against an endpoint of 0.37.0, which quotes a string success beside its structured content and sends a declared error as JSON text alone",
+    () =>
+      Effect.gen(function* () {
+        class EditMissed extends Schema.TaggedError<
+          EditMissed,
+          { readonly brand: unique symbol }
+        >()("EditMissed", { message: Schema.String }) {}
+
+        const Read = Action.make("read", {
+          description: "Reads a file",
+          readOnly: true,
+          caller: Action.Anyone,
+          success: Schema.String,
+          error: EditMissed,
+        });
+
+        const source = 'const a = "x";\n\tindented\n';
+
+        const answeredBy037 = (result: Schema.Json) =>
+          ActionMcp.client([Read], { url: "/old" }).pipe(
+            Effect.flatMap((mcp) => Effect.flip(mcp.read())),
+            Effect.provide(
+              Testing.layer(
+                HttpRouter.add(
+                  "POST",
+                  "/old",
+                  HttpServerResponse.jsonUnsafe({
+                    jsonrpc: "2.0",
+                    id: 1,
+                    result,
+                  })
+                )
+              )
+            )
+          );
+
+        const quoted = yield* answeredBy037({
+          content: [{ type: "text", text: JSON.stringify(source) }],
+          structuredContent: source,
+          isError: false,
+        });
+
+        const errorAsJsonText = yield* answeredBy037({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ _tag: "EditMissed", message: "missed" }),
+            },
+          ],
+          isError: true,
+        });
+
+        expect(quoted).toMatchObject({
+          _tag: "McpCallError",
+          reason: { _tag: "UnexpectedContent" },
+        });
+        expect(errorAsJsonText).toMatchObject({
+          _tag: "McpCallError",
+          reason: {
+            _tag: "UndeclaredError",
+            text: '{"_tag":"EditMissed","message":"missed"}',
+          },
+        });
+      })
+  );
+
   it.effect("fails with an McpCallError holding any other answer", () =>
     Effect.gen(function* () {
       const Loose = Action.make("getUser", {
@@ -527,7 +629,7 @@ describe("client", () => {
         {
           target: "missing_tool",
           reason: {
-            _tag: "NoStructuredContent",
+            _tag: "UnexpectedContent",
             body: JSON.stringify({
               jsonrpc: "2.0",
               id: 1,
