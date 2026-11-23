@@ -1,6 +1,6 @@
 {
   "name": "@gjermundgaraba/effect-actions-cloudflare",
-  "version": "0.37.0",
+  "version": "0.38.0",
   "description": "Run effect-actions entities on Cloudflare Durable Objects through Effect Cluster.",
   "keywords": [
     "cloudflare",
