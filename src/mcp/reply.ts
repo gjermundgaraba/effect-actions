@@ -45,8 +45,7 @@ export class UndeclaredError extends Schema.TaggedError<
 /**
  * The tool returned a result whose content does not fit its action's success: no structured
  * content where the success needs it, or, for a success whose schema encodes only to a string,
- * no text block, or structured content beside it, as an endpoint of 0.37.0 or earlier sends,
- * whose text is that string's JSON.
+ * no text block, or structured content beside it.
  */
 export class UnexpectedContent extends Schema.TaggedError<
   UnexpectedContent,

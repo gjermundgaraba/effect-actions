@@ -185,6 +185,27 @@ describe("MCP registration without media", () => {
 
   const textSuccesses = new Set(["greeting", "fail", "boom"]);
 
+  const JsonRpcListing = Schema.fromJsonString(
+    Schema.Struct({
+      jsonrpc: Schema.Literal("2.0"),
+      id: Schema.Json,
+      result: Schema.StructWithRest(
+        Schema.Struct({
+          tools: Schema.Array(
+            Schema.StructWithRest(
+              Schema.Struct({
+                name: Schema.String,
+                outputSchema: Schema.optionalKey(Schema.Json),
+              }),
+              [Schema.Record(Schema.String, Schema.Json)]
+            )
+          ),
+        }),
+        [Schema.Record(Schema.String, Schema.Json)]
+      ),
+    })
+  );
+
   const listedOutputSchemas = (line: string) =>
     Object.fromEntries(
       Schema.decodeSync(Schema.fromJsonString(ToolsListed))(
@@ -192,8 +213,19 @@ describe("MCP registration without media", () => {
       ).result.tools.map(({ name, outputSchema }) => [name, outputSchema])
     );
 
-  const registerToolkitsStringOutputSchema =
-    ',"outputSchema":{"type":"string"}';
+  const withoutTextSuccessesOutputSchemas = (listed: string) => {
+    const { result, ...reply } = Schema.decodeSync(JsonRpcListing)(listed);
+
+    return {
+      ...reply,
+      result: {
+        ...result,
+        tools: result.tools.map(({ outputSchema, ...tool }) =>
+          textSuccesses.has(tool.name) ? tool : { ...tool, outputSchema }
+        ),
+      },
+    };
+  };
 
   const besidesDepartures = (answers: readonly string[]) =>
     answers.flatMap((answer, index) => {
@@ -201,17 +233,13 @@ describe("MCP registration without media", () => {
         return [];
       }
 
-      return [
-        index === 0
-          ? answer.replaceAll(registerToolkitsStringOutputSchema, "")
-          : answer,
-      ];
+      return [index === 0 ? withoutTextSuccessesOutputSchemas(answer) : answer];
     });
 
   const expectDepartures = (
     ours: readonly string[],
     theirs: readonly string[],
-    stateless: boolean
+    revision2026: boolean
   ) => {
     const schemas = listedOutputSchemas(ours[0] ?? "");
     const theirSchemas = listedOutputSchemas(theirs[0] ?? "");
@@ -219,12 +247,12 @@ describe("MCP registration without media", () => {
     for (const name of textSuccesses) {
       expect(schemas[name]).toBeUndefined();
       expect(theirSchemas[name]).toStrictEqual(
-        stateless ? { type: "string" } : undefined
+        revision2026 ? { type: "string" } : undefined
       );
     }
 
     expect(replyOf(theirs[greetingAnswer] ?? "")).toStrictEqual({
-      result: stateless
+      result: revision2026
         ? {
             isError: false,
             structuredContent: 'say "hi"',
@@ -238,9 +266,6 @@ describe("MCP registration without media", () => {
         content: [{ type: "text", text: '{"_tag":"Missing","id":"1"}' }],
       },
     });
-    expect(theirs[failAnswer] ?? "").not.toContain(
-      "io.github.gjermundgaraba.effect-actions/error"
-    );
 
     expect(replyOf(ours[greetingAnswer] ?? "")).toStrictEqual({
       result: {

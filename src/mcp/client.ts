@@ -268,7 +268,6 @@ const callTool = <S extends Action.Any["success"]>(
  * **Gotchas**
  *
  * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
- * - Against an endpoint of 0.37.0 or earlier, a string success, sent beside its `structuredContent`, fails with `UnexpectedContent`, and a declared error, sent as JSON text with no `_meta`, with `UndeclaredError`: upgrade the endpoint with the client.
  * - A call of an action answering a stream returns a `Stream` of the elements its tool collected, the first arriving once the whole stream has ended on the server.
  * - A watch of an event the endpoint does not serve fails with `Event.SubscriptionError`, reason `NotServed`, as an endpoint serving events answers its first request; one serving none answers `events/*` with a 404, failing with `McpCallError`'s `StatusError`.
  * - A watch reconnects after the transport fails, a status such as 503, `Action.Unavailable`, or 60 seconds without an answer or a frame, a second later and doubling to 30 seconds, each reconnect logged as a warning; any other failure ends it.
