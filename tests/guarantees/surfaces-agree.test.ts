@@ -188,7 +188,9 @@ const ToolFailure = Schema.fromJsonString(
   Schema.Struct({
     result: Schema.Struct({
       content: Schema.Array(Schema.Struct({ text: Schema.String })),
-      _meta: Schema.Struct({ "effect-actions/error": Schema.Json }),
+      _meta: Schema.Struct({
+        "io.github.gjermundgaraba.effect-actions/error": Schema.Json,
+      }),
     }),
   })
 );
@@ -200,7 +202,9 @@ const modelTextAndEncodingOf = (
     response.status === 200
       ? Effect.map(Schema.decodeEffect(ToolFailure)(body), ({ result }) => ({
           text: result.content[0]?.text,
-          encoded: JSON.stringify(result._meta["effect-actions/error"]),
+          encoded: JSON.stringify(
+            result._meta["io.github.gjermundgaraba.effect-actions/error"]
+          ),
         }))
       : Effect.succeed({ text: undefined, encoded: body })
   );

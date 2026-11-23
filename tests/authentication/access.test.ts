@@ -258,7 +258,7 @@ describe("the authorizer", () => {
         isError: true,
         content: [{ type: "text", text: "Requires write." }],
         _meta: {
-          "effect-actions/error": {
+          "io.github.gjermundgaraba.effect-actions/error": {
             _tag: "Forbidden",
             message: "Requires write.",
           },
@@ -401,9 +401,9 @@ describe("the authorizer", () => {
         isError: true,
         content: [{ type: "text", text: signIn.message }],
         _meta: {
-          "effect-actions/error": Schema.encodeSync(Action.Unauthenticated)(
-            signIn
-          ),
+          "io.github.gjermundgaraba.effect-actions/error": Schema.encodeSync(
+            Action.Unauthenticated
+          )(signIn),
         },
       },
     });
@@ -523,7 +523,9 @@ describe("the authorizer", () => {
     const text = await reply.text();
     expect(text).toContain('"method":"notifications/progress"');
     expect(text).toContain('"isError":true');
-    expect(text).toContain('"effect-actions/error":{"_tag":"Forbidden"');
+    expect(text).toContain(
+      '"io.github.gjermundgaraba.effect-actions/error":{"_tag":"Forbidden"'
+    );
   });
 
   it.effect("runs over the native Toolkit", () =>

@@ -124,9 +124,9 @@ export const toolJsonSchema = (
     : { ...root, $defs: definitions };
 };
 
-export const fieldKey = "effect-actions/field";
+export const fieldKey = "io.github.gjermundgaraba.effect-actions/field";
 
-export const errorKey = "effect-actions/error";
+export const errorKey = "io.github.gjermundgaraba.effect-actions/error";
 
 /** Whether a success's schema encodes only to a string, which a tool sends as its raw text alone. */
 export const isText = (success: Codec): boolean =>

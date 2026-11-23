@@ -1005,7 +1005,11 @@ describe("projection boundaries", () => {
         isError: true,
         content: [{ type: "text", text: message }],
         _meta: {
-          "effect-actions/error": { _tag: "Denied", path: "a.ts", message },
+          "io.github.gjermundgaraba.effect-actions/error": {
+            _tag: "Denied",
+            path: "a.ts",
+            message,
+          },
         },
       },
     });
@@ -1018,7 +1022,12 @@ describe("projection boundaries", () => {
       result: {
         isError: true,
         content: [{ type: "text", text: '{"_tag":"Unlabelled","id":"1"}' }],
-        _meta: { "effect-actions/error": { _tag: "Unlabelled", id: "1" } },
+        _meta: {
+          "io.github.gjermundgaraba.effect-actions/error": {
+            _tag: "Unlabelled",
+            id: "1",
+          },
+        },
       },
     });
   });
@@ -1429,7 +1438,7 @@ describe("projection boundaries", () => {
       result: {
         isError: true,
         content: [{ type: "text", text: "failure" }],
-        _meta: { "effect-actions/error": "failure" },
+        _meta: { "io.github.gjermundgaraba.effect-actions/error": "failure" },
       },
     });
   });

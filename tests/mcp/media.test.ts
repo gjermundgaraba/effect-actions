@@ -38,7 +38,9 @@ const imageBlockAsSent = (
   type: "image",
   data: Base64.encode(data),
   mimeType,
-  ...(field === undefined ? {} : { _meta: { "effect-actions/field": field } }),
+  ...(field === undefined
+    ? {}
+    : { _meta: { "io.github.gjermundgaraba.effect-actions/field": field } }),
 });
 
 const Screen = Schema.Struct({ id: Schema.Finite, title: Schema.String });
@@ -236,7 +238,9 @@ describe("MCP registration without media", () => {
         content: [{ type: "text", text: '{"_tag":"Missing","id":"1"}' }],
       },
     });
-    expect(theirs[failAnswer] ?? "").not.toContain("effect-actions/error");
+    expect(theirs[failAnswer] ?? "").not.toContain(
+      "io.github.gjermundgaraba.effect-actions/error"
+    );
 
     expect(replyOf(ours[greetingAnswer] ?? "")).toStrictEqual({
       result: {
@@ -251,7 +255,7 @@ describe("MCP registration without media", () => {
       },
     });
     expect(ours[failAnswer]).toContain(
-      '"effect-actions/error":{"_tag":"Missing","id":"1"}'
+      '"io.github.gjermundgaraba.effect-actions/error":{"_tag":"Missing","id":"1"}'
     );
   };
 
