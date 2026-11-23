@@ -103,7 +103,10 @@ if (served.listed !== 200) {
   throw new Error("MCP request failed");
 }
 
-if (!served.raw.includes('"structuredContent":"Hello, Ada!"')) {
+if (
+  !served.raw.includes('"content":[{"type":"text","text":"Hello, Ada!"}]') ||
+  served.raw.includes('"structuredContent"')
+) {
   throw new Error(`Unexpected MCP result: ${served.raw}`);
 }
 

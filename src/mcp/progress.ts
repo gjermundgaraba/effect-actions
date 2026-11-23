@@ -6,7 +6,7 @@ import type { Codec } from "../contract/codec.js";
 import { progressSink } from "../contract/progress.js";
 import type { CallOptions, Reporting } from "../contract/progress.js";
 
-const progressKey = "effect-actions/progress";
+const progressKey = "io.github.gjermundgaraba.effect-actions/progress";
 
 const tokenOf = Schema.decodeUnknownOption(McpSchema.ProgressToken);
 

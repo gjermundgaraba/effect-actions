@@ -17,6 +17,7 @@ import {
   rawToolCall,
   sessionRequest,
   ToolList,
+  rawTextOf,
   valueOf,
   withBearer,
 } from "../support/requests.js";
@@ -230,7 +231,7 @@ describe.each([
 
     const admitted = await pingNamed("=?base64?cGluZx==?=");
     expect(admitted.status).toBe(200);
-    await expect(valueOf(admitted)).resolves.toBe("pong");
+    await expect(rawTextOf(admitted)).resolves.toBe("pong");
 
     const malformed = await pingNamed("=?base64?***?=");
     expect(malformed.status).toBe(401);

@@ -45,7 +45,7 @@ const notified = (progressToken: string | number, done: number) => ({
   jsonrpc: "2.0",
   method: "notifications/progress",
   params: {
-    _meta: { "effect-actions/progress": { done } },
+    _meta: { "io.github.gjermundgaraba.effect-actions/progress": { done } },
     progressToken,
     progress: done,
     message: JSON.stringify({ done }),

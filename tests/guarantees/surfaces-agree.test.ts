@@ -22,13 +22,7 @@ import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Testing from "../../src/testing/Testing.js";
 import * as ActionToolkit from "../../src/toolkit/ActionToolkit.js";
 import { exec, logged } from "../support/cli-services.js";
-import {
-  as,
-  rawToolCall,
-  send,
-  toolReplyOf,
-  withBearer,
-} from "../support/requests.js";
+import { as, rawToolCall, send, withBearer } from "../support/requests.js";
 
 const jsonTextOf = <T, E>(schema: Schema.Codec<T, E>) =>
   Schema.fromJsonString(Schema.toCodecJson(schema));
@@ -190,15 +184,43 @@ const encodedFailure = Schema.encodeEffect(jsonTextOf(Failure));
 
 const decodeFailureText = Schema.decodeUnknownEffect(jsonTextOf(Failure));
 
-const failureTextOf = (response: HttpClientResponse.HttpClientResponse) =>
-  response.status === 200
-    ? Effect.flatMap(response.text, (text) =>
-        Effect.map(toolReplyOf(text), (reply) => reply.text)
-      )
-    : response.text;
+const ToolFailure = Schema.fromJsonString(
+  Schema.Struct({
+    result: Schema.Struct({
+      content: Schema.Array(Schema.Struct({ text: Schema.String })),
+      _meta: Schema.Struct({
+        "io.github.gjermundgaraba.effect-actions/error": Schema.Json,
+      }),
+    }),
+  })
+);
+
+const modelTextAndEncodingOf = (
+  response: HttpClientResponse.HttpClientResponse
+) =>
+  Effect.flatMap(response.text, (body) =>
+    response.status === 200
+      ? Effect.map(Schema.decodeEffect(ToolFailure)(body), ({ result }) => ({
+          text: result.content[0]?.text,
+          encoded: JSON.stringify(
+            result._meta["io.github.gjermundgaraba.effect-actions/error"]
+          ),
+        }))
+      : Effect.succeed({ text: undefined, encoded: body })
+  );
 
 const failureOnEachSurface = (failure: typeof Failure.Type) =>
   Effect.gen(function* () {
+    const raw = yield* Effect.flatMap(
+      send(
+        withBearer(
+          rawToolCall("fail", yield* failArguments({ failure })),
+          token
+        )
+      ),
+      modelTextAndEncodingOf
+    );
+
     const http = yield* ActionHttp.client(Http, as(token));
     const rpc = yield* ActionRpc.client(Rpc);
     const mcp = yield* ActionMcp.client([Echo, Fail], as(token));
@@ -211,33 +233,34 @@ const failureOnEachSurface = (failure: typeof Failure.Type) =>
     ).pipe(asCaller);
 
     return {
-      http: yield* Effect.flip(http.fail({ failure })),
-      rpc: yield* Effect.flip(
-        rpc
-          .fail({ failure })
-          .pipe(RpcClient.withHeaders({ authorization: `Bearer ${token}` }))
-      ),
-      mcp: yield* Effect.flip(mcp.fail({ failure })),
-      rawMcp: yield* send(
-        withBearer(
-          rawToolCall("fail", yield* failArguments({ failure })),
-          token
-        )
-      ).pipe(Effect.flatMap(failureTextOf), Effect.flatMap(decodeFailureText)),
-      toolkit: toolResult?.isFailure === true ? toolResult.result : toolResult,
-      inProcess: yield* Effect.flip(inProcess.fail({ failure }).pipe(asCaller)),
-      cli: yield* exec(failCommand, [
-        "--failure",
-        yield* encodedFailure(failure),
-      ]).pipe(
-        asCaller,
-        Effect.flip,
-        Effect.flatMap((error) =>
-          error instanceof CliError.UserError
-            ? decodeFailureText(error.userMessage)
-            : Effect.die(error)
-        )
-      ),
+      modelText: raw.text,
+      surfaces: {
+        http: yield* Effect.flip(http.fail({ failure })),
+        rpc: yield* Effect.flip(
+          rpc
+            .fail({ failure })
+            .pipe(RpcClient.withHeaders({ authorization: `Bearer ${token}` }))
+        ),
+        mcp: yield* Effect.flip(mcp.fail({ failure })),
+        rawMcp: yield* decodeFailureText(raw.encoded),
+        toolkit:
+          toolResult?.isFailure === true ? toolResult.result : toolResult,
+        inProcess: yield* Effect.flip(
+          inProcess.fail({ failure }).pipe(asCaller)
+        ),
+        cli: yield* exec(failCommand, [
+          "--failure",
+          yield* encodedFailure(failure),
+        ]).pipe(
+          asCaller,
+          Effect.flip,
+          Effect.flatMap((error) =>
+            error instanceof CliError.UserError
+              ? decodeFailureText(error.userMessage)
+              : Effect.die(error)
+          )
+        ),
+      },
     };
   }).pipe(Effect.provide(comparedSurfaces));
 
@@ -311,16 +334,23 @@ describe("surfaces answer one call alike", () => {
   );
 
   it.effect.prop(
-    "fails over HTTP, RPC, MCP, raw MCP, the Toolkit, in process and as a command with the generated declared error, as JSON text carries it, its message included",
+    "fails over HTTP, RPC, MCP, raw MCP, the Toolkit, in process and as a command with the generated declared error, as JSON text carries it, its message included, and shows a model its message",
     [Arbitrary.schema(Failure)],
     ([failure]) =>
-      Effect.map(failureOnEachSurface(failure), (answers) => {
+      Effect.map(failureOnEachSurface(failure), ({ surfaces, modelText }) => {
         const sent = sentAsJsonText(Failure)(failure);
+        const encoded = failureAsJson(sent);
 
-        for (const [surface, answer] of Object.entries(answers)) {
+        for (const [surface, answer] of Object.entries(surfaces)) {
           expect(answer, surface).toStrictEqual(sent);
-          expect(failureAsJson(answer), surface).toStrictEqual(
-            failureAsJson(sent)
+          expect(failureAsJson(answer), surface).toStrictEqual(encoded);
+        }
+
+        if (modelText !== undefined) {
+          expect(modelText).toBe(
+            "message" in failure && failure.message !== ""
+              ? failure.message
+              : JSON.stringify(encoded)
           );
         }
       }),

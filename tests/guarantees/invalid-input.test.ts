@@ -768,7 +768,7 @@ describe("an input or success transformation", () => {
 
     const mcp = decodeMcp(await overMcp.json());
 
-    expect(mcp.result.structuredContent).toBe("7");
+    expect(mcp.result.content).toStrictEqual([{ type: "text", text: "7" }]);
     expect(decodes).toBe(2);
     expect(encodes).toBe(2);
   });

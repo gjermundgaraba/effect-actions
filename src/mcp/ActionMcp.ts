@@ -73,10 +73,12 @@ import type { Serving } from "./bridge.js";
 import { progressNotifier } from "./progress.js";
 import {
   defaultPath,
+  errorKey,
   fieldKey,
   httpProtocol,
   isMisplaced,
   isObjectSchema,
+  isText,
   protocols,
   toolJsonSchema,
 } from "./protocol.js";
@@ -267,6 +269,25 @@ const nativeJsonTextOf = (
     ? []
     : [{ type: "text", text: JSON.stringify(encoded) }];
 
+const errorTextOf = (encoded: ErasedValue): string => {
+  if (Predicate.isString(encoded)) {
+    return encoded;
+  }
+
+  return Predicate.hasProperty(encoded, "message") &&
+    Predicate.isString(encoded.message) &&
+    encoded.message !== ""
+    ? encoded.message
+    : JSON.stringify(encoded);
+};
+
+const declaredErrorResult = (encoded: ErasedValue) =>
+  new McpSchema.CallToolResult({
+    isError: true,
+    content: [{ type: "text", text: errorTextOf(encoded) }],
+    _meta: { [errorKey]: encoded },
+  });
+
 const contentBlockOf = ({
   kind,
   field,
@@ -334,9 +355,10 @@ const registerTools = Effect.fnUntraced(function* (
     const media = lift.fields.length === 0 ? undefined : lift;
 
     const structuredSuccess = media === undefined ? toolSuccess : media.rest;
+    const text = media === undefined && isText(toolSuccess);
 
     const structured =
-      structuredSuccess === undefined
+      structuredSuccess === undefined || text
         ? undefined
         : Schema.toCodecJson(structuredSuccess);
 
@@ -371,6 +393,14 @@ const registerTools = Effect.fnUntraced(function* (
     const liftedFieldNames = new Set(media?.fields.map(({ name }) => name));
 
     const resultOf = (encoded: ErasedValue, success: ErasedValue) => {
+      if (text) {
+        return new McpSchema.CallToolResult({
+          isError: false,
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+          content: [{ type: "text", text: encoded as string }],
+        });
+      }
+
       if (media === undefined) {
         return new McpSchema.CallToolResult({
           isError: false,
@@ -423,14 +453,7 @@ const registerTools = Effect.fnUntraced(function* (
             call(input).pipe(
               Effect.matchEffect({
                 onFailure: (error) =>
-                  Effect.map(
-                    encodeFailure(error),
-                    (encoded) =>
-                      new McpSchema.CallToolResult({
-                        isError: true,
-                        content: nativeJsonTextOf(encoded),
-                      })
-                  ),
+                  Effect.map(encodeFailure(error), declaredErrorResult),
                 onSuccess: (success) =>
                   Effect.map(encodeSuccess(success), (encoded) =>
                     resultOf(encoded, success)
@@ -628,13 +651,15 @@ type Inferring<D, A extends Pick<Action.Any, "caller">> = [D] extends [
  * **Gotchas**
  *
  * - A success is `isError: false` with `structuredContent` its JSON and the same JSON as one text block, both `null` for an action without `success`; an `Action.Image` field is left out of `structuredContent` and its text, its block following them, and a success of images alone has no `structuredContent`.
- * - A declared error is an `isError: true` tool result in a 200 holding its JSON as one text block, with no `structuredContent`; a refusal is answered as `Action.Unauthenticated` and `Action.Forbidden` say.
+ * - A success whose schema encodes only to a string, such as `Schema.String`, a string literal or `Schema.DateTimeUtc`, is its raw text as one text block on every revision, with no `structuredContent` and no `outputSchema`, since Claude Code shows a model serialized `structuredContent` in place of every text block: return file contents or command output as such a string, never as a field of an object, which reaches a model JSON-escaped.
+ * - A union holding a string, such as `Schema.NullOr(Schema.String)` or an optional string, is sent as any other success, so a 2026-07-28 client gets the string as `structuredContent` and JSON-quoted text, which reaches a Claude Code model escaped: return `""` for nothing, not `null`.
+ * - A declared error is an `isError: true` tool result in a 200 whose one text block is its `message`, or the error itself when it is a string, or its JSON when it has no `message` or an empty one, with its JSON in `_meta["io.github.gjermundgaraba.effect-actions/error"]`, from which `client` decodes it, and no `structuredContent`: write each `message` for the model, since its other fields reach a model only through it; a refusal is answered as `Action.Unauthenticated` and `Action.Forbidden` say.
  * - An action answering a stream, `Action.Stream`, answers its elements collected into one array once the stream ends, a success of that array.
- * - An action declaring `progress` sends each value as `notifications/progress` on the `progressToken` its call's `_meta` carries, before the result: `progress` counts from 1, `message` is the value's JSON and `_meta["effect-actions/progress"]` the value; a call without a token gets none.
+ * - An action declaring `progress` sends each value as `notifications/progress` on the `progressToken` its call's `_meta` carries, before the result: `progress` counts from 1, `message` is the value's JSON and `_meta["io.github.gjermundgaraba.effect-actions/progress"]` the value; a call without a token gets none.
  * - Arguments that do not decode never reach the handler: an `isError: true` result in a 200, text `Invalid parameters for tool '<name>': …`, or for a 2025-06-18 client a JSON-RPC error.
  * - A defect, an undeclared failure, or a success or an error that does not encode is `isError: true`, text `Tool execution failed due to an internal server error.`: the cause goes to the log and to the call's `ErrorReporter`s, never to the client.
  * - An unknown tool is a JSON-RPC error `-32602` in a 200; a body that is not JSON a JSON-RPC error `-32700` in a 200; a `Content-Type` missing or not JSON an empty 415; another HTTP method an empty 405 with `Allow: POST, DELETE`, `Allow: POST` where `requestScoped`, or the 401 of an endpoint with authentication when signed out.
- * - A 2025-11-25 or 2025-06-18 client gets `structuredContent` only for a success that is an object: any other success arrives as its text block alone, a string unquoted.
+ * - A 2025-11-25 or 2025-06-18 client gets `structuredContent` only for a success that is an object: a number, an array or `null` arrives as its JSON text block alone, and a string a union success returns as its text unquoted.
  * - A client asking for an earlier revision, such as 2025-03-26, is offered 2025-11-25, so a client speaking only that earlier one cannot connect.
  * - A request body is read whole, however large, and a 2025 session holds what its `initialize` sent until it ends, so an oversized `initialize` costs memory for that long: limit bodies as `ActionHttp.layer` says.
  * - An event type named starting with `mcp.`, a prefix MCP keeps for its own events, is refused as the endpoint is made, with `MCP event name starts with "mcp."`.

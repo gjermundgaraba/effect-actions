@@ -40,7 +40,7 @@ import {
   rawToolCall,
   send,
   toolReplyOf,
-  valueOf,
+  rawTextOf,
   withBearer,
 } from "../support/requests.js";
 import { serve, serveWithContext } from "../support/serve.js";
@@ -122,7 +122,9 @@ describe("an implementation's build", () => {
               arguments: {},
             });
 
-            expect(identityResult.structuredContent).toBe("build/mcp");
+            expect(identityResult.content).toStrictEqual([
+              { type: "text", text: "build/mcp" },
+            ]);
           }
         );
         expect(acquired).toBe(runtime);
@@ -162,7 +164,9 @@ describe("an implementation's build", () => {
         arguments: {},
       });
 
-      expect(identityResult.structuredContent).toBe(http);
+      expect(identityResult.content).toStrictEqual([
+        { type: "text", text: http },
+      ]);
     });
   });
 
@@ -801,7 +805,9 @@ describe("serving a binding", () => {
             arguments: {},
           });
 
-          expect(identityResult.structuredContent).toBe(name);
+          expect(identityResult.content).toStrictEqual([
+            { type: "text", text: name },
+          ]);
         }
       );
     }
@@ -831,7 +837,9 @@ describe("serving a binding", () => {
       expect(response.status).toBe(200);
 
       const answer =
-        transport === "HTTP" ? await response.json() : await valueOf(response);
+        transport === "HTTP"
+          ? await response.json()
+          : await rawTextOf(response);
 
       expect(answer).toBe("request");
     }
@@ -1565,7 +1573,7 @@ describe("HTTP bindings", () => {
     const tool = await web.handler(rawToolCall("beta"));
 
     await expect(tool.json()).resolves.toMatchObject({
-      result: { structuredContent: "beta" },
+      result: { content: [{ type: "text", text: "beta" }] },
     });
     expect(built).toBe(1);
   });
@@ -1728,7 +1736,7 @@ describe("HTTP bindings", () => {
     const tool = await routes.handler(rawToolCall("search", { topic: "y" }));
 
     await expect(tool.json()).resolves.toMatchObject({
-      result: { structuredContent: "notes:y" },
+      result: { content: [{ type: "text", text: "notes:y" }] },
     });
   });
 

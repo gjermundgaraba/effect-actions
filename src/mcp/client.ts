@@ -29,13 +29,13 @@ import type { Answer } from "../contract/stream.js";
 import { watching } from "../contract/watch.js";
 import type { WatchArgs, WatchRequirement } from "../contract/watch.js";
 import { decodedSink } from "./progress.js";
-import { defaultPath, unliftedFrom } from "./protocol.js";
+import { defaultPath, errorKey, isText, unliftedFrom } from "./protocol.js";
 import {
   bodyOf,
   callError,
   failWith,
   NoReply,
-  NoStructuredContent,
+  UnexpectedContent,
   ProtocolError,
   StatusError,
   UndeclaredError,
@@ -203,22 +203,45 @@ const callTool = <S extends Action.Any["success"]>(
 
     const { result } = reply.value;
 
-    if (result.isError === true) {
-      const error =
-        textOf(result.content.find((block) => block.type === "text")) ?? "";
+    const firstText = textOf(
+      result.content.find((block) => block.type === "text")
+    );
 
-      return yield* failWith(
-        projectedErrors(action),
-        error,
-        callError(method, name, new UndeclaredError({ text: error }))
+    if (result.isError === true) {
+      const undeclared = callError(
+        method,
+        name,
+        new UndeclaredError({ text: firstText ?? "" })
       );
+
+      const declared = result._meta?.[errorKey];
+
+      return yield* declared === undefined
+        ? Effect.fail(undeclared)
+        : failWith(
+            projectedErrors(action),
+            JSON.stringify(declared),
+            undeclared
+          );
+    }
+
+    if (lift.fields.length === 0 && isText(success)) {
+      if (firstText === undefined || result.structuredContent !== undefined) {
+        return yield* callError(
+          method,
+          name,
+          new UnexpectedContent({ body: text })
+        );
+      }
+
+      return yield* Schema.decodeEffect(Schema.toCodecJson(success))(firstText);
     }
 
     if (result.structuredContent === undefined && lift.rest !== undefined) {
       return yield* callError(
         method,
         name,
-        new NoStructuredContent({ body: text })
+        new UnexpectedContent({ body: text })
       );
     }
 
@@ -232,9 +255,10 @@ const callTool = <S extends Action.Any["success"]>(
  * A client of an MCP endpoint served by `layerHttp`, one method per action calling
  * its tool with one stateless request, as `ActionHttp.client` calls routes: the input is
  * encoded with the action's schema, and the success decoded from its structured content, each
- * media field from the blocks whose `_meta` names it, and a success that is media, or whose
- * every field is, from its blocks alone. A declared error the tool returns, the action's own
- * or a refusal, is its decoded value, and so is a refusal the endpoint's authentication answers
+ * media field from the blocks whose `_meta` names it, a success that is media, or whose
+ * every field is, from its blocks alone, and a success whose schema encodes only to a string
+ * from its text block. A declared error the tool returns, the action's own or a refusal, is its
+ * decoded value, read from the result's `_meta`, and so is a refusal the endpoint's authentication answers
  * with: a test telling a 401 or 403 from a tool result asserts the status of a request `request`
  * builds. The argument may be omitted when `{}` is a valid input. Where `contracts` lists event
  * types, `watch` subscribes to one as `Action.client`'s does, holding `events/stream` open, or

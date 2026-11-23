@@ -12,7 +12,12 @@ import * as ActionMcp from "../../src/mcp/ActionMcp.js";
 import { Http } from "../support/app/binding.js";
 import { UserNotFound } from "../support/app/contracts.js";
 import { withMcpClient } from "../support/mcp-client.js";
-import { mcpRequest, post, valueOf, withBearer } from "../support/requests.js";
+import {
+  mcpRequest,
+  post,
+  rawTextOf,
+  withBearer,
+} from "../support/requests.js";
 import { httpClient, serve } from "../support/serve.js";
 import { makeTestApp } from "../support/server.js";
 
@@ -757,6 +762,6 @@ describe("the MCP endpoint over HTTP", () => {
       })
     );
 
-    await expect(valueOf(result)).resolves.toBe("probe");
+    await expect(rawTextOf(result)).resolves.toBe("probe");
   });
 });

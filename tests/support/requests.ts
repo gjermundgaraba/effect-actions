@@ -106,6 +106,15 @@ const RawToolCallSuccess = Schema.Struct({
   result: Schema.Struct({ structuredContent: Schema.Json }),
 });
 
+const RawTextSuccess = Schema.Struct({
+  result: Schema.Struct({
+    structuredContent: Schema.optionalKey(Schema.Never),
+    content: Schema.Tuple([
+      Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }),
+    ]),
+  }),
+});
+
 const ToolReply = Schema.fromJsonString(
   Schema.Struct({
     result: Schema.Struct({
@@ -124,6 +133,10 @@ export const toolReplyOf = (text: string) =>
 export const valueOf = async (response: Response): Promise<Schema.Json> =>
   Schema.decodeUnknownSync(RawToolCallSuccess)(await response.json()).result
     .structuredContent;
+
+export const rawTextOf = async (response: Response): Promise<string> =>
+  Schema.decodeUnknownSync(RawTextSuccess)(await response.json()).result
+    .content[0].text;
 
 export const withBearer = (request: Request, token: string): Request => {
   request.headers.set("authorization", `Bearer ${token}`);

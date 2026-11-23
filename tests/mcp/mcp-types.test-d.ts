@@ -289,7 +289,7 @@ expectTypeOf<Types.ReasonTags<ActionMcp.McpCallError>>().toEqualTypeOf<
   | "ProtocolError"
   | "NoReply"
   | "UndeclaredError"
-  | "NoStructuredContent"
+  | "UnexpectedContent"
   | "FrameTooLarge"
 >();
 

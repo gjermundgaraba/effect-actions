@@ -4,6 +4,7 @@ import { McpProtocol, McpSchema } from "effect/ai";
 import { Base64 } from "effect/encoding";
 
 import type * as Action from "../contract/Action.js";
+import type { Codec } from "../contract/codec.js";
 import type { Field, Lift } from "../contract/lift.js";
 import { isMarked } from "../contract/media.js";
 
@@ -123,7 +124,13 @@ export const toolJsonSchema = (
     : { ...root, $defs: definitions };
 };
 
-export const fieldKey = "effect-actions/field";
+export const fieldKey = "io.github.gjermundgaraba.effect-actions/field";
+
+export const errorKey = "io.github.gjermundgaraba.effect-actions/error";
+
+/** Whether a success's schema encodes only to a string, which a tool sends as its raw text alone. */
+export const isText = (success: Codec): boolean =>
+  toolJsonSchema(Schema.toCodecJson(success), false)?.["type"] === "string";
 
 const partsAndEncodedSideOf = (
   ast: SchemaAST.AST

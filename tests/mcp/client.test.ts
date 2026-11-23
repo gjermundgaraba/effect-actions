@@ -2,6 +2,7 @@ import { NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Context,
+  DateTime,
   Effect,
   Layer,
   Option,
@@ -54,6 +55,11 @@ const headersAs = (token = "alice") => ({
 const mcpAs = (token = "alice") =>
   ActionMcp.client([GetUser, RenameUser, Double, WhoAmI], as(token));
 
+const rawAnswer = (method: string, params: ActionMcp.Params) =>
+  Effect.flatMap(HttpClient.HttpClient, (http) =>
+    http.execute(ActionMcp.request(method, params))
+  ).pipe(Effect.flatMap((response) => response.json));
+
 describe("client", () => {
   it.effect(
     "encodes the input and decodes the success from the structured content",
@@ -76,6 +82,96 @@ describe("client", () => {
           42,
           { id: "alice", tenantId: "acme" },
         ]);
+      })
+  );
+
+  const instant = DateTime.makeUnsafe("2026-11-23T12:00:00.000Z");
+  const source = 'const a = "x";\n\tindented\n';
+
+  it.effect.each([
+    [
+      "a string, quotes, tabs and newlines included",
+      Schema.String,
+      source,
+      source,
+    ],
+    ["a string literal", Schema.Literal("on"), "on", "on"],
+    [
+      "an identified string",
+      Schema.String.annotate({ identifier: "Source" }),
+      source,
+      source,
+    ],
+    [
+      "a transformation encoding to a string",
+      Schema.DateTimeUtc,
+      instant,
+      "2026-11-23T12:00:00.000Z",
+    ],
+  ] as const)(
+    "sends %s as its raw text alone, and decodes it back",
+    ([, success, value, text]) =>
+      Effect.gen(function* () {
+        const Read = Action.make("read", {
+          description: "Reads",
+          readOnly: true,
+          caller: Action.Anyone,
+          success,
+        });
+
+        const routes = ActionMcp.layerHttp(
+          Action.implement(Read, () => Effect.succeed(value)),
+          { name: "test", version: "0" }
+        );
+
+        const [decoded, sent, listed] = yield* Effect.all([
+          Effect.flatMap(ActionMcp.client([Read]), (mcp) => mcp.read()),
+          rawAnswer("tools/call", { name: "read", arguments: {} }),
+          rawAnswer("tools/list", {}),
+        ]).pipe(Effect.provide(Testing.layer(routes)));
+
+        expect(decoded).toStrictEqual(value);
+        expect(sent).toMatchObject({
+          result: { isError: false, content: [{ type: "text", text }] },
+        });
+        expect(sent).not.toHaveProperty("result.structuredContent");
+        expect(listed).not.toHaveProperty("result.tools.0.outputSchema");
+      })
+  );
+
+  it.effect(
+    "sends a union holding a string as any other success, its string JSON beside its structured content, and decodes it back",
+    () =>
+      Effect.gen(function* () {
+        const Read = Action.make("read", {
+          description: "Reads",
+          readOnly: true,
+          caller: Action.Anyone,
+          success: Schema.NullOr(Schema.String),
+        });
+
+        const routes = ActionMcp.layerHttp(
+          Action.implement(Read, () => Effect.succeed(source)),
+          { name: "test", version: "0" }
+        );
+
+        const [decoded, sent] = yield* Effect.all([
+          Effect.flatMap(ActionMcp.client([Read]), (mcp) => mcp.read()),
+          Effect.flatMap(HttpClient.HttpClient, (http) =>
+            http.execute(
+              ActionMcp.request("tools/call", { name: "read", arguments: {} })
+            )
+          ).pipe(Effect.flatMap((response) => response.json)),
+        ]).pipe(Effect.provide(Testing.layer(routes)));
+
+        expect(decoded).toBe(source);
+        expect(sent).toMatchObject({
+          result: {
+            isError: false,
+            structuredContent: source,
+            content: [{ type: "text", text: JSON.stringify(source) }],
+          },
+        });
       })
   );
 
@@ -443,6 +539,71 @@ describe("client", () => {
       })
   );
 
+  it.effect(
+    "fails loudly against an endpoint of 0.37.0, which quotes a string success beside its structured content and sends a declared error as JSON text alone",
+    () =>
+      Effect.gen(function* () {
+        class EditMissed extends Schema.TaggedError<
+          EditMissed,
+          { readonly brand: unique symbol }
+        >()("EditMissed", { message: Schema.String }) {}
+
+        const Read = Action.make("read", {
+          description: "Reads a file",
+          readOnly: true,
+          caller: Action.Anyone,
+          success: Schema.String,
+          error: EditMissed,
+        });
+
+        const answeredBy037 = (result: Schema.Json) =>
+          ActionMcp.client([Read], { url: "/old" }).pipe(
+            Effect.flatMap((mcp) => Effect.flip(mcp.read())),
+            Effect.provide(
+              Testing.layer(
+                HttpRouter.add(
+                  "POST",
+                  "/old",
+                  HttpServerResponse.jsonUnsafe({
+                    jsonrpc: "2.0",
+                    id: 1,
+                    result,
+                  })
+                )
+              )
+            )
+          );
+
+        const quoted = yield* answeredBy037({
+          content: [{ type: "text", text: JSON.stringify(source) }],
+          structuredContent: source,
+          isError: false,
+        });
+
+        const errorAsJsonText = yield* answeredBy037({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ _tag: "EditMissed", message: "missed" }),
+            },
+          ],
+          isError: true,
+        });
+
+        expect(quoted).toMatchObject({
+          _tag: "McpCallError",
+          reason: { _tag: "UnexpectedContent" },
+        });
+        expect(errorAsJsonText).toMatchObject({
+          _tag: "McpCallError",
+          reason: {
+            _tag: "UndeclaredError",
+            text: '{"_tag":"EditMissed","message":"missed"}',
+          },
+        });
+      })
+  );
+
   it.effect("fails with an McpCallError holding any other answer", () =>
     Effect.gen(function* () {
       const Loose = Action.make("getUser", {
@@ -527,7 +688,7 @@ describe("client", () => {
         {
           target: "missing_tool",
           reason: {
-            _tag: "NoStructuredContent",
+            _tag: "UnexpectedContent",
             body: JSON.stringify({
               jsonrpc: "2.0",
               id: 1,

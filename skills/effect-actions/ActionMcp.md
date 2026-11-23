@@ -67,6 +67,7 @@ A tool is its contract ([Action.md](Action.md#define-a-contract)): a model knows
 
 - Constrain in the schema what a model may send: `PrinterId` in [mcp-tools/src/printers/Printers.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/printers/Printers.ts). Which checks reach the listed schema is on `Action.Options.input`.
 - A model acts on a declared error's `message`, so write it for the model: [mcp-tools/src/platform/print-farm.ts](node_modules/@gjermundgaraba/effect-actions/examples/mcp-tools/src/platform/print-farm.ts).
+- A model reads a success whose schema is a string as it is, and an object or a `NullOr` of a string as escaped JSON, so return text it reads or copies, such as a file's lines or a command's output, as a string success: `greet` in [quickstart/src/greeting/Greeting.ts](node_modules/@gjermundgaraba/effect-actions/examples/quickstart/src/greeting/Greeting.ts). What each shape sends is on `layerHttp`.
 - `ActionMcp.Options`'s `actions` lists the tools, and only listed actions must suit MCP: [kitchen-sink/src/Actions.ts](node_modules/@gjermundgaraba/effect-actions/examples/kitchen-sink/src/Actions.ts). Leave out an action a model should not call, or one that takes a secret ([Action.md](Action.md#define-a-contract)).
 
 ## Return images and other media
