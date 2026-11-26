@@ -12,11 +12,10 @@ step() {
 }
 
 vp_bin="$HOME/.local/share/vite-plus/bin/vp"
+vp_env_the_installer_adds_to_login_profiles="$HOME/.config/vite-plus/env"
 vp_version=$(sed -n 's/^  vite-plus: *//p' pnpm-workspace.yaml)
 
-# One vp serves every repository in the orb, so one pinning an older
-# version keeps the newer one.
-install_vp() {
+install_vp_unless_newer_installed() {
   local installed
   installed=$("$vp_bin" --version 2>/dev/null | sed -n '1s/^vp v//p') || true
   if [[ -z "$installed" || "$(printf '%s\n' "$vp_version" "$installed" | sort -V | head -1)" != "$vp_version" ]]; then
@@ -24,9 +23,8 @@ install_vp() {
   fi
 }
 
-step "Vite+ $vp_version or newer" install_vp
-# The installer adds this to the login profiles, which this running script never reads.
+step "Vite+ $vp_version or newer" install_vp_unless_newer_installed
 # shellcheck disable=SC1091
-. "$HOME/.config/vite-plus/env"
+. "$vp_env_the_installer_adds_to_login_profiles"
 step "Node.js and pnpm" vp env install
 step "dependencies" vp install --frozen-lockfile
