@@ -174,4 +174,31 @@ describe("Event.appended", () => {
       ]);
     })
   );
+
+  it.effect(
+    "fails its check with what newest or after fail with, Unavailable included",
+    () =>
+      Effect.gen(function* () {
+        const down = new Action.Unavailable({ message: "Storage is down." });
+
+        const failures = yield* Effect.forEach(
+          [
+            Event.appended(Appended, {
+              newest: () => Effect.fail(down),
+              after: () => Effect.succeed({ items: [] }),
+              id: (data) => data.id,
+            }),
+            Event.appended(Appended, {
+              newest: () => Effect.succeed(9),
+              after: () => Effect.fail(down),
+              id: (data) => data.id,
+            }),
+          ],
+          (source, index) =>
+            Effect.flip(source.check({}, index === 0 ? null : "0"))
+        );
+
+        expect(failures).toStrictEqual([down, down]);
+      })
+  );
 });
