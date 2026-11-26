@@ -159,7 +159,7 @@ Give `Http.api`, a plain `HttpApi`, to `OpenApi.fromApi`, `HttpApiSwagger.layer`
 
 ## Call the API from Effect
 
-What a call fails with, `ActionHttp.MethodError`, is on `ActionHttp.client`, and a token or a per-request sign-in goes through `ActionHttp.ClientOptions.transformClient`.
+What a call fails with is on `ActionHttp.client`, its declared and built-in errors typed `ActionHttp.MethodError`, and a token or a per-request sign-in goes through `ActionHttp.ClientOptions.transformClient`.
 
 ```ts example=quickstart/src/client.ts
 import { NodeRuntime } from "@effect/platform-node";
@@ -180,7 +180,6 @@ Effect.gen(function* () {
 
 [kitchen-sink/src/seed.ts](../examples/kitchen-sink/src/seed.ts) reads `baseUrl` from `Config`, sends headers and handles errors by tag. `ActionMcp.client` takes the same `transformClient`, and `ActionCli.remote` the unyielded `ActionHttp.client(Http, …)` as its `client`.
 
-- `ActionHttp.fetchClient`, built once outside an Effect as [below](#call-the-api-from-a-browser), needs no `HttpClient` layer: a CLI calling one server may use it, its `transformClient` sending a cookie the same way.
 - In a test, provide `Testing.layer(routes)` instead of a network client ([Testing.md](Testing.md#test-routes-in-memory), [notes-service/test/routes.test.ts](../examples/notes-service/test/routes.test.ts)).
 
 ## Serve and watch events
