@@ -15,7 +15,7 @@ import type { Deferred, ErasedAuthorizer } from "./authorizer.js";
 import { Anyone, assertCaller } from "./caller.js";
 import { codecOf } from "./codec.js";
 import type { Codec, CodecOf, Fields, NoInput } from "./codec.js";
-import type { Refusal } from "./errors.js";
+import type { Refusal, Unavailable } from "./errors.js";
 import { EventImplementation, sourcesOf } from "./feed.js";
 import type { Events, KeyOptions } from "./hub.js";
 import type { ErasedValue, Protected } from "./implementation.js";
@@ -202,6 +202,7 @@ interface Hooked<E extends Any, R> {
  * **Gotchas**
  *
  * - An occurrence without `eventId` takes a fresh id at each read, and a page's occurrences before its last are read again from the cursor asked after a reconnect mid-page: give the upstream's ids, or a subscriber receives them again under ids no `watch` drops.
+ * - A read that fails for a while, such as its store being down, fails with `Action.Unavailable`, which a watch reads on after as after any failure no refusal explains, and an HTTP poll is answered 503 with `Retry-After`; a refusal such as `Forbidden` ends the watch.
  */
 export interface Check<E extends Any, R = never> extends Hooked<E, R> {
   /**
@@ -212,7 +213,7 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
   readonly check: (
     input: E["input"]["Type"],
     cursor: string | null
-  ) => Effect.Effect<Page<E>, Refusal, R>;
+  ) => Effect.Effect<Page<E>, Refusal | Unavailable, R>;
   /**
    * Every change `check` reads is announced by an `Events.notify` the server serving it receives,
    * as a store only that server's handlers write is: its streams and webhook deliveries then ask
@@ -263,12 +264,12 @@ export interface AppendedOptions<
   /** The id of the newest entry, `0` while there is none, run as the subscriber. */
   readonly newest: (
     input: E["input"]["Type"]
-  ) => Effect.Effect<number, Refusal, RN>;
+  ) => Effect.Effect<number, Refusal | Unavailable, RN>;
   /** The entries after `id`, oldest first, as many as one read takes, run as the subscriber. */
   readonly after: (
     input: E["input"]["Type"],
     id: number
-  ) => Effect.Effect<Appended<E>, Refusal, RA>;
+  ) => Effect.Effect<Appended<E>, Refusal | Unavailable, RA>;
   /** The id of the entry an occurrence's data was read from: its `eventId`, and a cursor. */
   readonly id: (data: E["payload"]["Type"]) => number;
   /** Each page's `nextPoll`; defaults to 5 seconds. */
@@ -357,12 +358,13 @@ export const appended = <
  * - A notify reads the value again for each subscriber it reaches, though a value equal to the one its cursor saw, for the same input and key, is not sent: notify after a write that may change it, not on a timer.
  * - The revision is read before `current`, so a value written between them is read again at the next read, never missed: write the value, then notify.
  * - A cursor is its subscription's own: one taken to another input of the same key, at a revision it already holds, is answered with nothing until the next notify.
+ * - A read that fails for a while, such as its store being down, fails with `Action.Unavailable`, which a watch reads on after as after any failure no refusal explains, and an HTTP poll is answered 503 with `Retry-After`; a refusal such as `Forbidden` ends the watch.
  */
 export interface Current<E extends Any, R = never> extends Hooked<E, R> {
   /** The value as it is, as the subscriber's `input` selects it, run as the subscriber. */
   readonly current: (
     input: E["input"]["Type"]
-  ) => Effect.Effect<E["payload"]["Type"], Refusal, R>;
+  ) => Effect.Effect<E["payload"]["Type"], Refusal | Unavailable, R>;
   /**
    * How long a polling client waits before it asks again, read in the bounds of `Page`'s
    * `nextPoll`; defaults to 5 seconds. Streams and webhook deliveries never wait on it: they read

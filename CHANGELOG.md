@@ -6,6 +6,7 @@
 
 - A watch's `reconnect` option, a `Schedule` such as `Schedule.recurs(5)`, ends the watch with its last failure once the schedule ends, so an application can tell its reader the watch stopped. Left out, a watch reconnects without end, as before.
 - `Event.memoryCursors()` is a `CursorStore` in memory that a watch's `resume` takes without a `key`: `resume: { store: Event.memoryCursors() }` lets a retry of the watch's stream go on where the failed run stopped, where an application wrote that store by hand. A store watches may share still takes a `key`.
+- A `check` or `current` source, and `appended`'s `newest` and `after`, may fail with `Action.Unavailable`, which the server already handled: a watch reads on after it as after any failure no refusal explains, and an HTTP poll is answered 503 with `Retry-After`, where MCP's `events/poll` still answers it `-32603`. A source with a typed storage error had only a refusal to fail with, which ends the watch, or a defect.
 
 ### Other changes
 

@@ -688,45 +688,51 @@ describe("a check source, watched in process", () => {
   );
 
   it.effect(
-    "reports a read that fails without a refusal once, and reads on from where it was, streamed and polled",
+    "reports a read that fails without a refusal, a defect or Unavailable, once, and reads on from where it was, streamed and polled",
     () =>
-      Effect.forEach(["stream", "poll"] as const, (mode) => {
-        const reported: string[] = [];
+      Effect.forEach(
+        [
+          ["stream", Effect.die(new Error("upstream blew up"))],
+          ["poll", Effect.die(new Error("upstream blew up"))],
+          ["stream", Effect.fail(new Action.Unavailable({ message: "Down." }))],
+          ["poll", Effect.fail(new Action.Unavailable({ message: "Down." }))],
+        ] as const,
+        ([mode, failure]) => {
+          const reported: string[] = [];
 
-        return Effect.gen(function* () {
-          const log = makeMessages();
-          let reads = 0;
+          return Effect.gen(function* () {
+            const log = makeMessages();
+            let reads = 0;
 
-          const failingSecondRead = Event.implement(Posted, {
-            check: (input, cursor) =>
-              (reads += 1) === 2
-                ? Effect.die(new Error("upstream blew up"))
-                : log.check(input, cursor),
-          });
+            const failingSecondRead = Event.implement(Posted, {
+              check: (input, cursor) =>
+                (reads += 1) === 2 ? failure : log.check(input, cursor),
+            });
 
-          const client = yield* Action.client(failingSecondRead);
+            const client = yield* Action.client(failingSecondRead);
 
-          const fiber = yield* client
-            .watch(Posted, {}, { mode })
-            .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+            const fiber = yield* client
+              .watch(Posted, {}, { mode })
+              .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
 
-          yield* settle;
-          log.post("general", "one");
-          yield* TestClock.adjust("5 seconds");
-          yield* TestClock.adjust("5 seconds");
+            yield* settle;
+            log.post("general", "one");
+            yield* TestClock.adjust("5 seconds");
+            yield* TestClock.adjust("5 seconds");
 
-          expect([
-            mode,
-            texts(yield* Fiber.join(fiber)),
-            reported.length,
-          ]).toStrictEqual([mode, ["one"], 1]);
-        }).pipe(
-          Effect.provide([
-            ErrorReporter.layer([recorder(reported)]),
-            Event.layerMemory,
-          ])
-        );
-      })
+            expect([
+              mode,
+              texts(yield* Fiber.join(fiber)),
+              reported.length,
+            ]).toStrictEqual([mode, ["one"], 1]);
+          }).pipe(
+            Effect.provide([
+              ErrorReporter.layer([recorder(reported)]),
+              Event.layerMemory,
+            ])
+          );
+        }
+      )
   );
 
   it.effect(
