@@ -221,6 +221,39 @@ describe("HTTP events", () => {
   );
 
   it.effect(
+    "answers a poll whose check or current source fails with Unavailable 503, as an action's",
+    () =>
+      Effect.gen(function* () {
+        const down = new Action.Unavailable({ message: "Storage is down." });
+
+        const answers = yield* Effect.forEach(
+          [
+            Event.implement(Posted, { check: () => Effect.fail(down) }),
+            Event.implement(Posted, { current: () => Effect.fail(down) }),
+          ],
+          (failing) =>
+            subscribe("message.posted", { input: {}, cursor: "0" }).pipe(
+              Effect.flatMap((response) =>
+                Effect.map(answerOf(response), (answer) => ({
+                  ...answer,
+                  retryAfter: response.headers["retry-after"],
+                }))
+              ),
+              Effect.provide(Testing.layer(ActionHttp.layer(Public, failing)))
+            )
+        );
+
+        expect(answers).toStrictEqual(
+          [0, 1].map(() => ({
+            status: 503,
+            body: { _tag: "Unavailable", message: "Storage is down." },
+            retryAfter: "1",
+          }))
+        );
+      }).pipe(Effect.provide(Event.layerMemory))
+  );
+
+  it.effect(
     "answers a nextPoll over 5 minutes, Duration.infinity included, as 5 minutes",
     () =>
       Effect.gen(function* () {
