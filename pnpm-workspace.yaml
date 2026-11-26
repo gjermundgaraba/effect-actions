@@ -49,8 +49,6 @@ minimumReleaseAgeExclude:
   - "@gjermundgaraba-designs/*"
   - effect
   - "@effect/*"
-# Name the directories pnpm links Ultracite's skill into: without one it auto-detects an agent,
-# and where none is installed, as in a Docker build, the install fails.
 skills:
   dirs:
     - .agents/skills

@@ -93,7 +93,6 @@ export interface Socket {
    */
   readonly protocol?:
     | {
-        /** The version served. */
         readonly version: string;
         /** The close code of a refusal, an integer from 4000 to 4999, which `ActionRpc.socketClient` stops at; another throws as `make` runs. */
         readonly code: number;
