@@ -25,8 +25,6 @@ export default defineConfig({
           name: "effect-actions",
         },
       },
-      "packages/*",
-      "packages/*/examples/*",
     ],
   },
 });

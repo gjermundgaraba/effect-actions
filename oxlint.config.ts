@@ -96,10 +96,6 @@ const lint: ReturnType<typeof config> = config({
     },
     {
       files: [
-        "packages/cloudflare/examples/chat-rooms/test/{support,worker,worker.test}.ts",
-        "packages/cloudflare/src/cluster/{ActionCluster,objects}.ts",
-        "packages/cloudflare/src/host/{ActionWorker,host,initializer}.ts",
-        "packages/cloudflare/tests/{worker,cluster/{eviction,natives,redaction}.test,host/worker.test,support/socket}.ts",
         "src/webhook/{address,subscriptions,Webhook}.ts",
         "examples/{build-events,kitchen-sink}/src/server.ts",
         "examples/build-events/test/support/memory.ts",
@@ -112,8 +108,6 @@ const lint: ReturnType<typeof config> = config({
     },
     {
       files: [
-        "packages/cloudflare/src/cluster/ActionCluster.ts",
-        "packages/cloudflare/src/host/{ActionWorker,host,sockets}.ts",
         "src/authentication/Authentication.ts",
         "src/cli/{ActionCli,commands}.ts",
         "src/contract/{Action,authorizer,call,caller,feed,idempotency,implementation,lease,push,serving,webhooks}.ts",
@@ -174,13 +168,11 @@ const lint: ReturnType<typeof config> = config({
     {
       files: [
         "examples/live-rpc/{src/browser,test/chat/chat.test,test/routes.test}.ts",
-        "packages/cloudflare/examples/chat-rooms/{src/browser,test/worker.test,test/webhooks.test}.ts",
       ],
       rules: { "unicorn/require-post-message-target-origin": "off" },
     },
     {
       files: [
-        "packages/cloudflare/scripts/package-consumer/worker.ts",
         "scripts/package-consumer/index.ts",
         "tests/contract/{client,event,tracing}.test.ts",
         "tests/guarantees/{builds.model,registration}.test.ts",
@@ -190,7 +182,6 @@ const lint: ReturnType<typeof config> = config({
     },
     {
       files: [
-        "packages/cloudflare/scripts/package-consumer/worker.ts",
         "scripts/package-consumer/index.ts",
         "tests/authentication/authentication.test.ts",
         "tests/contract/client.test.ts",
@@ -200,10 +191,7 @@ const lint: ReturnType<typeof config> = config({
       rules: { "effecttsgo/missing-effect-error": "off" },
     },
     {
-      files: [
-        "packages/cloudflare/scripts/package-consumer/worker.ts",
-        "tests/authentication/authentication.test.ts",
-      ],
+      files: ["tests/authentication/authentication.test.ts"],
       rules: { "effecttsgo/missing-layer-context": "off" },
     },
     {
@@ -295,29 +283,6 @@ const lint: ReturnType<typeof config> = config({
                 group: [...anyRelativeImport, "!./*.js"],
                 message:
                   "src/contract imports nothing outside itself: ./<file>.js alone.",
-              },
-            ],
-          },
-        ],
-      },
-    },
-    {
-      files: ["packages/*/src/**"],
-      rules: {
-        "no-restricted-imports": [
-          "error",
-          {
-            patterns: [
-              {
-                caseSensitive: true,
-                group: [
-                  ...anyRelativeImport,
-                  "!./*.js",
-                  "!../[a-z]*/[A-Z]*.js",
-                  "!../cluster/objects.js",
-                ],
-                message:
-                  "A relative import is ./<file>.js, another domain's public ../<domain>/<Module>.js, or the shared private ../cluster/objects.js; the core is imported by its package name.",
               },
             ],
           },

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Breaking changes
+
+**The `@gjermundgaraba/effect-actions-cloudflare` package is removed from this repository and gets no new versions; 0.38.0 is its last.** `ActionEntity` still runs on `@effect/platform-cloudflare`'s cluster, and `Stored`, `ActionRpc`'s poll exports, `watchMode`, `ActionEntity.bindingRpcs`, `isClusterFailure` and `forwardedHeaders` stay, for a socket host an application writes itself.
+
+- Migrate: `ActionCluster.layer` becomes `@effect/platform-cloudflare`'s `CloudflareCluster.layer`, whose entity clients send `authorization`, `cookie`, `set-cookie` and `x-api-key` as `<redacted>`, so an entity whose binding authenticates from them refuses every protected call with `Unauthenticated`: serve such an entity's contracts as `Action.Anyone`, authorizing in the Worker and passing what the entity needs in the payload, or keep 0.38.0's `ActionCluster.layer`, whose clients send a volatile call's headers intact, as your own layer. `ActionCluster.Sql` becomes `CloudflareCluster.DurableObjectSqlClient`, the same key. `ActionCluster.layerObject` becomes `Stored.layerEvents` over `Layer.effect(SqlClient.SqlClient)(CloudflareCluster.DurableObjectSqlClient.orDie)`. `failureResponse`, `ObjectState` and `ActionWorker` have no replacement: copy them from 0.38.0's source if you need them.
+
 ### Additions
 
 - A watch's `reconnect` option, a `Schedule` such as `Schedule.recurs(5)`, ends the watch with its last failure once the schedule ends, so an application can tell its reader the watch stopped. Left out, a watch reconnects without end, as before.

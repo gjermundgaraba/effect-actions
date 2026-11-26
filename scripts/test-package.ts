@@ -17,11 +17,8 @@ import { Schema } from "effect";
 import { API, SymbolFlags } from "typescript/unstable/sync";
 
 import manifest from "../package.json" with { type: "json" };
-import cloudflareManifest from "../packages/cloudflare/package.json" with { type: "json" };
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-
-const cloudflare = path.join(root, "packages/cloudflare");
 
 const decodeInstalled = Schema.decodeUnknownSync(
   Schema.Struct({ version: Schema.String })
@@ -158,13 +155,6 @@ const run = (command: string, args: readonly string[], cwd = consumer) =>
 try {
   const tarball = path.join(consumer, "effect-actions.tgz");
   run("vp", ["pm", "pack", "--out", tarball], root);
-
-  const cloudflareTarball = path.join(
-    consumer,
-    "effect-actions-cloudflare.tgz"
-  );
-
-  run("vp", ["pm", "pack", "--out", cloudflareTarball], cloudflare);
   writeFileSync(
     path.join(consumer, "package.json"),
     JSON.stringify({
@@ -173,15 +163,6 @@ try {
       devEngines: manifest.devEngines,
       dependencies: {
         [manifest.name]: `file:${tarball}`,
-        [cloudflareManifest.name]: `file:${cloudflareTarball}`,
-        "@cloudflare/workers-types": versionIn(
-          cloudflare,
-          "@cloudflare/workers-types"
-        ),
-        "@effect/platform-cloudflare": versionIn(
-          cloudflare,
-          "@effect/platform-cloudflare"
-        ),
         effect: versionIn(root, "effect"),
         typescript: manifest.devDependencies.typescript,
       },
@@ -207,18 +188,11 @@ try {
   run("vp", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
   const installed = path.join(consumer, "node_modules", manifest.name);
 
-  const installedCloudflare = path.join(
-    consumer,
-    "node_modules",
-    cloudflareManifest.name
-  );
-
   refuseUnshipped(root, installed);
-  refuseUnshipped(cloudflare, installedCloudflare);
-  refuseUndocumented(consumer, [
-    ...entriesOf(installed, manifest.publishConfig.exports),
-    ...entriesOf(installedCloudflare, cloudflareManifest.publishConfig.exports),
-  ]);
+  refuseUndocumented(
+    consumer,
+    entriesOf(installed, manifest.publishConfig.exports)
+  );
 
   const quickstart = path.join(installed, "examples", "quickstart", "src");
 
@@ -251,42 +225,6 @@ try {
   refuseInternalKeys(path.join(consumer, "declarations.d.ts"));
 
   run(process.execPath, ["index.js"]);
-
-  cpSync(
-    path.join(cloudflare, "scripts/package-consumer"),
-    path.join(consumer, "cloudflare"),
-    {
-      recursive: true,
-    }
-  );
-  cpSync(
-    path.join(installedCloudflare, "examples", "chat-rooms", "src"),
-    path.join(consumer, "cloudflare", "chat-rooms"),
-    { recursive: true }
-  );
-
-  writeFileSync(
-    path.join(consumer, "cloudflare", "tsconfig.json"),
-    JSON.stringify({
-      compilerOptions: {
-        ...compilerOptions,
-        skipLibCheck: true,
-        types: ["@cloudflare/workers-types"],
-        lib: ["es2023"],
-      },
-      include: ["*.ts", "chat-rooms/**/*.ts"],
-    })
-  );
-
-  run(process.execPath, [
-    path.join(consumer, "node_modules/typescript/bin/tsc"),
-    "-p",
-    path.join(consumer, "cloudflare"),
-  ]);
-
-  refuseInternalKeys(path.join(consumer, "cloudflare", "worker.d.ts"));
-
-  run(process.execPath, [path.join(consumer, "cloudflare", "node.js")]);
 } finally {
   rmSync(consumer, { recursive: true, force: true });
 }

@@ -161,7 +161,7 @@ export const buildEvents = Event.implement(
 
 A subscriber holding a stream open is read again every 5 seconds. Where the application writes the store itself, it wakes them at once: after the write, `Event.Events`' `notify`, as [build-events/src/builds/handlers.ts](../examples/build-events/src/builds/handlers.ts) does after each build finishes. A store another process writes is read at the next poll.
 
-Where the store appends entries under increasing integer ids that last as long as it does, such as a SQLite table's `INTEGER PRIMARY KEY`, `Event.appended` builds the check from the newest id and a read after an id, as the Cloudflare package's chat-rooms example does for its messages: the cursor is the last id read, and what a stale cursor answers is on `Event.appended`.
+Where the store appends entries under increasing integer ids that last as long as it does, such as a SQLite table's `INTEGER PRIMARY KEY`, `Event.appended` builds the check from the newest id and a read after an id: the cursor is the last id read, and what a stale cursor answers is on `Event.appended`.
 
 - **Check what a subscriber may see where the data is read**, as an action's handler does: `authorize` decides whether it may subscribe at all, and receives the event type, not the subscription's input.
 

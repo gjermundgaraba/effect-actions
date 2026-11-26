@@ -679,7 +679,7 @@ export interface ClientOptions extends Omit<
 > {
   /**
    * The `mode` of a watch that gives none: `"poll"` reads its pages from the first, as a server
-   * serving events by poll alone, such as the Cloudflare package's socket host, needs, without the
+   * serving events by poll alone, such as a socket host that holds polls, needs, without the
    * round trip a watch otherwise spends finding that out. A watch's own `mode` wins.
    */
   readonly watchMode?: "stream" | "poll" | undefined;
@@ -704,8 +704,8 @@ export const pollResentAfter = Duration.minutes(4);
  * - It drops undeclared input fields as it encodes, and fails with `InvalidInput`, sending nothing, for an input that does not encode.
  * - A browser WebSocket cannot set an `Authorization` header on its upgrade, so under Bearer a protected call without its own token fails with `Unauthenticated`, `A bearer token is required.`: send the token on each call with `RpcClient.withHeaders`.
  * - The socket belongs to the Layer providing the protocol, not to the `Scope` around the client: provided around one call, it opens a socket for that call alone.
- * - `watch(event, input, options)` with no `mode` holds the event's stream rpc open, as `Action.client`'s does, and polls instead, for that watch, where the server answers the stream rpc `Unknown request tag`, as an `ActionEntity` and the Cloudflare package's socket host do: one round trip more per watch, which `mode: "poll"` skips.
- * - `mode: "poll"` calls the event's `<event>/poll` for each page, a poll unanswered for `pollResentAfter` sent again from the same cursor, the first interrupted, so a server that holds a poll until something changes, as the Cloudflare package's socket host does, reads it again at least that often.
+ * - `watch(event, input, options)` with no `mode` holds the event's stream rpc open, as `Action.client`'s does, and polls instead, for that watch, where the server answers the stream rpc `Unknown request tag`, as an `ActionEntity` and a socket host forwarding into one do: one round trip more per watch, which `mode: "poll"` skips.
+ * - `mode: "poll"` calls the event's `<event>/poll` for each page, a poll unanswered for `pollResentAfter` sent again from the same cursor, the first interrupted, so a server that holds a poll until something changes, such as a socket host, reads it again at least that often.
  * - A watch of an event the server does not serve fails with `Event.SubscriptionError`, reason `NotServed`, as over HTTP, whatever its `mode`; a webhook `mode` fails with reason `Unsupported`.
  * - A watch reconnects after the protocol's socket or HTTP transport fails, a response ends before its stream does, as a server's restart ends it, a status a server sends while it recovers, or, over Effect's HTTP protocol, 60 seconds without an element, a socket's own pings telling a dead one, a second later and doubling to 30 seconds, each reconnect logged as a warning, and after `Action.Unavailable`; another declared error, a refusal included, or a socket's close with an application's code, 4000 to 4999, ends it.
  * - A native rpc of the binding's `rpcs` is the native client's method: a stream rpc's is a `Stream`, its headers given as its options' `headers`, since `RpcClient.withHeaders` wraps an Effect.
@@ -818,9 +818,8 @@ export type SocketClientOptions = SocketTarget &
      */
     readonly hooks?: Partial<RpcClient.ConnectionHooks["Service"]> | undefined;
     /**
-     * How messages are written on the socket: `RpcSerialization.json` by default, which the
-     * Cloudflare package's socket host reads; the server's own, such as `RpcSerialization.ndjson`,
-     * for an `ActionRpc.layer` served under another.
+     * How messages are written on the socket: `RpcSerialization.json` by default; the server's
+     * own, such as `RpcSerialization.ndjson`, for an `ActionRpc.layer` served under another.
      */
     readonly serialization?:
       | RpcSerialization.RpcSerialization["Service"]

@@ -220,7 +220,7 @@ export interface Check<E extends Any, R = never> extends Hooked<E, R> {
    * `check` again only when notified, on no timer, so an idle Cloudflare Durable Object holding
    * them hibernates. Defaults to `false`, asking again at each page's `nextPoll` too. A polling
    * client polls at `nextPoll` either way, and an rpc's poll page says `notified`, so a host that
-   * holds polls, as the Cloudflare package's socket host does, holds one of this source alone.
+   * holds polls, such as a socket host, holds one of this source alone.
    *
    * **Gotchas**
    *

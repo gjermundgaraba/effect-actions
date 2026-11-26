@@ -1,6 +1,6 @@
 # effect-actions
 
-Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to a model as a native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients underneath. Events go the same way: watched over HTTP, MCP, Effect RPC and the CLI, or delivered by webhook. A companion package, [effect-actions-cloudflare](packages/cloudflare/), runs actions and events in Cloudflare Durable Objects as Effect Cluster entities, which a Worker serves over HTTP and MCP.
+Define an Effect action once. Serve it over HTTP, MCP and Effect RPC, hand it to a model as a native Toolkit, and run it from a CLI. Same schemas, same handler, Effect's own servers and clients underneath. Events go the same way: watched over HTTP, MCP, Effect RPC and the CLI, or delivered by webhook.
 
 **If you are a coding agent**, start at [docs/README.md](docs/README.md), not here. It routes every task, protecting an action and limiting request bodies included, to its page and its example.
 
@@ -136,6 +136,6 @@ Set up with [Vite+](https://viteplus.dev/guide/): `vp install`, then `vp run rea
 
 ## Releasing
 
-Bump the version in `package.json` and `packages/cloudflare/package.json`, commit, tag `v<version>` and push the tag. `.github/workflows/npm.yml` then publishes every package whose version npm does not have yet, the core first, through npm trusted publishing. A new package's first version is published by hand with `vp pm publish`, followed by `npm trust github <package> --repo <repo> --file npm.yml` so the workflow can publish the next.
+Bump the version in `package.json`, commit, tag `v<version>` and push the tag. `.github/workflows/npm.yml` then publishes that version, unless npm has it already, through npm trusted publishing.
 
 `.github/workflows/effect-latest.yml` runs the full check weekly against the newest Effect 4.x, so a minor release that passes can be admitted to the `effect` peer range.

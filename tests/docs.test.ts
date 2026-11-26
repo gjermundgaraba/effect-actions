@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@effect/vitest";
 
 import manifest from "../package.json" with { type: "json" };
-import cloudflareManifest from "../packages/cloudflare/package.json" with { type: "json" };
 import { docsDirectory, examplesDirectory } from "../scripts/skill.ts";
 import { captured } from "./support/captured.js";
 
@@ -25,33 +24,14 @@ const directoriesIn = (directory: string) =>
 
 const examples = directoriesIn(examplesDirectory);
 
-const cloudflare = "packages/cloudflare";
-
-const cloudflareExamples = directoriesIn(
-  path.join(root, cloudflare, "examples")
-);
-
-const cloudflareDocsPages = markdownIn(path.join(root, cloudflare, "docs"));
-
 const docsPages = markdownIn(docsDirectory);
-
-const cloudflarePages = [
-  `${cloudflare}/README.md`,
-  ...cloudflareDocsPages,
-  ...cloudflareExamples.map(
-    (example) => `${cloudflare}/examples/${example}/README.md`
-  ),
-];
 
 const pages = [
   "README.md",
   "examples/README.md",
   ...docsPages,
   ...examples.map((example) => `examples/${example}/README.md`),
-  ...cloudflarePages,
 ];
-
-const everyDocsPage = [...docsPages, ...cloudflareDocsPages];
 
 const byName = (a: string, b: string) => a.localeCompare(b);
 
@@ -90,9 +70,6 @@ const linksOf = (page: string) =>
     })
   );
 
-const packageOf = (page: string) =>
-  page.startsWith(`${cloudflare}/`) ? `${cloudflare}/` : "";
-
 const snippets = pages.flatMap((page) =>
   Array.from(
     read(page).matchAll(
@@ -101,7 +78,7 @@ const snippets = pages.flatMap((page) =>
     (match) =>
       [
         page,
-        `${packageOf(page)}examples/${captured(match, "file")}`,
+        `examples/${captured(match, "file")}`,
         captured(match, "code"),
       ] as const
   )
@@ -136,7 +113,7 @@ describe("the documentation", () => {
     expect(broken).toStrictEqual([]);
   });
 
-  it.each(everyDocsPage)(
+  it.each(docsPages)(
     "%s links only inside docs/ and to examples/, which ship with it",
     (page) => {
       const outside = linksOf(page)
@@ -150,26 +127,10 @@ describe("the documentation", () => {
     }
   );
 
-  it.each(cloudflarePages)(
-    "%s links only inside the cloudflare package, which ships alone",
-    (page) => {
-      const outside = linksOf(page)
-        .map(({ target }) =>
-          path.relative(root, path.join(root, path.dirname(page), target))
-        )
-        .filter((linked) => !linked.startsWith(`${cloudflare}/`));
-
-      expect(outside).toStrictEqual([]);
-    }
-  );
-
-  it.each(everyDocsPage)(
+  it.each(docsPages)(
     "%s names no source path of the library, which does not ship",
     (page) => {
-      const ofAnExample = new RegExp(
-        `(?:${[...examples, ...cloudflareExamples].join("|")})/src/`,
-        "gu"
-      );
+      const ofAnExample = new RegExp(`(?:${examples.join("|")})/src/`, "gu");
 
       expect(withoutCode(page).replaceAll(ofAnExample, "")).not.toMatch(
         /\bsrc\//u
@@ -177,7 +138,7 @@ describe("the documentation", () => {
     }
   );
 
-  it.each(everyDocsPage)(
+  it.each(docsPages)(
     "%s fences TypeScript only as a whole example file",
     (page) => {
       const fences = Array.from(
@@ -192,7 +153,7 @@ describe("the documentation", () => {
   );
 
   it("gives every module page a -failures.md beside it, each entry one line", () => {
-    for (const page of everyDocsPage) {
+    for (const page of docsPages) {
       if (page.endsWith("-failures.md") || page.endsWith("docs/README.md")) {
         continue;
       }
@@ -220,7 +181,7 @@ describe("the documentation", () => {
     }
   });
 
-  it.each(everyDocsPage)(
+  it.each(docsPages)(
     "%s stays below the 16 KB safety margin for tool-output truncation",
     (page) => {
       expect(Buffer.byteLength(read(page))).toBeLessThan(16_000);
@@ -248,36 +209,6 @@ describe("the documentation", () => {
     }
   });
 
-  it("installs the cloudflare package beside the core, at its Effect peer range", () => {
-    const page = read(`${cloudflare}/README.md`);
-
-    expect(page).toContain(`${manifest.name} ${cloudflareManifest.name}`);
-    expect(page).toContain(
-      `effect@${cloudflareManifest.peerDependencies.effect}`
-    );
-    expect(cloudflareManifest.peerDependencies.effect).toBe(
-      manifest.peerDependencies.effect
-    );
-  });
-
-  it("says where to import every module the cloudflare package exports, on one of its pages", () => {
-    const modules = Object.keys(cloudflareManifest.exports).flatMap(
-      (exported) =>
-        exported === "./package.json" ? [] : [exported.slice("./".length)]
-    );
-
-    const docsTexts = cloudflareDocsPages.map((page) => read(page));
-
-    for (const module of modules) {
-      expect(
-        docsTexts.some((text) =>
-          text.includes(`Import \`${cloudflareManifest.name}/${module}\``)
-        ),
-        module
-      ).toBe(true);
-    }
-  });
-
   it("lists every module the package exports under docs/setup.md's entry points", () => {
     const section =
       read("docs/setup.md")
@@ -299,37 +230,32 @@ describe("the documentation", () => {
     expect(listed.toSorted(byName)).toStrictEqual(modules.toSorted(byName));
   });
 
-  it.each(["", `${cloudflare}/`])(
-    "names, in the JSDoc that ships from %ssrc, only pages and example paths the package holds",
-    (pkg) => {
-      const sources = readdirSync(path.join(root, pkg, "src"), {
-        recursive: true,
-        encoding: "utf-8",
-      })
-        .filter((name) => name.endsWith(".ts"))
-        .map((name) => `${pkg}src/${name}`);
+  it("names, in the JSDoc that ships from src, only pages and example paths the package holds", () => {
+    const sources = readdirSync(path.join(root, "src"), {
+      recursive: true,
+      encoding: "utf-8",
+    })
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => `src/${name}`);
 
-      const named = sources.flatMap((source) =>
-        Array.from(
-          read(source).matchAll(
-            /\u0060(?<shipped>(?:docs|examples)\/[\w./-]+)\u0060/gu
-          ),
-          (match) => ({ source, shipped: captured(match, "shipped") })
-        )
-      );
+    const named = sources.flatMap((source) =>
+      Array.from(
+        read(source).matchAll(
+          /\u0060(?<shipped>(?:docs|examples)\/[\w./-]+)\u0060/gu
+        ),
+        (match) => ({ source, shipped: captured(match, "shipped") })
+      )
+    );
 
-      expect(named.length).toBeGreaterThan(0);
-      expect(
-        named.filter(
-          ({ shipped }) => !existsSync(path.join(root, pkg, shipped))
-        )
-      ).toStrictEqual([]);
-    }
-  );
+    expect(named.length).toBeGreaterThan(0);
+    expect(
+      named.filter(({ shipped }) => !existsSync(path.join(root, shipped)))
+    ).toStrictEqual([]);
+  });
 });
 
-const exportsOf = (pkg: string, paths: readonly string[]) => {
-  const sources = readdirSync(path.join(root, pkg, "src"), {
+const exportsOf = (paths: readonly string[]) => {
+  const sources = readdirSync(path.join(root, "src"), {
     recursive: true,
     encoding: "utf-8",
   });
@@ -343,10 +269,10 @@ const exportsOf = (pkg: string, paths: readonly string[]) => {
     const file = sources.find((name) => name.endsWith(`/${module}.ts`));
 
     if (file === undefined) {
-      throw new Error(`No public module file for ${pkg}${module}`);
+      throw new Error(`No public module file for ${module}`);
     }
 
-    const source = read(`${pkg}src/${file}`);
+    const source = read(`src/${file}`);
 
     const declared = Array.from(
       source.matchAll(
@@ -378,11 +304,8 @@ const exportsOf = (pkg: string, paths: readonly string[]) => {
 };
 
 describe("the documented symbols", () => {
-  it("names, in the pages and READMEs, only symbols the public modules of both packages export", () => {
-    const exported = new Map([
-      ...exportsOf("", Object.keys(manifest.exports)),
-      ...exportsOf(`${cloudflare}/`, Object.keys(cloudflareManifest.exports)),
-    ]);
+  it("names, in the pages and READMEs, only symbols the public modules export", () => {
+    const exported = new Map(exportsOf(Object.keys(manifest.exports)));
 
     const pointer = new RegExp(
       `\\x60(?<module>${[...exported.keys()].join("|")})\\.(?<symbol>\\w+)`,

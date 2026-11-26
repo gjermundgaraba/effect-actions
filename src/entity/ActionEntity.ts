@@ -339,9 +339,9 @@ export function make(
 /**
  * The rpcs of `entity`'s binding, as its `protocol` holds them without its native rpcs: one per
  * action, the entity's internal actions included, and per event type its poll. A surface outside
- * the cluster forwards to the entity those of them its own binding lists alone, as the Cloudflare
- * package's socket host forwards its `actions`, which `ActionRpc.client`'s watch polls, finding
- * no stream rpc.
+ * the cluster forwards to the entity those of them its own binding lists alone, as a socket host
+ * forwards those its socket serves, which `ActionRpc.client`'s watch polls, finding no stream
+ * rpc.
  */
 export const bindingRpcs = (entity: Any): RpcGroup.RpcGroup<ErasedRpc> =>
   erasedOf(entity.binding.actions, entity.binding.events, "ActionEntity.layer");
@@ -550,9 +550,9 @@ const ClusterFailures = Schema.Union([
  * Whether a failure is one of those Effect's entity client fails with when the entity could not
  * be reached, `MailboxFull`, `PersistenceError`, `AlreadyProcessingMessage` and
  * `EntityNotAssignedToRunner`, which `client`, `nativeClient` and `reaching` answer as
- * `Action.Unavailable`: a server forwarding calls into an entity, as the Cloudflare package's
- * socket host does, makes them a defect, and a Worker calling Effect's `Entity.client` itself
- * answers them, as the Cloudflare package's `ActionCluster.failureResponse` does, with a 503.
+ * `Action.Unavailable`: a server forwarding calls into an entity, such as a socket host, or a
+ * Worker calling Effect's `Entity.client` itself, tells them apart with it, to answer them with a
+ * 503 or end the call with a defect.
  */
 export const isClusterFailure = Schema.is(ClusterFailures);
 

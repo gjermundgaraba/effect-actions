@@ -77,7 +77,7 @@
     "prepublishOnly": "vp run build",
     "prepare": "vp config && effect-tsgo patch --no-typescript --oxlint --tsrs",
     "example": "vpx examples/notes-service/src/server.ts",
-    "test:package": "vp run -r build && vpx scripts/test-package.ts",
+    "test:package": "vp run build && vpx scripts/test-package.ts",
     "docs:sync": "vpx scripts/sync-skill.ts",
     "ready": "vp check && vp test && vp run test:package"
   },
