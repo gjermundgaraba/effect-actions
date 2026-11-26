@@ -741,16 +741,6 @@ const subscriptionHandlerOf = (
   );
 };
 
-const sourceFailed = (event: Event.Any) => (cause: Cause.Cause<unknown>) =>
-  Effect.andThen(
-    reported(cause),
-    Effect.fail(
-      new Unavailable({
-        message: `The source of event "${event.name}" failed: try again later.`,
-      })
-    )
-  );
-
 const pollHandlerOf = (
   feed: Feed,
   steps: readonly Step[],
@@ -771,7 +761,18 @@ const pollHandlerOf = (
 
       const page = yield* feed
         .poll(input, cursor, { subscriber, maxEvents })
-        .pipe(Effect.catchCauseIf(Cause.hasDies, sourceFailed(feed.event)));
+        .pipe(
+          Effect.catchCauseIf(Cause.hasDies, (cause) =>
+            Effect.andThen(
+              reported(cause),
+              Effect.fail(
+                new Unavailable({
+                  message: `Event "${feed.event.name}" could not be read: try again later.`,
+                })
+              )
+            )
+          )
+        );
 
       return yield* encode({ ...page, notified: !feed.polls });
     })

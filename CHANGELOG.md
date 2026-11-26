@@ -16,7 +16,7 @@
 
 ### Fixes
 
-- An `ActionRpc.client` watch polling an `ActionRpc.layer` server (`mode: "poll"`) reads on after the event's source dies, as over HTTP, MCP and in process: the server reports the defect once and answers the poll `Action.Unavailable`, where it answered `Internal server error` and the watch ended.
+- An `ActionRpc.client` watch polling an `ActionRpc.layer` server (`mode: "poll"`) reads on after a defect reading the event, in its source, authorizer or subscription hook, as over HTTP, MCP and in process: the server reports the defect once and answers the poll `Action.Unavailable`, where it answered `Internal server error` and the watch ended. `ActionEntity.layer` answers its polls with the same handler.
 
 ### Other changes
 
