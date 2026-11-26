@@ -7,7 +7,10 @@ import {
   Effect,
   Fiber,
   Logger,
+  Option,
+  Exit,
   Predicate,
+  Schedule,
   Schema,
   Stream,
 } from "effect";
@@ -133,6 +136,58 @@ describe("a watch's reconnects", () => {
         1000, 2000, 4000, 8000, 16_000, 30_000, 30_000,
       ]);
     })
+  );
+
+  it.effect(
+    "stop once their reconnect schedule ends, counting failures in a row from the last occurrence, and fail with the last failure",
+    () =>
+      Effect.gen(function* () {
+        const opened: number[] = [];
+
+        const transport: Transport<Blip, never> = {
+          name: Changed.name,
+          poll: () => Effect.die("A streamed watch polled"),
+          stream: () =>
+            Stream.unwrap(
+              Effect.map(Clock.currentTimeMillis, (now) => {
+                opened.push(now);
+
+                return opened.length === 3
+                  ? Stream.make(occurrence("u1")).pipe(
+                      Stream.concat(Stream.fail(new Blip()))
+                    )
+                  : Stream.fail(new Blip());
+              })
+            ),
+          transient: Predicate.isTagged("Blip"),
+        };
+
+        const received: string[] = [];
+
+        const watched = yield* watching(transport, {
+          mode: "stream",
+          reconnect: Schedule.recurs(2),
+        }).pipe(
+          Stream.runForEach((item) =>
+            Effect.sync(() => {
+              received.push(item._tag === "Gap" ? "gap" : item.eventId);
+            })
+          ),
+          Effect.provide(Logger.layer([])),
+          Effect.exit,
+          Effect.forkChild
+        );
+
+        yield* TestClock.adjust("2 minutes");
+
+        const exit = yield* Fiber.join(watched);
+
+        expect(received).toStrictEqual(["u1"]);
+        expect(opened).toStrictEqual([0, 1000, 3000, 4000, 6000]);
+        expect(Exit.findErrorOption(exit)).toStrictEqual(
+          Option.some(new Blip())
+        );
+      })
   );
 });
 

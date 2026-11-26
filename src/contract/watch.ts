@@ -54,13 +54,21 @@ const reconnectDelay = Duration.seconds(1);
 
 const maxReconnectDelay = Duration.seconds(30);
 
-const afterFailures = <E>(transient: (error: E) => boolean) =>
-  Schedule.min([
+const afterFailures = <E>(
+  transient: (error: E) => boolean,
+  reconnect: Event.WatchOptions["reconnect"]
+) => {
+  const backoff = Schedule.min([
     Schedule.exponential(reconnectDelay),
     Schedule.spaced(maxReconnectDelay),
   ]).pipe(
     Schedule.setInputType<E>(),
-    Schedule.while(({ input }) => transient(input)),
+    Schedule.while(({ input }) => transient(input))
+  );
+
+  return (
+    reconnect === undefined ? backoff : Schedule.max([backoff, reconnect])
+  ).pipe(
     Schedule.tap(({ input, duration }) =>
       Effect.logWarning(
         `A watch reconnects in ${Duration.format(duration)} after a failure`,
@@ -68,6 +76,7 @@ const afterFailures = <E>(transient: (error: E) => boolean) =>
       )
     )
   );
+};
 
 const isSubscriptionError: Predicate.Refinement<
   unknown,
@@ -84,6 +93,7 @@ const pushRefused = Predicate.compose(
 
 const reconnecting = <E, R>(
   transient: ((error: E) => boolean) | undefined,
+  reconnect: Event.WatchOptions["reconnect"],
   open: (cursor: string | null) => Stream.Stream<Fed, E, R>,
   cursor: string | null,
   polled?: (cursor: string | null) => Stream.Stream<Fed, E, R>
@@ -100,10 +110,12 @@ const reconnecting = <E, R>(
 
   const reopened =
     transient === undefined
-      ? once.pipe(Stream.retry(afterFailures<E>(isUnavailable)))
+      ? once.pipe(Stream.retry(afterFailures<E>(isUnavailable, reconnect)))
       : once.pipe(
           Stream.repeat(Schedule.spaced(reconnectDelay)),
-          Stream.retry(afterFailures(Predicate.or(transient, isUnavailable)))
+          Stream.retry(
+            afterFailures(Predicate.or(transient, isUnavailable), reconnect)
+          )
         );
 
   return polled === undefined
@@ -121,7 +133,8 @@ const closing = <E, R>(closed: Effect.Effect<void, E, R>) =>
 export const polling =
   <E, R>(
     { poll }: Pick<Transport<E, R>, "poll">,
-    transient: ((error: E) => boolean) | undefined
+    transient: ((error: E) => boolean) | undefined,
+    reconnect?: Event.WatchOptions["reconnect"]
   ) =>
   (cursor: string | null): Stream.Stream<Fed, E, R> =>
     Stream.suspend(() => {
@@ -129,6 +142,7 @@ export const polling =
 
       return reconnecting(
         transient,
+        reconnect,
         (at) => paged((from) => poll(from, watch), at),
         cursor
       );
@@ -203,14 +217,14 @@ const delivered = <E, R>(
 
 export const watching = <E, R, SE = never>(
   transport: Transport<E, R>,
-  { cursor: given, mode, resume }: Event.WatchOptions<SE> = {}
+  { cursor: given, mode, resume, reconnect }: Event.WatchOptions<SE> = {}
 ): Stream.Stream<
   Event.Received<Event.Any>,
   E | SE | Event.SubscriptionError | Schema.SchemaError,
   R
 > => {
   const { transient } = transport;
-  const polled = polling(transport, transient);
+  const polled = polling(transport, transient, reconnect);
 
   const webhooked = (
     { baseUrl, ttl }: Event.WebhookDelivery,
@@ -257,6 +271,7 @@ export const watching = <E, R, SE = never>(
 
         return reconnecting(
           transient,
+          reconnect,
           (at) => delivered(webhook, request, received, at),
           cursor
         );
@@ -320,6 +335,7 @@ export const watching = <E, R, SE = never>(
 
         return reconnecting(
           transient,
+          reconnect,
           transport.stream,
           cursor,
           mode === "stream" ? undefined : polled
