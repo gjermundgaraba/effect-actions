@@ -32,6 +32,7 @@ import { Anyone, principalOf } from "../contract/caller.js";
 import type { Codec } from "../contract/codec.js";
 import { bindingErrors, eventErrors } from "../contract/declared.js";
 import type { Declaring } from "../contract/declared.js";
+import { Unavailable } from "../contract/errors.js";
 import * as Event from "../contract/Event.js";
 import { acquireFeeds } from "../contract/feed.js";
 import type { AnyEventImplementation, Feed } from "../contract/feed.js";
@@ -45,7 +46,7 @@ import { pageOf, rpcPageOf } from "../contract/pages.js";
 import { answerFrom, elementsFrom } from "../contract/progress.js";
 import type { Reporting, Progressed } from "../contract/progress.js";
 import { PushedOf, queuedPush, SubscriptionOf } from "../contract/push.js";
-import { concealed } from "../contract/reported.js";
+import { concealed, reported } from "../contract/reported.js";
 import { answeringOf, Answering, elementOf } from "../contract/stream.js";
 import {
   deliveryUnsupported,
@@ -740,6 +741,16 @@ const subscriptionHandlerOf = (
   );
 };
 
+const sourceFailed = (event: Event.Any) => (cause: Cause.Cause<unknown>) =>
+  Effect.andThen(
+    reported(cause),
+    Effect.fail(
+      new Unavailable({
+        message: `The source of event "${event.name}" failed: try again later.`,
+      })
+    )
+  );
+
 const pollHandlerOf = (
   feed: Feed,
   steps: readonly Step[],
@@ -758,7 +769,9 @@ const pollHandlerOf = (
 
       const subscriber = yield* principalOf(feed.event, authentication);
 
-      const page = yield* feed.poll(input, cursor, { subscriber, maxEvents });
+      const page = yield* feed
+        .poll(input, cursor, { subscriber, maxEvents })
+        .pipe(Effect.catchCauseIf(Cause.hasDies, sourceFailed(feed.event)));
 
       return yield* encode({ ...page, notified: !feed.polls });
     })
