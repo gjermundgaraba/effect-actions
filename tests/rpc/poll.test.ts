@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Schema, Stream } from "effect";
+import { Effect, ErrorReporter, Fiber, Layer, Schema, Stream } from "effect";
 import { TestRunner } from "effect/cluster";
 import { HttpClient } from "effect/http";
 import type { Headers } from "effect/http";
@@ -11,6 +11,7 @@ import * as ActionEntity from "../../src/entity/ActionEntity.js";
 import * as ActionRpc from "../../src/rpc/ActionRpc.js";
 import * as Testing from "../../src/testing/Testing.js";
 import { makeMessages, Posted, settle, texts } from "../support/events.js";
+import { recorder } from "../support/reporter.js";
 import { overHttp, rpcRoutes, unaryOf } from "../support/rpc.js";
 
 const Board = ActionEntity.make("Board", [Posted], {
@@ -151,6 +152,57 @@ describe("ActionRpc.client's watch through polls", () => {
         );
 
         expect(texts(received)).toStrictEqual(["one", "two"]);
+      })
+  );
+
+  it.effect(
+    "reads on, with mode poll, after a source's defect, which it reports once",
+    () =>
+      Effect.gen(function* () {
+        const log = makeMessages();
+        const reported: string[] = [];
+        let reads = 0;
+
+        log.post("general", "one");
+
+        const failingFirstRead = Event.implement(Posted, {
+          check: (input, cursor) =>
+            (reads += 1) === 1
+              ? Effect.die(new Error("upstream blew up"))
+              : log.check(input, cursor),
+        });
+
+        const received = yield* Effect.gen(function* () {
+          const client = yield* ActionRpc.client(signedOut);
+
+          const fiber = yield* client
+            .watch(Posted, {}, { cursor: "0", mode: "poll" })
+            .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+
+          yield* settle;
+          yield* TestClock.adjust("1 second");
+
+          return yield* Fiber.join(fiber);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            overHttp(
+              ActionRpc.layer(signedOut, [failingFirstRead]).pipe(
+                Layer.provide([
+                  Event.layerMemory,
+                  ErrorReporter.layer([recorder(reported)]),
+                ])
+              )
+            )
+          )
+        );
+
+        expect([texts(received), reads, reported.length]).toStrictEqual([
+          ["one"],
+          2,
+          1,
+        ]);
+        expect(reported[0]).toContain("upstream blew up");
       })
   );
 

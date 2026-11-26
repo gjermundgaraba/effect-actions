@@ -14,6 +14,10 @@
 - `Event.memoryCursors()` is a `CursorStore` in memory that a watch's `resume` takes without a `key`: `resume: { store: Event.memoryCursors() }` lets a retry of the watch's stream go on where the failed run stopped, where an application wrote that store by hand. A store watches may share still takes a `key`.
 - A `check` or `current` source, and `appended`'s `newest` and `after`, may fail with `Action.Unavailable`, which the server already handled: a watch reads on after it as after any failure no refusal explains, and an HTTP poll is answered 503 with `Retry-After`, where MCP's `events/poll` still answers it `-32603`. A source with a typed storage error had only a refusal to fail with, which ends the watch, or a defect.
 
+### Fixes
+
+- An `ActionRpc.client` watch polling an `ActionRpc.layer` server (`mode: "poll"`) reads on after a defect reading the event, in its source, authorizer or subscription hook, as over HTTP, MCP and in process: the server reports the defect once and answers the poll `Action.Unavailable`, where it answered `Internal server error` and the watch ended. `ActionEntity.layer` answers its polls with the same handler.
+
 ### Other changes
 
 - Built and tested on Effect 4.1.6; the `effect` peer stays `~4.1.4`.
