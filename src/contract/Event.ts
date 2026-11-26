@@ -586,10 +586,10 @@ export interface WatchOptions<E = never> {
     | { readonly store: CursorStore<E>; readonly key: string }
     | undefined;
   /**
-   * How many reconnects a watch makes after failures it would retry, such as a dropped stream or
-   * an `Unavailable`: it reconnects while both this schedule and its backoff, a second doubling
-   * up to 30, go on, waiting the longer delay, then fails with the last failure, as
-   * `Schedule.recurs(5)` fails at the sixth failure in a row; left out, it reconnects without end.
+   * Bounds a watch's reconnects after failures it retries, such as a dropped stream or an
+   * `Unavailable`: with `Schedule.recurs(5)`, the sixth failure in a row ends the watch with it.
+   * The watch still waits at least its own backoff between reconnects; left out, it reconnects
+   * without end.
    *
    * **Gotchas**
    *

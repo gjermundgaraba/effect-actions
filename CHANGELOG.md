@@ -4,7 +4,7 @@
 
 ### Additions
 
-- A watch's `reconnect` option, a `Schedule` such as `Schedule.recurs(5)`, bounds its reconnects after failures it retries, such as a dropped stream or an `Unavailable`: it reconnects while both the schedule and its own backoff go on, then fails with the last failure, so an application can tell its reader the watch stopped. The count starts again at anything the watch receives. Left out, a watch reconnects without end, as before.
+- A watch's `reconnect` option, a `Schedule` such as `Schedule.recurs(5)`, ends the watch with its last failure once the schedule ends, so an application can tell its reader the watch stopped. Left out, a watch reconnects without end, as before.
 
 ### Other changes
 

@@ -243,4 +243,4 @@ When each subscription needs something set up upstream while it lasts, such as j
 
 ## Watch in process
 
-`Action.client` given event implementations has `watch(event, input, options)`: a `Stream` of `Event.Received`, the occurrences and a `Gap` wherever some were missed, owing per subscription what an action's call owes. [Testing.md](Testing.md#test-events) watches one in a test. A watch reconnects after a failure it can retry, without end unless its `reconnect` schedule ends: give one, such as `Schedule.recurs(5)`, where a reader must learn that the watch stopped, as `Event.WatchOptions` says.
+`Action.client` given event implementations has `watch(event, input, options)`: a `Stream` of `Event.Received`, the occurrences and a `Gap` wherever some were missed, owing per subscription what an action's call owes. [Testing.md](Testing.md#test-events) watches one in a test. A watch reconnects after a failure it can retry without end; give it a `reconnect` schedule where a reader must learn that it stopped.
