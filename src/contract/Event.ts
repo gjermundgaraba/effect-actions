@@ -544,6 +544,23 @@ export interface CursorStore<E = never> {
 }
 
 /**
+ * A `CursorStore` in memory, for as long as it is referenced: give each watch its own, as
+ * `resume: { store: Event.memoryCursors() }`, so a retry of that watch's stream goes on where the
+ * failed run stopped; a restart starts from now.
+ */
+export const memoryCursors = (): CursorStore => {
+  const cursors = new Map<string, string>();
+
+  return {
+    get: (key) => Effect.sync(() => cursors.get(key)),
+    set: (key, cursor) =>
+      Effect.sync(() => {
+        cursors.set(key, cursor);
+      }),
+  };
+};
+
+/**
  * A watch delivered by webhook, which `Webhook.delivery` makes: the server POSTs each occurrence
  * to the route `Webhook.layerReceiver` serves in the watching process, reached under `baseUrl`,
  * for as long as the watch is read, each grant asking for `ttl`.
@@ -579,11 +596,17 @@ export interface WatchOptions<E = never> {
   readonly mode?: "stream" | "poll" | WebhookDelivery | undefined;
   /**
    * Where to keep the cursor between watches, such as across restarts: it starts from the cursor
-   * kept under `key`, when no `cursor` is given, and keeps each new one there. Effect's
-   * `KeyValueStore` is one: `{ store: yield* KeyValueStore.KeyValueStore, key: "builds" }`.
+   * kept under `key`, the event type's name when left out, when no `cursor` is given, and keeps
+   * each new one there. Effect's `KeyValueStore` is one:
+   * `{ store: yield* KeyValueStore.KeyValueStore, key: "builds" }`; `memoryCursors()` is one a
+   * single watch keeps for its own retries.
+   *
+   * **Gotchas**
+   *
+   * - Watches sharing a store need a `key` each, one per input too: two watches of one event type under the default key resume from each other's cursors and miss occurrences.
    */
   readonly resume?:
-    | { readonly store: CursorStore<E>; readonly key: string }
+    | { readonly store: CursorStore<E>; readonly key?: string | undefined }
     | undefined;
   /**
    * Bounds a watch's reconnects after failures it retries, such as a dropped stream or an
