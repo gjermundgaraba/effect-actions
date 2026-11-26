@@ -117,6 +117,23 @@ export const watchTypedByTheEventAndOwingItsSubscription = Effect.gen(
       Event.SubscriptionError | Action.BuiltIn | "unavailable"
     >();
 
+    const own = client.watch(
+      Ticked,
+      {},
+      { resume: { store: Event.memoryCursors() } }
+    );
+
+    expectTypeOf<Stream.Error<typeof own>>().toEqualTypeOf<
+      Event.SubscriptionError | Action.BuiltIn
+    >();
+
+    void client.watch(
+      Ticked,
+      {},
+      // @ts-expect-error -- A store watches may share takes a key.
+      { resume: { store: unavailable } }
+    );
+
     // @ts-expect-error -- Its input is the event's.
     void client.watch(Changed, { id: 1 });
     void client.watch(

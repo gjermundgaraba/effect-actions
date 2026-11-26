@@ -660,7 +660,7 @@ describe("a check source, watched in process", () => {
   );
 
   it.effect(
-    "goes on where a failed run stopped when retried with resume, in a store of its own without a key",
+    "goes on where a failed run stopped when retried with resume in memoryCursors",
     () =>
       Effect.gen(function* () {
         const flaky = makeFlaky();

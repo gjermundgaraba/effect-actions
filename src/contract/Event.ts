@@ -543,15 +543,25 @@ export interface CursorStore<E = never> {
   readonly set: (key: string, cursor: string) => Effect.Effect<void, E>;
 }
 
+/** A `CursorStore` in memory, which `memoryCursors` makes. */
+export interface MemoryCursors extends CursorStore {
+  readonly _tag: "MemoryCursors";
+}
+
 /**
- * A `CursorStore` in memory, for as long as it is referenced: give each watch its own, as
- * `resume: { store: Event.memoryCursors() }`, so a retry of that watch's stream goes on where the
- * failed run stopped; a restart starts from now.
+ * A `CursorStore` in memory, for as long as it is referenced: give a watch one of its own,
+ * `resume: { store: Event.memoryCursors() }`, which takes no `key`, so a retry of the watch's
+ * stream goes on where the failed run stopped; a restart starts from now.
+ *
+ * **Gotchas**
+ *
+ * - One store given to two watches without a `key` keeps one cursor for both, so each resumes from the other's and misses occurrences: make one per watch.
  */
-export const memoryCursors = (): CursorStore => {
+export const memoryCursors = (): MemoryCursors => {
   const cursors = new Map<string, string>();
 
   return {
+    _tag: "MemoryCursors",
     get: (key) => Effect.sync(() => cursors.get(key)),
     set: (key, cursor) =>
       Effect.sync(() => {
@@ -596,17 +606,13 @@ export interface WatchOptions<E = never> {
   readonly mode?: "stream" | "poll" | WebhookDelivery | undefined;
   /**
    * Where to keep the cursor between watches, such as across restarts: it starts from the cursor
-   * kept under `key`, the event type's name when left out, when no `cursor` is given, and keeps
-   * each new one there. Effect's `KeyValueStore` is one:
-   * `{ store: yield* KeyValueStore.KeyValueStore, key: "builds" }`; `memoryCursors()` is one a
-   * single watch keeps for its own retries.
-   *
-   * **Gotchas**
-   *
-   * - Watches sharing a store need a `key` each, one per input too: two watches of one event type under the default key resume from each other's cursors and miss occurrences.
+   * kept under `key`, when no `cursor` is given, and keeps each new one there. Effect's
+   * `KeyValueStore` is one: `{ store: yield* KeyValueStore.KeyValueStore, key: "builds" }`; a
+   * store of the watch's own, `memoryCursors()`, takes no `key`.
    */
   readonly resume?:
-    | { readonly store: CursorStore<E>; readonly key?: string | undefined }
+    | { readonly store: CursorStore<E>; readonly key: string }
+    | { readonly store: MemoryCursors; readonly key?: string | undefined }
     | undefined;
   /**
    * Bounds a watch's reconnects after failures it retries, such as a dropped stream or an
