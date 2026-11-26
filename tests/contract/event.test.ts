@@ -659,31 +659,32 @@ describe("a check source, watched in process", () => {
       }).pipe(Effect.provide(Event.layerMemory))
   );
 
-  it.effect("goes on where a failed run stopped when retried with resume", () =>
-    Effect.gen(function* () {
-      const flaky = makeFlaky();
-      const client = yield* Action.client(flaky.implementation);
-      const store = yield* KeyValueStore.KeyValueStore;
+  it.effect(
+    "goes on where a failed run stopped when retried with resume in memoryCursors",
+    () =>
+      Effect.gen(function* () {
+        const flaky = makeFlaky();
+        const client = yield* Action.client(flaky.implementation);
 
-      const fiber = yield* client
-        .watch(Posted, {}, { resume: { store, key: "posted" } })
-        .pipe(
-          Stream.retry(Schedule.recurs(1)),
-          Stream.take(2),
-          Stream.runCollect,
-          Effect.forkChild
-        );
+        const fiber = yield* client
+          .watch(Posted, {}, { resume: { store: Event.memoryCursors() } })
+          .pipe(
+            Stream.retry(Schedule.recurs(1)),
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.forkChild
+          );
 
-      yield* settle;
-      flaky.log.post("general", "one");
-      yield* TestClock.adjust("5 seconds");
-      flaky.refuseNext();
-      flaky.log.post("general", "two");
-      yield* TestClock.adjust("5 seconds");
+        yield* settle;
+        flaky.log.post("general", "one");
+        yield* TestClock.adjust("5 seconds");
+        flaky.refuseNext();
+        flaky.log.post("general", "two");
+        yield* TestClock.adjust("5 seconds");
 
-      expect(texts(yield* Fiber.join(fiber))).toStrictEqual(["one", "two"]);
-      expect(flaky.asked).toStrictEqual([null, "0", "1", "1"]);
-    }).pipe(Effect.provide([KeyValueStore.layerMemory, Event.layerMemory]))
+        expect(texts(yield* Fiber.join(fiber))).toStrictEqual(["one", "two"]);
+        expect(flaky.asked).toStrictEqual([null, "0", "1", "1"]);
+      }).pipe(Effect.provide(Event.layerMemory))
   );
 
   it.effect(

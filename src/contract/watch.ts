@@ -282,10 +282,12 @@ export const watching = <E, R, SE = never>(
     const seen = makeRecent();
     let keptOnNextPull: string | null = null;
 
+    const key = resume?.key ?? transport.name;
+
     const keep = (cursor: string | null): Effect.Effect<void, SE> =>
       cursor === null || resume === undefined
         ? Effect.void
-        : resume.store.set(resume.key, cursor);
+        : resume.store.set(key, cursor);
 
     const fresh = (eventId: string) => {
       if (seen.has(eventId)) {
@@ -321,7 +323,7 @@ export const watching = <E, R, SE = never>(
     const start: Effect.Effect<string | null, SE> =
       given !== undefined || resume === undefined
         ? Effect.succeed(given ?? null)
-        : Effect.map(resume.store.get(resume.key), (kept) => kept ?? null);
+        : Effect.map(resume.store.get(key), (kept) => kept ?? null);
 
     return Stream.unwrap(
       Effect.map(start, (cursor) => {

@@ -5,6 +5,7 @@
 ### Additions
 
 - A watch's `reconnect` option, a `Schedule` such as `Schedule.recurs(5)`, ends the watch with its last failure once the schedule ends, so an application can tell its reader the watch stopped. Left out, a watch reconnects without end, as before.
+- `Event.memoryCursors()` is a `CursorStore` in memory that a watch's `resume` takes without a `key`: `resume: { store: Event.memoryCursors() }` lets a retry of the watch's stream go on where the failed run stopped, where an application wrote that store by hand. A store watches may share still takes a `key`.
 
 ### Other changes
 

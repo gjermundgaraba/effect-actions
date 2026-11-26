@@ -543,6 +543,33 @@ export interface CursorStore<E = never> {
   readonly set: (key: string, cursor: string) => Effect.Effect<void, E>;
 }
 
+/** A `CursorStore` in memory, which `memoryCursors` makes. */
+export interface MemoryCursors extends CursorStore {
+  readonly _tag: "MemoryCursors";
+}
+
+/**
+ * A `CursorStore` in memory, for as long as it is referenced: give a watch one of its own,
+ * `resume: { store: Event.memoryCursors() }`, which takes no `key`, so a retry of the watch's
+ * stream goes on where the failed run stopped; a restart starts from now.
+ *
+ * **Gotchas**
+ *
+ * - One store given to two watches without a `key` keeps one cursor for both, so each resumes from the other's and misses occurrences: make one per watch.
+ */
+export const memoryCursors = (): MemoryCursors => {
+  const cursors = new Map<string, string>();
+
+  return {
+    _tag: "MemoryCursors",
+    get: (key) => Effect.sync(() => cursors.get(key)),
+    set: (key, cursor) =>
+      Effect.sync(() => {
+        cursors.set(key, cursor);
+      }),
+  };
+};
+
 /**
  * A watch delivered by webhook, which `Webhook.delivery` makes: the server POSTs each occurrence
  * to the route `Webhook.layerReceiver` serves in the watching process, reached under `baseUrl`,
@@ -580,10 +607,12 @@ export interface WatchOptions<E = never> {
   /**
    * Where to keep the cursor between watches, such as across restarts: it starts from the cursor
    * kept under `key`, when no `cursor` is given, and keeps each new one there. Effect's
-   * `KeyValueStore` is one: `{ store: yield* KeyValueStore.KeyValueStore, key: "builds" }`.
+   * `KeyValueStore` is one: `{ store: yield* KeyValueStore.KeyValueStore, key: "builds" }`; a
+   * store of the watch's own, `memoryCursors()`, takes no `key`.
    */
   readonly resume?:
     | { readonly store: CursorStore<E>; readonly key: string }
+    | { readonly store: MemoryCursors; readonly key?: string | undefined }
     | undefined;
   /**
    * Bounds a watch's reconnects after failures it retries, such as a dropped stream or an
