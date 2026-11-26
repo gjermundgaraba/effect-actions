@@ -2,7 +2,7 @@
 
 `ActionEntity` serves actions and event types as an Effect Cluster entity. An entity type is a kind of stateful object, such as a chat room, and an entity id names one of them, such as the room `lobby`. The cluster's `Sharding` runs each entity id in one place at a time, on whatever runtime provides it: a Node or SQL cluster, `TestRunner` in a test, or a host that runs one entity per object. Each call reaches the entity its input names, and that entity builds its own handlers.
 
-The example is [shopping-carts](node_modules/@gjermundgaraba/effect-actions/examples/shopping-carts/), carts on one process over SQLite; the Cloudflare package's chat-rooms runs the same model on Durable Objects. A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionEntity-failures.md](ActionEntity-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`.
+The example is [shopping-carts](node_modules/@gjermundgaraba/effect-actions/examples/shopping-carts/), carts on one process over SQLite. A message the library throws says its fix; for a compiler diagnostic or Effect's own error, search [ActionEntity-failures.md](ActionEntity-failures.md). For one symbol, `grep -rn <symbol> node_modules/@gjermundgaraba/effect-actions/dist/`.
 
 ## Define an entity
 
@@ -86,7 +86,7 @@ A call the entity could not be reached for, or that did not answer within `reach
 
 An event is followed through the entity's poll rpc, so no watcher holds an entity open; a stream polls it from the surface. What crosses the two hops, and what does not, is on `ActionEntity.reaching`.
 
-A server outside the cluster that forwards a socket's calls into the entity, as the Cloudflare package's socket host does, forwards those rpcs of `ActionEntity.bindingRpcs(entity)` its own binding lists, never the entity's internal actions or native rpcs, which authenticate nothing; its clients call them with `ActionRpc.client` of that binding, whose watch polls them.
+A server outside the cluster that forwards a socket's calls into the entity, such as a socket host, forwards those rpcs of `ActionEntity.bindingRpcs(entity)` its own binding lists, never the entity's internal actions or native rpcs, which authenticate nothing; its clients call them with `ActionRpc.client` of that binding, whose watch polls them.
 
 ## Watch an event
 

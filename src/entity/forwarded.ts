@@ -20,8 +20,8 @@ const ownedByTheRequest = (name: string) =>
  * one but its connection's (`host`, `connection`, `keep-alive`, `te`, `trailer`,
  * `transfer-encoding`, `upgrade`), its body's (`content-*`), what it accepts (`accept*`), a
  * proxy's (`proxy-*`), a WebSocket upgrade's (`sec-websocket-*`) and an MCP request's routing
- * headers (`mcp-*`). `reaching` sends these of the caller's request, and the Cloudflare
- * package's socket host keeps these of a page's upgrade.
+ * headers (`mcp-*`). `reaching` sends these of the caller's request, and a socket host forwarding
+ * a page's calls into an entity keeps these of the page's upgrade.
  */
 export const forwardedHeaders = (headers: Headers.Input): Headers.Headers =>
   Headers.fromInput(

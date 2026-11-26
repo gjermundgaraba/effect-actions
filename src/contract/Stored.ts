@@ -15,10 +15,10 @@ import { Idempotency, Kept, keptFor } from "./idempotency.js";
 /**
  * What `layerEvents` calls in the fiber that made each change its change signal counts, each
  * append to a log, published or emitted, and each `notify`, once the change is written: a host
- * serving the database's events from outside `Events`, as the Cloudflare package's socket host
- * does, learns of a change as it is made, by work that outlived the call that started it too, not
- * only when a handler ends. `layerEvents` reads it as it builds; by default it does nothing, and
- * the Cloudflare package's `ActionCluster.layer` provides one to each entity's build.
+ * serving the database's events from outside `Events`, such as a socket host that holds polls,
+ * learns of a change as it is made, by work that outlived the call that started it too, not only
+ * when a handler ends. `layerEvents` reads it as it builds; by default it does nothing, and such a
+ * host provides one to each entity's build.
  *
  * **Gotchas**
  *
@@ -44,7 +44,7 @@ export const ChangeListener = Context.Reference<() => void>(
  *
  * **Gotchas**
  *
- * - Written for SQLite, such as a cluster entity's own on a Durable Object, `CloudflareCluster.DurableObjectSqlClient`, and tested on `@effect/sql-sqlite-node`'s and on workerd: another dialect is unsupported.
+ * - Written for SQLite, such as a cluster entity's own on a Durable Object, `CloudflareCluster.DurableObjectSqlClient`, and tested on `@effect/sql-sqlite-node`'s: another dialect is unsupported.
  * - Build it once per database, as `Event.layerMemory` is built once per process: two builds over one database each wake only their own subscribers, and their appends to one log collide, dying on the table's key.
  * - Logs are kept by their event's name: two event types of one name attached to one build die, naming it.
  * - A `key` holding a lone surrogate, not well-formed UTF-16, is kept with U+FFFD in its place: its occurrences no longer reach that key's subscribers.
@@ -112,12 +112,12 @@ export const layerEvents: Layer.Layer<Events, never, SqlClient.SqlClient> =
  * column is the sum of `effect_actions_event_revision`'s counts and of
  * `effect_actions_event_position`'s `last` sequence numbers: it moves at each `notify` and each
  * append to a log, and at no read or restart, so a host that runs it as `ChangeListener` is
- * called and after each handler, as the Cloudflare package's socket host does, learns whether a
- * parked poll could answer anything new.
+ * called and after each handler, such as a socket host that holds polls, learns whether a parked
+ * poll could answer anything new.
  *
  * **Gotchas**
  *
- * - Before `layerEvents` first builds on the database its tables are missing, and the query fails with SQLite's `no such table`: the Cloudflare package's socket host reads that as no signal, answering polls at once as for an entity whose events are kept elsewhere, and fails a poll with a defect on any other failure, as on tables of another shape.
+ * - Before `layerEvents` first builds on the database its tables are missing, and the query fails with SQLite's `no such table`: a host reading that alone as no signal answers polls at once, as for an entity whose events are kept elsewhere, and another failure, as on tables of another shape, is a defect of the poll.
  */
 export const changeSignal: string = changeSignalQuery;
 

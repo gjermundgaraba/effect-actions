@@ -1,6 +1,6 @@
 # shopping-carts
 
-Shopping carts as Effect Cluster entities: each cart is one entity id of the `Cart` entity, which runs in one place at a time and one call at a time. Shoppers add items to their own cart and list it over JSON routes, which reach the cart the input names through `ActionEntity.reaching`. The server is one process, Effect's `SingleRunner`, keeping the cluster's messages and the carts in one SQLite file. The same entities on Cloudflare Durable Objects are the Cloudflare package's chat-rooms example.
+Shopping carts as Effect Cluster entities: each cart is one entity id of the `Cart` entity, which runs in one place at a time and one call at a time. Shoppers add items to their own cart and list it over JSON routes, which reach the cart the input names through `ActionEntity.reaching`. The server is one process, Effect's `SingleRunner`, keeping the cluster's messages and the carts in one SQLite file.
 
 ## Run it
 
