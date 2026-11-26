@@ -445,7 +445,7 @@ export type Occurrence<E extends Any> = OccurrenceSchema<E>["Type"];
 
 export { Gap } from "./occurrence.js";
 
-/** What a subscriber receives: occurrences, and gaps where it missed some. */
+/** What a subscriber receives: occurrences, and gaps where it missed some, told apart by `_tag`, `"Occurrence"` or `"Gap"`. */
 export type Received<E extends Any> = Occurrence<E> | Gap;
 
 /** The server serves no event type of that name, or no longer does. */

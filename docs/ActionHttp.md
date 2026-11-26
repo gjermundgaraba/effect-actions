@@ -159,7 +159,7 @@ Give `Http.api`, a plain `HttpApi`, to `OpenApi.fromApi`, `HttpApiSwagger.layer`
 
 ## Call the API from Effect
 
-What a call fails with is on `ActionHttp.client`, and a token or a per-request sign-in goes through `ActionHttp.ClientOptions.transformClient`.
+What a call fails with is on `ActionHttp.client`, its declared and built-in errors typed `ActionHttp.MethodError`, and a token or a per-request sign-in goes through `ActionHttp.ClientOptions.transformClient`.
 
 ```ts example=quickstart/src/client.ts
 import { NodeRuntime } from "@effect/platform-node";
