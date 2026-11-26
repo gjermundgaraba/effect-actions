@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Additions
+
+- A watch's `reconnect` option, a `Schedule` such as `Schedule.recurs(5)`, ends the watch with its last failure once the schedule ends, so an application can tell its reader the watch stopped. Left out, a watch reconnects without end, as before.
+
 ### Other changes
 
 - Built and tested on Effect 4.1.6; the `effect` peer stays `~4.1.4`.

@@ -7,7 +7,7 @@ import {
   Predicate,
   Schema,
 } from "effect";
-import type { DateTime, Duration, Scope, Stream } from "effect";
+import type { DateTime, Duration, Schedule, Scope, Stream } from "effect";
 
 import type * as Action from "./Action.js";
 import { authorizerOf } from "./authorizer.js";
@@ -585,6 +585,17 @@ export interface WatchOptions<E = never> {
   readonly resume?:
     | { readonly store: CursorStore<E>; readonly key: string }
     | undefined;
+  /**
+   * Bounds a watch's reconnects after failures it retries, such as a dropped stream or an
+   * `Unavailable`: with `Schedule.recurs(5)`, the sixth failure in a row ends the watch with it.
+   * Between reconnects the watch waits the longer of the schedule's delay and its own backoff;
+   * left out, it reconnects without end.
+   *
+   * **Gotchas**
+   *
+   * - The count starts again at anything the watch receives, a stream's 30-second heartbeat included, so it bounds failures in a row, not a watch's lifetime.
+   */
+  readonly reconnect?: Schedule.Schedule<unknown> | undefined;
 }
 
 /**

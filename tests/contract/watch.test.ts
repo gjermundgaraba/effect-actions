@@ -5,9 +5,12 @@ import {
   DateTime,
   Duration,
   Effect,
+  Exit,
   Fiber,
   Logger,
+  Option,
   Predicate,
+  Schedule,
   Schema,
   Stream,
 } from "effect";
@@ -133,6 +136,97 @@ describe("a watch's reconnects", () => {
         1000, 2000, 4000, 8000, 16_000, 30_000, 30_000,
       ]);
     })
+  );
+
+  it.effect(
+    "stop once their reconnect schedule ends, counting failures in a row from the last occurrence, and fail with the last failure",
+    () =>
+      Effect.gen(function* () {
+        const opened: number[] = [];
+
+        const transport: Transport<Blip, never> = {
+          name: Changed.name,
+          poll: () => Effect.die("A streamed watch polled"),
+          stream: () =>
+            Stream.unwrap(
+              Effect.map(Clock.currentTimeMillis, (now) => {
+                opened.push(now);
+
+                return opened.length === 3
+                  ? Stream.make(occurrence("u1")).pipe(
+                      Stream.concat(Stream.fail(new Blip()))
+                    )
+                  : Stream.fail(new Blip());
+              })
+            ),
+          transient: Predicate.isTagged("Blip"),
+        };
+
+        const received: string[] = [];
+
+        const watched = yield* watching(transport, {
+          mode: "stream",
+          reconnect: Schedule.recurs(2),
+        }).pipe(
+          Stream.runForEach((item) =>
+            Effect.sync(() => {
+              received.push(item._tag === "Gap" ? "gap" : item.eventId);
+            })
+          ),
+          Effect.provide(Logger.layer([])),
+          Effect.exit,
+          Effect.forkChild
+        );
+
+        yield* TestClock.adjust("2 minutes");
+
+        const exit = yield* Fiber.join(watched);
+
+        expect(received).toStrictEqual(["u1"]);
+        expect(opened).toStrictEqual([0, 1000, 3000, 4000, 6000]);
+        expect(Exit.findErrorOption(exit)).toStrictEqual(
+          Option.some(new Blip())
+        );
+      })
+  );
+
+  it.effect(
+    "wait the reconnect schedule's delay where it is longer than their own",
+    () =>
+      Effect.gen(function* () {
+        const opened: number[] = [];
+
+        const transport: Transport<Blip, never> = {
+          name: Changed.name,
+          poll: () => Effect.die("A streamed watch polled"),
+          stream: () =>
+            Stream.unwrap(
+              Effect.map(Clock.currentTimeMillis, (now) => {
+                opened.push(now);
+
+                return opened.length < 4
+                  ? Stream.fail(new Blip())
+                  : Stream.make(occurrence("u1"));
+              })
+            ),
+          transient: Predicate.isTagged("Blip"),
+        };
+
+        const watched = yield* watching(transport, {
+          mode: "stream",
+          reconnect: Schedule.spaced("5 seconds"),
+        }).pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.provide(Logger.layer([])),
+          Effect.forkChild
+        );
+
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(watched);
+
+        expect(opened).toStrictEqual([0, 5000, 10_000, 15_000]);
+      })
   );
 });
 
