@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Other changes
+
+- Built and tested on Effect 4.1.6; the `effect` peer stays `~4.1.4`.
+
 ## 0.38.0
 
 ### Breaking changes
