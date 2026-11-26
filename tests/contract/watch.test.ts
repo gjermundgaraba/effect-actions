@@ -189,6 +189,45 @@ describe("a watch's reconnects", () => {
         );
       })
   );
+
+  it.effect(
+    "wait the reconnect schedule's delay where it is longer than their own",
+    () =>
+      Effect.gen(function* () {
+        const opened: number[] = [];
+
+        const transport: Transport<Blip, never> = {
+          name: Changed.name,
+          poll: () => Effect.die("A streamed watch polled"),
+          stream: () =>
+            Stream.unwrap(
+              Effect.map(Clock.currentTimeMillis, (now) => {
+                opened.push(now);
+
+                return opened.length < 4
+                  ? Stream.fail(new Blip())
+                  : Stream.make(occurrence("u1"));
+              })
+            ),
+          transient: Predicate.isTagged("Blip"),
+        };
+
+        const watched = yield* watching(transport, {
+          mode: "stream",
+          reconnect: Schedule.spaced("5 seconds"),
+        }).pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.provide(Logger.layer([])),
+          Effect.forkChild
+        );
+
+        yield* TestClock.adjust("1 minute");
+        yield* Fiber.join(watched);
+
+        expect(opened).toStrictEqual([0, 5000, 10_000, 15_000]);
+      })
+  );
 });
 
 const refused = (value: string) =>

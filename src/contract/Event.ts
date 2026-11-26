@@ -588,8 +588,8 @@ export interface WatchOptions<E = never> {
   /**
    * Bounds a watch's reconnects after failures it retries, such as a dropped stream or an
    * `Unavailable`: with `Schedule.recurs(5)`, the sixth failure in a row ends the watch with it.
-   * The watch still waits at least its own backoff between reconnects; left out, it reconnects
-   * without end.
+   * Between reconnects the watch waits the longer of the schedule's delay and its own backoff;
+   * left out, it reconnects without end.
    *
    * **Gotchas**
    *
