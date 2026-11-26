@@ -26,7 +26,7 @@ export const routes = Layer.mergeAll(
 
 - Claude Code 2.1 and Codex CLI 0.162 connect: `claude mcp add --transport http <name> <url>/mcp --header "Authorization: Bearer <token>"`, `codex mcp add <name> --url <url>/mcp --bearer-token-env-var <VAR>`; [mcp-tools](../examples/mcp-tools/README.md#connect-a-client) has stdio and Claude Desktop.
 - Where an endpoint without `authentication` listens, and its body limit: [mcp-tools/src/server.ts](../examples/mcp-tools/src/server.ts).
-- **On a serverless host**, such as Cloudflare Workers, pass `requestScoped: true`: [notes-service/src/worker.ts](../examples/notes-service/src/worker.ts). An endpoint serving cluster entities on Cloudflare Durable Objects is one such host.
+- **On a serverless host**, such as Cloudflare Workers, pass `requestScoped: true`: [notes-service/src/worker.ts](../examples/notes-service/src/worker.ts).
 - `McpServer.middleware` and `McpServer.visibility` provided around the endpoint run for its tools and its native features alike. A limit that must hold on every surface goes in the handlers: [kitchen-sink/src/issues/write-limit.ts](../examples/kitchen-sink/src/issues/write-limit.ts).
 
 ## Serve tools over stdio
